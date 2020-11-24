@@ -23,21 +23,9 @@
 python -m pip install -r requirements.txt
 ```
 
-然后将CDTB仓库克隆到本地
-
-```shell script
-git clone git@github.com:CommunityDragon/CDTB.git .\tools\CDTB
-```
-
-
 
 如果你本地已经克隆过该仓库, 那么请修改Config.py文件中的第10行的路径
 
-```python
-# 将目录中CDTB加入环境变量, 试得代码中可以直接导入包
-# 但是Start.py中需要将引入Config放入前面
-sys.path.append(r'你本地仓库的路径')
-```
 
 
 
