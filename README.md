@@ -1,6 +1,6 @@
 # lol_extract_voice
 
-[![standard-readme compliant](https://img.shields.io/badge/readme%20style-standard-brightgreen.svg?style=flat-square)](https://github.com/RichardLitt/standard-readme)
+![](https://img.shields.io/badge/python-%3E%3D3.x-blue)
 
 提取英雄联盟中游戏内音频文件
 
@@ -22,10 +22,6 @@
 ```shell script
 python -m pip install -r requirements.txt
 ```
-
-
-如果你本地已经克隆过该仓库, 那么请修改Config.py文件中的第10行的路径
-
 
 
 
