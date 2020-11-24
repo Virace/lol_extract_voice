@@ -1,13 +1,19 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+# @Time    : 2020/11/24 19:31
+# @Author  : Virace
+# @Email   : Virace@aliyun.com
+# @Site    : https://x-item.com
+# @File    : Config.py
+# @Update  : 2020/11/24 19:31
+# @Software: PyCharm
+
 import os
-import sys
 import json
 
 
 base = os.path.dirname(__file__)
 
-# 将目录中CDTB加入环境变量, 试得代码中可以直接导入包
-# 但是Start.py中需要将引入Config放入前面
-sys.path.append(os.path.join(base, "tools", "CDTB"))
 
 # 游戏目录
 GAME_PATH = r'D:\Games\Ol\Tencent\League of Legends'

@@ -3,14 +3,17 @@
 # @Time    : 2020/05/19日 14点58分
 # @Author  : Virace
 # @Email   : Virace@aliyun.com
+# @Site    : https://x-item.com
 # @File    : Start.py
+# @Update  : 2020/11/24日 19点27分
+# @Software: PyCharm
+
 
 import os
 from concurrent.futures import ThreadPoolExecutor
 
 import Config as config
 
-# IDE 会报错不用管
 from cdragontoolbox.wad import Wad
 from cdragontoolbox.hashes import default_hashfile
 
