@@ -1,1 +1,1501 @@
-[{"id":-1,"name":"无","alias":"None","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/-1.png","roles":[]},{"id":1,"name":"黑暗之女","alias":"Annie","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/1.png","roles":["mage"]},{"id":2,"name":"狂战士","alias":"Olaf","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/2.png","roles":["fighter","tank"]},{"id":3,"name":"正义巨像","alias":"Galio","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/3.png","roles":["tank","mage"]},{"id":4,"name":"卡牌大师","alias":"TwistedFate","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/4.png","roles":["mage"]},{"id":5,"name":"德邦总管","alias":"XinZhao","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/5.png","roles":["fighter","assassin"]},{"id":6,"name":"无畏战车","alias":"Urgot","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/6.png","roles":["fighter","tank"]},{"id":7,"name":"诡术妖姬","alias":"Leblanc","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/7.png","roles":["assassin","mage"]},{"id":8,"name":"猩红收割者","alias":"Vladimir","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/8.png","roles":["mage"]},{"id":9,"name":"远古恐惧","alias":"FiddleSticks","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/9.png","roles":["mage","support"]},{"id":10,"name":"正义天使","alias":"Kayle","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/10.png","roles":["fighter","support"]},{"id":11,"name":"无极剑圣","alias":"MasterYi","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/11.png","roles":["assassin","fighter"]},{"id":12,"name":"牛头酋长","alias":"Alistar","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/12.png","roles":["tank","support"]},{"id":13,"name":"符文法师","alias":"Ryze","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/13.png","roles":["mage","fighter"]},{"id":14,"name":"亡灵战神","alias":"Sion","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/14.png","roles":["tank","fighter"]},{"id":15,"name":"战争女神","alias":"Sivir","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/15.png","roles":["marksman"]},{"id":16,"name":"众星之子","alias":"Soraka","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/16.png","roles":["support","mage"]},{"id":17,"name":"迅捷斥候","alias":"Teemo","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/17.png","roles":["marksman","assassin"]},{"id":18,"name":"麦林炮手","alias":"Tristana","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/18.png","roles":["marksman","assassin"]},{"id":19,"name":"祖安怒兽","alias":"Warwick","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/19.png","roles":["fighter","tank"]},{"id":20,"name":"雪原双子","alias":"Nunu","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/20.png","roles":["tank","fighter"]},{"id":21,"name":"赏金猎人","alias":"MissFortune","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/21.png","roles":["marksman"]},{"id":22,"name":"寒冰射手","alias":"Ashe","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/22.png","roles":["marksman","support"]},{"id":23,"name":"蛮族之王","alias":"Tryndamere","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/23.png","roles":["fighter","assassin"]},{"id":24,"name":"武器大师","alias":"Jax","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/24.png","roles":["fighter","assassin"]},{"id":25,"name":"堕落天使","alias":"Morgana","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/25.png","roles":["mage","support"]},{"id":26,"name":"时光守护者","alias":"Zilean","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/26.png","roles":["support","mage"]},{"id":27,"name":"炼金术士","alias":"Singed","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/27.png","roles":["tank","fighter"]},{"id":28,"name":"痛苦之拥","alias":"Evelynn","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/28.png","roles":["assassin","mage"]},{"id":29,"name":"瘟疫之源","alias":"Twitch","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/29.png","roles":["marksman","assassin"]},{"id":30,"name":"死亡颂唱者","alias":"Karthus","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/30.png","roles":["mage"]},{"id":31,"name":"虚空恐惧","alias":"Chogath","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/31.png","roles":["tank","mage"]},{"id":32,"name":"殇之木乃伊","alias":"Amumu","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/32.png","roles":["tank","mage"]},{"id":33,"name":"披甲龙龟","alias":"Rammus","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/33.png","roles":["tank","fighter"]},{"id":34,"name":"冰晶凤凰","alias":"Anivia","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/34.png","roles":["mage","support"]},{"id":35,"name":"恶魔小丑","alias":"Shaco","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/35.png","roles":["assassin"]},{"id":36,"name":"祖安狂人","alias":"DrMundo","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/36.png","roles":["fighter","tank"]},{"id":37,"name":"琴瑟仙女","alias":"Sona","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/37.png","roles":["support","mage"]},{"id":38,"name":"虚空行者","alias":"Kassadin","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/38.png","roles":["assassin","mage"]},{"id":39,"name":"刀锋舞者","alias":"Irelia","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/39.png","roles":["fighter","assassin"]},{"id":40,"name":"风暴之怒","alias":"Janna","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/40.png","roles":["support","mage"]},{"id":41,"name":"海洋之灾","alias":"Gangplank","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/41.png","roles":["fighter"]},{"id":42,"name":"英勇投弹手","alias":"Corki","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/42.png","roles":["marksman"]},{"id":43,"name":"天启者","alias":"Karma","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/43.png","roles":["mage","support"]},{"id":44,"name":"瓦洛兰之盾","alias":"Taric","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/44.png","roles":["support","fighter"]},{"id":45,"name":"邪恶小法师","alias":"Veigar","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/45.png","roles":["mage"]},{"id":48,"name":"巨魔之王","alias":"Trundle","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/48.png","roles":["fighter","tank"]},{"id":50,"name":"诺克萨斯统领","alias":"Swain","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/50.png","roles":["mage","fighter"]},{"id":51,"name":"皮城女警","alias":"Caitlyn","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/51.png","roles":["marksman"]},{"id":53,"name":"蒸汽机器人","alias":"Blitzcrank","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/53.png","roles":["tank","fighter"]},{"id":54,"name":"熔岩巨兽","alias":"Malphite","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/54.png","roles":["tank","fighter"]},{"id":55,"name":"不祥之刃","alias":"Katarina","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/55.png","roles":["assassin","mage"]},{"id":56,"name":"永恒梦魇","alias":"Nocturne","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/56.png","roles":["assassin","fighter"]},{"id":57,"name":"扭曲树精","alias":"Maokai","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/57.png","roles":["tank","mage"]},{"id":58,"name":"荒漠屠夫","alias":"Renekton","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/58.png","roles":["fighter","tank"]},{"id":59,"name":"德玛西亚皇子","alias":"JarvanIV","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/59.png","roles":["tank","fighter"]},{"id":60,"name":"蜘蛛女皇","alias":"Elise","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/60.png","roles":["mage","fighter"]},{"id":61,"name":"发条魔灵","alias":"Orianna","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/61.png","roles":["mage","support"]},{"id":62,"name":"齐天大圣","alias":"MonkeyKing","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/62.png","roles":["fighter","tank"]},{"id":63,"name":"复仇焰魂","alias":"Brand","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/63.png","roles":["mage"]},{"id":64,"name":"盲僧","alias":"LeeSin","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/64.png","roles":["fighter","assassin"]},{"id":67,"name":"暗夜猎手","alias":"Vayne","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/67.png","roles":["marksman","assassin"]},{"id":68,"name":"机械公敌","alias":"Rumble","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/68.png","roles":["fighter","mage"]},{"id":69,"name":"魔蛇之拥","alias":"Cassiopeia","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/69.png","roles":["mage"]},{"id":72,"name":"水晶先锋","alias":"Skarner","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/72.png","roles":["fighter","tank"]},{"id":74,"name":"大发明家","alias":"Heimerdinger","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/74.png","roles":["mage","support"]},{"id":75,"name":"沙漠死神","alias":"Nasus","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/75.png","roles":["fighter","tank"]},{"id":76,"name":"狂野女猎手","alias":"Nidalee","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/76.png","roles":["assassin","mage"]},{"id":77,"name":"兽灵行者","alias":"Udyr","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/77.png","roles":["fighter","tank"]},{"id":78,"name":"圣锤之毅","alias":"Poppy","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/78.png","roles":["tank","fighter"]},{"id":79,"name":"酒桶","alias":"Gragas","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/79.png","roles":["fighter","mage"]},{"id":80,"name":"不屈之枪","alias":"Pantheon","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/80.png","roles":["fighter","assassin"]},{"id":81,"name":"探险家","alias":"Ezreal","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/81.png","roles":["marksman","mage"]},{"id":82,"name":"铁铠冥魂","alias":"Mordekaiser","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/82.png","roles":["fighter"]},{"id":83,"name":"牧魂人","alias":"Yorick","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/83.png","roles":["fighter","tank"]},{"id":84,"name":"离群之刺","alias":"Akali","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/84.png","roles":["assassin"]},{"id":85,"name":"狂暴之心","alias":"Kennen","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/85.png","roles":["mage","marksman"]},{"id":86,"name":"德玛西亚之力","alias":"Garen","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/86.png","roles":["fighter","tank"]},{"id":89,"name":"曙光女神","alias":"Leona","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/89.png","roles":["tank","support"]},{"id":90,"name":"虚空先知","alias":"Malzahar","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/90.png","roles":["mage","assassin"]},{"id":91,"name":"刀锋之影","alias":"Talon","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/91.png","roles":["assassin"]},{"id":92,"name":"放逐之刃","alias":"Riven","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/92.png","roles":["fighter","assassin"]},{"id":96,"name":"深渊巨口","alias":"KogMaw","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/96.png","roles":["marksman","mage"]},{"id":98,"name":"暮光之眼","alias":"Shen","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/98.png","roles":["tank"]},{"id":99,"name":"光辉女郎","alias":"Lux","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/99.png","roles":["mage","support"]},{"id":101,"name":"远古巫灵","alias":"Xerath","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/101.png","roles":["mage"]},{"id":102,"name":"龙血武姬","alias":"Shyvana","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/102.png","roles":["fighter","tank"]},{"id":103,"name":"九尾妖狐","alias":"Ahri","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/103.png","roles":["mage","assassin"]},{"id":104,"name":"法外狂徒","alias":"Graves","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/104.png","roles":["marksman"]},{"id":105,"name":"潮汐海灵","alias":"Fizz","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/105.png","roles":["assassin","fighter"]},{"id":106,"name":"不灭狂雷","alias":"Volibear","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/106.png","roles":["fighter","tank"]},{"id":107,"name":"傲之追猎者","alias":"Rengar","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/107.png","roles":["assassin","fighter"]},{"id":110,"name":"惩戒之箭","alias":"Varus","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/110.png","roles":["marksman","mage"]},{"id":111,"name":"深海泰坦","alias":"Nautilus","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/111.png","roles":["tank","fighter"]},{"id":112,"name":"机械先驱","alias":"Viktor","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/112.png","roles":["mage"]},{"id":113,"name":"北地之怒","alias":"Sejuani","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/113.png","roles":["tank","fighter"]},{"id":114,"name":"无双剑姬","alias":"Fiora","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/114.png","roles":["fighter","assassin"]},{"id":115,"name":"爆破鬼才","alias":"Ziggs","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/115.png","roles":["mage"]},{"id":117,"name":"仙灵女巫","alias":"Lulu","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/117.png","roles":["support","mage"]},{"id":119,"name":"荣耀行刑官","alias":"Draven","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/119.png","roles":["marksman"]},{"id":120,"name":"战争之影","alias":"Hecarim","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/120.png","roles":["fighter","tank"]},{"id":121,"name":"虚空掠夺者","alias":"Khazix","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/121.png","roles":["assassin"]},{"id":122,"name":"诺克萨斯之手","alias":"Darius","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/122.png","roles":["fighter","tank"]},{"id":126,"name":"未来守护者","alias":"Jayce","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/126.png","roles":["fighter","marksman"]},{"id":127,"name":"冰霜女巫","alias":"Lissandra","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/127.png","roles":["mage"]},{"id":131,"name":"皎月女神","alias":"Diana","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/131.png","roles":["fighter","mage"]},{"id":133,"name":"德玛西亚之翼","alias":"Quinn","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/133.png","roles":["marksman","assassin"]},{"id":134,"name":"暗黑元首","alias":"Syndra","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/134.png","roles":["mage","support"]},{"id":136,"name":"铸星龙王","alias":"AurelionSol","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/136.png","roles":["mage"]},{"id":141,"name":"影流之镰","alias":"Kayn","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/141.png","roles":["fighter","assassin"]},{"id":142,"name":"暮光星灵","alias":"Zoe","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/142.png","roles":["mage","support"]},{"id":143,"name":"荆棘之兴","alias":"Zyra","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/143.png","roles":["mage","support"]},{"id":145,"name":"虚空之女","alias":"Kaisa","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/145.png","roles":["marksman"]},{"id":147,"name":"星籁歌姬","alias":"Seraphine","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/147.png","roles":["mage","support"]},{"id":150,"name":"迷失之牙","alias":"Gnar","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/150.png","roles":["fighter","tank"]},{"id":154,"name":"生化魔人","alias":"Zac","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/154.png","roles":["tank","fighter"]},{"id":157,"name":"疾风剑豪","alias":"Yasuo","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/157.png","roles":["fighter","assassin"]},{"id":161,"name":"虚空之眼","alias":"Velkoz","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/161.png","roles":["mage"]},{"id":163,"name":"岩雀","alias":"Taliyah","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/163.png","roles":["mage","support"]},{"id":164,"name":"青钢影","alias":"Camille","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/164.png","roles":["fighter","tank"]},{"id":201,"name":"弗雷尔卓德之心","alias":"Braum","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/201.png","roles":["support","tank"]},{"id":202,"name":"戏命师","alias":"Jhin","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/202.png","roles":["marksman","mage"]},{"id":203,"name":"永猎双子","alias":"Kindred","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/203.png","roles":["marksman"]},{"id":222,"name":"暴走萝莉","alias":"Jinx","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/222.png","roles":["marksman"]},{"id":223,"name":"河流之王","alias":"TahmKench","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/223.png","roles":["support","tank"]},{"id":235,"name":"涤魂圣枪","alias":"Senna","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/235.png","roles":["marksman","support"]},{"id":236,"name":"圣枪游侠","alias":"Lucian","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/236.png","roles":["marksman"]},{"id":238,"name":"影流之主","alias":"Zed","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/238.png","roles":["assassin"]},{"id":240,"name":"暴怒骑士","alias":"Kled","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/240.png","roles":["fighter","tank"]},{"id":245,"name":"时间刺客","alias":"Ekko","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/245.png","roles":["assassin","fighter"]},{"id":246,"name":"元素女皇","alias":"Qiyana","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/246.png","roles":["assassin","fighter"]},{"id":254,"name":"皮城执法官","alias":"Vi","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/254.png","roles":["fighter","assassin"]},{"id":266,"name":"暗裔剑魔","alias":"Aatrox","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/266.png","roles":["fighter","tank"]},{"id":267,"name":"唤潮鲛姬","alias":"Nami","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/267.png","roles":["support","mage"]},{"id":268,"name":"沙漠皇帝","alias":"Azir","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/268.png","roles":["mage","marksman"]},{"id":350,"name":"魔法猫咪","alias":"Yuumi","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/350.png","roles":["support","mage"]},{"id":360,"name":"沙漠玫瑰","alias":"Samira","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/360.png","roles":["marksman"]},{"id":412,"name":"魂锁典狱长","alias":"Thresh","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/412.png","roles":["support","fighter"]},{"id":420,"name":"海兽祭司","alias":"Illaoi","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/420.png","roles":["fighter","tank"]},{"id":421,"name":"虚空遁地兽","alias":"RekSai","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/421.png","roles":["fighter"]},{"id":427,"name":"翠神","alias":"Ivern","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/427.png","roles":["support","mage"]},{"id":429,"name":"复仇之矛","alias":"Kalista","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/429.png","roles":["marksman"]},{"id":432,"name":"星界游神","alias":"Bard","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/432.png","roles":["support","mage"]},{"id":497,"name":"幻翎","alias":"Rakan","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/497.png","roles":["support"]},{"id":498,"name":"逆羽","alias":"Xayah","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/498.png","roles":["marksman"]},{"id":516,"name":"山隐之焰","alias":"Ornn","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/516.png","roles":["tank","fighter"]},{"id":517,"name":"解脱者","alias":"Sylas","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/517.png","roles":["mage","assassin"]},{"id":518,"name":"万花通灵","alias":"Neeko","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/518.png","roles":["mage","support"]},{"id":523,"name":"残月之肃","alias":"Aphelios","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/523.png","roles":["marksman"]},{"id":526,"name":"镕铁少女","alias":"Rell","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/526.png","roles":["fighter"]},{"id":555,"name":"血港鬼影","alias":"Pyke","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/555.png","roles":["support","assassin"]},{"id":777,"name":"封魔剑魂","alias":"Yone","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/777.png","roles":["assassin","fighter"]},{"id":875,"name":"腕豪","alias":"Sett","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/875.png","roles":["fighter","tank"]},{"id":876,"name":"含羞蓓蕾","alias":"Lillia","squarePortraitPath":"/lol-game-data/assets/v1/champion-icons/876.png","roles":["fighter","mage"]}]
+[
+  {
+    "id": -1,
+    "name": "无",
+    "alias": "None",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/-1.png",
+    "roles": []
+  },
+  {
+    "id": 1,
+    "name": "黑暗之女",
+    "alias": "Annie",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/1.png",
+    "roles": [
+      "mage"
+    ]
+  },
+  {
+    "id": 2,
+    "name": "狂战士",
+    "alias": "Olaf",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/2.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 3,
+    "name": "正义巨像",
+    "alias": "Galio",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/3.png",
+    "roles": [
+      "tank",
+      "mage"
+    ]
+  },
+  {
+    "id": 4,
+    "name": "卡牌大师",
+    "alias": "TwistedFate",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/4.png",
+    "roles": [
+      "mage"
+    ]
+  },
+  {
+    "id": 5,
+    "name": "德邦总管",
+    "alias": "XinZhao",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/5.png",
+    "roles": [
+      "fighter",
+      "assassin"
+    ]
+  },
+  {
+    "id": 6,
+    "name": "无畏战车",
+    "alias": "Urgot",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/6.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 7,
+    "name": "诡术妖姬",
+    "alias": "Leblanc",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/7.png",
+    "roles": [
+      "assassin",
+      "mage"
+    ]
+  },
+  {
+    "id": 8,
+    "name": "猩红收割者",
+    "alias": "Vladimir",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/8.png",
+    "roles": [
+      "mage"
+    ]
+  },
+  {
+    "id": 9,
+    "name": "远古恐惧",
+    "alias": "FiddleSticks",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/9.png",
+    "roles": [
+      "mage",
+      "support"
+    ]
+  },
+  {
+    "id": 10,
+    "name": "正义天使",
+    "alias": "Kayle",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/10.png",
+    "roles": [
+      "fighter",
+      "support"
+    ]
+  },
+  {
+    "id": 11,
+    "name": "无极剑圣",
+    "alias": "MasterYi",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/11.png",
+    "roles": [
+      "assassin",
+      "fighter"
+    ]
+  },
+  {
+    "id": 12,
+    "name": "牛头酋长",
+    "alias": "Alistar",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/12.png",
+    "roles": [
+      "tank",
+      "support"
+    ]
+  },
+  {
+    "id": 13,
+    "name": "符文法师",
+    "alias": "Ryze",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/13.png",
+    "roles": [
+      "mage",
+      "fighter"
+    ]
+  },
+  {
+    "id": 14,
+    "name": "亡灵战神",
+    "alias": "Sion",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/14.png",
+    "roles": [
+      "tank",
+      "fighter"
+    ]
+  },
+  {
+    "id": 15,
+    "name": "战争女神",
+    "alias": "Sivir",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/15.png",
+    "roles": [
+      "marksman"
+    ]
+  },
+  {
+    "id": 16,
+    "name": "众星之子",
+    "alias": "Soraka",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/16.png",
+    "roles": [
+      "support",
+      "mage"
+    ]
+  },
+  {
+    "id": 17,
+    "name": "迅捷斥候",
+    "alias": "Teemo",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/17.png",
+    "roles": [
+      "marksman",
+      "assassin"
+    ]
+  },
+  {
+    "id": 18,
+    "name": "麦林炮手",
+    "alias": "Tristana",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/18.png",
+    "roles": [
+      "marksman",
+      "assassin"
+    ]
+  },
+  {
+    "id": 19,
+    "name": "祖安怒兽",
+    "alias": "Warwick",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/19.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 20,
+    "name": "雪原双子",
+    "alias": "Nunu",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/20.png",
+    "roles": [
+      "tank",
+      "fighter"
+    ]
+  },
+  {
+    "id": 21,
+    "name": "赏金猎人",
+    "alias": "MissFortune",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/21.png",
+    "roles": [
+      "marksman"
+    ]
+  },
+  {
+    "id": 22,
+    "name": "寒冰射手",
+    "alias": "Ashe",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/22.png",
+    "roles": [
+      "marksman",
+      "support"
+    ]
+  },
+  {
+    "id": 23,
+    "name": "蛮族之王",
+    "alias": "Tryndamere",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/23.png",
+    "roles": [
+      "fighter",
+      "assassin"
+    ]
+  },
+  {
+    "id": 24,
+    "name": "武器大师",
+    "alias": "Jax",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/24.png",
+    "roles": [
+      "fighter",
+      "assassin"
+    ]
+  },
+  {
+    "id": 25,
+    "name": "堕落天使",
+    "alias": "Morgana",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/25.png",
+    "roles": [
+      "mage",
+      "support"
+    ]
+  },
+  {
+    "id": 26,
+    "name": "时光守护者",
+    "alias": "Zilean",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/26.png",
+    "roles": [
+      "support",
+      "mage"
+    ]
+  },
+  {
+    "id": 27,
+    "name": "炼金术士",
+    "alias": "Singed",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/27.png",
+    "roles": [
+      "tank",
+      "fighter"
+    ]
+  },
+  {
+    "id": 28,
+    "name": "痛苦之拥",
+    "alias": "Evelynn",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/28.png",
+    "roles": [
+      "assassin",
+      "mage"
+    ]
+  },
+  {
+    "id": 29,
+    "name": "瘟疫之源",
+    "alias": "Twitch",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/29.png",
+    "roles": [
+      "marksman",
+      "assassin"
+    ]
+  },
+  {
+    "id": 30,
+    "name": "死亡颂唱者",
+    "alias": "Karthus",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/30.png",
+    "roles": [
+      "mage"
+    ]
+  },
+  {
+    "id": 31,
+    "name": "虚空恐惧",
+    "alias": "Chogath",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/31.png",
+    "roles": [
+      "tank",
+      "mage"
+    ]
+  },
+  {
+    "id": 32,
+    "name": "殇之木乃伊",
+    "alias": "Amumu",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/32.png",
+    "roles": [
+      "tank",
+      "mage"
+    ]
+  },
+  {
+    "id": 33,
+    "name": "披甲龙龟",
+    "alias": "Rammus",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/33.png",
+    "roles": [
+      "tank",
+      "fighter"
+    ]
+  },
+  {
+    "id": 34,
+    "name": "冰晶凤凰",
+    "alias": "Anivia",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/34.png",
+    "roles": [
+      "mage",
+      "support"
+    ]
+  },
+  {
+    "id": 35,
+    "name": "恶魔小丑",
+    "alias": "Shaco",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/35.png",
+    "roles": [
+      "assassin"
+    ]
+  },
+  {
+    "id": 36,
+    "name": "祖安狂人",
+    "alias": "DrMundo",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/36.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 37,
+    "name": "琴瑟仙女",
+    "alias": "Sona",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/37.png",
+    "roles": [
+      "support",
+      "mage"
+    ]
+  },
+  {
+    "id": 38,
+    "name": "虚空行者",
+    "alias": "Kassadin",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/38.png",
+    "roles": [
+      "assassin",
+      "mage"
+    ]
+  },
+  {
+    "id": 39,
+    "name": "刀锋舞者",
+    "alias": "Irelia",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/39.png",
+    "roles": [
+      "fighter",
+      "assassin"
+    ]
+  },
+  {
+    "id": 40,
+    "name": "风暴之怒",
+    "alias": "Janna",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/40.png",
+    "roles": [
+      "support",
+      "mage"
+    ]
+  },
+  {
+    "id": 41,
+    "name": "海洋之灾",
+    "alias": "Gangplank",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/41.png",
+    "roles": [
+      "fighter"
+    ]
+  },
+  {
+    "id": 42,
+    "name": "英勇投弹手",
+    "alias": "Corki",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/42.png",
+    "roles": [
+      "marksman"
+    ]
+  },
+  {
+    "id": 43,
+    "name": "天启者",
+    "alias": "Karma",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/43.png",
+    "roles": [
+      "mage",
+      "support"
+    ]
+  },
+  {
+    "id": 44,
+    "name": "瓦洛兰之盾",
+    "alias": "Taric",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/44.png",
+    "roles": [
+      "support",
+      "fighter"
+    ]
+  },
+  {
+    "id": 45,
+    "name": "邪恶小法师",
+    "alias": "Veigar",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/45.png",
+    "roles": [
+      "mage"
+    ]
+  },
+  {
+    "id": 48,
+    "name": "巨魔之王",
+    "alias": "Trundle",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/48.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 50,
+    "name": "诺克萨斯统领",
+    "alias": "Swain",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/50.png",
+    "roles": [
+      "mage",
+      "fighter"
+    ]
+  },
+  {
+    "id": 51,
+    "name": "皮城女警",
+    "alias": "Caitlyn",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/51.png",
+    "roles": [
+      "marksman"
+    ]
+  },
+  {
+    "id": 53,
+    "name": "蒸汽机器人",
+    "alias": "Blitzcrank",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/53.png",
+    "roles": [
+      "tank",
+      "fighter"
+    ]
+  },
+  {
+    "id": 54,
+    "name": "熔岩巨兽",
+    "alias": "Malphite",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/54.png",
+    "roles": [
+      "tank",
+      "fighter"
+    ]
+  },
+  {
+    "id": 55,
+    "name": "不祥之刃",
+    "alias": "Katarina",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/55.png",
+    "roles": [
+      "assassin",
+      "mage"
+    ]
+  },
+  {
+    "id": 56,
+    "name": "永恒梦魇",
+    "alias": "Nocturne",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/56.png",
+    "roles": [
+      "assassin",
+      "fighter"
+    ]
+  },
+  {
+    "id": 57,
+    "name": "扭曲树精",
+    "alias": "Maokai",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/57.png",
+    "roles": [
+      "tank",
+      "mage"
+    ]
+  },
+  {
+    "id": 58,
+    "name": "荒漠屠夫",
+    "alias": "Renekton",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/58.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 59,
+    "name": "德玛西亚皇子",
+    "alias": "JarvanIV",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/59.png",
+    "roles": [
+      "tank",
+      "fighter"
+    ]
+  },
+  {
+    "id": 60,
+    "name": "蜘蛛女皇",
+    "alias": "Elise",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/60.png",
+    "roles": [
+      "mage",
+      "fighter"
+    ]
+  },
+  {
+    "id": 61,
+    "name": "发条魔灵",
+    "alias": "Orianna",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/61.png",
+    "roles": [
+      "mage",
+      "support"
+    ]
+  },
+  {
+    "id": 62,
+    "name": "齐天大圣",
+    "alias": "MonkeyKing",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/62.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 63,
+    "name": "复仇焰魂",
+    "alias": "Brand",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/63.png",
+    "roles": [
+      "mage"
+    ]
+  },
+  {
+    "id": 64,
+    "name": "盲僧",
+    "alias": "LeeSin",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/64.png",
+    "roles": [
+      "fighter",
+      "assassin"
+    ]
+  },
+  {
+    "id": 67,
+    "name": "暗夜猎手",
+    "alias": "Vayne",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/67.png",
+    "roles": [
+      "marksman",
+      "assassin"
+    ]
+  },
+  {
+    "id": 68,
+    "name": "机械公敌",
+    "alias": "Rumble",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/68.png",
+    "roles": [
+      "fighter",
+      "mage"
+    ]
+  },
+  {
+    "id": 69,
+    "name": "魔蛇之拥",
+    "alias": "Cassiopeia",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/69.png",
+    "roles": [
+      "mage"
+    ]
+  },
+  {
+    "id": 72,
+    "name": "水晶先锋",
+    "alias": "Skarner",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/72.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 74,
+    "name": "大发明家",
+    "alias": "Heimerdinger",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/74.png",
+    "roles": [
+      "mage",
+      "support"
+    ]
+  },
+  {
+    "id": 75,
+    "name": "沙漠死神",
+    "alias": "Nasus",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/75.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 76,
+    "name": "狂野女猎手",
+    "alias": "Nidalee",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/76.png",
+    "roles": [
+      "assassin",
+      "mage"
+    ]
+  },
+  {
+    "id": 77,
+    "name": "兽灵行者",
+    "alias": "Udyr",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/77.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 78,
+    "name": "圣锤之毅",
+    "alias": "Poppy",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/78.png",
+    "roles": [
+      "tank",
+      "fighter"
+    ]
+  },
+  {
+    "id": 79,
+    "name": "酒桶",
+    "alias": "Gragas",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/79.png",
+    "roles": [
+      "fighter",
+      "mage"
+    ]
+  },
+  {
+    "id": 80,
+    "name": "不屈之枪",
+    "alias": "Pantheon",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/80.png",
+    "roles": [
+      "fighter",
+      "assassin"
+    ]
+  },
+  {
+    "id": 81,
+    "name": "探险家",
+    "alias": "Ezreal",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/81.png",
+    "roles": [
+      "marksman",
+      "mage"
+    ]
+  },
+  {
+    "id": 82,
+    "name": "铁铠冥魂",
+    "alias": "Mordekaiser",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/82.png",
+    "roles": [
+      "fighter"
+    ]
+  },
+  {
+    "id": 83,
+    "name": "牧魂人",
+    "alias": "Yorick",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/83.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 84,
+    "name": "离群之刺",
+    "alias": "Akali",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/84.png",
+    "roles": [
+      "assassin"
+    ]
+  },
+  {
+    "id": 85,
+    "name": "狂暴之心",
+    "alias": "Kennen",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/85.png",
+    "roles": [
+      "mage",
+      "marksman"
+    ]
+  },
+  {
+    "id": 86,
+    "name": "德玛西亚之力",
+    "alias": "Garen",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/86.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 89,
+    "name": "曙光女神",
+    "alias": "Leona",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/89.png",
+    "roles": [
+      "tank",
+      "support"
+    ]
+  },
+  {
+    "id": 90,
+    "name": "虚空先知",
+    "alias": "Malzahar",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/90.png",
+    "roles": [
+      "mage",
+      "assassin"
+    ]
+  },
+  {
+    "id": 91,
+    "name": "刀锋之影",
+    "alias": "Talon",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/91.png",
+    "roles": [
+      "assassin"
+    ]
+  },
+  {
+    "id": 92,
+    "name": "放逐之刃",
+    "alias": "Riven",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/92.png",
+    "roles": [
+      "fighter",
+      "assassin"
+    ]
+  },
+  {
+    "id": 96,
+    "name": "深渊巨口",
+    "alias": "KogMaw",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/96.png",
+    "roles": [
+      "marksman",
+      "mage"
+    ]
+  },
+  {
+    "id": 98,
+    "name": "暮光之眼",
+    "alias": "Shen",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/98.png",
+    "roles": [
+      "tank"
+    ]
+  },
+  {
+    "id": 99,
+    "name": "光辉女郎",
+    "alias": "Lux",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/99.png",
+    "roles": [
+      "mage",
+      "support"
+    ]
+  },
+  {
+    "id": 101,
+    "name": "远古巫灵",
+    "alias": "Xerath",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/101.png",
+    "roles": [
+      "mage"
+    ]
+  },
+  {
+    "id": 102,
+    "name": "龙血武姬",
+    "alias": "Shyvana",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/102.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 103,
+    "name": "九尾妖狐",
+    "alias": "Ahri",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/103.png",
+    "roles": [
+      "mage",
+      "assassin"
+    ]
+  },
+  {
+    "id": 104,
+    "name": "法外狂徒",
+    "alias": "Graves",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/104.png",
+    "roles": [
+      "marksman"
+    ]
+  },
+  {
+    "id": 105,
+    "name": "潮汐海灵",
+    "alias": "Fizz",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/105.png",
+    "roles": [
+      "assassin",
+      "fighter"
+    ]
+  },
+  {
+    "id": 106,
+    "name": "不灭狂雷",
+    "alias": "Volibear",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/106.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 107,
+    "name": "傲之追猎者",
+    "alias": "Rengar",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/107.png",
+    "roles": [
+      "assassin",
+      "fighter"
+    ]
+  },
+  {
+    "id": 110,
+    "name": "惩戒之箭",
+    "alias": "Varus",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/110.png",
+    "roles": [
+      "marksman",
+      "mage"
+    ]
+  },
+  {
+    "id": 111,
+    "name": "深海泰坦",
+    "alias": "Nautilus",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/111.png",
+    "roles": [
+      "tank",
+      "fighter"
+    ]
+  },
+  {
+    "id": 112,
+    "name": "机械先驱",
+    "alias": "Viktor",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/112.png",
+    "roles": [
+      "mage"
+    ]
+  },
+  {
+    "id": 113,
+    "name": "北地之怒",
+    "alias": "Sejuani",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/113.png",
+    "roles": [
+      "tank",
+      "fighter"
+    ]
+  },
+  {
+    "id": 114,
+    "name": "无双剑姬",
+    "alias": "Fiora",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/114.png",
+    "roles": [
+      "fighter",
+      "assassin"
+    ]
+  },
+  {
+    "id": 115,
+    "name": "爆破鬼才",
+    "alias": "Ziggs",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/115.png",
+    "roles": [
+      "mage"
+    ]
+  },
+  {
+    "id": 117,
+    "name": "仙灵女巫",
+    "alias": "Lulu",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/117.png",
+    "roles": [
+      "support",
+      "mage"
+    ]
+  },
+  {
+    "id": 119,
+    "name": "荣耀行刑官",
+    "alias": "Draven",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/119.png",
+    "roles": [
+      "marksman"
+    ]
+  },
+  {
+    "id": 120,
+    "name": "战争之影",
+    "alias": "Hecarim",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/120.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 121,
+    "name": "虚空掠夺者",
+    "alias": "Khazix",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/121.png",
+    "roles": [
+      "assassin"
+    ]
+  },
+  {
+    "id": 122,
+    "name": "诺克萨斯之手",
+    "alias": "Darius",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/122.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 126,
+    "name": "未来守护者",
+    "alias": "Jayce",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/126.png",
+    "roles": [
+      "fighter",
+      "marksman"
+    ]
+  },
+  {
+    "id": 127,
+    "name": "冰霜女巫",
+    "alias": "Lissandra",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/127.png",
+    "roles": [
+      "mage"
+    ]
+  },
+  {
+    "id": 131,
+    "name": "皎月女神",
+    "alias": "Diana",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/131.png",
+    "roles": [
+      "fighter",
+      "mage"
+    ]
+  },
+  {
+    "id": 133,
+    "name": "德玛西亚之翼",
+    "alias": "Quinn",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/133.png",
+    "roles": [
+      "marksman",
+      "assassin"
+    ]
+  },
+  {
+    "id": 134,
+    "name": "暗黑元首",
+    "alias": "Syndra",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/134.png",
+    "roles": [
+      "mage",
+      "support"
+    ]
+  },
+  {
+    "id": 136,
+    "name": "铸星龙王",
+    "alias": "AurelionSol",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/136.png",
+    "roles": [
+      "mage"
+    ]
+  },
+  {
+    "id": 141,
+    "name": "影流之镰",
+    "alias": "Kayn",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/141.png",
+    "roles": [
+      "fighter",
+      "assassin"
+    ]
+  },
+  {
+    "id": 142,
+    "name": "暮光星灵",
+    "alias": "Zoe",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/142.png",
+    "roles": [
+      "mage",
+      "support"
+    ]
+  },
+  {
+    "id": 143,
+    "name": "荆棘之兴",
+    "alias": "Zyra",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/143.png",
+    "roles": [
+      "mage",
+      "support"
+    ]
+  },
+  {
+    "id": 145,
+    "name": "虚空之女",
+    "alias": "Kaisa",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/145.png",
+    "roles": [
+      "marksman"
+    ]
+  },
+  {
+    "id": 147,
+    "name": "星籁歌姬",
+    "alias": "Seraphine",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/147.png",
+    "roles": [
+      "mage",
+      "support"
+    ]
+  },
+  {
+    "id": 150,
+    "name": "迷失之牙",
+    "alias": "Gnar",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/150.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 154,
+    "name": "生化魔人",
+    "alias": "Zac",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/154.png",
+    "roles": [
+      "tank",
+      "fighter"
+    ]
+  },
+  {
+    "id": 157,
+    "name": "疾风剑豪",
+    "alias": "Yasuo",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/157.png",
+    "roles": [
+      "fighter",
+      "assassin"
+    ]
+  },
+  {
+    "id": 161,
+    "name": "虚空之眼",
+    "alias": "Velkoz",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/161.png",
+    "roles": [
+      "mage"
+    ]
+  },
+  {
+    "id": 163,
+    "name": "岩雀",
+    "alias": "Taliyah",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/163.png",
+    "roles": [
+      "mage",
+      "support"
+    ]
+  },
+  {
+    "id": 164,
+    "name": "青钢影",
+    "alias": "Camille",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/164.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 201,
+    "name": "弗雷尔卓德之心",
+    "alias": "Braum",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/201.png",
+    "roles": [
+      "support",
+      "tank"
+    ]
+  },
+  {
+    "id": 202,
+    "name": "戏命师",
+    "alias": "Jhin",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/202.png",
+    "roles": [
+      "marksman",
+      "mage"
+    ]
+  },
+  {
+    "id": 203,
+    "name": "永猎双子",
+    "alias": "Kindred",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/203.png",
+    "roles": [
+      "marksman"
+    ]
+  },
+  {
+    "id": 222,
+    "name": "暴走萝莉",
+    "alias": "Jinx",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/222.png",
+    "roles": [
+      "marksman"
+    ]
+  },
+  {
+    "id": 223,
+    "name": "河流之王",
+    "alias": "TahmKench",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/223.png",
+    "roles": [
+      "support",
+      "tank"
+    ]
+  },
+  {
+    "id": 235,
+    "name": "涤魂圣枪",
+    "alias": "Senna",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/235.png",
+    "roles": [
+      "marksman",
+      "support"
+    ]
+  },
+  {
+    "id": 236,
+    "name": "圣枪游侠",
+    "alias": "Lucian",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/236.png",
+    "roles": [
+      "marksman"
+    ]
+  },
+  {
+    "id": 238,
+    "name": "影流之主",
+    "alias": "Zed",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/238.png",
+    "roles": [
+      "assassin"
+    ]
+  },
+  {
+    "id": 240,
+    "name": "暴怒骑士",
+    "alias": "Kled",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/240.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 245,
+    "name": "时间刺客",
+    "alias": "Ekko",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/245.png",
+    "roles": [
+      "assassin",
+      "fighter"
+    ]
+  },
+  {
+    "id": 246,
+    "name": "元素女皇",
+    "alias": "Qiyana",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/246.png",
+    "roles": [
+      "assassin",
+      "fighter"
+    ]
+  },
+  {
+    "id": 254,
+    "name": "皮城执法官",
+    "alias": "Vi",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/254.png",
+    "roles": [
+      "fighter",
+      "assassin"
+    ]
+  },
+  {
+    "id": 266,
+    "name": "暗裔剑魔",
+    "alias": "Aatrox",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/266.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 267,
+    "name": "唤潮鲛姬",
+    "alias": "Nami",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/267.png",
+    "roles": [
+      "support",
+      "mage"
+    ]
+  },
+  {
+    "id": 268,
+    "name": "沙漠皇帝",
+    "alias": "Azir",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/268.png",
+    "roles": [
+      "mage",
+      "marksman"
+    ]
+  },
+  {
+    "id": 350,
+    "name": "魔法猫咪",
+    "alias": "Yuumi",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/350.png",
+    "roles": [
+      "support",
+      "mage"
+    ]
+  },
+  {
+    "id": 360,
+    "name": "沙漠玫瑰",
+    "alias": "Samira",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/360.png",
+    "roles": [
+      "marksman"
+    ]
+  },
+  {
+    "id": 412,
+    "name": "魂锁典狱长",
+    "alias": "Thresh",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/412.png",
+    "roles": [
+      "support",
+      "fighter"
+    ]
+  },
+  {
+    "id": 420,
+    "name": "海兽祭司",
+    "alias": "Illaoi",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/420.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 421,
+    "name": "虚空遁地兽",
+    "alias": "RekSai",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/421.png",
+    "roles": [
+      "fighter"
+    ]
+  },
+  {
+    "id": 427,
+    "name": "翠神",
+    "alias": "Ivern",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/427.png",
+    "roles": [
+      "support",
+      "mage"
+    ]
+  },
+  {
+    "id": 429,
+    "name": "复仇之矛",
+    "alias": "Kalista",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/429.png",
+    "roles": [
+      "marksman"
+    ]
+  },
+  {
+    "id": 432,
+    "name": "星界游神",
+    "alias": "Bard",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/432.png",
+    "roles": [
+      "support",
+      "mage"
+    ]
+  },
+  {
+    "id": 497,
+    "name": "幻翎",
+    "alias": "Rakan",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/497.png",
+    "roles": [
+      "support"
+    ]
+  },
+  {
+    "id": 498,
+    "name": "逆羽",
+    "alias": "Xayah",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/498.png",
+    "roles": [
+      "marksman"
+    ]
+  },
+  {
+    "id": 516,
+    "name": "山隐之焰",
+    "alias": "Ornn",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/516.png",
+    "roles": [
+      "tank",
+      "fighter"
+    ]
+  },
+  {
+    "id": 517,
+    "name": "解脱者",
+    "alias": "Sylas",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/517.png",
+    "roles": [
+      "mage",
+      "assassin"
+    ]
+  },
+  {
+    "id": 518,
+    "name": "万花通灵",
+    "alias": "Neeko",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/518.png",
+    "roles": [
+      "mage",
+      "support"
+    ]
+  },
+  {
+    "id": 523,
+    "name": "残月之肃",
+    "alias": "Aphelios",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/523.png",
+    "roles": [
+      "marksman"
+    ]
+  },
+  {
+    "id": 526,
+    "name": "镕铁少女",
+    "alias": "Rell",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/526.png",
+    "roles": [
+      "fighter"
+    ]
+  },
+  {
+    "id": 555,
+    "name": "血港鬼影",
+    "alias": "Pyke",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/555.png",
+    "roles": [
+      "support",
+      "assassin"
+    ]
+  },
+  {
+    "id": 777,
+    "name": "封魔剑魂",
+    "alias": "Yone",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/777.png",
+    "roles": [
+      "assassin",
+      "fighter"
+    ]
+  },
+  {
+    "id": 875,
+    "name": "腕豪",
+    "alias": "Sett",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/875.png",
+    "roles": [
+      "fighter",
+      "tank"
+    ]
+  },
+  {
+    "id": 876,
+    "name": "含羞蓓蕾",
+    "alias": "Lillia",
+    "squarePortraitPath": "/lol-game-data/assets/v1/champion-icons/876.png",
+    "roles": [
+      "fighter",
+      "mage"
+    ]
+  }
+]

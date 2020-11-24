@@ -1,5 +1,6 @@
 requests
 hachoir
-xxhash
-zstd
+xxhash~=1.4.3
+zstd~=1.4.4.0
 Pillow
+playsound~=1.2.2

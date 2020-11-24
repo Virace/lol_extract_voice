@@ -11,9 +11,7 @@
 import os
 import json
 
-
 base = os.path.dirname(__file__)
-
 
 # 游戏目录
 GAME_PATH = r'D:\Games\Ol\Tencent\League of Legends'
@@ -33,3 +31,10 @@ CHINESE = True
 
 # 读取英雄中文信息, 涉及到中文内容文件. 注意编码
 CHAMPION_INFO = json.load(open(os.path.join(base, 'data', 'champion-summary.json'), encoding='utf-8'))
+SKIN_INFO = json.load(open(os.path.join(base, 'data', 'skins.json'), encoding='utf-8'))
+
+CHAMPIONS_PATH = os.path.join(base, 'data', 'champions')
+
+
+def champion_info_by_id(_id):
+    return json.load(open(os.path.join(base, 'data', 'champions', f'{_id}.json'), encoding='utf-8'))
