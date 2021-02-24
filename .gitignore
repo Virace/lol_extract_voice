@@ -104,3 +104,10 @@ venv.bak/
 .mypy_cache/
 .idea
 .vscode
+
+# other
+data
+asr*.py
+temp.py
+test.py
+*.bak
