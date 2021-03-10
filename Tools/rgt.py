@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-# @Time    : 2021/2/25 0:45
 # @Author  : Virace
 # @Email   : Virace@aliyun.com
 # @Site    : x-item.com
 # @Software: PyCharm
+# @Create  : 2021/2/25 0:45
+# @Update  : 2021/3/3 19:4
 # @Detail  : RavioliGameTools操作
 
 import os
@@ -22,7 +23,7 @@ def voice_extract(filename, output):
     # 如果不想看到输出, 可以使用其他方式调用
     cp = subprocess.run(
         [
-            '',
+            Ravioli.RGT_CLI,
             filename,
             output,
             '/soundformat:wav'

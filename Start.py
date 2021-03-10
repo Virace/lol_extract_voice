@@ -1,12 +1,11 @@
-#!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# @Time    : 2020/05/19日 14点58分
 # @Author  : Virace
 # @Email   : Virace@aliyun.com
 # @Site    : https://x-item.com
-# @File    : Start.py
-# @Update  : 2020/11/24日 19点27分
-# @Software: PyCharm
+# @Software: Pycharm
+# @Create  : 2020/05/19日 14点58分
+# @Update  : 2021/3/4 21:13
+# @Detail  : 
 
 
 import os

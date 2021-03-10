@@ -59,7 +59,7 @@ class SliceIdGenerator:
                 break
             else:
                 ch = ch[:j] + 'a' + ch[j + 1:]
-                j = j - 1
+                j -= 1
         self.__ch = ch
         return self.__ch
 

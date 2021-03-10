@@ -111,5 +111,7 @@ asr*.py
 temp.py
 test.py
 *.bak
-
+*.bak.*
+*.json
+hashes.*.txt
 Temp
