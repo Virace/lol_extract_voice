@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-# @Time    : 2021/2/25 1:40
 # @Author  : Virace
 # @Email   : Virace@aliyun.com
 # @Site    : x-item.com
 # @Software: PyCharm
+# @Create  : 2021/2/25 1:40
+# @Update  : 2021/3/12 0:40
 # @Detail  : 获取英雄数据
 
 import os
@@ -32,7 +33,7 @@ def update_champions():
 
     with open(os.path.join(save_path, update_list[0]), encoding='utf-8') as f:
         summary = json.load(f)
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor() as executor:
             for item in summary:
                 name = f'{item["id"]}.json'
                 executor.submit(downloader.get, f'{url}champions/{name}',
@@ -62,8 +63,10 @@ def get_name(name, chinese=True):
     for item in summary:
         if item['alias'].lower() == name.lower():
             if chinese:
-                return item['name']
+                return item['alias'], item['name']
             else:
                 return item['alias']
-        else:
-            return name
+
+
+def get_names():
+    return {item['alias'].lower(): item['name'] for item in get_summary()}
