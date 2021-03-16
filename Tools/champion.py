@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/2/25 1:40
-# @Update  : 2021/3/16 21:15
+# @Update  : 2021/3/16 23:37
 # @Detail  : 获取英雄数据
 
 import os
@@ -96,3 +96,7 @@ def get_name(name, chinese=True):
 
 def get_names():
     return {item['alias'].lower(): item['name'] for item in get_summary()}
+
+
+def get_ids():
+    return {item['id'] for item in get_summary()}
