@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/2/24 23:29
-# @Update  : 2021/3/16 14:4
+# @Update  : 2021/3/16 23:54
 # @Detail  : 解包英雄联盟语音文件
 
 
@@ -16,8 +16,10 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from lol_voice import get_audio_files
 from lol_voice.formats import WAD
 
+import Champions
 from Hashes import bin_to_data, bin_to_event, to_audio_hashtable, E2A_HASH_PATH
-from Utils import makedirs
+from Tools.champion import get_ids
+from Utils import makedirs, format_region
 from Utils.wrapper import check_time
 
 log = logging.getLogger(__name__)
@@ -84,6 +86,32 @@ def get_event_audio_hash_table(champion_path, common_path, region, update=False,
                 log.info(f'Done. {fs[f]}')
 
 
+def get_lcu_audio(game_path, region, out_dir):
+    sfx = []
+    vo = []
+    if region == 'en_us':
+        region = 'default'
+
+    def output_file_name(_r):
+        def get_path(path):
+            rep = f'plugins/rcp-be-lol-game-data/global/{_r}/v1/'
+            new = path.replace(rep, f'{_r}/')
+            return os.path.join(out_dir, os.path.normpath(new))
+        return get_path
+
+    data_path = os.path.join(game_path, 'LeagueClient', 'Plugins', 'rcp-be-lol-game-data')
+
+    wad_sfx_file = os.path.join(data_path, 'default-assets.wad')
+    wad_vo_file = os.path.join(data_path, f'{format_region(region)}-assets.wad')
+    for cid in get_ids():
+        sfx.append(f'plugins/rcp-be-lol-game-data/global/default/v1/champion-sfx-audios/{cid}.ogg')
+        vo.extend([f'plugins/rcp-be-lol-game-data/global/{region}/v1/champion-choose-vo/{cid}.ogg',
+                   f'plugins/rcp-be-lol-game-data/global/{region}/v1/champion-ban-vo/{cid}.ogg'])
+
+    WAD(wad_sfx_file).extract(sfx, out_dir=output_file_name('default'))
+    WAD(wad_vo_file).extract(vo, out_dir=output_file_name(region))
+
+
 @check_time
 def main(game_path, out_dir, vgmstream_cli, region=None, audio_format='wem', max_works=None):
     """
@@ -143,4 +171,3 @@ def main(game_path, out_dir, vgmstream_cli, region=None, audio_format='wem', max
             else:
                 # log.info(f'Done. {fs[f]}')
                 pass
-
