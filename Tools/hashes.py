@@ -4,8 +4,8 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/2/24 23:41
-# @Update  : 2021/3/4 22:20
-# @Detail  : 哈希值更新
+# @Update  : 2021/3/16 23:4
+# @Detail  : 哈希值更新(目前废弃)
 
 import os
 import logging
