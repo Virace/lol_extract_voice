@@ -4,25 +4,26 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/2/25 1:40
-# @Update  : 2021/3/12 0:40
+# @Update  : 2021/3/16 21:15
 # @Detail  : 获取英雄数据
 
 import os
 import json
 import Champions
 import logging
-from Utils import downloader
+from lol_voice.formats import WAD
+from Utils import downloader, format_region
 from concurrent.futures import ThreadPoolExecutor
 
 log = logging.getLogger(__name__)
 
 
-def update_champions():
+def update_champions_by_cdragon(region='zh_cn'):
     """
     更新英雄数据
     :return:
     """
-    save_path = Champions.CHAMPIONS_PATH
+    save_path = Champions.CHAMPIONS_PATH % region
     update_list = [
         'champion-summary.json',
         'skins.json'
@@ -40,16 +41,41 @@ def update_champions():
                                 os.path.join(Champions.CHAMPIONS_DETAILED_PATH, f'{name}'))
 
 
-def get_summary():
-    return json.load(open(Champions.CHAMPIONS_SUMMARY, encoding='utf-8'))
+def update_champions_by_local(game_path, region='zh_cn'):
+    if region == 'en_us':
+        region = 'default'
+
+    def output_file_name(path):
+        old = f'plugins/rcp-be-lol-game-data/global/{region}/v1/'
+        new = path.replace(old, '')
+        return os.path.join(Champions.CHAMPIONS_PATH % region, os.path.normpath(new))
+
+    data_path = os.path.join(game_path, 'LeagueClient', 'Plugins', 'rcp-be-lol-game-data')
+
+    wad_file = os.path.join(data_path, f'{format_region(region)}-assets.wad')
+    hash_table = [
+        f'plugins/rcp-be-lol-game-data/global/{region}/v1/champion-summary.json',
+        f'plugins/rcp-be-lol-game-data/global/{region}/v1/skinlines.json',
+        f'plugins/rcp-be-lol-game-data/global/{region}/v1/skins.json',
+        f'plugins/rcp-be-lol-game-data/global/{region}/v1/maps.json',
+        f'plugins/rcp-be-lol-game-data/global/{region}/v1/universes.json'
+    ]
+    WAD(wad_file).extract(hash_table, out_dir=output_file_name)
+    WAD(wad_file).extract(
+        [f'plugins/rcp-be-lol-game-data/global/{region}/v1/champions/{item["id"]}.json' for item in get_summary()],
+        out_dir=output_file_name)
 
 
-def get_skins():
-    return json.load(open(Champions.CHAMPIONS_SKINS, encoding='utf-8'))
+def get_summary(region='zh_cn'):
+    return json.load(open(Champions.CHAMPIONS_SUMMARY % region, encoding='utf-8'))
 
 
-def get_detail_by_id(cid):
-    return json.load(open(os.path.join(Champions.CHAMPIONS_DETAILED_PATH, f'{cid}.json'), encoding='utf-8'))
+def get_skins(region='zh_cn'):
+    return json.load(open(Champions.CHAMPIONS_SKINS % region, encoding='utf-8'))
+
+
+def get_detail_by_id(cid, region='zh_cn'):
+    return json.load(open(os.path.join(Champions.CHAMPIONS_DETAILED_PATH % region, f'{cid}.json'), encoding='utf-8'))
 
 
 def get_name(name, chinese=True):
