@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/3/4 22:11
-# @Update  : 2021/3/16 13:58
+# @Update  : 2021/3/16 22:59
 # @Detail  : 
 
 import gc
@@ -23,10 +23,11 @@ from Utils import str_get_number, tree, makedirs
 
 log = logging.getLogger(__name__)
 HASH_PATH = os.path.dirname(__file__)
+CDTB_PATH = os.path.join(HASH_PATH, 'cdragontoolbox')
 EVENT_HASH_PATH = os.path.join(HASH_PATH, 'event')
 E2A_HASH_PATH = os.path.join(HASH_PATH, 'event2audio')
-GAME = os.path.join(HASH_PATH, 'hashes.game.txt')
-LCU = os.path.join(HASH_PATH, 'hashes.lcu.txt')
+GAME_HASH = os.path.join(CDTB_PATH, 'hashes.game.txt')
+LCU_HASH = os.path.join(CDTB_PATH, 'hashes.lcu.txt')
 
 __all__ = [
     'HASH_PATH',
@@ -53,7 +54,7 @@ def filter_hashtable(update=False) -> Dict:
         return json.load(open(target, encoding='utf-8'))
     else:
         res = tree()
-        with open(GAME) as f:
+        with open(GAME_HASH) as f:
             for line in f:
 
                 h, p = line.replace('\n', '').split(' ', 1)
