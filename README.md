@@ -1,53 +1,47 @@
 # lol_extract_voice
+![](https://img.shields.io/badge/python-%3E%3D3.8-blue)
 
-![](https://img.shields.io/badge/python-%3E%3D3.x-blue)
+批量提取联盟中音频文件
 
-提取英雄联盟中游戏内音频文件
 
-1. 先将WAD文件解包
-2. 区分出音频文件(bkn, wpk), 进行解包转码
-
-## 内容列表
-
+- [介绍](#介绍)
 - [安装](#安装)
-- [使用说明](#使用说明)
-- [相关仓库](#相关仓库)
+- [使用](#使用)
 - [维护者](#维护者)
-- [使用许可](#使用许可)
+- [感谢](#感谢)
+- [许可证](#许可证)
 
-## 安装
 
-这个项目使用 [Python](https://www.python.org)。请确保你本地已经安装了。
-
-```shell script
-python -m pip install -r requirements.txt
-```
+### 介绍
+提取联盟中音频文件, 并且生成事件ID与音频ID对应哈希表. 详见[lol-audio-events-hashtable](https://github.com/Virace/lol-audio-events-hashtable)
 
 
 
-## 使用说明
+### 安装
 
-首先按实际情况修改**Config.py**中, **GAME_PATH**和**OUT_PATH**
+因为部分代码使用了新版本特性, 比如: 海象表达式等. 所以Python版本最低为3.8
 
-然后执行脚本
-```shell script
-python Start.py
-```
+`pip install -r requirements.txt`
 
-代码中增加了大量的注释, 帮助修改
-## 相关仓库
+环境中有一个包是从GitHub安装的, 详情见: [py-bnk-extract](https://github.com/Virace/py-bnk-extract)
 
-- [CTDB](https://github.com/CommunityDragon/CDTB) — 💌 A toolbox to work with League of Legends game files and export files for CDragon. It can be used as a library or a command-line tool.
-- [RavioliGameTools](http://www.scampers.org/steve/sms/other.htm#ravioli_download) — 💌 The Ravioli Game Tools are a set of programs to explore, analyze and extract files from various game resource files. 
+### 使用
+使用前查看[index.py](index.py), main函数文档. 
 
-## 维护者
+### 维护者
+**Virace**
+- blog: [孤独的未知数](https://x-item.com)
 
-[@Virace](https://github.com/Virace) 
+### 感谢
+- [@Morilli](https://github.com/Morilli/bnk-extract), **bnk-extract**
+- [@Pupix](https://github.com/Pupix/lol-file-parser), **lol-file-parser**
+- [@CommunityDragon](https://github.com/CommunityDragon/CDTB), **CDTB** 
+- [@vgmstream](https://github.com/vgmstream/vgmstream), **vgmstream**
 
+- 以及**JetBrains**提供开发环境支持
+  
+  <a href="https://www.jetbrains.com/?from=kratos-pe" target="_blank"><img src="https://cdn.jsdelivr.net/gh/virace/kratos-pe@main/jetbrains.svg"></a>
 
-## 使用许可
+### 许可证
 
-[MIT](LICENSE) © Apache License
-
-
-
+[GPLv3](LICENSE)
