@@ -104,3 +104,12 @@ venv.bak/
 .mypy_cache/
 .idea
 .vscode
+
+*.json
+*.bak.*
+*.bak
+asr*
+temp*
+test*
+Hashes
+Ravioli
