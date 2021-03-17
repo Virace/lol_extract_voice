@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/2/24 23:29
-# @Update  : 2021/3/16 23:54
+# @Update  : 2021/3/17 14:7
 # @Detail  : 解包英雄联盟语音文件
 
 
@@ -16,9 +16,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from lol_voice import get_audio_files
 from lol_voice.formats import WAD
 
-import Champions
 from Hashes import bin_to_data, bin_to_event, to_audio_hashtable, E2A_HASH_PATH
-from Tools.champion import get_ids
+from Tools.data import get_champions_id
 from Utils import makedirs, format_region
 from Utils.wrapper import check_time
 
@@ -86,7 +85,14 @@ def get_event_audio_hash_table(champion_path, common_path, region, update=False,
                 log.info(f'Done. {fs[f]}')
 
 
-def get_lcu_audio(game_path, region, out_dir):
+def get_lcu_audio(data_path, out_dir, region='zh_cn'):
+    """
+    提取LCU ban 选以及效果 音频资源
+    :param data_path:
+    :param region:
+    :param out_dir:
+    :return:
+    """
     sfx = []
     vo = []
     if region == 'en_us':
@@ -95,15 +101,14 @@ def get_lcu_audio(game_path, region, out_dir):
     def output_file_name(_r):
         def get_path(path):
             rep = f'plugins/rcp-be-lol-game-data/global/{_r}/v1/'
-            new = path.replace(rep, f'{_r}/')
-            return os.path.join(out_dir, os.path.normpath(new))
-        return get_path
+            new = path.replace(rep, '')
+            return os.path.join(out_dir, _r, 'LCU', os.path.normpath(new))
 
-    data_path = os.path.join(game_path, 'LeagueClient', 'Plugins', 'rcp-be-lol-game-data')
+        return get_path
 
     wad_sfx_file = os.path.join(data_path, 'default-assets.wad')
     wad_vo_file = os.path.join(data_path, f'{format_region(region)}-assets.wad')
-    for cid in get_ids():
+    for cid in get_champions_id():
         sfx.append(f'plugins/rcp-be-lol-game-data/global/default/v1/champion-sfx-audios/{cid}.ogg')
         vo.extend([f'plugins/rcp-be-lol-game-data/global/{region}/v1/champion-choose-vo/{cid}.ogg',
                    f'plugins/rcp-be-lol-game-data/global/{region}/v1/champion-ban-vo/{cid}.ogg'])
@@ -112,23 +117,17 @@ def get_lcu_audio(game_path, region, out_dir):
     WAD(wad_vo_file).extract(vo, out_dir=output_file_name(region))
 
 
-@check_time
-def main(game_path, out_dir, vgmstream_cli, region=None, audio_format='wem', max_works=None):
+def get_game_audio(game_path, out_dir, vgmstream_cli, region='zh_cn', audio_format='wav', max_works=None):
     """
-    获取语音事件语音ID对应表, 并且解包所有音频文件
-    :param game_path: 游戏根目录
-    :param out_dir:
-    :param vgmstream_cli:
-    :param region: 提取的区域与语言, 默认zh_cn
-    :param audio_format:
-    :param max_works:
+    获取游戏内音频资源
+    :param game_path: 游戏目录
+    :param out_dir: 输出目录
+    :param vgmstream_cli: 转码所需工具路径
+    :param region: 地区
+    :param audio_format: 音频转码格式
+    :param max_works: 最大进程数
     :return:
     """
-    champion_path = os.path.join(game_path, 'Game', 'DATA', 'FINAL', 'Champions')
-    common_path = os.path.join(game_path, 'Game', 'DATA', 'FINAL', 'Maps', 'Shipping')
-
-    # 约使用75秒左右
-    get_event_audio_hash_table(champion_path, common_path, region)
     with ProcessPoolExecutor(max_workers=max_works) as e:
         fs = dict()
         for root, dirs, files in os.walk(E2A_HASH_PATH):
@@ -153,13 +152,12 @@ def main(game_path, out_dir, vgmstream_cli, region=None, audio_format='wem', max
                                 for i in audio_files:
                                     thisname = i.filename if i.filename else f'{i.id}.wem'
                                     filename = os.path.join(
-                                        out_dir,
+                                        out_dir, region,
                                         _type, kind, name, detail,
                                         thisname.replace('wem', audio_format)
                                     )
                                     makedirs(os.path.dirname(filename))
-                                    # i.save_file(filename, False,
-                                    #             r"D:\Games\Ol\Tools\Temps\bin\vgmstream-win\test.exe")
+
                                     fs[e.submit(i.static_save_file, i.data, filename, False, vgmstream_cli)] = (
                                         _type, kind, name, detail, wadfile)
 
@@ -171,3 +169,25 @@ def main(game_path, out_dir, vgmstream_cli, region=None, audio_format='wem', max
             else:
                 # log.info(f'Done. {fs[f]}')
                 pass
+
+
+@check_time
+def main(game_path, out_dir, vgmstream_cli, region='zh_cn', audio_format='wav', max_works=None):
+    """
+    获取游戏内 音频文件
+    :param game_path: 游戏根目录
+    :param out_dir: 输出目录
+    :param vgmstream_cli: 转码工具
+    :param region: 提取的区域与语言, 默认zh_cn
+    :param audio_format: 音频格式
+    :param max_works: 最大线程数
+    :return:
+    """
+    champion_path = os.path.join(game_path, 'Game', 'DATA', 'FINAL', 'Data')
+    common_path = os.path.join(game_path, 'Game', 'DATA', 'FINAL', 'Maps', 'Shipping')
+    lcu_data_path = os.path.join(game_path, 'LeagueClient', 'Plugins', 'rcp-be-lol-game-data')
+    get_event_audio_hash_table(champion_path, common_path, region)
+
+    get_lcu_audio(lcu_data_path, out_dir, region)
+    get_game_audio(game_path, out_dir, vgmstream_cli, region, audio_format, max_works)
+
