@@ -45,7 +45,18 @@ pip install -r requirements.txt
 ### 使用
 使用前查看[index.py](index.py), main函数文档. 
 
-当前可正常提取, 但输出目录为按规定划分, 所以自行规范输出目录, 防止多语言提取时文件被覆盖.
+直接进入目录新建test.py
+```python
+from index import main
+main(r'C:\League of Legends',
+     r"C:\Out",
+     r'C:\vgmstream-win\test.exe',
+     'zh_cn',
+     'wav',
+     5)
+```
+第三个参数为vgmstream工具, 可以在这里下载[https://vgmstream.org/downloads](https://vgmstream.org/downloads), 用于转码.
+最后一个参数为多进程数量, 如果需要满载就不填写就行. 总线程超过32的CPU请手动填写实际数量.
 
 ### 问题
 - 多余代码未整理
