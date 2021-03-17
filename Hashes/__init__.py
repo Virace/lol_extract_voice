@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/3/4 22:11
-# @Update  : 2021/3/16 23:17
+# @Update  : 2021/3/17 14:7
 # @Detail  : 
 
 import gc
@@ -17,8 +17,7 @@ from typing import Dict, List
 from lol_voice import get_event_hashtable, get_audio_hashtable
 from lol_voice.formats import BIN, WAD, StringHash
 
-from Config import MAP_IDS
-from Tools import champion
+from Tools import data
 from Utils import str_get_number, tree, makedirs
 
 log = logging.getLogger(__name__)
@@ -47,7 +46,7 @@ def filter_hashtable(update=False) -> Dict:
     :return:
     """
 
-    champion_list = champion.get_names()
+    champion_list = data.get_champions_name()
 
     target = os.path.join(HASH_PATH, 'bin.json')
     if os.path.exists(target) and not update:
@@ -80,7 +79,7 @@ def filter_hashtable(update=False) -> Dict:
                             continue
                     elif item[2] == 'shipping':
                         name = item[3]
-                        if str_get_number(name) not in MAP_IDS and name != 'common':
+                        if str_get_number(name) not in data.get_maps_id() and name != 'common':
                             continue
                     else:
                         continue
@@ -315,3 +314,4 @@ def to_audio_hashtable(items, wad_file, bin_data, _type, kind, name, skin, updat
         del res
         gc.collect()
         # log.info(f'to_audio_hashtable: {kind}, {name}, {skin}, {_type}')
+

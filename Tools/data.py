@@ -4,12 +4,12 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/2/25 1:40
-# @Update  : 2021/3/16 23:37
+# @Update  : 2021/3/17 14:7
 # @Detail  : 获取英雄数据
 
 import os
 import json
-import Champions
+import Data
 import logging
 from lol_voice.formats import WAD
 from Utils import downloader, format_region
@@ -18,12 +18,12 @@ from concurrent.futures import ThreadPoolExecutor
 log = logging.getLogger(__name__)
 
 
-def update_champions_by_cdragon(region='zh_cn'):
+def update_data_by_cdragon(region='zh_cn'):
     """
-    更新英雄数据
+    更新游戏数据
     :return:
     """
-    save_path = Champions.CHAMPIONS_PATH % region
+    save_path = Data.DATA_PATH % region
     update_list = [
         'champion-summary.json',
         'skins.json'
@@ -38,17 +38,23 @@ def update_champions_by_cdragon(region='zh_cn'):
             for item in summary:
                 name = f'{item["id"]}.json'
                 executor.submit(downloader.get, f'{url}champions/{name}',
-                                os.path.join(Champions.CHAMPIONS_DETAILED_PATH, f'{name}'))
+                                os.path.join(Data.DATA_CHAMPIONS_PATH, f'{name}'))
 
 
-def update_champions_by_local(game_path, region='zh_cn'):
+def update_data_by_local(game_path, region='zh_cn'):
+    """
+    根据根本游戏文件获取 数据文件
+    :param game_path:
+    :param region:
+    :return:
+    """
     if region == 'en_us':
         region = 'default'
 
     def output_file_name(path):
         old = f'plugins/rcp-be-lol-game-data/global/{region}/v1/'
         new = path.replace(old, '')
-        return os.path.join(Champions.CHAMPIONS_PATH % region, os.path.normpath(new))
+        return os.path.join(Data.DATA_PATH % region, os.path.normpath(new))
 
     data_path = os.path.join(game_path, 'LeagueClient', 'Plugins', 'rcp-be-lol-game-data')
 
@@ -67,18 +73,22 @@ def update_champions_by_local(game_path, region='zh_cn'):
 
 
 def get_summary(region='zh_cn'):
-    return json.load(open(Champions.CHAMPIONS_SUMMARY % region, encoding='utf-8'))
+    return json.load(open(Data.DATA_SUMMARY % region, encoding='utf-8'))
 
 
 def get_skins(region='zh_cn'):
-    return json.load(open(Champions.CHAMPIONS_SKINS % region, encoding='utf-8'))
+    return json.load(open(Data.DATA_SKINS % region, encoding='utf-8'))
 
 
-def get_detail_by_id(cid, region='zh_cn'):
-    return json.load(open(os.path.join(Champions.CHAMPIONS_DETAILED_PATH % region, f'{cid}.json'), encoding='utf-8'))
+def get_maps(region='zh_cn'):
+    return json.load(open(Data.DATA_MAPS % region, encoding='utf-8'))
 
 
-def get_name(name, chinese=True):
+def get_champion_detail_by_id(cid, region='zh_cn'):
+    return json.load(open(os.path.join(Data.DATA_CHAMPIONS_PATH % region, f'{cid}.json'), encoding='utf-8'))
+
+
+def get_champion_name(name, chinese=True):
     """
     根据游戏数据获取中文名称
     :param name:
@@ -94,9 +104,13 @@ def get_name(name, chinese=True):
                 return item['alias']
 
 
-def get_names():
+def get_champions_name():
     return {item['alias'].lower(): item['name'] for item in get_summary()}
 
 
-def get_ids():
-    return {item['id'] for item in get_summary()}
+def get_champions_id():
+    return [item['id'] for item in get_summary()]
+
+
+def get_maps_id():
+    return [item['id'] for item in get_maps()]
