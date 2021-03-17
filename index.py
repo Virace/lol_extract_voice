@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/2/24 23:29
-# @Update  : 2021/3/17 14:7
+# @Update  : 2021/3/17 22:5
 # @Detail  : 解包英雄联盟语音文件
 
 
@@ -152,7 +152,7 @@ def get_game_audio(game_path, out_dir, vgmstream_cli, region='zh_cn', audio_form
                                 for i in audio_files:
                                     thisname = i.filename if i.filename else f'{i.id}.wem'
                                     filename = os.path.join(
-                                        out_dir, region,
+                                        out_dir, region if kind == 'VO' else 'default',
                                         _type, kind, name, detail,
                                         thisname.replace('wem', audio_format)
                                     )
@@ -190,4 +190,3 @@ def main(game_path, out_dir, vgmstream_cli, region='zh_cn', audio_format='wav', 
 
     get_lcu_audio(lcu_data_path, out_dir, region)
     get_game_audio(game_path, out_dir, vgmstream_cli, region, audio_format, max_works)
-
