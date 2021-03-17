@@ -106,7 +106,7 @@ venv.bak/
 .vscode
 
 # other
-data
+*/data
 asr*.py
 temp.py
 test.py
