@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/2/24 23:29
-# @Update  : 2021/3/17 22:5
+# @Update  : 2021/3/20 14:30
 # @Detail  : 解包英雄联盟语音文件
 
 
@@ -183,7 +183,7 @@ def main(game_path, out_dir, vgmstream_cli, region='zh_cn', audio_format='wav', 
     :param max_works: 最大线程数
     :return:
     """
-    champion_path = os.path.join(game_path, 'Game', 'DATA', 'FINAL', 'Data')
+    champion_path = os.path.join(game_path, 'Game', 'DATA', 'FINAL', 'Champions')
     common_path = os.path.join(game_path, 'Game', 'DATA', 'FINAL', 'Maps', 'Shipping')
     lcu_data_path = os.path.join(game_path, 'LeagueClient', 'Plugins', 'rcp-be-lol-game-data')
     get_event_audio_hash_table(champion_path, common_path, region)
