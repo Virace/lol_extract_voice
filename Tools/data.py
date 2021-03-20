@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/2/25 1:40
-# @Update  : 2021/3/17 14:7
+# @Update  : 2021/3/21 0:19
 # @Detail  : 获取英雄数据
 
 import os
@@ -23,12 +23,14 @@ def update_data_by_cdragon(region='zh_cn'):
     更新游戏数据
     :return:
     """
+    if region == 'en_us':
+        region = 'default'
     save_path = Data.DATA_PATH % region
     update_list = [
         'champion-summary.json',
         'skins.json'
     ]
-    url = 'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/zh_cn/v1/'
+    url = f'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/{region}/v1/'
     for item in update_list:
         downloader.get(f'{url}{item}', os.path.join(save_path, os.path.basename(item)))
 
