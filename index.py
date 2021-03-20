@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/2/24 23:29
-# @Update  : 2021/3/20 14:30
+# @Update  : 2021/3/21 0:20
 # @Detail  : 解包英雄联盟语音文件
 
 
@@ -17,7 +17,7 @@ from lol_voice import get_audio_files
 from lol_voice.formats import WAD
 
 from Hashes import bin_to_data, bin_to_event, to_audio_hashtable, E2A_HASH_PATH
-from Tools.data import get_champions_id
+from Tools.data import get_champions_id, update_data_by_local
 from Utils import makedirs, format_region
 from Utils.wrapper import check_time
 
@@ -85,6 +85,7 @@ def get_event_audio_hash_table(champion_path, common_path, region, update=False,
                 log.info(f'Done. {fs[f]}')
 
 
+@check_time
 def get_lcu_audio(data_path, out_dir, region='zh_cn'):
     """
     提取LCU ban 选以及效果 音频资源
@@ -142,9 +143,9 @@ def get_game_audio(game_path, out_dir, vgmstream_cli, region='zh_cn', audio_form
                         kind = data['info']['kind']
                         name = data['info']['name']
                         detail = data['info']['detail']
-                        wadfile = os.path.join(game_path, os.path.normpath(data['info']['wad']))
+                        wad_file = os.path.join(game_path, os.path.normpath(data['info']['wad']))
 
-                        audio_raws = WAD(wadfile).extract(list(data['data'].keys()), raw=True)
+                        audio_raws = WAD(wad_file).extract(list(data['data'].keys()), raw=True)
                         for raw in audio_raws:
                             if raw:
                                 audio_files = get_audio_files(raw)
@@ -152,14 +153,14 @@ def get_game_audio(game_path, out_dir, vgmstream_cli, region='zh_cn', audio_form
                                 for i in audio_files:
                                     thisname = i.filename if i.filename else f'{i.id}.wem'
                                     filename = os.path.join(
-                                        out_dir, region if kind == 'VO' else 'default',
+                                        out_dir, region if _type == 'VO' else 'default',
                                         _type, kind, name, detail,
                                         thisname.replace('wem', audio_format)
                                     )
                                     makedirs(os.path.dirname(filename))
 
                                     fs[e.submit(i.static_save_file, i.data, filename, False, vgmstream_cli)] = (
-                                        _type, kind, name, detail, wadfile)
+                                        _type, kind, name, detail, wad_file)
 
         for f in as_completed(fs):
             try:
@@ -186,7 +187,13 @@ def main(game_path, out_dir, vgmstream_cli, region='zh_cn', audio_format='wav', 
     champion_path = os.path.join(game_path, 'Game', 'DATA', 'FINAL', 'Champions')
     common_path = os.path.join(game_path, 'Game', 'DATA', 'FINAL', 'Maps', 'Shipping')
     lcu_data_path = os.path.join(game_path, 'LeagueClient', 'Plugins', 'rcp-be-lol-game-data')
+
+    # 获取英雄 地图等数据, 运行一次就可以注释掉了
+    update_data_by_local(game_path, region)
+
+    # 获取哈希表
     get_event_audio_hash_table(champion_path, common_path, region)
 
     get_lcu_audio(lcu_data_path, out_dir, region)
     get_game_audio(game_path, out_dir, vgmstream_cli, region, audio_format, max_works)
+
