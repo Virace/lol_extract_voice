@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/2/24 23:29
-# @Update  : 2021/3/21 0:20
+# @Update  : 2021/4/9 0:15
 # @Detail  : 解包英雄联盟语音文件
 
 
@@ -12,7 +12,8 @@ import json
 import logging
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
-
+import itertools
+import requests
 from lol_voice import get_audio_files
 from lol_voice.formats import WAD
 
@@ -25,6 +26,16 @@ log = logging.getLogger(__name__)
 
 
 def get_wad_file_name(champion_path, common_path, kind, name, _type, region):
+    """
+    根据条件拼接wad文件路径
+    :param champion_path:
+    :param common_path:
+    :param kind:
+    :param name:
+    :param _type:
+    :param region:
+    :return:
+    """
     region2 = region[:3].lower() + region[3:].upper()
     if kind == 'companions':
         name = 'map22'
@@ -63,9 +74,8 @@ def get_event_audio_hash_table(champion_path, common_path, region, update=False,
                     # raw_files = [WAD(name).extract(item, raw=True) for item in paths]
                     bin_data = bin_to_event(kind, name)
                     for _type, value in paths.items():
-
-                        if kind == 'characters' and name == 'swain' and skin == 'skin2' and _type == 'VO':
-                            continue
+                        # if kind == 'characters' and name == 'swain' and skin == 'skin2' and _type == 'VO':
+                        #     continue
 
                         wad_file = get_wad_file_name(champion_path, common_path, kind, name, _type, region)
 
@@ -196,4 +206,53 @@ def main(game_path, out_dir, vgmstream_cli, region='zh_cn', audio_format='wav', 
 
     get_lcu_audio(lcu_data_path, out_dir, region)
     get_game_audio(game_path, out_dir, vgmstream_cli, region, audio_format, max_works)
+
+
+def get_champion_audio_by_json(json_path, game_path, out_dir, vgmstream_cli, audio_format='wav', max_works=None):
+    """
+    根据get_event_audio_hash_table生成的哈希表来获取单个英雄的语音
+    :param json_path: 哈希表json路径/网址
+    :param game_path: 游戏路径
+    :param out_dir: 输出目录
+    :param vgmstream_cli: 转码工具路径
+    :param audio_format: 音频格式
+    :param max_works: 最大线程数
+    :return:
+    """
+    if ':' in json_path:
+        hash_table = requests.get(json_path).json()
+    else:
+        with open(json_path, encoding='utf-8') as f:
+            hash_table = json.load(f)
+
+    wad_file = os.path.join(game_path, hash_table['info']['wad'])
+    with ProcessPoolExecutor(max_workers=max_works) as e:
+        fs = dict()
+        for file_path, events in hash_table['data'].items():
+            audio_raws = WAD(wad_file).extract([file_path], raw=True)
+            for raw in audio_raws:
+                if raw:
+                    audio_files = get_audio_files(raw, hash_table=list(itertools.chain(*events.values())))
+                    del raw
+                    for event, _hash_table in events.items():
+                        for i in audio_files:
+                            if i.id in _hash_table:
+                                thisname = i.filename if i.filename else f'{i.id}.wem'
+                                filename = os.path.join(
+                                    out_dir,
+                                    event,
+                                    thisname.replace('wem', audio_format)
+                                )
+                                makedirs(os.path.dirname(filename))
+                                fs[e.submit(i.static_save_file, i.data, filename, False, vgmstream_cli)] = (
+                                    event, i.id, wad_file)
+
+        for f in as_completed(fs):
+            try:
+                f.result()
+            except Exception as exc:
+                log.warning(f'generated an exception: {exc}, {fs[f]}')
+            else:
+                # log.info(f'Done. {fs[f]}')
+                pass
 
