@@ -1,8 +1,8 @@
 certifi==2020.12.5
 chardet==4.0.0
 idna==2.10
--e git+https://github.com/Virace/py-bnk-extract@package#egg=lol_voice
+-e git+https://github.com/Virace/py-bnk-extract@7069c2aadc119b4ffe3dd5bdc4cf7936ec9b41e5#egg=lol_voice
 requests==2.25.1
-urllib3==1.26.3
+urllib3==1.26.4
 xxhash==2.0.0
 zstd==1.4.8.1
