@@ -4,13 +4,14 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/3/4 22:11
-# @Update  : 2021/3/17 14:7
+# @Update  : 2021/4/8 17:49
 # @Detail  : 
 
 import gc
 import json
 import logging
 import os
+import re
 from collections import defaultdict
 from typing import Dict, List
 
@@ -176,7 +177,7 @@ def bin_to_data(champion_path, common_path, regin, update=False) -> tree:
 
         res = tree()
         for kind, parts in bin_hash.items():
-            # companions为云顶小英雄特效音
+            # companions为云顶小英雄特效音, bin文件中没有事件信息
             if kind == 'companions':
                 continue
             for name, bins in parts.items():
@@ -198,8 +199,11 @@ def bin_to_data(champion_path, common_path, regin, update=False) -> tree:
                 for _id, raw in zip(ids, raw_bins):
                     if not raw:
                         continue
+                    # 解析Bin文件
                     b = BIN(raw)
+                    # 音频文件列表
                     p = b.audio_files
+                    # 去重
                     temp, fs = de_duplication(temp, p)
                     if fs:
                         bs.append(b)
@@ -256,7 +260,12 @@ def to_audio_hashtable(items, wad_file, bin_data, _type, kind, name, skin, updat
             return bool(temp)
         return bool(value)
 
-    target = os.path.join(HASH_PATH, 'event2audio', _type, kind, name,
+    region = re.compile(r'\w{2}_\w{2}').search(wad_file)
+    if region:
+        region = region.group()
+    else:
+        region = 'Default'
+    target = os.path.join(HASH_PATH, 'event2audio', region, _type, kind, name,
                           f'{skin}.json')
     if os.path.exists(target) and not update:
         # 可以直接pass 这里json加载用来校验文件是否正常
@@ -267,7 +276,7 @@ def to_audio_hashtable(items, wad_file, bin_data, _type, kind, name, skin, updat
 
     else:
         res = tree()
-        relative_pathwad_path = 'Game' + wad_file.split('Game')[-1].replace('\\', '/')
+        relative_wad_path = 'Game' + wad_file.split('Game')[-1].replace('\\', '/')
         for item in items:
             if not item['events']:
                 log.warning(f'无事件文件: {kind}, {name}, {skin}, {_type}')
@@ -307,11 +316,10 @@ def to_audio_hashtable(items, wad_file, bin_data, _type, kind, name, skin, updat
                     'name': name,
                     'detail': skin,
                     'type': _type,
-                    'wad': relative_pathwad_path
+                    'wad': relative_wad_path
                 }
                 with open(target, 'w+', encoding='utf-8') as f:
                     json.dump(res, f)
         del res
         gc.collect()
         # log.info(f'to_audio_hashtable: {kind}, {name}, {skin}, {_type}')
-
