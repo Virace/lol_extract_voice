@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/3/4 22:11
-# @Update  : 2021/4/8 17:49
+# @Update  : 2021/4/12 19:1
 # @Detail  : 
 
 import gc
@@ -15,11 +15,11 @@ import re
 from collections import defaultdict
 from typing import Dict, List
 
-from lol_voice import get_event_hashtable, get_audio_hashtable
-from lol_voice.formats import BIN, WAD, StringHash
+from lol_voice import get_audio_hashtable, get_event_hashtable
+from lol_voice.formats import BIN, StringHash, WAD
 
 from Tools import data
-from Utils import str_get_number, tree, makedirs
+from Utils import makedirs, str_get_number, tree
 
 log = logging.getLogger(__name__)
 HASH_PATH = os.path.dirname(__file__)
@@ -252,6 +252,26 @@ def bin_to_event(kind, name, bin_datas: List[BIN] = None, update=False):
 
 
 def to_audio_hashtable(items, wad_file, bin_data, _type, kind, name, skin, update=False):
+    """
+    根据提供的信息生成音频ID哈希表
+    :param items: 由bin_to_data返回的数据, 格式如下
+        {
+        "events":
+            "assets/sounds/wwise2016/vo/zh_cn/characters/aatrox/skins/base/aatrox_base_vo_events.bnk",
+        "audio":
+            ["assets/sounds/wwise2016/vo/zh_cn/characters/aatrox/skins/base/aatrox_base_vo_audio.bnk",
+            "assets/sounds/wwise2016/vo/zh_cn/characters/aatrox/skins/base/aatrox_base_vo_audio.wpk"]
+        }
+    :param wad_file: wad文件
+    :param bin_data: bin_to_event 返回
+    :param _type: 音频类型, VO/SFX/MUSIC
+    :param kind: 音频类型, characters/companions/maps
+    :param name: 英雄或地图名字
+    :param skin: 皮肤或地图
+    :param update: 是否强制更新
+    :return:
+    """
+
     def tt(value):
         temp = False
         if isinstance(value, list):
@@ -323,3 +343,4 @@ def to_audio_hashtable(items, wad_file, bin_data, _type, kind, name, skin, updat
         del res
         gc.collect()
         # log.info(f'to_audio_hashtable: {kind}, {name}, {skin}, {_type}')
+
