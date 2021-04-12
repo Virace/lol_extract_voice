@@ -4,16 +4,18 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/2/25 1:40
-# @Update  : 2021/3/21 0:19
+# @Update  : 2021/4/12 19:1
 # @Detail  : 获取英雄数据
 
-import os
 import json
-import Data
 import logging
-from lol_voice.formats import WAD
-from Utils import downloader, format_region
+import os
 from concurrent.futures import ThreadPoolExecutor
+
+from lol_voice.formats import WAD
+
+import Data
+from Utils import downloader, format_region, makedirs
 
 log = logging.getLogger(__name__)
 
@@ -26,9 +28,17 @@ def update_data_by_cdragon(region='zh_cn'):
     if region == 'en_us':
         region = 'default'
     save_path = Data.DATA_PATH % region
+    if not os.path.exists(save_path):
+        makedirs(save_path)
+    champion_path = Data.DATA_CHAMPIONS_PATH % region
+    if not os.path.exists(champion_path):
+        makedirs(save_path)
     update_list = [
         'champion-summary.json',
-        'skins.json'
+        'skinlines.json',
+        'skins.json',
+        'maps.json',
+        'universes.json'
     ]
     url = f'https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/{region}/v1/'
     for item in update_list:
@@ -40,7 +50,7 @@ def update_data_by_cdragon(region='zh_cn'):
             for item in summary:
                 name = f'{item["id"]}.json'
                 executor.submit(downloader.get, f'{url}champions/{name}',
-                                os.path.join(Data.DATA_CHAMPIONS_PATH, f'{name}'))
+                                os.path.join(champion_path, f'{name}'))
 
 
 def update_data_by_local(game_path, region='zh_cn'):
