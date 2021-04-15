@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/3/4 22:11
-# @Update  : 2021/4/12 19:1
+# @Update  : 2021/4/15 16:43
 # @Detail  : 
 
 import gc
@@ -247,7 +247,6 @@ def bin_to_event(kind, name, bin_datas: List[BIN] = None, update=False):
             with open(target, 'w+', encoding='utf-8') as f:
                 json.dump(list(res), f, cls=StringHash.dump_cls())
     del bin_datas
-    gc.collect()
     return res
 
 
@@ -325,21 +324,20 @@ def to_audio_hashtable(items, wad_file, bin_data, _type, kind, name, skin, updat
             del event_raw
             del data_raw
             del audio_raw
-            gc.collect()
 
-            if res:
-                path = os.path.dirname(target)
+        if res:
+            path = os.path.dirname(target)
 
-                makedirs(path)
-                res['info'] = {
-                    'kind': kind,
-                    'name': name,
-                    'detail': skin,
-                    'type': _type,
-                    'wad': relative_wad_path
-                }
-                with open(target, 'w+', encoding='utf-8') as f:
-                    json.dump(res, f)
+            makedirs(path)
+            res['info'] = {
+                'kind': kind,
+                'name': name,
+                'detail': skin,
+                'type': _type,
+                'wad': relative_wad_path
+            }
+            with open(target, 'w+', encoding='utf-8') as f:
+                json.dump(res, f)
         del res
         gc.collect()
         # log.info(f'to_audio_hashtable: {kind}, {name}, {skin}, {_type}')
