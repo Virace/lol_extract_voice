@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/2/24 23:29
-# @Update  : 2021/4/9 0:15
+# @Update  : 2021/5/6 15:33
 # @Detail  : 解包英雄联盟语音文件
 
 
@@ -18,9 +18,10 @@ from lol_voice import get_audio_files
 from lol_voice.formats import WAD
 
 from Hashes import bin_to_data, bin_to_event, to_audio_hashtable, E2A_HASH_PATH
-from Tools.data import get_champions_id, update_data_by_local
+from Tools.data import get_champions_id, update_data_by_local, get_game_version_by_local
 from Utils import makedirs, format_region
 from Utils.wrapper import check_time
+from config import LOCAL_VERSION_FILE
 
 log = logging.getLogger(__name__)
 
@@ -198,11 +199,14 @@ def main(game_path, out_dir, vgmstream_cli, region='zh_cn', audio_format='wav', 
     common_path = os.path.join(game_path, 'Game', 'DATA', 'FINAL', 'Maps', 'Shipping')
     lcu_data_path = os.path.join(game_path, 'LeagueClient', 'Plugins', 'rcp-be-lol-game-data')
 
-    # 获取英雄 地图等数据, 运行一次就可以注释掉了
-    update_data_by_local(game_path, region)
+    # 对比游戏版本, 判断是否更新资源文件
+    update = check_game_version(game_path)
+
+    if update:
+        update_data_by_local(game_path, region)
 
     # 获取哈希表
-    get_event_audio_hash_table(champion_path, common_path, region)
+    get_event_audio_hash_table(champion_path, common_path, region, update)
 
     get_lcu_audio(lcu_data_path, out_dir, region)
     get_game_audio(game_path, out_dir, vgmstream_cli, region, audio_format, max_works)
@@ -211,6 +215,7 @@ def main(game_path, out_dir, vgmstream_cli, region='zh_cn', audio_format='wav', 
 def get_champion_audio_by_json(json_path, game_path, out_dir, vgmstream_cli, audio_format='wav', max_works=None):
     """
     根据get_event_audio_hash_table生成的哈希表来获取单个英雄的语音
+    https://cdn.jsdelivr.net/gh/Virace/lol-audio-events-hashtable@main/
     :param json_path: 哈希表json路径/网址
     :param game_path: 游戏路径
     :param out_dir: 输出目录
@@ -256,3 +261,21 @@ def get_champion_audio_by_json(json_path, game_path, out_dir, vgmstream_cli, aud
                 # log.info(f'Done. {fs[f]}')
                 pass
 
+
+def check_game_version(game_path):
+    """
+    检查游戏版本文件, 用来判断是否更新资源
+    :param game_path:
+    :return:
+    """
+    old_version = ''
+    if os.path.exists(LOCAL_VERSION_FILE):
+        with open(LOCAL_VERSION_FILE, encoding='utf-8') as f:
+            old_version = f.read()
+    new_version = get_game_version_by_local(game_path)
+    if old_version == new_version:
+        return False
+    else:
+        with open(LOCAL_VERSION_FILE, 'w+', encoding='utf-8') as f:
+            f.write(new_version)
+        return True

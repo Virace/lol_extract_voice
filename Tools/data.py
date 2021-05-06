@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/2/25 1:40
-# @Update  : 2021/4/12 19:1
+# @Update  : 2021/5/6 2:11
 # @Detail  : 获取英雄数据
 
 import json
@@ -82,6 +82,17 @@ def update_data_by_local(game_path, region='zh_cn'):
     WAD(wad_file).extract(
         [f'plugins/rcp-be-lol-game-data/global/{region}/v1/champions/{item["id"]}.json' for item in get_summary()],
         out_dir=output_file_name)
+
+
+def get_game_version_by_local(game_path):
+    meta = os.path.join(game_path, 'Game', 'code-metadata.json')
+    if os.path.exists(meta):
+        with open(meta, encoding='utf-8') as f:
+            data = json.load(f)
+        version_v = data['version']
+    else:
+        return '99.99'
+    return version_v.split('+')[0]
 
 
 def get_summary(region='zh_cn'):
