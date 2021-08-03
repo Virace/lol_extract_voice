@@ -45,7 +45,7 @@ pip install -r requirements.txt
 ### 使用
 使用前查看[index.py](index.py), main函数文档. 
 
-直接进入目录新建test.py
+直接进入目录新建test.py, (名字无要求)
 ```python
 from index import main
 main(r'C:\League of Legends',
