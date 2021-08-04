@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/2/24 23:29
-# @Update  : 2021/5/17 21:46
+# @Update  : 2021/8/4 20:21
 # @Detail  : 解包英雄联盟语音文件
 
 
@@ -154,7 +154,7 @@ def get_game_audio(game_path, out_dir, vgmstream_cli, region='zh_cn', audio_form
                         kind = data['info']['kind']
                         name = data['info']['name']
                         detail = data['info']['detail']
-                        wad_file = os.path.join(game_path, 'Game', os.path.normpath(data['info']['wad']))
+                        wad_file = os.path.join(game_path, os.path.normpath(data['info']['wad']))
                         audio_raws = WAD(wad_file).extract(list(data['data'].keys()), raw=True)
                         for raw in audio_raws:
                             if raw:
@@ -278,4 +278,5 @@ def check_game_version(game_path):
         with open(LOCAL_VERSION_FILE, 'w+', encoding='utf-8') as f:
             f.write(new_version)
         return True
+
 
