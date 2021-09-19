@@ -22,17 +22,9 @@ v2版本相对于之前的版本有比较大的更新:
 
 ### 安装
 ```shell
-git clone --recurse-submodules -b v2 https://github.com/Virace/lol_extract_voice
-```
-注意子模块CDTB的哈希表更新, 
-```shell
-git submodule update --remote
+git clone -b v2 https://github.com/Virace/lol_extract_voice
 ```
 
-如果你clone的时候没有添加 **--recurse-submodules** 参数, 也可以在之后执行
-```shell
-git submodule init
-```
 
 因为部分代码使用了新版本特性, 比如: 海象表达式等. 所以Python版本最低为3.8
 
