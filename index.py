@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: PyCharm
 # @Create  : 2021/2/24 23:29
-# @Update  : 2021/8/4 20:21
+# @Update  : 2021/9/20 10:17
 # @Detail  : 解包英雄联盟语音文件
 
 
@@ -168,7 +168,7 @@ def get_game_audio(game_path, out_dir, vgmstream_cli, region='zh_cn', audio_form
                                         thisname.replace('wem', audio_format)
                                     )
                                     makedirs(os.path.dirname(filename))
-
+                                    # i.static_save_file(i.data, filename, False, vgmstream_cli)
                                     fs[e.submit(i.static_save_file, i.data, filename, False, vgmstream_cli)] = (
                                         _type, kind, name, detail, wad_file)
 
@@ -198,14 +198,10 @@ def main(game_path, out_dir, vgmstream_cli, region='zh_cn', audio_format='wav', 
     common_path = os.path.join(game_path, 'Game', 'DATA', 'FINAL', 'Maps', 'Shipping')
     lcu_data_path = os.path.join(game_path, 'LeagueClient', 'Plugins', 'rcp-be-lol-game-data')
 
-    # 对比游戏版本, 判断是否更新资源文件
-    update = check_game_version(game_path)
-
-    if update:
-        update_data_by_local(game_path, region)
+    update_data_by_local(game_path, region)
 
     # 获取哈希表
-    get_event_audio_hash_table(champion_path, common_path, region, update)
+    get_event_audio_hash_table(champion_path, common_path, region, True)
 
     get_lcu_audio(lcu_data_path, out_dir, region)
     get_game_audio(game_path, out_dir, vgmstream_cli, region, audio_format, max_works)
