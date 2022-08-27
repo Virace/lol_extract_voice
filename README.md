@@ -5,6 +5,7 @@
 
 
 - [介绍](#介绍)
+- [使用方法](#使用方法)
 - [开发进度](#开发进度)
 - [维护者](#维护者)
 - [感谢](#感谢)
@@ -14,12 +15,20 @@
 ### 介绍
 提取联盟中音频文件, 并且生成事件ID与音频ID对应哈希表. 详见[lol-audio-events-hashtable](https://github.com/Virace/lol-audio-events-hashtable)
 
+### 使用方法
+1. git clone https://github.com/Virace/lol_extract_voice -b v3
+2. 安装peotry, https://python-poetry.org/docs/master/#installation
+3. 进入目录 poetry install
+4. 编写配置文件, 详见[配置文件](config.py)
+5. 运行 python main.py
+
 ### 开发进度
-- [ ] 功能实现
-- [ ] 降低代码复杂度
+- [x] 功能实现
+- [x] 降低代码复杂度
 - [ ] 版本区分
 - [ ] 降低后续文件更新难度
 - [ ] 文件打包
+- [ ] GUI
 
 
 

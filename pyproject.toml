@@ -8,8 +8,9 @@ packages = [{include = "lol_audio_unpack"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"
-lol-voice = "^1.0.0a9"
+lol-voice = "^1.0.2"
 requests = "^2.28.1"
+loguru = "^0.6.0"
 
 
 [build-system]
