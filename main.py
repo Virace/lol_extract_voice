@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2022/8/27 12:51
+# @Update  : 2022/8/27 13:22
 # @Detail  : 描述
 
 import json
@@ -86,7 +86,7 @@ def get_event_audio_hash_table(update=False, max_works=None) -> None:
                             {e.submit(get_audio_hashes, value, wad_file, event_hashes, _type, kind, name,
                                       skin, update): f'{kind}, {name}, {skin}, {_type}'
                              })
-        
+
         log_result(fs, sys._getframe().f_code.co_name)
         logger.info('提取音频哈希表完毕.')
 
@@ -168,7 +168,6 @@ def get_game_audio(audio_format='wav', max_works=None):
                                     fs[e.submit(i.static_save_file, i.data, filename, False, VGMSTREAM_PATH)] = (
                                         _type, kind, name, detail, wad_file)
 
-
         log_result(fs, sys._getframe().f_code.co_name)
         logger.info('提取游戏内音频完毕.')
 
@@ -180,12 +179,13 @@ def main(audio_format='wem', max_works=None):
     :param max_works: 最大线程数
     :return:
     """
-    # game_data.update_data()
+    # 更新英雄列表等数据
+    game_data.update_data()
 
-    # 刷新哈希表
-    # get_event_audio_hash_table()
-    #
-    # get_lcu_audio()
+    # 更新哈希表
+    get_event_audio_hash_table()
+
+    get_lcu_audio()
     get_game_audio(audio_format, max_works)
 
 
@@ -195,3 +195,8 @@ def init():
     makedirs(LOG_PATH)
     makedirs(HASH_PATH)
     makedirs(MANIFEST_PATH)
+
+
+if __name__ == '__main__':
+    init()
+    main('wav')
