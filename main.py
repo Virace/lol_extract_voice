@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2022/8/27 13:22
+# @Update  : 2022/8/27 13:26
 # @Detail  : 描述
 
 import json
@@ -118,17 +118,20 @@ def get_lcu_audio():
     WAD(wad_vo_file).extract(vo, out_dir=output_file_name(GAME_REGION))
 
 
-def get_game_audio(audio_format='wav', max_works=None):
+def get_game_audio(hash_path=E2A_HASH_PATH, audio_format='wav', max_works=None):
     """
-    获取游戏内音频资源
+    根据提供的哈希表, 提取游戏音频资源
+    如果默认则为全部哈希表
+    如果只需要更新部分英雄，则将部分哈希表放在指定目录，传入即可
+    :param hash_path: 哈希表路径, 默认为E2A_HASH_PATH
     :param audio_format: 音频转码格式
     :param max_works: 最大进程数
     :return:
     """
-    logger.info('开始提取游戏内音频.')
+    logger.info(f'开始提取游戏内音频. hash_path:{hash_path}, audio_format:{audio_format}')
     with ProcessPoolExecutor(max_workers=max_works) as e:
         fs = dict()
-        for root, dirs, files in os.walk(E2A_HASH_PATH):
+        for root, dirs, files in os.walk(hash_path):
 
             # 排除不需要的文件夹
             _tt = os.path.basename(os.path.dirname(os.path.dirname(root)))
@@ -192,11 +195,11 @@ def main(audio_format='wem', max_works=None):
 def init():
     # 初始化目录
     makedirs(TEMP_PATH)
-    makedirs(LOG_PATH)
+    makedirs(LOG_PATH, True)
     makedirs(HASH_PATH)
     makedirs(MANIFEST_PATH)
 
 
 if __name__ == '__main__':
     init()
-    main('wav')
+    main(audio_format='wav')
