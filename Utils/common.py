@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/16 0:15
-# @Update  : 2022/8/26 20:27
+# @Update  : 2022/9/8 14:43
 # @Detail  : 通用函数
 
 import os
@@ -42,10 +42,12 @@ def makedirs(path, clear=False):
     :return:
     """
     try:
-        if clear:
+        if clear and os.path.exists(path):
             shutil.rmtree(path)
+
         if not os.path.exists(path):
             os.makedirs(path)
+            
     except FileExistsError as _:
         pass
 
