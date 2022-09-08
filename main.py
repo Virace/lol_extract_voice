@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2022/8/27 13:26
+# @Update  : 2022/9/8 17:27
 # @Detail  : 描述
 
 import json
@@ -189,7 +189,7 @@ def main(audio_format='wem', max_works=None):
     get_event_audio_hash_table()
 
     get_lcu_audio()
-    get_game_audio(audio_format, max_works)
+    get_game_audio(audio_format=audio_format, max_works=max_works)
 
 
 def init():
@@ -203,3 +203,4 @@ def init():
 if __name__ == '__main__':
     init()
     main(audio_format='wav')
+
