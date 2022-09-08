@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "英雄联盟游戏音频文件解包工具"
 authors = ["Virace <Virace@aliyun.com>"]
 readme = "README.md"
-packages = [{include = "lol_audio_unpack"}]
 
 [tool.poetry.dependencies]
 python = "^3.10"
