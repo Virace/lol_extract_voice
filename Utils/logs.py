@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/27 12:07
-# @Update  : 2022/8/27 12:32
+# @Update  : 2022/9/23 15:35
 # @Detail  : 描述
 
 import os
@@ -29,15 +29,15 @@ def log_result(fs, func_name):
         try:
             f.result()
         except Exception as exc:
-            error_list.append(fs[f])
+            error_list.append((fs[f], exc))
             logger.warning(f'{func_name}, 遇到错误: {exc}, {fs[f]}')
             traceback.print_exc()
 
         else:
             logger.debug(f'{func_name}, 完成: {fs[f]}')
-        finally:
-            if error_list:
-                logger.error(f'{func_name}, 以下文件遇到错误: {error_list}')
+
+    if error_list:
+        logger.error(f'{func_name}, 以下文件遇到错误: {error_list}')
 
     with open(_log_file, 'a+', encoding='utf-8') as f:
         for item in error_list:

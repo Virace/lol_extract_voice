@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:11
-# @Update  : 2022/8/27 12:34
+# @Update  : 2022/9/23 15:42
 # @Detail  : 描述
 
 import gc
@@ -267,7 +267,7 @@ def get_audio_hashes(items, wad_file, event_hashes, _type, kind, name, skin, upd
             files = [item['events'], *item['audio']]
             data_raw = WAD(wad_file).extract(files, raw=True)
             if not tt(data_raw):
-                warn_item.append(({wad_file}, {name}, {skin}, {_type}, {item["events"]}))
+                warn_item.append((wad_file, item["events"]))
                 logger.trace(f'WAD无文件解包: {wad_file}, {name}, {skin}, {_type}, {item["events"]}')
                 continue
 
