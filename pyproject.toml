@@ -7,7 +7,7 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-lol-voice = "^1.0.2"
+lol-voice = "^1.0.3"
 requests = "^2.28.1"
 loguru = "^0.6.0"
 
