@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:56
-# @Update  : 2022/10/10 21:20
+# @Update  : 2023/3/8 21:39
 # @Detail  : 描述
 
 import json
@@ -12,30 +12,43 @@ import os
 import traceback
 from pathlib import Path
 
+import requests
 from loguru import logger
 from lol_voice.formats import WAD
 
-from Utils.common import format_region
+from Utils.common import format_region, download_file
 from config import GAME_PATH, GAME_REGION, MANIFEST_PATH
 
 
 class GameData:
     """
-    获取本地游戏相关数据
+    获取游戏相关数据
     """
 
-    def __init__(self):
+    def __init__(self, region=GAME_REGION):
+        """
+        :param region: 地区
+        """
         self.game_path = Path(GAME_PATH)
         self.out_path = Path(MANIFEST_PATH)
-        self.region = GAME_REGION
+        self.region = region
+        if self.region.lower() == 'en_us':
+            self.region = 'default'
         self.data_path = self.game_path / 'LeagueClient' / 'Plugins' / 'rcp-be-lol-game-data'
         self.wad_file_region = self.data_path / f'{format_region(self.region)}-assets.wad'
         self.wad_file_default = self.data_path / 'default-assets.wad'
 
-    def _get_out_path(self, before: [str, list[str]] = ''):
-        if isinstance(before, str):
-            before = [before]
-        return (self.out_path / self.region).joinpath(*before)
+        self._version_api = 'https://ddragon.leagueoflegends.com/api/versions.json'
+
+    def _get_out_path(self, files: [str, list[str]] = ''):
+        """
+        获取输出路径
+        :param files: 文件, 可传入数组 则为多级目录
+        :return:
+        """
+        if isinstance(files, str):
+            files = [files]
+        return (self.out_path / self.region).joinpath(*files)
 
     def _open_file(self, filename):
         file = self._get_out_path(filename)
@@ -51,20 +64,41 @@ class GameData:
             return {}
 
     def get_summary(self, ):
+        """
+        获取英雄列表
+        :return:
+        """
         return self._open_file('champion-summary.json')
 
     def get_skins(self, ):
+        """
+        获取皮肤列表
+        :return:
+        """
         return self._open_file('skins.json')
 
     def get_skinlines(self, ):
+        """
+        获取皮肤系列列表
+        :return:
+        """
         temp = self._open_file('skinlines.json')
         result = {item['id']: item['name'] for item in temp}
         return result
 
     def get_maps(self, ):
+        """
+        获取地图列表
+        :return:
+        """
         return self._open_file('maps.json')
 
     def get_champion_detail_by_id(self, cid, ):
+        """
+        根据英雄ID获取英雄详情
+        :param cid:
+        :return:
+        """
         return self._open_file(['champions', f'{cid}.json'])
 
     def get_champion_name(self, name, chinese=True):
@@ -83,12 +117,39 @@ class GameData:
                     return item['alias']
 
     def get_champions_name(self, ):
+        """
+        获取英雄名字, 说是名字, 其实json中是title
+        :return:
+        """
+        res = {}
+        summary = self.get_summary()
+        for item in summary:
+            if item['id'] == -1:
+                continue
+
+            this = self.get_champion_detail_by_id(item['id'])
+            res[item['alias']] = this['title']
+        return res
+
+    def get_champions_alias(self, ):
+        """
+        获取英雄代号, 说是代号，其实json中是name
+        :return:
+        """
         return {item['alias'].lower(): item['name'] for item in self.get_summary()}
 
     def get_champions_id(self, ):
+        """
+        获取英雄ID
+        :return:
+        """
         return [item['id'] for item in self.get_summary()]
 
     def get_maps_id(self, ):
+        """
+        获取地图ID
+        :return:
+        """
         return [item['id'] for item in self.get_maps()]
 
     def get_manifest(self):
@@ -110,6 +171,7 @@ class GameData:
             f'plugins/rcp-be-lol-game-data/global/{self.region}/v1/skinlines.json',
             f'plugins/rcp-be-lol-game-data/global/{self.region}/v1/skins.json',
             f'plugins/rcp-be-lol-game-data/global/{self.region}/v1/maps.json',
+            f'plugins/rcp-be-lol-game-data/global/{self.region}/v1/items.json',
             f'plugins/rcp-be-lol-game-data/global/{self.region}/v1/universes.json'
         ]
         WAD(self.wad_file_region).extract(hash_table, out_dir=output_file_name)
@@ -163,6 +225,11 @@ class GameData:
         WAD(self.wad_file_default).extract(_hash_list, out_dir=output_file_name)
 
     def get_game_version(self, default='99.99'):
+        """
+        获取游戏版本
+        :param default:
+        :return:
+        """
         meta = self.game_path / 'Game' / 'code-metadata.json'
         if os.path.exists(meta):
             with open(meta, encoding='utf-8') as f:
@@ -171,6 +238,13 @@ class GameData:
         else:
             return default
         return version_v.split('+')[0]
+
+    def get_latest_version(self):
+        """
+        获取最新版本
+        :return:
+        """
+        return requests.get(self._version_api).json()[0]
 
     def update_data(self):
         """
@@ -195,7 +269,8 @@ class GameData:
             f'plugins/rcp-be-lol-game-data/global/{_region}/v1/skinlines.json',
             f'plugins/rcp-be-lol-game-data/global/{_region}/v1/skins.json',
             f'plugins/rcp-be-lol-game-data/global/{_region}/v1/maps.json',
-            f'plugins/rcp-be-lol-game-data/global/{_region}/v1/universes.json'
+            f'plugins/rcp-be-lol-game-data/global/{_region}/v1/items.json',
+            f'plugins/rcp-be-lol-game-data/global/{_region}/v1/universes.json',
         ]
         WAD(wad_file).extract(hash_table, out_dir=output_file_name)
         WAD(wad_file).extract(

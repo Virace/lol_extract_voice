@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:11
-# @Update  : 2022/9/23 15:42
+# @Update  : 2023/3/9 17:11
 # @Detail  : 描述
 
 import gc
@@ -30,6 +30,7 @@ makedirs(E2A_HASH_PATH)
 
 # 游戏数据相关
 game_data = GameData()
+game_data_default = GameData('en_us')
 
 
 def file_classify(b, region) -> tree:
@@ -311,3 +312,4 @@ def get_audio_hashes(items, wad_file, event_hashes, _type, kind, name, skin, upd
     with open(_log_file, 'a+', encoding='utf-8') as f:
         for item in warn_item:
             f.write(f'{item}\n')
+
