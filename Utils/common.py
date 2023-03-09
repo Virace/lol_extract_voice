@@ -4,12 +4,15 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/16 0:15
-# @Update  : 2022/9/8 14:43
+# @Update  : 2023/3/9 19:45
 # @Detail  : 通用函数
 
+import json
 import os
+import re
 import shutil
 import time
+import requests
 from collections import defaultdict
 
 from loguru import logger
@@ -47,7 +50,7 @@ def makedirs(path, clear=False):
 
         if not os.path.exists(path):
             os.makedirs(path)
-            
+
     except FileExistsError as _:
         pass
 
@@ -100,3 +103,99 @@ def check_time(func):
         return ret
 
     return wrapper
+
+
+def dump_json(obj, path):
+    """
+    将对象写入json文件
+    :param obj: 对象
+    :param path: 路径
+    :return:
+    """
+    with open(path, 'w+', encoding='utf-8') as f:
+        json.dump(obj, f, ensure_ascii=False)
+
+
+def load_json(path):
+    """
+    读取json文件
+    :param path:
+    :return:
+    """
+
+    # 如果文件不存在这返回空字典
+    if not os.path.exists(path):
+        return {}
+
+    # 如果报错则返回空字典
+    try:
+        with open(path, encoding='utf-8') as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f'文件报错， 位置: {path}, 错误: {e}')
+        return {}
+    # with open(path, encoding='utf-8') as f:
+    #     return json.load(f)
+
+
+def list2dict(data, key):
+    """
+    将类似[{'id':1, 'xx':xx}, ...]的列表转换为字典
+    :param data:
+    :param key:
+    :return:
+    """
+    return {item[key]: item for item in data}
+
+
+def download_file(url, path):
+    """
+    下载文件
+    :param url: 下载链接
+    :param path: 保存路径
+    :return:
+    """
+    r = requests.get(url, stream=True)
+    with open(path, 'wb') as f:
+        for chunk in r.iter_content(chunk_size=1024):
+            if chunk:
+                f.write(chunk)
+                f.flush()
+    return path
+
+
+def replace(data, repl):
+    """
+    替换
+    :param data:
+    :param repl:键值对
+    :return:
+    """
+    for key, value in repl.items():
+        data = data.replace(key, value)
+    return data
+
+
+def re_replace(data, repl):
+    """
+    正则替换
+    :param data:
+    :param repl: 键值对
+    :return:
+    """
+
+    def replf(v):
+        def temp(mobj):
+            match = mobj.groups()[0]
+            if match:
+                return v.format(match)
+            else:
+                return v.replace('{}', '')
+
+        return temp
+
+    for key, value in repl.items():
+        if '{}' in value:
+            value = replf(value)
+        data = re.compile(f'{key}', re.I).sub(value, data)
+    return data
