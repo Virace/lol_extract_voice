@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2022/9/8 17:27
+# @Update  : 2023/3/9 22:32
 # @Detail  : 描述
 
 import json
@@ -17,10 +17,16 @@ import lol_voice
 from loguru import logger
 from lol_voice.formats import WAD
 
-from Hashes import E2A_HASH_PATH, game_data, get_audio_hashes, get_bnk_hashes, get_event_hashes
+from Hashes import E2A_HASH_PATH, game_data, game_data_default, get_audio_hashes, get_bnk_hashes, get_event_hashes
 from Utils.common import format_region, makedirs
 from Utils.logs import log_result
-from config import AUDIO_PATH, EXCLUDE_TYPE, GAME_CHAMPION_PATH, GAME_LCU_PATH, GAME_MAPS_PATH, GAME_PATH, GAME_REGION, \
+from config import AUDIO_PATH,\
+    EXCLUDE_TYPE,\
+    GAME_CHAMPION_PATH,\
+    GAME_LCU_PATH,\
+    GAME_MAPS_PATH,\
+    GAME_PATH,\
+    GAME_REGION, \
     HASH_PATH, \
     LOG_PATH, \
     MANIFEST_PATH, \
@@ -136,6 +142,7 @@ def get_game_audio(hash_path=E2A_HASH_PATH, audio_format='wav', max_works=None):
             # 排除不需要的文件夹
             _tt = os.path.basename(os.path.dirname(os.path.dirname(root)))
             if files and _tt in EXCLUDE_TYPE:
+                logger.debug(f'排除: {_tt}')
                 continue
 
             for file in files:
@@ -184,9 +191,12 @@ def main(audio_format='wem', max_works=None):
     """
     # 更新英雄列表等数据
     game_data.update_data()
+    game_data_default.update_data()
+    # 获取英雄相关图片
+    # game_data.get_images()
 
     # 更新哈希表
-    get_event_audio_hash_table()
+    get_event_audio_hash_table(True)
 
     get_lcu_audio()
     get_game_audio(audio_format=audio_format, max_works=max_works)
