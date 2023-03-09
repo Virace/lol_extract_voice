@@ -1,0 +1,3 @@
+Elemental       元素师
+MoveFirstMirrorMatch        首次移动
+MoveFirstNoMirrorMatch      首次移动

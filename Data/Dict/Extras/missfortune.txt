@@ -1,0 +1,3 @@
+Bounce                  弹跳
+DoubleBounce            双重弹跳
+GunSelect               枪械选择

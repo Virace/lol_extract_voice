@@ -1,0 +1,4 @@
+RedCard         红牌
+GoldCard        黄牌
+BlueCard        蓝牌
+Gate            R技能二段(传送之门)

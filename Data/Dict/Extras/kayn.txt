@@ -1,0 +1,8 @@
+EpicMonster         石甲虫
+Crab                河道蟹
+InfestKill          蓝凯使用R技能击杀英雄
+AssW                蓝凯W技能
+Host                释放
+Slayer              红凯
+RecallLeadOut       回城
+Rhaast              拉亚斯特

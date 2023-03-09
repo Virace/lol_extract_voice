@@ -1,0 +1,5 @@
+WallSpeedFullyRamped            贴墙快速奔跑
+MoveFromWorkedGround            从掘石场上离开
+MoveToWorkedGround              进入到掘石场
+MoveOOC                         长时间未移动
+Anim                            动作?

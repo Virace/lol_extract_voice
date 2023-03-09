@@ -1,0 +1,7 @@
+ShareGold               共享赏金
+Execute                 处决
+Lose1v1                 单挑输了
+PingOnMyWayLeaving      发送标记"正在路上"
+Range                   蓄力
+Ra_nge                   蓄力
+Place                   放置

@@ -1,0 +1,9 @@
+KalistaExpunge              KalistaE
+KalistaMysticShotMisTrue    KalistaMysticShot
+KalistaRMis                 KalistaR
+MinionKillCount             MinionKill
+VOBindAllyGlobal            被动绑定队友全局语音
+BindAlly                    被动绑定队友
+HighStack                   多层叠加
+QECombo                     EQ连招
+VOUnBound                   没有可链接的队友

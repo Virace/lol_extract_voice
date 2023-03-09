@@ -1,0 +1,10 @@
+Dragonmancer        Dragonmancers
+WardJump            W摸眼
+MoveLeeSinWard      W摸眼
+JungleCampHarvest   清空野怪
+FirstItemBuy        首次购买物品
+Dying               快死了
+BlindMonkETwo       摧筋断骨(E技能)
+BlindMonkQTwo       回音击(Q技能)
+BlindMonkWTwo       铁布衫(W技能)
+Insec               一套技能连招
