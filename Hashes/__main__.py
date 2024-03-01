@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:11
-# @Update  : 2023/3/9 17:11
+# @Update  : 2024/3/2 2:08
 # @Detail  : 描述
 
 import gc
@@ -33,7 +33,7 @@ game_data = GameData()
 game_data_default = GameData('en_us')
 
 
-def file_classify(b, region) -> tree:
+def file_classify(b, region='') -> tree:
     """
     分类, 区分事件和资源文件
     :param b: 好几层的dict
@@ -68,7 +68,9 @@ def file_classify(b, region) -> tree:
                     audio = []
                     for path in item:
                         # 哈希表的路径是无所谓大小写(因为最后计算还是按小写+)
-                        path = path.lower().replace('en_us', region)
+                        path = path.lower()
+                        if region:
+                            path = path.replace('en_us', region)
                         if 'events' in path:
                             events = path
                         elif 'audio' in path:
@@ -101,7 +103,8 @@ def get_bin_hashes(update=False) -> Dict:
             "map11": {"4648248922051545971": "data/maps/shipping/map11/map11.bin"},
             "map12": {"10561014283630087560": "data/maps/shipping/map12/map12.bin"},
             "map21": {"15820477637625025279": "data/maps/shipping/map21/map21.bin"},
-            "map22": {"2513799657867357310": "data/maps/shipping/map22/map22.bin"}
+            "map22": {"2513799657867357310": "data/maps/shipping/map22/map22.bin"},
+            "map30": {"15149346087287108683": "data/maps/shipping/map22/map30.bin"}
         }}
     champion_list = game_data.get_champions_name()
     tpl = 'data/characters/{}/skins/skin{}.bin'
@@ -176,7 +179,9 @@ def get_bnk_hashes(update=False) -> tree:
                     get_event_hashes(kind, name, bs, True)
 
         # 这里其实不返回值也可以, 浅拷贝修改
-        res = file_classify(res, GAME_REGION)
+        # res = file_classify(res, GAME_REGION)
+        # 傻逼RIOT，zh_cn的文件名字是en_us
+        res = file_classify(res)
         with open(target, 'w+', encoding='utf-8') as f:
             json.dump(res, f)
     return res
@@ -312,4 +317,3 @@ def get_audio_hashes(items, wad_file, event_hashes, _type, kind, name, skin, upd
     with open(_log_file, 'a+', encoding='utf-8') as f:
         for item in warn_item:
             f.write(f'{item}\n')
-
