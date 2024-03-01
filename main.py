@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2023/3/9 22:32
+# @Update  : 2024/3/2 2:17
 # @Detail  : 描述
 
 import json
@@ -20,12 +20,12 @@ from lol_voice.formats import WAD
 from Hashes import E2A_HASH_PATH, game_data, game_data_default, get_audio_hashes, get_bnk_hashes, get_event_hashes
 from Utils.common import format_region, makedirs
 from Utils.logs import log_result
-from config import AUDIO_PATH,\
-    EXCLUDE_TYPE,\
-    GAME_CHAMPION_PATH,\
-    GAME_LCU_PATH,\
-    GAME_MAPS_PATH,\
-    GAME_PATH,\
+from config import AUDIO_PATH, \
+    EXCLUDE_TYPE, \
+    GAME_CHAMPION_PATH, \
+    GAME_LCU_PATH, \
+    GAME_MAPS_PATH, \
+    GAME_PATH, \
     GAME_REGION, \
     HASH_PATH, \
     LOG_PATH, \
@@ -65,7 +65,7 @@ def get_event_audio_hash_table(update=False, max_works=None) -> None:
     # 获取bnk\wpk文件哈希表
     logger.info(rf'开始获取bnk\wpk文件哈希表, 强制更新: {update}')
     bnk_hashes = get_bnk_hashes(update)
-    logger.info(rf'获取bnk\wpk文件哈希表完成')
+    logger.info(r'获取bnk\wpk文件哈希表完成')
 
     logger.info('开始提取音频哈希表.')
     with ProcessPoolExecutor(max_workers=max_works) as e:
@@ -213,4 +213,3 @@ def init():
 if __name__ == '__main__':
     init()
     main(audio_format='wav')
-
