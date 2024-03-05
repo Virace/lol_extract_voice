@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:56
-# @Update  : 2023/3/8 21:39
+# @Update  : 2024/3/6 6:50
 # @Detail  : 描述
 
 import json
@@ -16,7 +16,7 @@ import requests
 from loguru import logger
 from lol_voice.formats import WAD
 
-from Utils.common import format_region, download_file
+from Utils.common import format_region
 from config import GAME_PATH, GAME_REGION, MANIFEST_PATH
 
 
@@ -58,7 +58,7 @@ class GameData:
         try:
             with open(file, encoding='utf-8') as f:
                 return json.load(f)
-        except Exception as e:
+        except Exception:
             e = traceback.format_exc()
             logger.warning(e)
             return {}
@@ -186,14 +186,14 @@ class GameData:
         :return:
         """
         _hash_list = []
-        _head = f'plugins/rcp-be-lol-game-data/global/default'
+        _head = 'plugins/rcp-be-lol-game-data/global/default'
 
         def fix_hash_path(path):
             return f"{_head}/{path.replace('/lol-game-data/assets/', '')}"
 
         def output_file_name(path):
             old = 'plugins/rcp-be-lol-game-data/global/default/v1/'
-            loading = f'plugins/rcp-be-lol-game-data/global/default/ASSETS/Characters'
+            loading = 'plugins/rcp-be-lol-game-data/global/default/ASSETS/Characters'
             new = path.replace(old, '')
             new = new.replace(loading, 'champion-loadscreen')
 
