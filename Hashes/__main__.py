@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:11
-# @Update  : 2024/3/2 2:08
+# @Update  : 2024/3/6 6:50
 # @Detail  : 描述
 
 import gc
@@ -104,7 +104,7 @@ def get_bin_hashes(update=False) -> Dict:
             "map12": {"10561014283630087560": "data/maps/shipping/map12/map12.bin"},
             "map21": {"15820477637625025279": "data/maps/shipping/map21/map21.bin"},
             "map22": {"2513799657867357310": "data/maps/shipping/map22/map22.bin"},
-            "map30": {"15149346087287108683": "data/maps/shipping/map22/map30.bin"}
+            "map30": {"15079425428213655221": "data/maps/shipping/map30/map30.bin"}
         }}
     champion_list = game_data.get_champions_name()
     tpl = 'data/characters/{}/skins/skin{}.bin'
