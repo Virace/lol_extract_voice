@@ -4,8 +4,8 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:56
-# @Update  : 2024/3/6 6:50
-# @Detail  : 描述
+# @Update  : 2024/3/12 13:38
+# @Detail  : 游戏数据
 
 import json
 import os
@@ -17,7 +17,7 @@ from loguru import logger
 from lol_voice.formats import WAD
 
 from Utils.common import format_region
-from config import GAME_PATH, GAME_REGION, MANIFEST_PATH
+from Utils.type_hints import StrPath
 
 
 class GameData:
@@ -25,12 +25,13 @@ class GameData:
     获取游戏相关数据
     """
 
-    def __init__(self, region=GAME_REGION):
+    def __init__(self, game_path: StrPath,
+                 manifest_path: StrPath, region: str = 'zh_CN'):
         """
         :param region: 地区
         """
-        self.game_path = Path(GAME_PATH)
-        self.out_path = Path(MANIFEST_PATH)
+        self.game_path = Path(game_path)
+        self.out_path = Path(manifest_path)
         self.region = region
         if self.region.lower() == 'en_us':
             self.region = 'default'
@@ -39,6 +40,13 @@ class GameData:
         self.wad_file_default = self.data_path / 'default-assets.wad'
 
         self._version_api = 'https://ddragon.leagueoflegends.com/api/versions.json'
+
+        # 游戏英雄文件目录 (Game/DATA/FINAL/Champions)
+        self.GAME_CHAMPION_PATH = os.path.join(self.game_path,
+                                               'Game', 'DATA', 'FINAL', 'Champions')
+
+        # 游戏地图(公共)文件目录 (Game/DATA/FINAL/Maps/Shipping)
+        self.GAME_MAPS_PATH = os.path.join(self.game_path, 'Game', 'DATA', 'FINAL', 'Maps', 'Shipping')
 
     def _get_out_path(self, files: [str, list[str]] = ''):
         """
@@ -176,7 +184,8 @@ class GameData:
         ]
         WAD(self.wad_file_region).extract(hash_table, out_dir=output_file_name)
         WAD(self.wad_file_region).extract(
-            [f'plugins/rcp-be-lol-game-data/global/{self.region}/v1/champions/{item["id"]}.json' for item in
+            [f'plugins/rcp-be-lol-game-data/global/{self.region}/v1/champions/'
+             f'{item["id"]}.json' for item in
              self.get_summary()],
             out_dir=output_file_name)
 
@@ -259,7 +268,7 @@ class GameData:
         def output_file_name(path):
             old = f'plugins/rcp-be-lol-game-data/global/{_region}/v1/'
             new = path.replace(old, '')
-            return os.path.join(MANIFEST_PATH, _region, os.path.normpath(new))
+            return os.path.join(self.out_path, _region, os.path.normpath(new))
 
         data_path = os.path.join(self.game_path, 'LeagueClient', 'Plugins', 'rcp-be-lol-game-data')
 
@@ -277,3 +286,43 @@ class GameData:
             [f'plugins/rcp-be-lol-game-data/global/{_region}/v1/champions/{item["id"]}.json' for item in
              self.get_summary()],
             out_dir=output_file_name)
+
+
+def compare_version(version1: str, version2: str) -> None:
+    """
+    比较版本号
+    :param version1:
+    :param version2:
+    :return:
+    """
+    # 检查输入格式
+    if not is_valid_version(version1) or not is_valid_version(version2):
+        logger.error("版本号格式不正确，请使用 '大版本.小版本' 或 '大版本.小版本.修订号' 格式。")
+        return
+
+    version1_parts = version1.split('.')
+    version2_parts = version2.split('.')
+
+    major_version1, minor_version1 = int(version1_parts[0]), int(version1_parts[1])
+    major_version2, minor_version2 = int(version2_parts[0]), int(version2_parts[1])
+
+    if major_version1 != major_version2:
+        raise ValueError(
+            f"大版本不同，无法比较。版本号分别为: {version1} 和 {version2}")
+    elif minor_version1 != minor_version2:
+        logger.warning(f"小版本不同，请注意。版本号分别为: {version1} 和 {version2}")
+
+    logger.info("版本号比较完成。")
+
+
+def is_valid_version(version: str) -> bool:
+    parts = version.split('.')
+    if len(parts) < 2 or len(parts) > 3:
+        return False
+    try:
+        major, minor = map(int, parts[:2])
+        if major < 0 or minor < 0:
+            return False
+    except ValueError:
+        return False
+    return True
