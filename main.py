@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2024/3/12 14:22
+# @Update  : 2024/3/12 14:30
 # @Detail  : 描述
 
 import json
@@ -21,6 +21,7 @@ from Data.Manifest import compare_version
 from Hashes import HashManager
 from Utils.common import format_region, makedirs
 from Utils.logs import log_result
+from Utils.type_hints import StrPath
 from config import AUDIO_PATH, \
     EXCLUDE_TYPE, \
     GAME_CHAMPION_PATH, \
@@ -35,6 +36,8 @@ from config import AUDIO_PATH, \
 
 HASH_MANAGER = HashManager(game_path=GAME_PATH, hash_path=HASH_PATH,
                            manifest_path=MANIFEST_PATH, region=GAME_REGION, log_path=LOG_PATH)
+
+AUDIO_PATH: StrPath = os.path.join(AUDIO_PATH, HASH_MANAGER.game_version)
 
 
 def get_wad_file_name(kind, name, _type, region) -> Union[str, os.PathLike]:
@@ -110,7 +113,7 @@ def get_lcu_audio():
     vo = []
 
     def output_file_name(_r):
-        def get_path(path):
+        def get_path(path: StrPath) -> StrPath:
             rep = f'plugins/rcp-be-lol-game-data/global/{_r}/v1/'
             new = path.replace(rep, '')
             return os.path.join(AUDIO_PATH, _r, 'LCU', os.path.normpath(new))
