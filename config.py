@@ -4,15 +4,14 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:00
-# @Update  : 2024/3/12 9:19
-# @Detail  : 描述
+# @Update  : 2024/3/12 14:21
+# @Detail  : config.py
 
 import os
-from typing import Union
 
 from dotenv import load_dotenv
 
-StrPath = Union[str, 'os.PathLike[str]']
+from Utils.type_hints import StrPath
 
 # 游戏目录
 GAME_PATH: StrPath = ''
