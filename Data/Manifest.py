@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:56
-# @Update  : 2024/3/12 13:38
+# @Update  : 2024/3/12 14:31
 # @Detail  : 游戏数据
 
 import json
@@ -290,7 +290,7 @@ class GameData:
 
 def compare_version(version1: str, version2: str) -> None:
     """
-    比较版本号
+    比较版本号, # todo: 这玩意没实测， 有问题再说
     :param version1:
     :param version2:
     :return:
@@ -312,7 +312,7 @@ def compare_version(version1: str, version2: str) -> None:
     elif minor_version1 != minor_version2:
         logger.warning(f"小版本不同，请注意。版本号分别为: {version1} 和 {version2}")
 
-    logger.info("版本号比较完成。")
+    # logger.info("版本号比较完成。")
 
 
 def is_valid_version(version: str) -> bool:
