@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/3/12 13:20
-# @Update  : 2024/3/12 13:21
+# @Update  : 2024/3/12 13:40
 # @Detail  : 
 
 
@@ -25,7 +25,8 @@ from Utils.type_hints import StrPath
 
 
 class HashManager:
-    def __init__(self, hash_path: StrPath, region: str = 'zh_CN', log_path: Optional[StrPath] = None):
+    def __init__(self, game_path: StrPath, manifest_path: StrPath, hash_path: StrPath, region: str = 'zh_CN',
+                 log_path: Optional[StrPath] = None):
         """
         哈希表管理器
         :param hash_path:
@@ -46,8 +47,8 @@ class HashManager:
         self.audio_hash_tpl = os.path.join(e2a_hash_path,
                                            '{region}', '{type}', "{kind}", "{name}", '{skin}.json')
 
-        self.game_data = GameData()
-        self.game_data_default = GameData('en_us')
+        self.game_data = GameData(game_path, manifest_path, region)
+        self.game_data_default = GameData(game_path, manifest_path, 'en_us')
 
         self.log_path = log_path
 
