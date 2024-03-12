@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/16 0:15
-# @Update  : 2023/3/9 19:45
+# @Update  : 2024/3/12 13:03
 # @Detail  : 通用函数
 
 import json
@@ -105,15 +105,17 @@ def check_time(func):
     return wrapper
 
 
-def dump_json(obj, path):
+def dump_json(obj, path, ensure_ascii=False, cls=None):
     """
     将对象写入json文件
     :param obj: 对象
     :param path: 路径
+    :param ensure_ascii: 是否转义
+    :param cls: 类
     :return:
     """
     with open(path, 'w+', encoding='utf-8') as f:
-        json.dump(obj, f, ensure_ascii=False)
+        json.dump(obj, f, ensure_ascii=ensure_ascii, cls=cls)
 
 
 def load_json(path):
