@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2024/3/2 2:17
+# @Update  : 2024/3/12 14:22
 # @Detail  : 描述
 
 import json
@@ -17,7 +17,8 @@ import lol_voice
 from loguru import logger
 from lol_voice.formats import WAD
 
-from Hashes import E2A_HASH_PATH, game_data, game_data_default, get_audio_hashes, get_bnk_hashes, get_event_hashes
+from Data.Manifest import compare_version
+from Hashes import HashManager
 from Utils.common import format_region, makedirs
 from Utils.logs import log_result
 from config import AUDIO_PATH, \
@@ -31,6 +32,9 @@ from config import AUDIO_PATH, \
     LOG_PATH, \
     MANIFEST_PATH, \
     TEMP_PATH, VGMSTREAM_PATH
+
+HASH_MANAGER = HashManager(game_path=GAME_PATH, hash_path=HASH_PATH,
+                           manifest_path=MANIFEST_PATH, region=GAME_REGION, log_path=LOG_PATH)
 
 
 def get_wad_file_name(kind, name, _type, region) -> Union[str, os.PathLike]:
@@ -64,7 +68,7 @@ def get_event_audio_hash_table(update=False, max_works=None) -> None:
     """
     # 获取bnk\wpk文件哈希表
     logger.info(rf'开始获取bnk\wpk文件哈希表, 强制更新: {update}')
-    bnk_hashes = get_bnk_hashes(update)
+    bnk_hashes = HASH_MANAGER.get_bnk_hashes(update)
     logger.info(r'获取bnk\wpk文件哈希表完成')
 
     logger.info('开始提取音频哈希表.')
@@ -79,21 +83,21 @@ def get_event_audio_hash_table(update=False, max_works=None) -> None:
             for name, skins in sections.items():
                 for skin, paths in skins.items():
 
-                    event_hashes = get_event_hashes(kind, name)
+                    event_hashes = HASH_MANAGER.get_event_hashes(kind, name)
 
                     for _type, value in paths.items():
                         # if not(kind == 'characters' and name == 'akali' and skin == 'skin61' and _type == 'SFX'):
                         #     continue
 
                         wad_file = get_wad_file_name(kind, name, _type, GAME_REGION)
-                        # get_audio_hashes(value, wad_file, bin_data, _type, kind, name,
+                        # HASH_MANAGER.get_audio_hashes(value, wad_file, event_hashes, _type, kind, name,
                         #                  skin, update)
                         fs.update(
-                            {e.submit(get_audio_hashes, value, wad_file, event_hashes, _type, kind, name,
+                            {e.submit(HASH_MANAGER.get_audio_hashes, value, wad_file, event_hashes, _type, kind, name,
                                       skin, update): f'{kind}, {name}, {skin}, {_type}'
                              })
 
-        log_result(fs, sys._getframe().f_code.co_name)
+        log_result(fs, sys._getframe().f_code.co_name, GAME_REGION, LOG_PATH)
         logger.info('提取音频哈希表完毕.')
 
 
@@ -115,7 +119,7 @@ def get_lcu_audio():
 
     wad_sfx_file = os.path.join(GAME_LCU_PATH, 'default-assets.wad')
     wad_vo_file = os.path.join(GAME_LCU_PATH, f'{format_region(GAME_REGION)}-assets.wad')
-    for cid in game_data.get_champions_id():
+    for cid in HASH_MANAGER.game_data.get_champions_id():
         sfx.append(f'plugins/rcp-be-lol-game-data/global/default/v1/champion-sfx-audios/{cid}.ogg')
         vo.extend([f'plugins/rcp-be-lol-game-data/global/{GAME_REGION}/v1/champion-choose-vo/{cid}.ogg',
                    f'plugins/rcp-be-lol-game-data/global/{GAME_REGION}/v1/champion-ban-vo/{cid}.ogg'])
@@ -124,7 +128,7 @@ def get_lcu_audio():
     WAD(wad_vo_file).extract(vo, out_dir=output_file_name(GAME_REGION))
 
 
-def get_game_audio(hash_path=E2A_HASH_PATH, audio_format='wav', max_works=None):
+def get_game_audio(hash_path=HASH_MANAGER.e2a_hash_path, audio_format='wav', max_works=None):
     """
     根据提供的哈希表, 提取游戏音频资源
     如果默认则为全部哈希表
@@ -134,7 +138,12 @@ def get_game_audio(hash_path=E2A_HASH_PATH, audio_format='wav', max_works=None):
     :param max_works: 最大进程数
     :return:
     """
-    logger.info(f'开始提取游戏内音频. hash_path:{hash_path}, audio_format:{audio_format}')
+    logger.info(f'开始提取游戏内音频.'
+                f' hash_path:{hash_path}, audio_format:{audio_format}')
+
+    # 当前游戏版本
+    current_version = HASH_MANAGER.game_data.get_game_version()
+
     with ProcessPoolExecutor(max_workers=max_works) as e:
         fs = dict()
         for root, dirs, files in os.walk(hash_path):
@@ -154,9 +163,15 @@ def get_game_audio(hash_path=E2A_HASH_PATH, audio_format='wav', max_works=None):
                         kind = data['info']['kind']
                         name = data['info']['name']
                         detail = data['info']['detail']
+
+                        if 'version' in data['info']:
+                            # 比较版本号, 如果大版本号不同直接报错， 小版本号不同则警告
+                            compare_version(current_version, data['info']['version'])
+
                         logger.info(f'获取{kind} {name} {detail} {_type}音频')
                         # 拼接wad文件名字
-                        wad_file = os.path.join(GAME_PATH, os.path.normpath(data['info']['wad']))
+                        wad_file = os.path.join(GAME_PATH,
+                                                os.path.normpath(data['info']['wad']))
 
                         # 取出bnk音频文件 字节类型
                         audio_raws = WAD(wad_file).extract(list(data['data'].keys()), raw=True)
@@ -178,7 +193,7 @@ def get_game_audio(hash_path=E2A_HASH_PATH, audio_format='wav', max_works=None):
                                     fs[e.submit(i.static_save_file, i.data, filename, False, VGMSTREAM_PATH)] = (
                                         _type, kind, name, detail, wad_file)
 
-        log_result(fs, sys._getframe().f_code.co_name)
+        log_result(fs, sys._getframe().f_code.co_name, GAME_REGION, LOG_PATH)
         logger.info('提取游戏内音频完毕.')
 
 
@@ -190,13 +205,13 @@ def main(audio_format='wem', max_works=None):
     :return:
     """
     # 更新英雄列表等数据
-    game_data.update_data()
-    game_data_default.update_data()
+    HASH_MANAGER.game_data.update_data()
+    HASH_MANAGER.game_data_default.update_data()
     # 获取英雄相关图片
-    # game_data.get_images()
+    # HASH_MANAGER.game_data.get_images()
 
     # 更新哈希表
-    get_event_audio_hash_table(True)
+    get_event_audio_hash_table(False)
 
     get_lcu_audio()
     get_game_audio(audio_format=audio_format, max_works=max_works)

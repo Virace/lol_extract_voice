@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/3/12 13:20
-# @Update  : 2024/3/12 13:40
+# @Update  : 2024/3/12 14:21
 # @Detail  : 
 
 
@@ -33,22 +33,25 @@ class HashManager:
         :param region:
         :param log_path:
         """
-        event_hash_path = os.path.join(hash_path, 'event')
-        e2a_hash_path = os.path.join(hash_path, 'event2audio')
+        self.game_data = GameData(game_path, manifest_path, region)
+        self.game_data_default = GameData(game_path, manifest_path, 'en_us')
 
-        makedirs(event_hash_path)
-        makedirs(e2a_hash_path)
+        self.game_version: str = self.game_data.get_game_version()
+
+        self.event_hash_path = os.path.join(hash_path, self.game_version, 'event')
+        self.e2a_hash_path = os.path.join(hash_path, self.game_version, 'event2audio')
+
+        makedirs(self.event_hash_path)
+        makedirs(self.e2a_hash_path)
 
         self.regin = region
 
         self.bin_hash_file = os.path.join(hash_path, 'bin.json')
         self.bnk_hash_file = os.path.join(hash_path, f'bnk.{self.regin}.json')
-        self.event_hash_tpl = os.path.join(event_hash_path, '{kind}', '{name}.json')
-        self.audio_hash_tpl = os.path.join(e2a_hash_path,
+        self.event_hash_tpl = os.path.join(self.event_hash_path,
+                                           '{kind}', '{name}.json')
+        self.audio_hash_tpl = os.path.join(self.e2a_hash_path,
                                            '{region}', '{type}', "{kind}", "{name}", '{skin}.json')
-
-        self.game_data = GameData(game_path, manifest_path, region)
-        self.game_data_default = GameData(game_path, manifest_path, 'en_us')
 
         self.log_path = log_path
 
@@ -238,7 +241,8 @@ class HashManager:
             """
         target = self.event_hash_tpl.format(kind=kind, name=name)
         if res := self._load_json_file(target, update):
-            return res
+            return BIN.load_hash_table(res)
+
         else:
             res = set()
             for bin_data in bin_datas:
