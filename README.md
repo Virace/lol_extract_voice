@@ -45,12 +45,31 @@ VGMSTREAM_PATH: str = ''
 
 **EXCLUDE_TYPE**一般只处理语音的话, 可以排除掉SFX和MUSIC, 例如: `['SFX', 'MUSIC']`。
 
-另外增加了对环境变量的支持，前缀为**LOL_xxx**，比如**LOL_GAME_PATH**，**LOL_OUTPUT_PATH**，**LOL_GAME_REGION**，**LOL_EXCLUDE_TYPE**，**LOL_VGMSTREAM_PATH**。
+---
+以下是方便第三方程序或者CI/CD使用的优化
+
+另外增加了对环境变量的支持，前缀为`LOL_xxx`，比如`LOL_GAME_PATH`，`LOL_OUTPUT_PATH`，`LOL_GAME_REGION`，`LOL_EXCLUDE_TYPE`，`LOL_VGMSTREAM_PATH`。
 
 正常情况下config.py手动填写以及环境变量互补，手动填写优先级最高，如果没有填写留空则会使用环境变量。
 
-也可将**LOL_ENV_ONLY**设置为**True**(非`0`
-、`false`的字符串或留空 都可以)，则只使用环境变量。方便第三方工具调用。
+也可将`LOL_ENV_ONLY`设置为**True**(非`0`
+、`false`的字符串或留空 都可以)，则忽略优先级，只使用环境变量。
+
+`ENV_PATH` 配置文件路径，可选。默认`.lol.env`
+
+`ENV_OVERRIDE`设置为**True**(非`0`
+、`false`的字符串或留空 都可以)， 则忽略优先级值使用`ENV_PATH`提供的配置文件。
+
+.lol.env文件格式如下
+```
+LOL_GAME_PATH=D:\\Games\\Tencent\\league of legends
+LOL_GAME_REGION=zh_CN
+LOL_OUTPUT_PATH=E:\\Caches\\League of legends Res\\audio
+LOL_EXCLUDE_TYPE=SFX,MUSIC
+```
+没什么讲究 https://saurabh-kumar.com/python-dotenv/#file-format
+
+注意转义就行，路径不用双斜杠就用反斜杠也是没有问题的。
 
 ### 开发进度
 - [x] 功能实现
