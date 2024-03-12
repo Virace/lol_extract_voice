@@ -4,26 +4,28 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/27 12:07
-# @Update  : 2022/9/23 15:35
+# @Update  : 2024/3/12 13:26
 # @Detail  : 描述
 
 import os
 import traceback
 from concurrent.futures import as_completed
+from typing import Optional
+from Utils.type_hints import StrPath
 
 from loguru import logger
 
-from config import GAME_REGION, LOG_PATH
 
-
-def log_result(fs, func_name):
+def log_result(fs, func_name, region: Optional[str] = '', log_path: StrPath = ''):
     """
     对异步函数的结果进行日志记录
     :param fs: 迭代对象
     :param func_name: 函数名
+    :param region: 地区
+    :param log_path: 日志路径
     :return:
     """
-    _log_file = os.path.join(LOG_PATH, f'{func_name}.{GAME_REGION}.log')
+    _log_file = os.path.join(log_path, f'{func_name}.{region}.log')
     error_list = []
     for f in as_completed(fs):
         try:
