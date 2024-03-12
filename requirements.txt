@@ -1,3 +1,4 @@
 loguru==0.6.0
 lol-voice==1.0.4
+python-dotenv==1.0.1
 requests==2.31.0
