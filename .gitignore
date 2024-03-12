@@ -89,6 +89,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.lol.env
 
 # Spyder project settings
 .spyderproject
@@ -115,3 +116,5 @@ test.py
 *.json
 hashes.*.txt
 Temp
+
+
