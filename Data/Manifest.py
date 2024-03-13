@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:56
-# @Update  : 2024/3/12 14:31
+# @Update  : 2024/3/13 18:36
 # @Detail  : 游戏数据
 
 import json
@@ -239,7 +239,7 @@ class GameData:
         :param default:
         :return:
         """
-        meta = self.game_path / 'Game' / 'code-metadata.json'
+        meta = self.game_path / 'Game' / 'content-metadata.json'
         if os.path.exists(meta):
             with open(meta, encoding='utf-8') as f:
                 data = json.load(f)
