@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2024/3/12 14:30
+# @Update  : 2024/3/13 18:38
 # @Detail  : 描述
 
 import json
@@ -210,6 +210,8 @@ def main(audio_format='wem', max_works=None):
     # 更新英雄列表等数据
     HASH_MANAGER.game_data.update_data()
     HASH_MANAGER.game_data_default.update_data()
+    # 当前游戏版本号
+    logger.info(f'当前游戏版本: {HASH_MANAGER.game_version}')
     # 获取英雄相关图片
     # HASH_MANAGER.game_data.get_images()
 
