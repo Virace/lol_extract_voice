@@ -4,11 +4,12 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:56
-# @Update  : 2024/3/13 18:36
+# @Update  : 2024/3/13 19:44
 # @Detail  : 游戏数据
 
 import json
 import os
+import re
 import traceback
 from pathlib import Path
 
@@ -246,7 +247,8 @@ class GameData:
             version_v = data['version']
         else:
             return default
-        return version_v.split('+')[0]
+        if m := re.match(r"^(\d+\.\d+)\.", version_v):
+            return m.group(1)
 
     def get_latest_version(self):
         """
