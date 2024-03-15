@@ -4,8 +4,8 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2023/3/7 0:35
-# @Update  : 2023/3/9 22:23
-# @Detail  : 事件处理
+# @Update  : 2024/3/15 10:21
+# @Detail  : todo: 用不上暂时不处理
 
 import os
 import re
@@ -14,8 +14,7 @@ from typing import Union
 from loguru import logger
 import requests
 from Data import DICT_PATH, EXTRAS_PATH
-from Hashes import game_data, game_data_default
-from Utils.common import download_file, dump_json, load_json, makedirs, re_replace, replace
+from Utils.common import dump_json, load_json, makedirs, re_replace, replace
 
 
 def txt2dict(data, suffix=''):
