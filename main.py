@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2024/5/5 6:45
+# @Update  : 2024/5/5 7:36
 # @Detail  : 描述
 
 import json
@@ -190,8 +190,9 @@ def get_game_audio(
             if _tt in config_instance.EXCLUDE_TYPE:
                 logger.debug(f"排除: {_tt}")
                 continue
-            # if "map11" not in _tt.lower():
-            #     continue
+
+            if file.name != "map11.json":
+                continue
 
             ext = file.suffix
             if ext == ".json":
@@ -217,15 +218,21 @@ def get_game_audio(
                     audio_raws = WAD(wad_file).extract(
                         list(data["data"].keys()), raw=True
                     )
+                    ids = []
                     for raw in audio_raws:
                         if raw:
                             # 解析bnk文件
                             audio_files = league_tools.get_audio_files(raw)
                             del raw
                             for i in audio_files:
-                                thisname = (
-                                    i.filename if i.filename else f"{i.id}.wem"
-                                )
+
+                                # 处理不同事件下的重复文件
+                                if i.id in ids:
+                                    continue
+                                else:
+                                    ids.append(i.id)
+
+                                thisname = i.filename if i.filename else f"{i.id}.wem"
                                 filename = (
                                     Path(AUDIO_PATH)
                                     / (
