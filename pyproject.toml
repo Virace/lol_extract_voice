@@ -1,16 +1,31 @@
-[tool.poetry]
+[project]
 name = "lol-audio-unpack"
 version = "0.1.0"
 description = "英雄联盟游戏音频文件解包工具"
-authors = ["Virace <Virace@aliyun.com>"]
+authors = [
+    { name = "Virace", email = "Virace@aliyun.com" }
+]
+dependencies = [
+    "requests>=2.31.0",
+    "python-dotenv>=1.0.1",
+    "league-tools==0.2.0.dev1",
+]
 readme = "README.md"
+requires-python = ">= 3.10"
 
-[tool.poetry.dependencies]
-python = "^3.10"
-lol-voice = "^1.0.4"
-requests = "^2.31.0"
-loguru = "^0.6.0"
-python-dotenv = "^1.0.1"
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.rye]
+managed = true
+dev-dependencies = []
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
 
 [tool.ruff]
 line-length = 88
@@ -52,7 +67,3 @@ target-version = "py310"
 [tool.ruff.mccabe]
 # Unlike Flake8, default to a complexity level of 10.
 max-complexity = 10
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
