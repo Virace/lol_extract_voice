@@ -4,10 +4,11 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2023/3/9 19:30
+# @Update  : 2024/5/5 3:11
 # @Detail  : 描述
 
-import os
+from pathlib import Path
 
-DICT_PATH = os.path.join(os.path.dirname(__file__), 'Dict')
-EXTRAS_PATH = os.path.join(DICT_PATH, 'Extras')
+DICT_PATH = Path(__file__).parent / 'Dict'
+EXTRAS_PATH = DICT_PATH / 'Extras'
+

@@ -4,24 +4,30 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/16 0:15
-# @Update  : 2024/3/15 10:17
+# @Update  : 2024/3/15 11:09
 # @Detail  : 通用函数
 
 import json
+import os
 import re
 import shutil
 import time
 from collections import defaultdict
 from json import JSONEncoder
 from os import PathLike
-from pathlib import Path
+from pathlib import Path, PosixPath, WindowsPath
 from typing import Callable, Dict, Type, Union
 
 import requests
 from loguru import logger
 
+if os.name == "nt":
+    BasePath = WindowsPath
+else:
+    BasePath = PosixPath
 
-class EnhancedPath(Path):
+
+class EnhancedPath(BasePath):
     """
     增强Path
     """

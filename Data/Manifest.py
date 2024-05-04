@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:56
-# @Update  : 2024/3/15 9:27
+# @Update  : 2024/5/4 19:45
 # @Detail  : 游戏数据
 
 import json
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import requests
 from loguru import logger
-from lol_voice.formats import WAD
+from league_tools.formats import WAD
 
 from Utils.common import format_region
 from Utils.type_hints import StrPath
