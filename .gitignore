@@ -118,3 +118,4 @@ hashes.*.txt
 Temp
 
 
+!/params.json
