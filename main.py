@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2024/5/5 8:05
+# @Update  : 2024/5/6 0:53
 # @Detail  : 描述
 
 import json
@@ -12,7 +12,7 @@ import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-import league_tools
+from league_tools import get_audio_files
 from league_tools.formats import WAD
 from loguru import logger
 
@@ -190,78 +190,75 @@ def get_game_audio(
             if _tt in config_instance.EXCLUDE_TYPE:
                 logger.debug(f"排除: {_tt}")
                 continue
-                
-            ext = file.suffix
-            if ext == ".json":
-                with open(file, encoding="utf-8") as f:
-                    data = json.load(f)
-                    _type = data["info"]["type"]
-                    kind = data["info"]["kind"]
-                    name = data["info"]["name"]
-                    detail = data["info"]["detail"]
 
-                    if "version" in data["info"]:
-                        # 比较版本号, 如果大版本号不同直接报错， 小版本号不同则警告
-                        compare_version(current_version, data["info"]["version"])
+            with file.open(encoding="utf-8") as f:
+                data = json.load(f)
+                _type = data["info"]["type"]
+                kind = data["info"]["kind"]
+                name = data["info"]["name"]
+                detail = data["info"]["detail"]
 
-                    logger.info(f"获取{kind} {name} {detail} {_type}音频")
-                    # 拼接wad文件名字
-                    wad_file = (
-                        Path(config_instance.GAME_PATH)
-                        / Path(data["info"]["wad"]).as_posix()
-                    )
+                if "version" in data["info"]:
+                    # 比较版本号, 如果大版本号不同直接报错， 小版本号不同则警告
+                    compare_version(current_version, data["info"]["version"])
 
-                    # 取出bnk音频文件 字节类型
-                    audio_raws = WAD(wad_file).extract(
-                        list(data["data"].keys()), raw=True
-                    )
-                    ids = []
-                    for raw in audio_raws:
-                        if raw:
-                            # 解析bnk文件
-                            audio_files = league_tools.get_audio_files(raw)
-                            del raw
-                            for i in audio_files:
+                logger.info(f"获取{kind} {name} {detail} {_type}音频")
+                # 拼接wad文件名字
+                wad_file = (
+                    Path(config_instance.GAME_PATH)
+                    / Path(data["info"]["wad"]).as_posix()
+                )
 
-                                # 处理不同事件下的重复文件
-                                if i.id in ids:
-                                    continue
-                                else:
-                                    ids.append(i.id)
+                # 取出bnk音频文件 字节类型
+                audio_raws = WAD(wad_file).extract(list(data["data"].keys()), raw=True)
 
-                                thisname = i.filename if i.filename else f"{i.id}.wem"
-                                filename = (
-                                    Path(AUDIO_PATH)
-                                    / (
-                                        config_instance.GAME_REGION
-                                        if _type == "VO"
-                                        else "default"
-                                    )
-                                    / _type
-                                    / kind
-                                    / name
-                                    / detail
-                                    / thisname.replace("wem", audio_format)
+                ids = []
+                for raw in audio_raws:
+                    if raw:
+                        # 解析bnk文件
+                        audio_files = get_audio_files(raw)
+                        del raw
+                        for i in audio_files:
+
+                            # 处理不同事件下的重复文件
+                            if i.id in ids:
+                                continue
+                            else:
+                                ids.append(i.id)
+
+                            thisname = i.filename if i.filename else f"{i.id}.wem"
+                            filename = (
+                                Path(AUDIO_PATH)
+                                / (
+                                    config_instance.GAME_REGION
+                                    if _type == "VO"
+                                    else "default"
                                 )
+                                / _type
+                                / kind
+                                / name
+                                / detail
+                                / thisname.replace("wem", audio_format)
+                            )
 
-                                filename.parent.mkdir(parents=True, exist_ok=True)
-                                # i.static_save_file(i.data,
-                                # filename, False, vgmstream_cli)
-                                # i.static_save_file(
-                                #     i.data,
-                                #     filename,
-                                #     False,
-                                #     config_instance.VGMSTREAM_PATH,
-                                # )
-                                fs[
-                                    e.submit(
-                                        i.static_save_file,
-                                        i.data,
-                                        filename,
-                                        False,
-                                        config_instance.VGMSTREAM_PATH,
-                                    )
-                                ] = (_type, kind, name, detail, wad_file)
+                            filename.parent.mkdir(parents=True, exist_ok=True)
+                            # i.static_save_file(i.data,
+                            # filename, False, vgmstream_cli)
+                            # i.static_save_file(
+                            #     i.data,
+                            #     filename,
+                            #     False,
+                            #     config_instance.VGMSTREAM_PATH,
+                            # )
+                            fs[
+                                e.submit(
+                                    i.static_save_file,
+                                    i.data,
+                                    filename,
+                                    False,
+                                    config_instance.VGMSTREAM_PATH,
+                                )
+                            ] = (_type, kind, name, detail, wad_file)
 
         log_result(
             fs,
@@ -288,9 +285,9 @@ def main(audio_format="wem", max_works=None):
     # HASH_MANAGER.game_data.get_images()
 
     # 更新哈希表
-    # get_event_audio_hash_table()
+    get_event_audio_hash_table()
 
-    # get_lcu_audio()
+    get_lcu_audio()
     get_game_audio(audio_format=audio_format, max_works=max_works)
 
 
@@ -300,7 +297,6 @@ def init():
     makedirs(config_instance.LOG_PATH, True)
     makedirs(config_instance.HASH_PATH)
     makedirs(config_instance.MANIFEST_PATH)
-    makedirs(AUDIO_PATH)
 
 
 if __name__ == "__main__":
