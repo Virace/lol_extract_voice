@@ -16,7 +16,7 @@ colorama==0.4.6
     # via loguru
 idna==3.7
     # via requests
-league-tools==0.2.0.dev2
+league-tools==0.2.0
     # via lol-audio-unpack
 loguru==0.7.2
     # via league-tools
