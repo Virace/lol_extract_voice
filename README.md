@@ -17,59 +17,43 @@
 
 ### 使用方法
 1. git clone https://github.com/Virace/lol_extract_voice -b v3
-2. 安装peotry, https://python-poetry.org/docs/master/#installation
-3. 进入目录 poetry install
-4. 编写配置文件, 详见[配置文件](#配置文件)
-5. 运行 python main.py
+2. 进入目录 `pip install -r requirements.txt` 或者  `pip install -r requirements.lock`
+3. 编写配置文件, 详见[配置文件](#配置文件)
+4. 运行 python main.py
 
 #### 配置文件
-```python
+
+项目目录下.lol.env文件或是环境变量`LOL_ENV_PATH`提供的文件路径, https://saurabh-kumar.com/python-dotenv/#file-format
+
+```
 # 游戏目录
-GAME_PATH: str = ''
+LOL_GAME_PATH=''
+
+# 区域代码
+LOL_GAME_REGION=zh_CN
 
 # 输出目录
-OUTPUT_PATH: str = ''
+LOL_OUTPUT_PATH=''
 
-# 要处理的区域文件
-GAME_REGION: str = 'zh_CN'
+# 排除类型 VO、SFX、MUSIC， 语音、特效、背景音乐。使用英文逗号分割('VO,SFX,MUSIC')
+LOL_EXCLUDE_TYPE='SFX,MUSIC'
 
-# 排除处理的类型 (VO/SFX/MUSIC) 台词音频/效果音频/背景音乐
-EXCLUDE_TYPE: list = ['SFX']
-
-# vgmstream cli程序, 用来转码, 如果不提供则默认输出为wem格式。
-VGMSTREAM_PATH: str = ''
+# vgmstream可执行文件路径(vgmstream-cli.exe)，为空则不会转码
+LOL_VGMSTREAM_PATH=''
 ```
 **GAME_PATH**选择游戏根目录, 例如: `D:\Games\League of Legends`，这个文件夹打开里面会有`Game`文件夹。
 
 **GAME_REGION**就是各种区域代码, 例如: `zh_CN`，`en_US`，`ko_KR`，`ja_JP`，`es_ES`，`fr_FR`，`de_DE`，`it_IT`，`pl_PL`，`pt_BR`，`ro_RO`，`ru_RU`，`tr_TR`等等。
 
-**EXCLUDE_TYPE**一般只处理语音的话, 可以排除掉SFX和MUSIC, 例如: `['SFX', 'MUSIC']`。
-
 ---
-以下是方便第三方程序或者CI/CD使用的优化
+以下是第三方程序或者CI/CD使用的优化
 
-另外增加了对环境变量的支持，前缀为`LOL_xxx`，比如`LOL_GAME_PATH`，`LOL_OUTPUT_PATH`，`LOL_GAME_REGION`，`LOL_EXCLUDE_TYPE`，`LOL_VGMSTREAM_PATH`。
+`LOL_ENV_PATH`环境变量, 用于指定配置文件路径, 例如: `/root/.lol.env`。默认为项目执行目录。
 
-正常情况下config.py手动填写以及环境变量互补，手动填写优先级最高，如果没有填写留空则会使用环境变量。
+`LOL_ENV_ONLY`环境变量, 用于指定是否只使用环境变量, 例如: `True`。默认为`False`, 如果设置为`True`, 则不会读取配置文件。
 
-也可将`LOL_ENV_ONLY`设置为**True**(非`0`
-、`false`的字符串或留空 都可以)，则忽略优先级，只使用环境变量。
+所有配置文件中提到的项目均可设置环境变量传入，方便CI/CD使用。
 
-`ENV_PATH` 配置文件路径，可选。默认`.lol.env`
-
-`ENV_OVERRIDE`设置为**True**(非`0`
-、`false`的字符串或留空 都可以)， 则忽略优先级值使用`ENV_PATH`提供的配置文件。
-
-.lol.env文件格式如下
-```
-LOL_GAME_PATH=D:\\Games\\Tencent\\league of legends
-LOL_GAME_REGION=zh_CN
-LOL_OUTPUT_PATH=E:\\Caches\\League of legends Res\\audio
-LOL_EXCLUDE_TYPE=SFX,MUSIC
-```
-没什么讲究 https://saurabh-kumar.com/python-dotenv/#file-format
-
-注意转义就行，路径不用双斜杠就用反斜杠也是没有问题的。
 
 ### 开发进度
 - [x] 功能实现
