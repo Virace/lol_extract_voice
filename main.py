@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2024/5/5 7:36
+# @Update  : 2024/5/5 8:05
 # @Detail  : 描述
 
 import json
@@ -190,10 +190,7 @@ def get_game_audio(
             if _tt in config_instance.EXCLUDE_TYPE:
                 logger.debug(f"排除: {_tt}")
                 continue
-
-            if file.name != "map11.json":
-                continue
-
+                
             ext = file.suffix
             if ext == ".json":
                 with open(file, encoding="utf-8") as f:
