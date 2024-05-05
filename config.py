@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:00
-# @Update  : 2024/5/5 6:41
+# @Update  : 2024/5/6 1:04
 # @Detail  : config.py
 
 import json
@@ -25,6 +25,9 @@ class Config:
 
     # 配置路径，默认为当前目录下的 .lol.env 文件
     env_path: StrPath = os.getenv("LOL_ENV_PATH", ".lol.env")
+
+    # 是否只加载环境变量，True则不加载配置文件，默认为False
+    env_only = bool(os.getenv("LOL_ENV_ONLY", False))
 
     def __new__(cls):
         if not cls._instance:
@@ -67,7 +70,8 @@ class Config:
         :return:
         """
 
-        load_dotenv(dotenv_path=cls.env_path, override=True)
+        if not cls.env_only:
+            load_dotenv(dotenv_path=cls.env_path, override=True)
         cls.params = json.loads((Path("params.json")).read_text())
         for param, metadata in cls.params.items():
             data = cls._get_env(param, metadata)
