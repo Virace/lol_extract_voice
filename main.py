@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2024/5/6 0:53
+# @Update  : 2024/5/6 1:15
 # @Detail  : 描述
 
 import json
@@ -300,5 +300,10 @@ def init():
 
 
 if __name__ == "__main__":
+    logger.configure(handlers=[
+            dict(sink=sys.stdout, level="INFO")
+        ])
+    logger.enable("league_tools")
+
     init()
     main(audio_format="wav")
