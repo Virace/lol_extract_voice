@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/3/12 13:20
-# @Update  : 2024/5/5 5:05
+# @Update  : 2024/5/6 22:50
 # @Detail  : 
 
 import gc
@@ -12,11 +12,10 @@ import re
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import league_tools
+from league_tools.formats import BIN, WAD, StringHash
 from loguru import logger
-from league_tools.formats import BIN, StringHash, WAD
 
 from Data.Manifest import GameData
 from Utils.common import (
@@ -32,12 +31,12 @@ from Utils.type_hints import StrPath
 
 class HashManager:
     def __init__(
-        self,
-        game_path: StrPath,
-        manifest_path: StrPath,
-        hash_path: StrPath,
-        region: str = "zh_CN",
-        log_path: Optional[StrPath] = None,
+            self,
+            game_path: StrPath,
+            manifest_path: StrPath,
+            hash_path: StrPath,
+            region: str = "zh_CN",
+            log_path: StrPath | None = None,
     ):
         """
         哈希表管理器
@@ -56,16 +55,18 @@ class HashManager:
 
         self.game_version: str = self.game_data.get_game_version()
 
-        self.event_hash_path = hash_path / self.game_version / "event"
-        self.e2a_hash_path = hash_path / self.game_version / "event2audio"
+        self.workspace = hash_path / self.game_version
+
+        self.event_hash_path = self.workspace / "event"
+        self.e2a_hash_path = self.workspace / "event2audio"
 
         makedirs(self.event_hash_path)
         makedirs(self.e2a_hash_path)
 
-        self.regin = region
+        self.region = region
 
-        self.bin_hash_file = hash_path / "bin.json"
-        self.bnk_hash_file = hash_path / f"bnk.{self.regin}.json"
+        self.bin_hash_file = self.workspace / "bin.json"
+        self.bnk_hash_file = self.workspace / f"bnk.{self.region}.json"
         self.event_hash_tpl = EnhancedPath(
             self.event_hash_path / "{kind}" / "{name}.json"
         )
@@ -77,6 +78,8 @@ class HashManager:
             / "{name}"
             / "{skin}.json"
         )
+
+        self.integrate_hash_table_file = self.workspace / f"{self.game_version}.{self.region}.json"
 
         self.log_path = log_path
 
@@ -149,7 +152,7 @@ class HashManager:
                     b[kind][name][skin] = this
         return b
 
-    def get_bin_hashes(self, update: bool = False) -> Dict:
+    def get_bin_hashes(self, update: bool = False) -> dict:
         """
         穷举皮肤ID， 0~100， 取出bin哈希表
         这个哈希表是用来从wad中提取bin文件用的。
@@ -162,13 +165,11 @@ class HashManager:
             return data
 
         # map是整理好的, 几乎没见过更新位置, 所以写死了
-        # 如果有新的就直接调用以下 WAD.get_hash(小写路径) 就行了
+        # 如果有新的就直接调用一下 WAD.get_hash(小写路径) 就行了
         result = {
             "characters": {},
             "maps": {
-                "common": {
-                    "15714053217970310635": "data/maps/shipping/common/common.bin"
-                },
+                "common": {"15714053217970310635": "data/maps/shipping/common/common.bin"},
                 "map11": {"4648248922051545971": "data/maps/shipping/map11/map11.bin"},
                 "map12": {"10561014283630087560": "data/maps/shipping/map12/map12.bin"},
                 "map21": {"15820477637625025279": "data/maps/shipping/map21/map21.bin"},
@@ -221,13 +222,13 @@ class HashManager:
 
                     if kind == "characters":
                         wad_file = (
-                            self.game_data.GAME_CHAMPION_PATH
-                            / f"{name.capitalize()}.wad.client"
+                                self.game_data.GAME_CHAMPION_PATH
+                                / f"{name.capitalize()}.wad.client"
                         )
                     elif kind == "maps":
                         wad_file = (
-                            self.game_data.GAME_MAPS_PATH
-                            / f"{name.capitalize()}.wad.client"
+                                self.game_data.GAME_MAPS_PATH
+                                / f"{name.capitalize()}.wad.client"
                         )
                     else:
                         wad_file = self.game_data.GAME_MAPS_PATH / "Map22.wad.client"
@@ -251,9 +252,8 @@ class HashManager:
                         if fs:
                             bs.append(b)
                             res[kind][name][_id] = list(fs)
-                        else:
-                            if p:
-                                bs.append(b)
+                        elif p:
+                            bs.append(b)
                     del raw_bins
                     if bs:
                         self.get_event_hashes(kind, name, bs, True)
@@ -267,9 +267,7 @@ class HashManager:
 
         return res
 
-    def get_event_hashes(
-        self, kind, name, bin_datas: List[BIN] = None, update=False
-    ) -> List:
+    def get_event_hashes(self, kind, name, bin_datas: list[BIN] = None, update=False) -> list:
         """
         根据bin文件获取事件哈希表
         :param kind:
@@ -299,7 +297,7 @@ class HashManager:
         return res
 
     def get_audio_hashes(
-        self, items, wad_file, event_hashes, _type, kind, name, skin, update=False
+            self, items, wad_file, event_hashes, _type, kind, name, skin, update=False
     ) -> None:
         """
         根据提供的信息生成事件ID与音频ID的哈希表
@@ -352,7 +350,7 @@ class HashManager:
         else:
             res = tree()
             parts = wad_file.parts
-            index = parts.index('Game')
+            index = parts.index("Game")
             relative_wad_path = Path(*parts[index:])
             # relative_wad_path = "Game" + wad_file.split("Game")[-1].replace("\\", "/")
             logger.info(f"开始处理: {kind}, {name}, {skin}, {_type}")
@@ -396,13 +394,13 @@ class HashManager:
                 del audio_raw
 
             if res:
-
                 target.parent.mkdir(parents=True, exist_ok=True)
                 res["info"] = {
                     "kind": kind,
                     "name": name,
                     "detail": skin,
                     "type": _type,
+                    "region": self.region,
                     "wad": str(relative_wad_path),
                     "version": game_version,
                 }
@@ -413,7 +411,7 @@ class HashManager:
             gc.collect()
             # log.info(f'to_audio_hashtable: {kind}, {name}, {skin}, {_type}')
         if self.log_path:
-            _log_file = self.log_path / f"{func_name}.{self.regin}.log"
+            _log_file = self.log_path / f"{func_name}.{self.region}.log"
             with _log_file.open("a+", encoding="utf-8") as f:
                 for item in warn_item:
                     f.write(f"{item}\n")
