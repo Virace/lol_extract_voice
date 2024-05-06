@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2024/5/6 1:15
+# @Update  : 2024/5/6 22:51
 # @Detail  : 描述
 
 import json
@@ -144,8 +144,8 @@ def get_lcu_audio():
 
     wad_sfx_file = config_instance.GAME_LCU_PATH / "default-assets.wad"
     wad_vo_file = (
-        config_instance.GAME_LCU_PATH
-        / f"{format_region(config_instance.GAME_REGION)}-assets.wad"
+            config_instance.GAME_LCU_PATH
+            / f"{format_region(config_instance.GAME_REGION)}-assets.wad"
     )
     for cid in HASH_MANAGER.game_data.get_champions_id():
         sfx.append(
@@ -163,7 +163,7 @@ def get_lcu_audio():
 
 
 def get_game_audio(
-    hash_path: StrPath = HASH_MANAGER.e2a_hash_path, audio_format="wav", max_works=None
+        hash_path: StrPath = HASH_MANAGER.e2a_hash_path, audio_format="wav", max_works=None
 ):
     """
     根据提供的哈希表, 提取游戏音频资源
@@ -205,8 +205,8 @@ def get_game_audio(
                 logger.info(f"获取{kind} {name} {detail} {_type}音频")
                 # 拼接wad文件名字
                 wad_file = (
-                    Path(config_instance.GAME_PATH)
-                    / Path(data["info"]["wad"]).as_posix()
+                        Path(config_instance.GAME_PATH)
+                        / Path(data["info"]["wad"]).as_posix()
                 )
 
                 # 取出bnk音频文件 字节类型
@@ -228,17 +228,17 @@ def get_game_audio(
 
                             thisname = i.filename if i.filename else f"{i.id}.wem"
                             filename = (
-                                Path(AUDIO_PATH)
-                                / (
-                                    config_instance.GAME_REGION
-                                    if _type == "VO"
-                                    else "default"
-                                )
-                                / _type
-                                / kind
-                                / name
-                                / detail
-                                / thisname.replace("wem", audio_format)
+                                    Path(AUDIO_PATH)
+                                    / (
+                                        config_instance.GAME_REGION
+                                        if _type == "VO"
+                                        else "default"
+                                    )
+                                    / _type
+                                    / kind
+                                    / name
+                                    / detail
+                                    / thisname.replace("wem", audio_format)
                             )
 
                             filename.parent.mkdir(parents=True, exist_ok=True)
@@ -285,7 +285,7 @@ def main(audio_format="wem", max_works=None):
     # HASH_MANAGER.game_data.get_images()
 
     # 更新哈希表
-    get_event_audio_hash_table()
+    get_event_audio_hash_table(True)
 
     get_lcu_audio()
     get_game_audio(audio_format=audio_format, max_works=max_works)
@@ -301,8 +301,8 @@ def init():
 
 if __name__ == "__main__":
     logger.configure(handlers=[
-            dict(sink=sys.stdout, level="INFO")
-        ])
+        dict(sink=sys.stdout, level="INFO")
+    ])
     logger.enable("league_tools")
 
     init()
