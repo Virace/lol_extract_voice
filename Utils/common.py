@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/16 0:15
-# @Update  : 2024/3/15 11:09
+# @Update  : 2024/5/6 20:10
 # @Detail  : 通用函数
 
 import json
@@ -155,7 +155,9 @@ def dump_json(
     :param cls: 类
     :return:
     """
-    with open(path, "w+", encoding="utf-8") as f:
+    path = Path(path)
+
+    with path.open("w+", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=ensure_ascii, cls=cls)
 
 
@@ -174,7 +176,7 @@ def load_json(path: Union[str, PathLike, Path]) -> Dict:
 
     # 如果报错则返回空字典
     try:
-        with open(path, encoding="utf-8") as f:
+        with path.open(encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
         logger.error(f"文件不存在， 位置: {path}")
@@ -249,3 +251,4 @@ def re_replace(data: str, repl: Dict[str, str]) -> str:
             value = replf(value)
         data = re.compile(f"{key}", re.I).sub(value, data)
     return data
+
