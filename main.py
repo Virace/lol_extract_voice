@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2024/5/6 22:51
+# @Update  : 2024/8/3 16:18
 # @Detail  : 描述
 
 import json
@@ -18,7 +18,7 @@ from loguru import logger
 
 from Data.Manifest import compare_version
 from Hashes import HashManager
-from Utils.common import format_region, makedirs
+from Utils.common import format_region, makedirs, capitalize_first_letter
 from Utils.logs import log_result
 from Utils.type_hints import StrPath
 from config import config_instance
@@ -53,9 +53,9 @@ def get_wad_file_name(kind, name, _type, region) -> StrPath:
         else config_instance.GAME_MAPS_PATH
     )
 
-    filename = f"{name.capitalize()}.wad.client"
+    filename = f"{capitalize_first_letter(name)}.wad.client"
     if _type == "VO" and region2 != "en_US":
-        filename = f"{name.capitalize()}.{region2}.wad.client"
+        filename = f"{capitalize_first_letter(name)}.{region2}.wad.client"
 
     return path / filename
 
@@ -86,7 +86,6 @@ def get_event_audio_hash_table(update=False, max_works=None) -> None:
                 for skin, paths in skins.items():
 
                     event_hashes = HASH_MANAGER.get_event_hashes(kind, name)
-
                     for _type, value in paths.items():
                         # if not(kind == 'characters' and name == 'akali'
                         # and skin == 'skin61' and _type == 'SFX'):
@@ -285,7 +284,7 @@ def main(audio_format="wem", max_works=None):
     # HASH_MANAGER.game_data.get_images()
 
     # 更新哈希表
-    get_event_audio_hash_table(True)
+    get_event_audio_hash_table(False)
 
     get_lcu_audio()
     get_game_audio(audio_format=audio_format, max_works=max_works)
@@ -307,3 +306,4 @@ if __name__ == "__main__":
 
     init()
     main(audio_format="wav")
+
