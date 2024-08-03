@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/3/12 13:20
-# @Update  : 2024/5/6 22:50
+# @Update  : 2024/8/3 15:13
 # @Detail  : 
 
 import gc
@@ -223,7 +223,7 @@ class HashManager:
                     if kind == "characters":
                         wad_file = (
                                 self.game_data.GAME_CHAMPION_PATH
-                                / f"{name.capitalize()}.wad.client"
+                                / f"{name}.wad.client"
                         )
                     elif kind == "maps":
                         wad_file = (
