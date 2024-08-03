@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/3/12 13:20
-# @Update  : 2024/8/3 15:13
+# @Update  : 2024/8/3 15:56
 # @Detail  : 
 
 import gc
@@ -232,6 +232,10 @@ class HashManager:
                         )
                     else:
                         wad_file = self.game_data.GAME_MAPS_PATH / "Map22.wad.client"
+
+                    if not wad_file.exists():
+                        logger.warning(f'文件缺失: {wad_file}......跳过')
+                        continue
 
                     bin_paths = list(bins.values())
                     ids = [Path(item).stem for item in bin_paths]
