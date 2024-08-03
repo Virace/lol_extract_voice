@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/16 0:15
-# @Update  : 2024/5/6 20:10
+# @Update  : 2024/8/3 16:18
 # @Detail  : 通用函数
 
 import json
@@ -25,6 +25,12 @@ if os.name == "nt":
     BasePath = WindowsPath
 else:
     BasePath = PosixPath
+
+
+def capitalize_first_letter(word):
+    if not word:
+        return word  # 处理空字符串的情况
+    return word[0].upper() + word[1:]
 
 
 class EnhancedPath(BasePath):
@@ -142,10 +148,10 @@ def check_time(func: callable) -> Callable:
 
 
 def dump_json(
-    obj,
-    path: Union[str, PathLike, Path],
-    ensure_ascii: bool = False,
-    cls: Type[JSONEncoder] | None = None,
+        obj,
+        path: Union[str, PathLike, Path],
+        ensure_ascii: bool = False,
+        cls: Type[JSONEncoder] | None = None,
 ):
     """
     将对象写入json文件
@@ -251,4 +257,3 @@ def re_replace(data: str, repl: Dict[str, str]) -> str:
             value = replf(value)
         data = re.compile(f"{key}", re.I).sub(value, data)
     return data
-
