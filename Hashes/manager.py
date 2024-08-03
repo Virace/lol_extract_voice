@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/3/12 13:20
-# @Update  : 2024/8/3 16:18
+# @Update  : 2024/8/3 16:54
 # @Detail  : 
 
 import gc
@@ -83,6 +83,10 @@ class HashManager:
         self.integrate_hash_table_file = self.workspace / f"{self.game_version}.{self.region}.json"
 
         self.log_path = log_path
+
+        self.region_map = ["cs_CZ", "el_GR", "pl_PL", "ro_RO", "hu_HU", "en_GB", "de_DE", "es_ES", "it_IT", "fr_FR",
+                           "ja_JP", "ko_KR", "es_MX", "es_AR", "pt_BR", "en_US", "en_AU", "ru_RU", "tr_TR", "ms_MY",
+                           "en_PH", "en_SG", "th_TH", "vn_VN", "id_ID", "zh_MY", "zh_CN", "zh_TW"]
 
     @classmethod
     def _load_json_file(cls, filepath: Path, update=False):
@@ -336,11 +340,8 @@ class HashManager:
                 return bool(temp)
             return bool(value)
 
-        region = re.compile(r"\w{2}_\w{2}").search(str(wad_file))
-        if region:
-            region = region.group()
-        else:
-            region = "Default"
+        region_match = re.compile(r"\w{2}_\w{2}").search(str(wad_file))
+        region = region_match.group() if region_match and region_match.group() in self.region_map else "Default"
 
         target = self.audio_hash_tpl.format(
             type=_type, kind=kind, name=name, skin=skin, region=region
