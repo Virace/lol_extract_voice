@@ -4,17 +4,20 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2023/3/7 0:35
-# @Update  : 2024/3/15 10:21
+# @Update  : 2024/8/21 19:54
 # @Detail  : todo: 用不上暂时不处理
 
 import os
 import re
 from collections import defaultdict
-from typing import Union
-from loguru import logger
+
 import requests
+from loguru import logger
+
 from Data import DICT_PATH, EXTRAS_PATH
+from Data.Manifest import GameData
 from Utils.common import dump_json, load_json, makedirs, re_replace, replace
+from Utils.type_hints import StrPath
 
 
 def txt2dict(data, suffix=''):
@@ -65,9 +68,9 @@ def check_extras_end(name):
 
 class Event:
 
-    def __init__(self, event_path: Union[str, os.PathLike], hashes_path: Union[str, os.PathLike]):
+    def __init__(self, event_path: StrPath, hashes_path: StrPath, game_path: StrPath, manifest_path: StrPath):
         """
-        事件处理, 传入数据目录, 一般为 MANIFEST_PATH
+        事件处理, 传入数据目录
         :param event_path: 事件目录
         :param hashes_path: 哈希表目录  Hashes E2A_HASH_PATH
         """
@@ -78,6 +81,9 @@ class Event:
 
         self._en_path = os.path.join(self.event_path, 'default')
         self._zh_path = os.path.join(self.event_path, 'zh_cn')
+
+        self.game_data = GameData(game_path, manifest_path, 'zh_cn')
+        self.game_data_default = GameData(game_path, manifest_path, "en_us")
 
         makedirs(self._en_path)
         makedirs(self._zh_path)
@@ -113,13 +119,13 @@ class Event:
         champions_data = requests.get(champions_api).json()['data']
         champions = {int(item['key']): item for item in champions_data.values()}
         res = {}
-        for item in game_data.get_summary():
+        for item in self.game_data.get_summary():
             if item['id'] == -1:
                 continue
             if item['id'] not in champions:
                 logger.warning(f'ddragon中未找到 {item["name"]}-{item["alias"]} 对应的英雄, 可能为PBE新英雄')
                 continue
-            
+
             res.update({item['alias']: champions[item['id']]})
 
         dump_json(res, self._zh_champions_path)
@@ -134,7 +140,7 @@ class Event:
             logger.debug(f'下载 {name} 数据')
             temp = requests.get(url).json()['data']
             res = temp[list(temp.keys())[0]]
-            dump_json(res,  os.path.join(self._zh_path, f'{name.lower()}.json'))
+            dump_json(res, os.path.join(self._zh_path, f'{name.lower()}.json'))
             # download_file(url, os.path.join(self._zh_path, f'{name.lower()}.json'))
 
     def organize(self):
@@ -145,7 +151,7 @@ class Event:
 
         # 处理 英雄名字
         logger.debug('处理英雄名字')
-        dump_json(game_data.get_champions_name(), self.repl_champions_path)
+        dump_json(self.game_data.get_champions_name(), self.repl_champions_path)
 
         self._get_skill()
         self._get_items()
@@ -163,8 +169,8 @@ class Event:
         for name, items in champions.items():
 
             data = {
-                'en_us': game_data_default.get_champion_detail_by_id(items['key'])["skins"],
-                'zh_cn': game_data.get_champion_detail_by_id(items['key'])["skins"]}
+                'en_us': self.game_data_default.get_champion_detail_by_id(items['key'])["skins"],
+                'zh_cn': self.game_data.get_champion_detail_by_id(items['key'])["skins"]}
             for region, data in data.items():
                 for item in data:
                     if not item['isBase']:
@@ -189,8 +195,8 @@ class Event:
 
         # 处理 系列皮肤
         logger.debug('处理系列皮肤')
-        zh_cn = game_data.get_skinlines()
-        en_us = game_data_default.get_skinlines()
+        zh_cn = self.game_data.get_skinlines()
+        en_us = self.game_data_default.get_skinlines()
         data = {sid: {'zh_cn': name} for sid, name in zh_cn.items()}
         for sid, name in en_us.items():
             data[sid].update({'en_us': name})
@@ -206,7 +212,7 @@ class Event:
 
         # 处理 地图信息
         logger.debug('处理地图信息')
-        data = game_data.get_maps()
+        data = self.game_data.get_maps()
         dump_json({f'Map{str(item["id"])}': item['name'] for item in data}, self.repl_maps_path)
 
         logger.debug('生成替换字典完成')
@@ -263,7 +269,7 @@ class Event:
         champions = load_json(self._zh_champions_path)
         res = dict()
         res_end = dict()
-        for data in game_data.get_summary():
+        for data in self.game_data.get_summary():
             cid = data['id']
             name = data['alias']
 
@@ -274,8 +280,8 @@ class Event:
             res_end[name] = {}
             sl = 'QWER'
 
-            en_us = game_data_default.get_champion_detail_by_id(cid)
-            zh_cn = game_data.get_champion_detail_by_id(cid)
+            en_us = self.game_data_default.get_champion_detail_by_id(cid)
+            zh_cn = self.game_data.get_champion_detail_by_id(cid)
 
             # PBE新英雄
             if name in champions:
@@ -337,7 +343,7 @@ class Event:
         :return:
         """
         # champions = load_json(self.repl_champions_path)
-        champions = game_data.get_champions_name()
+        champions = self.game_data.get_champions_name()
         skill = load_json(self.repl_skills_path)
         skill_end = load_json(self.repl_skills_end_path)
         items = load_json(self.repl_items_path)
