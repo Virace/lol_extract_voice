@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:00
-# @Update  : 2024/5/6 1:04
+# @Update  : 2024/8/22 0:29
 # @Detail  : config.py
 
 import json
@@ -72,7 +72,7 @@ class Config:
 
         if not cls.env_only:
             load_dotenv(dotenv_path=cls.env_path, override=True)
-        cls.params = json.loads((Path("params.json")).read_text())
+        cls.params = json.loads((ROOT_PATH / "params.json").read_text())
         for param, metadata in cls.params.items():
             data = cls._get_env(param, metadata)
 
@@ -133,4 +133,5 @@ class Config:
         self._load_and_set_env(self)
 
 
+ROOT_PATH = Path(__file__).resolve().parent
 config_instance = Config()
