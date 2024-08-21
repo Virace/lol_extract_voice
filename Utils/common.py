@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/16 0:15
-# @Update  : 2024/8/3 16:18
+# @Update  : 2024/8/21 23:25
 # @Detail  : 通用函数
 
 import json
@@ -220,6 +220,55 @@ def download_file(url: str, path: Union[str, PathLike, Path]) -> Path:
                 f.write(chunk)
                 f.flush()
     return path
+
+
+def fetch_json_data(url: str, method: str = 'GET', retries: int = 5, delay: int = 2, params: dict = None,
+                    data: dict = None, headers: dict = None, callback: callable = None) -> dict:
+    """
+    从给定的URL获取JSON数据
+
+    :param url: 要获取数据的URL。
+    :param method: HTTP请求方法 ('GET' 或 'POST')，默认为 'GET'。
+    :param retries: 遇到网络错误时的重试次数，默认为5次。
+    :param delay: 每次重试之间的延迟时间（秒），默认为2秒。
+    :param params: URL中的请求参数（适用于GET请求）。
+    :param data: 请求体中的数据（适用于POST请求）。
+    :param headers: 请求头信息。
+    :param callback: 一个回调函数，用于处理非JSON格式的响应内容。
+    :return: 返回JSON格式的数据（字典），或回调函数的处理结果。
+    :raises ValueError: 如果响应内容不是JSON格式且未提供回调函数，则抛出异常。
+    """
+    for attempt in range(retries):
+        try:
+            logger.trace(f"第 {attempt + 1} 次尝试访问 URL: {url}，总共尝试次数: {retries}")
+
+            if method.upper() == 'GET':
+                response = requests.get(url, params=params, headers=headers)
+            elif method.upper() == 'POST':
+                response = requests.post(url, params=params, data=data, headers=headers)
+            else:
+                raise ValueError("无效的请求方法。请使用 'GET' 或 'POST'。")
+
+            logger.trace(f"收到来自 URL: {url} 的响应，状态码为: {response.status_code}")
+
+            try:
+                json_data = response.json()
+                logger.debug(f"成功从 URL: {url} 解析出JSON数据")
+                return json_data
+            except ValueError:
+                logger.warning(f"来自 URL: {url} 的响应内容不是JSON格式")
+                if callback:
+                    logger.debug(f"使用回调函数处理来自 URL: {url} 的非JSON响应内容")
+                    return callback(response.text)
+                else:
+                    raise ValueError(f"响应内容不是JSON格式，且未提供回调函数用于处理 URL: {url} 的数据")
+
+        except requests.RequestException as e:
+            logger.error(f"网络错误: {e}，将在 {delay} 秒后重试...")
+            time.sleep(delay)
+
+    logger.error(f"多次尝试后仍无法从 URL: {url} 获取JSON数据，已达到最大重试次数: {retries}")
+    raise ValueError(f"多次尝试后仍无法从 URL: {url} 获取JSON数据，已达到最大重试次数: {retries}")
 
 
 def replace(data: str, repl: Dict[str, str]) -> str:
