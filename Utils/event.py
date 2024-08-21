@@ -4,12 +4,13 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2023/3/7 0:35
-# @Update  : 2024/8/21 19:54
+# @Update  : 2024/8/21 20:43
 # @Detail  : todo: 用不上暂时不处理
 
 import os
 import re
 from collections import defaultdict
+from pathlib import Path
 
 import requests
 from loguru import logger
@@ -68,19 +69,19 @@ def check_extras_end(name):
 
 class Event:
 
-    def __init__(self, event_path: StrPath, hashes_path: StrPath, game_path: StrPath, manifest_path: StrPath):
+    def __init__(self, manifest_path: StrPath, hash_path: StrPath, game_path: StrPath, version: str = '99.99'):
         """
         事件处理, 传入数据目录
-        :param event_path: 事件目录
-        :param hashes_path: 哈希表目录  Hashes E2A_HASH_PATH
+        :param manifest_path: 事件目录
+        :param hash_path: 哈希表目录  Hashes E2A_HASH_PATH
         """
-        self.hashes_path = hashes_path
-        self.event_path = os.path.join(event_path, 'Events')
+        self.hash_path = Path(hash_path) / version / 'event2audio'
+        self.manifest_path = os.path.join(manifest_path, 'Events')
 
-        self.repl_path = os.path.join(event_path, 'Repl')
+        self.repl_path = os.path.join(manifest_path, 'Repl')
 
-        self._en_path = os.path.join(self.event_path, 'default')
-        self._zh_path = os.path.join(self.event_path, 'zh_cn')
+        self._en_path = os.path.join(self.manifest_path, 'default')
+        self._zh_path = os.path.join(self.manifest_path, 'zh_cn')
 
         self.game_data = GameData(game_path, manifest_path, 'zh_cn')
         self.game_data_default = GameData(game_path, manifest_path, "en_us")
@@ -89,7 +90,7 @@ class Event:
         makedirs(self._zh_path)
         makedirs(self.repl_path)
 
-        self._all_events = os.path.join(self.event_path, 'AllEvents.json')
+        self._all_events = os.path.join(self.manifest_path, 'AllEvents.json')
 
         self._en_items_path = os.path.join(self._en_path, 'Items-en.json')
         self._zh_items_path = os.path.join(self._zh_path, 'Items-zh.json')
@@ -108,7 +109,7 @@ class Event:
         self.repl_maps_path = os.path.join(self.repl_path, 'Maps.json')
 
         # 最终翻译文件
-        self.kv = os.path.join(hashes_path, 'kv.json')
+        self.kv = os.path.join(self.hash_path, 'kv.json')
 
     def update_data(self):
         version = requests.get('https://ddragon.leagueoflegends.com/api/versions.json').json()[0]
@@ -314,8 +315,8 @@ class Event:
         收集所有事件名
         :return:
         """
-        root = [os.path.join(self.hashes_path, 'zh_CN', 'VO', 'characters'),
-                os.path.join(self.hashes_path, 'zh_CN', 'VO', 'maps')]
+        root = [os.path.join(self.hash_path, 'zh_CN', 'VO', 'characters'),
+                os.path.join(self.hash_path, 'zh_CN', 'VO', 'maps')]
         res = {}
         for path in root:
             skins = {}
@@ -454,3 +455,22 @@ class Event:
             #     print(res)
             # print(data)
         dump_json(result, self.kv)
+
+
+if __name__ == '__main__':
+    import sys
+    from config import config_instance
+
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    logger.configure(handlers=[
+        dict(sink=sys.stdout, level="DEBUG")
+    ])
+
+    event = Event(
+        game_path=config_instance.GAME_PATH,
+        hash_path=config_instance.HASH_PATH,
+        manifest_path=config_instance.MANIFEST_PATH,
+        version='14.11'
+    )
+    event.update_data()
+    event.organize()
