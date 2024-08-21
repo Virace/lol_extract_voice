@@ -4,21 +4,23 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2023/3/7 0:35
-# @Update  : 2024/8/21 20:43
-# @Detail  : todo: 用不上暂时不处理
+# @Update  : 2024/8/22 0:33
+# @Detail  : 
 
+import json
 import os
 import re
 from collections import defaultdict
 from pathlib import Path
+from typing import Callable
 
-import requests
 from loguru import logger
 
 from Data import DICT_PATH, EXTRAS_PATH
 from Data.Manifest import GameData
 from Utils.common import dump_json, load_json, makedirs, re_replace, replace
 from Utils.type_hints import StrPath
+from common import fetch_json_data
 
 
 def txt2dict(data, suffix=''):
@@ -59,8 +61,8 @@ def check_extras(name, suffix=''):
     :return:
     """
     name = f'{name.lower()}{suffix}.txt'
-    if name in os.listdir(EXTRAS_PATH):
-        return load_keys(os.path.join(EXTRAS_PATH, name))
+    if name in EXTRAS_PATH.iterdir():
+        return load_keys(EXTRAS_PATH / name)
 
 
 def check_extras_end(name):
@@ -75,13 +77,17 @@ class Event:
         :param manifest_path: 事件目录
         :param hash_path: 哈希表目录  Hashes E2A_HASH_PATH
         """
+
+        self._ddragon_version_api = 'https://ddragon.leagueoflegends.com/api/versions.json'
+        dd_version = fetch_json_data(self._ddragon_version_api)[0]
+
         self.hash_path = Path(hash_path) / version / 'event2audio'
-        self.manifest_path = os.path.join(manifest_path, 'Events')
+        self.manifest_path = Path(manifest_path) / dd_version / 'Events'
 
-        self.repl_path = os.path.join(manifest_path, 'Repl')
+        self.repl_path = Path(manifest_path) / dd_version / 'Repl'
 
-        self._en_path = os.path.join(self.manifest_path, 'default')
-        self._zh_path = os.path.join(self.manifest_path, 'zh_cn')
+        self._en_path = self.manifest_path / 'default'
+        self._zh_path = self.manifest_path / 'zh_cn'
 
         self.game_data = GameData(game_path, manifest_path, 'zh_cn')
         self.game_data_default = GameData(game_path, manifest_path, "en_us")
@@ -90,34 +96,67 @@ class Event:
         makedirs(self._zh_path)
         makedirs(self.repl_path)
 
-        self._all_events = os.path.join(self.manifest_path, 'AllEvents.json')
+        self._all_events = self.manifest_path / 'AllEvents.json'
 
-        self._en_items_path = os.path.join(self._en_path, 'Items-en.json')
-        self._zh_items_path = os.path.join(self._zh_path, 'Items-zh.json')
+        self._en_items_path = self._en_path / 'Items-en.json'
+        self._zh_items_path = self._zh_path / 'Items-zh.json'
 
-        self._zh_champions_path = os.path.join(self._zh_path, 'Champions-zh.json')
+        self._zh_champions_raw_path = self._zh_path / 'Champions-raw-zh.json'
+        self._zh_champions_path = self._zh_path / 'Champions-zh.json'
 
         # 最初输出的文件名
-        self.repl_items_path = os.path.join(self.repl_path, 'Items.json')
-        self.repl_champions_path = os.path.join(self.repl_path, 'Champions.json')
-        self.repl_regions_path = os.path.join(self.repl_path, 'Regions.json')
-        self.repl_skills_path = os.path.join(self.repl_path, 'Skills.json')
-        self.repl_skills_end_path = os.path.join(self.repl_path, 'Skills_end.json')
-        self.repl_skins_path = os.path.join(self.repl_path, 'Skins.json')
-        self.repl_skins_end_path = os.path.join(self.repl_path, 'Skins_end.json')
-        self.repl_skin_lines_path = os.path.join(self.repl_path, 'Skin_lines.json')
-        self.repl_maps_path = os.path.join(self.repl_path, 'Maps.json')
+        self.repl_items_path = self.repl_path / 'Items.json'
+        self.repl_champions_path = self.repl_path / 'Champions.json'
+        self.repl_regions_path = self.repl_path / 'Regions.json'
+        self.repl_skills_path = self.repl_path / 'Skills.json'
+        self.repl_skills_end_path = self.repl_path / 'Skills_end.json'
+        self.repl_skins_path = self.repl_path / 'Skins.json'
+        self.repl_skins_end_path = self.repl_path / 'Skins_end.json'
+        self.repl_skin_lines_path = self.repl_path / 'Skin_lines.json'
+        self.repl_maps_path = self.repl_path / 'Maps.json'
+
+        logger.info(f'本地版本: {version}, ddragon版本: {dd_version}')
+        self._ddragon_champions_cn_api = f'https://ddragon.leagueoflegends.com/cdn/{dd_version}/data/zh_CN/champion.json'
+        self._ddragon_item_zh_api = f'https://ddragon.leagueoflegends.com/cdn/{dd_version}/data/zh_CN/item.json'
+        self._ddragon_item_en_api = f'https://ddragon.leagueoflegends.com/cdn/{dd_version}/data/zh_CN/item.json'
+        self._ddragon_champion_cn_api = f'https://ddragon.leagueoflegends.com/cdn/{dd_version}/data/zh_CN/champion/{{name}}.json'
 
         # 最终翻译文件
-        self.kv = os.path.join(self.hash_path, 'kv.json')
+        self.kv = Path(manifest_path) / f'kv.{version}.json'
+
+    @classmethod
+    def _fetch_and_save(cls, url, path, force_update=False, _call: Callable = None, **kwargs):
+        """
+        从指定URL获取数据并保存到文件。 如果文件存在且大小大于空字典的大小，则不执行下载。
+        如果force_update为True，则无论文件是否存在，都会重新获取数据并保存。
+
+        :param url: 要获取数据的URL
+        :param path: 保存文件的路径
+        :param force_update: 是否强制更新文件，默认值为False
+        :param kwargs: 传递给fetch_json_data的其他参数
+        :return: None
+        """
+        path = Path(path)
+        empty_dict_size = len(json.dumps({}))  # 空字典的大小
+
+        if path.exists() and not force_update:
+            if path.stat().st_size > empty_dict_size:
+                logger.debug(f"{path} 文件已存在且大小符合要求，跳过下载")
+                return
+
+        logger.debug(f"正在从 {url} 获取数据并保存到 {path}")
+
+        data = fetch_json_data(url, **kwargs)['data']
+        if _call:
+            data = _call(data)
+        dump_json(data, path)
 
     def update_data(self):
-        version = requests.get('https://ddragon.leagueoflegends.com/api/versions.json').json()[0]
 
-        logger.debug(f'当前版本: {version}')
-        champions_api = f'https://ddragon.leagueoflegends.com/cdn/{version}/data/zh_CN/champion.json'
-        #
-        champions_data = requests.get(champions_api).json()['data']
+        # 下载并保存RAW数据
+        self._fetch_and_save(self._ddragon_champions_cn_api,
+                             self._zh_champions_raw_path)
+        champions_data = load_json(self._zh_champions_raw_path)
         champions = {int(item['key']): item for item in champions_data.values()}
         res = {}
         for item in self.game_data.get_summary():
@@ -131,18 +170,14 @@ class Event:
 
         dump_json(res, self._zh_champions_path)
 
-        item_api = f'https://ddragon.leagueoflegends.com/cdn/{version}/data/zh_CN/item.json'
-        dump_json(requests.get(item_api).json()['data'], self._zh_items_path)
-        item_api = f'https://ddragon.leagueoflegends.com/cdn/{version}/data/en_US/item.json'
-        dump_json(requests.get(item_api).json()['data'], self._en_items_path)
+        self._fetch_and_save(self._ddragon_item_zh_api, self._zh_items_path)
+        self._fetch_and_save(self._ddragon_item_en_api, self._en_items_path)
 
         for name, _ in champions_data.items():
-            url = f'https://ddragon.leagueoflegends.com/cdn/{version}/data/zh_CN/champion/{name}.json'
-            logger.debug(f'下载 {name} 数据')
-            temp = requests.get(url).json()['data']
-            res = temp[list(temp.keys())[0]]
-            dump_json(res, os.path.join(self._zh_path, f'{name.lower()}.json'))
-            # download_file(url, os.path.join(self._zh_path, f'{name.lower()}.json'))
+            logger.info(f'下载 {name} 数据')
+            self._fetch_and_save(self._ddragon_champion_cn_api.format(name=name),
+                                 self._zh_path / f'{name.lower()}.json',
+                                 _call=lambda x: list(x.values())[0])
 
     def organize(self):
         """
@@ -151,19 +186,19 @@ class Event:
         """
 
         # 处理 英雄名字
-        logger.debug('处理英雄名字')
+        logger.info('处理英雄名字')
         dump_json(self.game_data.get_champions_name(), self.repl_champions_path)
 
         self._get_skill()
         self._get_items()
 
         # 处理 联盟宇宙相关
-        logger.debug('处理联盟宇宙相关')
+        logger.info('处理联盟宇宙相关')
         self._get_universe()
 
         # 处理 皮肤
         champions = load_json(self._zh_champions_path)
-        logger.debug('处理皮肤')
+        logger.info('处理皮肤')
         skins = defaultdict(dict)
         res = {}
         res_end = {}
@@ -195,7 +230,7 @@ class Event:
         dump_json(res_end, self.repl_skins_end_path)
 
         # 处理 系列皮肤
-        logger.debug('处理系列皮肤')
+        logger.info('处理系列皮肤')
         zh_cn = self.game_data.get_skinlines()
         en_us = self.game_data_default.get_skinlines()
         data = {sid: {'zh_cn': name} for sid, name in zh_cn.items()}
@@ -212,11 +247,11 @@ class Event:
         dump_json(res, self.repl_skin_lines_path)
 
         # 处理 地图信息
-        logger.debug('处理地图信息')
+        logger.info('处理地图信息')
         data = self.game_data.get_maps()
         dump_json({f'Map{str(item["id"])}': item['name'] for item in data}, self.repl_maps_path)
 
-        logger.debug('生成替换字典完成')
+        logger.info('生成替换字典完成')
 
     def _get_universe(self):
         """
@@ -224,11 +259,11 @@ class Event:
         :return:
         """
         region_api = 'https://yz.lol.qq.com/v1/zh_cn/faction-browse/index.json'
-        region_data = requests.get(region_api).json()['factions']
+        region_data = fetch_json_data(region_api)['factions']
         res = {item['slug'].replace('-', ''): item['name'] for item in region_data}
 
         other_api = 'https://yz.lol.qq.com/v1/dictionaries/zh_cn.json'
-        other_data = requests.get(other_api).json()
+        other_data = fetch_json_data(other_api)
         for key, value in other_data.items():
             gourp = re.compile(r'^(race|role|faction)-(.*)').findall(key)
             if gourp and value is not None:
@@ -286,7 +321,7 @@ class Event:
 
             # PBE新英雄
             if name in champions:
-                data = load_json(os.path.join(self._zh_path, f'{name.lower()}.json'))
+                data = load_json(self._zh_path / f'{name.lower()}.json')
                 res[name].update({'Passive': f'{data["passive"]["name"]}(被动技能)'})
                 res_end[name].update({f'{name}P': f'{data["passive"]["name"]}(被动技能)', })
 
@@ -315,25 +350,25 @@ class Event:
         收集所有事件名
         :return:
         """
-        root = [os.path.join(self.hash_path, 'zh_CN', 'VO', 'characters'),
-                os.path.join(self.hash_path, 'zh_CN', 'VO', 'maps')]
+        root = [self.hash_path / 'zh_CN' / 'VO' / 'characters',
+                self.hash_path / 'zh_CN' / 'VO' / 'maps']
         res = {}
         for path in root:
             skins = {}
-            items = os.listdir(path)
-            for name in items:
+            for name_path in path.iterdir():
                 skins.update({
-                    name: [os.path.join(path, name, i) for i in os.listdir(os.path.join(path, name))]
+                    # 英雄名: [skin文件列表]
+                    name_path.name: [str(i) for i in name_path.iterdir()]
                 })
 
             for name, skin in skins.items():
-                event = []
+                _event = []
                 for item in skin:
                     values = load_json(item)['data'].values()
                     for v in values:
-                        event.extend(list(v.keys()))
+                        _event.extend(list(v.keys()))
                     # event.extend(list(load_json(item)['data'].values())[0].keys())
-                res[name] = event
+                res[name] = _event
 
         dump_json(res, self._all_events)
 
@@ -355,12 +390,12 @@ class Event:
         maps = load_json(self.repl_maps_path)
         events = load_json(self._all_events)
 
-        fix = load_keys(os.path.join(DICT_PATH, 'words_fix.txt'))
-        start = load_keys(os.path.join(DICT_PATH, 'start_cn.txt'))
-        end = load_keys(os.path.join(DICT_PATH, 'end_cn.txt'))
-        uin = load_keys(os.path.join(DICT_PATH, 'universe.txt'))
-        map_del = load_keys(os.path.join(DICT_PATH, 'maps.txt'))
-        item_del = load_keys(os.path.join(DICT_PATH, 'item_cn.txt'), '(已删除)')
+        fix = load_keys(DICT_PATH / 'words_fix.txt')
+        start = load_keys(DICT_PATH / 'start_cn.txt')
+        end = load_keys(DICT_PATH / 'end_cn.txt')
+        uin = load_keys(DICT_PATH / 'universe.txt')
+        map_del = load_keys(DICT_PATH / 'maps.txt')
+        item_del = load_keys(DICT_PATH / 'item_cn.txt', '(已删除)')
 
         result = load_json(self.kv)
         for name, title in champions.items():
@@ -370,7 +405,7 @@ class Event:
             result[key] = {}
             # if name != 'Kayle':
             #     continue
-            logger.debug(f'处理{name}')
+            logger.info(f'处理{name}')
             skill_this = skill[name]
             skill_this_end = skill_end[name]
             # name = name.capitalize()
@@ -455,6 +490,7 @@ class Event:
             #     print(res)
             # print(data)
         dump_json(result, self.kv)
+        logger.success(f'kv file: {self.kv}')
 
 
 if __name__ == '__main__':
@@ -463,7 +499,7 @@ if __name__ == '__main__':
 
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     logger.configure(handlers=[
-        dict(sink=sys.stdout, level="DEBUG")
+        dict(sink=sys.stdout, level="INFO")
     ])
 
     event = Event(
@@ -472,5 +508,10 @@ if __name__ == '__main__':
         manifest_path=config_instance.MANIFEST_PATH,
         version='14.11'
     )
+    # 从dd更新数据
     event.update_data()
+    # 收集所有事件名
+    event.collect_event()
+
     event.organize()
+    event.translate_event()
