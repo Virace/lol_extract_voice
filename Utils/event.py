@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2023/3/7 0:35
-# @Update  : 2024/8/22 0:33
+# @Update  : 2024/8/22 0:38
 # @Detail  : 
 
 import json
@@ -495,9 +495,11 @@ class Event:
 
 if __name__ == '__main__':
     import sys
-    from config import config_instance
 
     sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    from config import config_instance
+
     logger.configure(handlers=[
         dict(sink=sys.stdout, level="INFO")
     ])
