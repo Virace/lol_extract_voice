@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:00
-# @Update  : 2024/8/22 0:29
+# @Update  : 2024/9/3 10:24
 # @Detail  : config.py
 
 import json
@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from typing import Dict
 from pathlib import Path
 
-from Utils.type_hints import StrPath
+from lol_audio_unpack.Utils.type_hints import StrPath
 
 
 class Config:
@@ -24,7 +24,7 @@ class Config:
     env_prefix: str = "LOL_"
 
     # 配置路径，默认为当前目录下的 .lol.env 文件
-    env_path: StrPath = os.getenv("LOL_ENV_PATH", ".lol.env")
+    env_path: StrPath = os.getenv("LOL_ENV_PATH", "../.lol.env")
 
     # 是否只加载环境变量，True则不加载配置文件，默认为False
     env_only = bool(os.getenv("LOL_ENV_ONLY", False))

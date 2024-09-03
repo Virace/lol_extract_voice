@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2023/3/7 0:35
-# @Update  : 2024/8/22 0:38
+# @Update  : 2024/9/3 10:24
 # @Detail  : 
 
 import json
@@ -16,10 +16,10 @@ from typing import Callable
 
 from loguru import logger
 
-from Data import DICT_PATH, EXTRAS_PATH
-from Data.Manifest import GameData
-from Utils.common import dump_json, load_json, makedirs, re_replace, replace
-from Utils.type_hints import StrPath
+from lol_audio_unpack.Data import DICT_PATH, EXTRAS_PATH
+from lol_audio_unpack.Data.Manifest import GameData
+from lol_audio_unpack.Utils.common import dump_json, load_json, makedirs, re_replace, replace
+from lol_audio_unpack.Utils.type_hints import StrPath
 from common import fetch_json_data
 
 

@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/3/12 13:20
-# @Update  : 2024/9/3 6:41
+# @Update  : 2024/9/3 10:24
 # @Detail  : 
 
 import gc
@@ -17,9 +17,9 @@ import league_tools
 from league_tools.formats import BIN, WAD, StringHash
 from loguru import logger
 
-from Data.Manifest import GameData
-from Utils.common import EnhancedPath, de_duplication, dump_json, load_json, makedirs, tree, capitalize_first_letter
-from Utils.type_hints import StrPath
+from lol_audio_unpack.Data.Manifest import GameData
+from lol_audio_unpack.Utils.common import EnhancedPath, de_duplication, dump_json, load_json, makedirs, tree, capitalize_first_letter
+from lol_audio_unpack.Utils.type_hints import StrPath
 
 
 class HashManager:

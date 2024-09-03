@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2024/8/30 7:06
+# @Update  : 2024/9/3 10:24
 # @Detail  : 描述
 
 import json
@@ -16,12 +16,12 @@ from league_tools import get_audio_files
 from league_tools.formats import WAD
 from loguru import logger
 
-from Data.Manifest import compare_version
-from Hashes import HashManager
-from Utils.common import format_region, makedirs, capitalize_first_letter
-from Utils.logs import log_result, task_done_callback
-from Utils.type_hints import StrPath
-from config import config_instance
+from lol_audio_unpack.Data.Manifest import compare_version
+from lol_audio_unpack.Hashes import HashManager
+from lol_audio_unpack.Utils.common import format_region, makedirs, capitalize_first_letter
+from lol_audio_unpack.Utils.logs import log_result, task_done_callback
+from lol_audio_unpack.Utils.type_hints import StrPath
+from lol_audio_unpack.Utils.config import config_instance
 
 HASH_MANAGER = HashManager(
     game_path=config_instance.GAME_PATH,

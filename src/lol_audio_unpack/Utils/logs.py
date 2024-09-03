@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/27 12:07
-# @Update  : 2024/8/30 7:04
+# @Update  : 2024/9/3 10:24
 # @Detail  : 描述
 
 import traceback
@@ -14,7 +14,7 @@ from typing import Optional
 
 from loguru import logger
 
-from Utils.type_hints import StrPath
+from lol_audio_unpack.Utils.type_hints import StrPath
 
 
 def log_result(fs, func_name, region: Optional[str] = "", log_path: StrPath = ""):
