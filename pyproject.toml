@@ -8,10 +8,14 @@ authors = [
 dependencies = [
     "requests>=2.31.0",
     "python-dotenv>=1.0.1",
-    "league-tools>=0.2.0",
+    "league-tools>=0.2.3",
+    "riotmanifest>=1.0.4",
 ]
 readme = "README.md"
 requires-python = ">= 3.10"
+
+[project.scripts]
+"lol-audio-unpack" = "lol_audio_unpack:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -25,10 +29,10 @@ dev-dependencies = []
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["."]
+packages = ["src/lol_audio_unpack"]
 
 [tool.ruff]
-line-length = 88
+line-length = 120
 
 select = [
     "E", # pycodestyle Errors
