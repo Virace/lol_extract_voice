@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/3/12 13:20
-# @Update  : 2024/8/3 16:54
+# @Update  : 2024/9/3 6:41
 # @Detail  : 
 
 import gc
@@ -18,26 +18,18 @@ from league_tools.formats import BIN, WAD, StringHash
 from loguru import logger
 
 from Data.Manifest import GameData
-from Utils.common import (
-    EnhancedPath,
-    de_duplication,
-    dump_json,
-    load_json,
-    makedirs,
-    tree,
-    capitalize_first_letter
-)
+from Utils.common import EnhancedPath, de_duplication, dump_json, load_json, makedirs, tree, capitalize_first_letter
 from Utils.type_hints import StrPath
 
 
 class HashManager:
     def __init__(
-            self,
-            game_path: StrPath,
-            manifest_path: StrPath,
-            hash_path: StrPath,
-            region: str = "zh_CN",
-            log_path: StrPath | None = None,
+        self,
+        game_path: StrPath,
+        manifest_path: StrPath,
+        hash_path: StrPath,
+        region: str = "zh_CN",
+        log_path: StrPath | None = None,
     ):
         """
         哈希表管理器
@@ -68,25 +60,45 @@ class HashManager:
 
         self.bin_hash_file = self.workspace / "bin.json"
         self.bnk_hash_file = self.workspace / f"bnk.{self.region}.json"
-        self.event_hash_tpl = EnhancedPath(
-            self.event_hash_path / "{kind}" / "{name}.json"
-        )
+        self.event_hash_tpl = EnhancedPath(self.event_hash_path / "{kind}" / "{name}.json")
         self.audio_hash_tpl = EnhancedPath(
-            self.e2a_hash_path
-            / "{region}"
-            / "{type}"
-            / "{kind}"
-            / "{name}"
-            / "{skin}.json"
+            self.e2a_hash_path / "{region}" / "{type}" / "{kind}" / "{name}" / "{skin}.json"
         )
 
         self.integrate_hash_table_file = self.workspace / f"{self.game_version}.{self.region}.json"
 
         self.log_path = log_path
 
-        self.region_map = ["cs_CZ", "el_GR", "pl_PL", "ro_RO", "hu_HU", "en_GB", "de_DE", "es_ES", "it_IT", "fr_FR",
-                           "ja_JP", "ko_KR", "es_MX", "es_AR", "pt_BR", "en_US", "en_AU", "ru_RU", "tr_TR", "ms_MY",
-                           "en_PH", "en_SG", "th_TH", "vn_VN", "id_ID", "zh_MY", "zh_CN", "zh_TW"]
+        self.region_map = [
+            "cs_CZ",
+            "el_GR",
+            "pl_PL",
+            "ro_RO",
+            "hu_HU",
+            "en_GB",
+            "de_DE",
+            "es_ES",
+            "it_IT",
+            "fr_FR",
+            "ja_JP",
+            "ko_KR",
+            "es_MX",
+            "es_AR",
+            "pt_BR",
+            "en_US",
+            "en_AU",
+            "ru_RU",
+            "tr_TR",
+            "ms_MY",
+            "en_PH",
+            "en_SG",
+            "th_TH",
+            "vn_VN",
+            "id_ID",
+            "zh_MY",
+            "zh_CN",
+            "zh_TW",
+        ]
 
     @classmethod
     def _load_json_file(cls, filepath: Path, update=False):
@@ -191,12 +203,7 @@ class HashManager:
 
             # 循环0 到100， 是skin的编号
             result["characters"].update(
-                {
-                    item: {
-                        WAD.get_hash(tpl.format(item, i)): tpl.format(item, i)
-                        for i in range(101)
-                    }
-                }
+                {item: {WAD.get_hash(tpl.format(item, i)): tpl.format(item, i) for i in range(101)}}
             )
 
         self._save_json_file(self.bin_hash_file, result)
@@ -226,20 +233,14 @@ class HashManager:
                 for name, bins in parts.items():
 
                     if kind == "characters":
-                        wad_file = (
-                                self.game_data.GAME_CHAMPION_PATH
-                                / f"{capitalize_first_letter(name)}.wad.client"
-                        )
+                        wad_file = self.game_data.GAME_CHAMPION_PATH / f"{capitalize_first_letter(name)}.wad.client"
                     elif kind == "maps":
-                        wad_file = (
-                                self.game_data.GAME_MAPS_PATH
-                                / f"{capitalize_first_letter(name)}.wad.client"
-                        )
+                        wad_file = self.game_data.GAME_MAPS_PATH / f"{capitalize_first_letter(name)}.wad.client"
                     else:
                         wad_file = self.game_data.GAME_MAPS_PATH / "Map22.wad.client"
 
                     if not wad_file.exists():
-                        logger.warning(f'文件缺失: {wad_file}......跳过')
+                        logger.warning(f"文件缺失: {wad_file}......跳过")
                         continue
 
                     bin_paths = list(bins.values())
@@ -305,9 +306,7 @@ class HashManager:
         del bin_datas
         return res
 
-    def get_audio_hashes(
-            self, items, wad_file, event_hashes, _type, kind, name, skin, update=False
-    ) -> None:
+    def get_audio_hashes(self, items, wad_file, event_hashes, _type, kind, name, skin, update=False) -> None:
         """
         根据提供的信息生成事件ID与音频ID的哈希表
         :param items: 由bin_to_data返回的数据, 格式如下
@@ -343,9 +342,7 @@ class HashManager:
         region_match = re.compile(r"\w{2}_\w{2}").search(str(wad_file))
         region = region_match.group() if region_match and region_match.group() in self.region_map else "Default"
 
-        target = self.audio_hash_tpl.format(
-            type=_type, kind=kind, name=name, skin=skin, region=region
-        )
+        target = self.audio_hash_tpl.format(type=_type, kind=kind, name=name, skin=skin, region=region)
         if target.exists() and not update:
             # 可以直接pass 这里json加载用来校验文件是否正常
             # d = json.load(open(target, encoding='utf-8'))
@@ -369,25 +366,18 @@ class HashManager:
                 data_raw = WAD(wad_file).extract(files, raw=True)
                 if not tt(data_raw):
                     warn_item.append((wad_file, item["events"]))
-                    logger.trace(
-                        f"WAD无文件解包: {wad_file}, "
-                        f'{name}, {skin}, {_type}, {item["events"]}'
-                    )
+                    logger.trace(f"WAD无文件解包: {wad_file}, " f'{name}, {skin}, {_type}, {item["events"]}')
                     continue
 
                 # 事件就一个，音频可能有多个，一般是两个
                 event_raw, *audio_raw = data_raw
                 try:
-                    event_hash = league_tools.get_event_hashtable(
-                        event_hashes, event_raw
-                    )
+                    event_hash = league_tools.get_event_hashtable(event_hashes, event_raw)
                 except KeyError:
                     # characters, zyra, skin2, SFX, 这个bnk文件events和audio是相反的
                     if len(audio_raw) > 1:
                         raise ValueError(f"未知错误, {kind}, {name}, {skin}, {_type}")
-                    event_hash = league_tools.get_event_hashtable(
-                        event_hashes, audio_raw[0]
-                    )
+                    event_hash = league_tools.get_event_hashtable(event_hashes, audio_raw[0])
                     audio_raw = [event_raw]
 
                 for raw in audio_raw:

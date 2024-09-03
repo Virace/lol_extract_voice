@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:56
-# @Update  : 2024/8/3 14:44
+# @Update  : 2024/9/3 6:38
 # @Detail  : 游戏数据
 
 import json
@@ -25,9 +25,7 @@ class GameData:
     获取游戏相关数据
     """
 
-    def __init__(
-        self, game_path: StrPath, manifest_path: StrPath, region: str = "zh_CN"
-    ):
+    def __init__(self, game_path: StrPath, manifest_path: StrPath, region: str = "zh_CN"):
         """
         :param region: 地区
         """
@@ -36,25 +34,17 @@ class GameData:
         self.region = region
         if self.region.lower() == "en_us":
             self.region = "default"
-        self.data_path = (
-            self.game_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data"
-        )
-        self.wad_file_region = (
-            self.data_path / f"{format_region(self.region)}-assets.wad"
-        )
+        self.data_path = self.game_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data"
+        self.wad_file_region = self.data_path / f"{format_region(self.region)}-assets.wad"
         self.wad_file_default = self.data_path / "default-assets.wad"
 
         self._version_api = "https://ddragon.leagueoflegends.com/api/versions.json"
 
         # 游戏英雄文件目录 (Game/DATA/FINAL/Champions)
-        self.GAME_CHAMPION_PATH = (
-            self.game_path / "Game" / "DATA" / "FINAL" / "Champions"
-        )
+        self.GAME_CHAMPION_PATH = self.game_path / "Game" / "DATA" / "FINAL" / "Champions"
 
         # 游戏地图(公共)文件目录 (Game/DATA/FINAL/Maps/Shipping)
-        self.GAME_MAPS_PATH = (
-            self.game_path / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping"
-        )
+        self.GAME_MAPS_PATH = self.game_path / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping"
 
     def _get_out_path(self, files: [str, list[str]] = ""):
         """
@@ -89,27 +79,21 @@ class GameData:
             logger.debug(traceback.format_exc())
         return {}
 
-    def get_summary(
-        self,
-    ):
+    def get_summary(self):
         """
         获取英雄列表
         :return:
         """
         return self._open_file("champion-summary.json")
 
-    def get_skins(
-        self,
-    ):
+    def get_skins(self):
         """
         获取皮肤列表
         :return:
         """
         return self._open_file("skins.json")
 
-    def get_skinlines(
-        self,
-    ):
+    def get_skinlines(self):
         """
         获取皮肤系列列表
         :return:
@@ -118,9 +102,7 @@ class GameData:
         result = {item["id"]: item["name"] for item in temp}
         return result
 
-    def get_maps(
-        self,
-    ):
+    def get_maps(self):
         """
         获取地图列表
         :return:
@@ -153,9 +135,7 @@ class GameData:
                 else:
                     return item["alias"]
 
-    def get_champions_name(
-        self,
-    ):
+    def get_champions_name(self):
         """
         获取英雄名字, 说是名字, 其实json中是title
         :return:
@@ -170,27 +150,21 @@ class GameData:
             res[item["alias"]] = this["title"]
         return res
 
-    def get_champions_alias(
-        self,
-    ):
+    def get_champions_alias(self):
         """
         获取英雄代号, 说是代号，其实json中是name
         :return:
         """
         return {item["alias"].lower(): item["name"] for item in self.get_summary()}
 
-    def get_champions_id(
-        self,
-    ):
+    def get_champions_id(self):
         """
         获取英雄ID
         :return:
         """
         return [item["id"] for item in self.get_summary()]
 
-    def get_maps_id(
-        self,
-    ):
+    def get_maps_id(self):
         """
         获取地图ID
         :return:
@@ -222,8 +196,7 @@ class GameData:
         WAD(self.wad_file_region).extract(hash_table, out_dir=output_file_name)
         WAD(self.wad_file_region).extract(
             [
-                f"plugins/rcp-be-lol-game-data/global/{self.region}/v1/champions/"
-                f'{item["id"]}.json'
+                f"plugins/rcp-be-lol-game-data/global/{self.region}/v1/champions/" f'{item["id"]}.json'
                 for item in self.get_summary()
             ],
             out_dir=output_file_name,
@@ -261,12 +234,8 @@ class GameData:
                 # "tilePath": "/lol-game-data/assets/v1/champion-tiles/2/2000.jpg",
                 # "loadScreenPath": "/lol-game-data/assets/ASSETS/Characters/Olaf/Skins/Base/OlafLoadScreen.jpg",
 
-                _hash_list.append(
-                    f'{_head}/v1/champion-splashes/{cid}/{item["id"]}.jpg'
-                )
-                _hash_list.append(
-                    f'{_head}/v1/champion-splashes/uncentered/{cid}/{item["id"]}.jpg'
-                )
+                _hash_list.append(f'{_head}/v1/champion-splashes/{cid}/{item["id"]}.jpg')
+                _hash_list.append(f'{_head}/v1/champion-splashes/uncentered/{cid}/{item["id"]}.jpg')
                 _hash_list.append(f'{_head}/v1/champion-tiles/{cid}/{item["id"]}.jpg')
                 _hash_list.append(fix_hash_path(item["loadScreenPath"]))
 
@@ -274,9 +243,7 @@ class GameData:
                 if "chromas" in item:
                     _hash_list.append(f'{_head}/v1/chromaPath/{cid}/{item["id"]}.jpg')
                     for chroma in item["chromas"]:
-                        _hash_list.append(
-                            f'{_head}/v1/champion-chroma-images/{cid}/{item["id"]}/{chroma["id"]}.jpg'
-                        )
+                        _hash_list.append(f'{_head}/v1/champion-chroma-images/{cid}/{item["id"]}/{chroma["id"]}.jpg')
         WAD(self.wad_file_default).extract(_hash_list, out_dir=output_file_name)
 
     def get_game_version(self, default="99.99"):
@@ -347,9 +314,7 @@ def compare_version(version1: str, version2: str) -> None:
     """
     # 检查输入格式
     if not is_valid_version(version1) or not is_valid_version(version2):
-        logger.error(
-            "版本号格式不正确，请使用 '大版本.小版本' 或 '大版本.小版本.修订号' 格式。"
-        )
+        logger.error("版本号格式不正确，请使用 '大版本.小版本' 或 '大版本.小版本.修订号' 格式。")
         return
 
     version1_parts = version1.split(".")
@@ -359,9 +324,7 @@ def compare_version(version1: str, version2: str) -> None:
     major_version2, minor_version2 = int(version2_parts[0]), int(version2_parts[1])
 
     if major_version1 != major_version2:
-        raise ValueError(
-            f"大版本不同，无法比较。版本号分别为: {version1} 和 {version2}"
-        )
+        raise ValueError(f"大版本不同，无法比较。版本号分别为: {version1} 和 {version2}")
     elif minor_version1 != minor_version2:
         logger.warning(f"小版本不同，请注意。版本号分别为: {version1} 和 {version2}")
 

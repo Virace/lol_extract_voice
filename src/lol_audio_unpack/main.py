@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2024/8/3 16:18
+# @Update  : 2024/8/30 7:06
 # @Detail  : 描述
 
 import json
@@ -19,7 +19,7 @@ from loguru import logger
 from Data.Manifest import compare_version
 from Hashes import HashManager
 from Utils.common import format_region, makedirs, capitalize_first_letter
-from Utils.logs import log_result
+from Utils.logs import log_result, task_done_callback
 from Utils.type_hints import StrPath
 from config import config_instance
 
@@ -180,8 +180,7 @@ def get_game_audio(
     # 当前游戏版本
     current_version = HASH_MANAGER.game_data.get_game_version()
 
-    with ProcessPoolExecutor(max_workers=max_works) as e:
-        fs = dict()
+    with ProcessPoolExecutor(max_workers=max_works) as executor:
         for file in Path(hash_path).rglob("*.json"):
 
             # 排除不需要的文件夹
@@ -241,30 +240,19 @@ def get_game_audio(
                             )
 
                             filename.parent.mkdir(parents=True, exist_ok=True)
-                            # i.static_save_file(i.data,
-                            # filename, False, vgmstream_cli)
-                            # i.static_save_file(
-                            #     i.data,
-                            #     filename,
-                            #     False,
-                            #     config_instance.VGMSTREAM_PATH,
-                            # )
-                            fs[
-                                e.submit(
-                                    i.static_save_file,
-                                    i.data,
-                                    filename,
-                                    False,
-                                    config_instance.VGMSTREAM_PATH,
-                                )
-                            ] = (_type, kind, name, detail, wad_file)
 
-        log_result(
-            fs,
-            sys._getframe().f_code.co_name,
-            config_instance.GAME_REGION,
-            config_instance.LOG_PATH,
-        )
+                            future = executor.submit(
+                                i.static_save_file,
+                                i.data,
+                                filename,
+                                False,
+                                config_instance.VGMSTREAM_PATH,
+                            )
+                            task_info = (_type, kind, name, detail, wad_file)
+                            future.add_done_callback(
+                                lambda _f, t=task_info: task_done_callback(_f, t)
+                            )
+
         logger.info("提取游戏内音频完毕.")
 
 
@@ -306,4 +294,3 @@ if __name__ == "__main__":
 
     init()
     main(audio_format="wav")
-
