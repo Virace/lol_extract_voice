@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:00
-# @Update  : 2024/9/3 10:24
+# @Update  : 2024/9/3 10:42
 # @Detail  : config.py
 
 import json
@@ -17,6 +17,9 @@ from pathlib import Path
 from lol_audio_unpack.Utils.type_hints import StrPath
 
 
+ROOT_PATH = Path(__file__).resolve().parent.parent
+
+
 class Config:
     _instance = None
 
@@ -24,7 +27,7 @@ class Config:
     env_prefix: str = "LOL_"
 
     # 配置路径，默认为当前目录下的 .lol.env 文件
-    env_path: StrPath = os.getenv("LOL_ENV_PATH", "../.lol.env")
+    env_path: StrPath = os.getenv("LOL_ENV_PATH", ROOT_PATH)
 
     # 是否只加载环境变量，True则不加载配置文件，默认为False
     env_only = bool(os.getenv("LOL_ENV_ONLY", False))
@@ -47,7 +50,7 @@ class Config:
 
         type_func = {
             "str": lambda x: x,
-            "path": lambda x: Path(x) if x else '',
+            "path": lambda x: Path(x) if x else "",
             "list": lambda x: x.split(",") if x else [],
         }
 
@@ -133,5 +136,4 @@ class Config:
         self._load_and_set_env(self)
 
 
-ROOT_PATH = Path(__file__).resolve().parent
 config_instance = Config()
