@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:56
-# @Update  : 2024/9/8 15:13
+# @Update  : 2024/9/8 15:22
 # @Detail  : 游戏数据
 
 import json
@@ -256,7 +256,7 @@ class GameData:
 
         def output_file_name(path: str):
             reg = re.compile(rf"plugins/rcp-be-lol-game-data/global/{self.region}/v1/", re.IGNORECASE)
-            new = reg.sub('', path)
+            new = reg.sub("", path)
             return self._get_out_path() / Path(new)
 
         wad_file = (
@@ -276,10 +276,14 @@ class GameData:
             f"plugins/rcp-be-lol-game-data/global/{self.region}/v1/universes.json",
         ]
         self.wad_extract(wad_file, hash_table, output_file_name)
-        self.wad_extract(wad_file, [
+        self.wad_extract(
+            wad_file,
+            [
                 rf"plugins/rcp-be-lol-game-data/global/{self.region}/v1/champions/{item['id']}.json"
                 for item in self.get_summary()
-            ], output_file_name)
+            ],
+            output_file_name,
+        )
 
     def get_images(self):
         """
@@ -326,8 +330,7 @@ class GameData:
 
         wad_file = self.game_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data" / "default-assets.wad"
         self.wad_extract(wad_file, _hash_list, out_dir=output_file_name)
-    # C:\Users\Virace\Downloads\Programs\1\manifest\14.17\zh_CN\plugins\rcp-be-lol-game-data\global\zh_CN\v1
-    # C:\Users\Virace\Downloads\Programs\1\manifest\14.17\zh_CN\champion-summary.json
+
     def get_game_version(self):
         """
         获取游戏版本
