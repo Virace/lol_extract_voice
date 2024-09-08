@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:56
-# @Update  : 2024/9/8 15:22
+# @Update  : 2024/9/8 19:30
 # @Detail  : 游戏数据
 
 import json
@@ -85,6 +85,12 @@ class GameData:
         # 游戏地图(公共)文件目录 (Game/DATA/FINAL/Maps/Shipping)
         self.GAME_MAPS_PATH = self.game_path / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping"
 
+        self.rgd = RiotGameData()
+        self.rgd.load_lcu_data()
+        self.rgd.load_game_data()
+        self.lcu_extractor = WADExtractor(self.rgd.lastest_lcu().url)
+        self.game_extractor = WADExtractor(self.rgd.latest_game().url)
+
     def _remote_initialize(self):
         """
         创建各种对象，并且根据正则下载文件，
@@ -92,12 +98,6 @@ class GameData:
         """
         logger.debug("remote模式，开始下载所需文件.")
         self.rdl = ResourceDL(self.game_path)
-        self.rgd = RiotGameData()
-        self.rgd.load_lcu_data()
-        self.rgd.load_game_data()
-        self.lcu_extractor = WADExtractor(self.rgd.lastest_lcu().url)
-        self.game_extractor = WADExtractor(self.rgd.latest_game().url)
-
         self.rdl.d_game = True
         self.rdl.d_lcu = True
         self.rdl.download_resources(
@@ -366,7 +366,7 @@ class GameData:
         hash_table: List[str],
         out_dir: Optional[Union[StrPath, Callable[[StrPath], StrPath]]] = None,
         raw: bool = False,
-    ) -> Optional[List]:
+    ) -> Optional[List[bytes]]:
         """
         解包 WAD 文件。如果 WAD 文件不存在，则使用 WADExtractor 类从网络获取。
 
@@ -380,16 +380,16 @@ class GameData:
 
         if wad_file.exists():
             # 如果文件存在，直接使用本地解包
-            return WAD(wad_file).extract(hash_table, out_dir, raw)
+            return WAD(wad_file).extract(hash_table, "" if out_dir is None else out_dir, raw)
 
         file_path = self.to_relative_path(wad_file)
 
         # 根据路径前缀选择合适的 WADExtractor
         wad_extractor = None
         if file_path.startswith("DATA"):
-            wad_extractor = WADExtractor(self.rgd.latest_game().url)
+            wad_extractor = self.game_extractor
         elif file_path.startswith("Plugins"):
-            wad_extractor = WADExtractor(self.rgd.lastest_lcu().url)
+            wad_extractor = self.lcu_extractor
 
         if wad_extractor is None:
             return
@@ -397,7 +397,8 @@ class GameData:
         # 从网络提取文件
         file_raw = wad_extractor.extract_files({file_path: hash_table})
         if raw:
-            return file_raw.get(file_path)
+            temp = file_raw.get(file_path)
+            return [temp[item] for item in hash_table]
 
         # 保存文件到指定目录
         for item, data in file_raw.get(file_path, {}).items():
