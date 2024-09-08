@@ -4,9 +4,9 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/3/12 12:39
-# @Update  : 2024/3/12 12:46
+# @Update  : 2024/9/8 19:46
 # @Detail  : 
 
 from typing import Union
 
-StrPath = Union[str, 'os.PathLike[str]']
+StrPath = Union[str, "os.PathLike[str]"]
