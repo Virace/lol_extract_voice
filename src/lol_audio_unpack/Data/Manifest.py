@@ -4,17 +4,19 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:56
-# @Update  : 2024/9/3 10:24
+# @Update  : 2024/9/8 15:13
 # @Detail  : 游戏数据
 
 import json
 import re
 import traceback
 from pathlib import Path
+from typing import Callable, Dict, List, Optional, Union
 
 import requests
-from loguru import logger
 from league_tools.formats import WAD
+from loguru import logger
+from riotmanifest import ResourceDL, RiotGameData, WADExtractor
 
 from lol_audio_unpack.Utils.common import format_region
 from lol_audio_unpack.Utils.type_hints import StrPath
@@ -25,18 +27,55 @@ class GameData:
     获取游戏相关数据
     """
 
-    def __init__(self, game_path: StrPath, manifest_path: StrPath, region: str = "zh_CN"):
+    def __init__(
+        self,
+        out_dir: StrPath,
+        mode: str = "local",
+        game_path: Optional[StrPath] = None,
+        temp_path: Optional[StrPath] = None,
+        region: str = "zh_CN",
+    ):
         """
-        :param region: 地区
+        初始化 GameData 类。
+
+        :param out_dir: 清单文件的存储路径，所有模式都需要。
+        :param mode: 运行模式，可以是 'local'、'remote'。
+        :param game_path: 游戏的本地路径，仅在 local 模式下需要。
+        :param temp_path: 临时文件的存储路径，仅在 remote 模式下需要。
+        :param region: 地区代码，默认为 "zh_CN"。
+        :raises ValueError: 如果模式不正确或者缺少必要路径。
         """
-        self.game_path = Path(game_path)
-        self.out_path = Path(manifest_path)
+        self.mode = mode
         self.region = region
+        self.game_path = None
+        self.remote_path = None
+
+        self.rdl: Optional[ResourceDL] = None
+        self.rgd: Optional[RiotGameData] = None
+        self.lcu_extractor: Optional[WADExtractor] = None
+        self.game_extractor: Optional[WADExtractor] = None
+
+        if self.mode == "local":
+            if game_path is None:
+                raise ValueError("local 模式不可缺少 game_path")
+            self.game_path = Path(game_path)
+
+        elif self.mode == "remote":
+            if temp_path is None:
+                raise ValueError("remote 模式不可缺少 temp_path")
+            self.remote_path = Path(temp_path) / "remote"
+            self.game_path = self.remote_path
+            self._remote_initialize()
+        else:
+            raise ValueError("错误的模式. 只接受local、remote")
+
+        self.out_dir = Path(out_dir) / self.get_game_version()
+
+        if self.mode in ["remote"]:
+            self.rdl = ResourceDL(self.game_path)
+
         if self.region.lower() == "en_us":
             self.region = "default"
-        self.data_path = self.game_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data"
-        self.wad_file_region = self.data_path / f"{format_region(self.region)}-assets.wad"
-        self.wad_file_default = self.data_path / "default-assets.wad"
 
         self._version_api = "https://ddragon.leagueoflegends.com/api/versions.json"
 
@@ -46,7 +85,47 @@ class GameData:
         # 游戏地图(公共)文件目录 (Game/DATA/FINAL/Maps/Shipping)
         self.GAME_MAPS_PATH = self.game_path / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping"
 
-    def _get_out_path(self, files: [str, list[str]] = ""):
+    def _remote_initialize(self):
+        """
+        创建各种对象，并且根据正则下载文件，
+        :return:
+        """
+        logger.debug("remote模式，开始下载所需文件.")
+        self.rdl = ResourceDL(self.game_path)
+        self.rgd = RiotGameData()
+        self.rgd.load_lcu_data()
+        self.rgd.load_game_data()
+        self.lcu_extractor = WADExtractor(self.rgd.lastest_lcu().url)
+        self.game_extractor = WADExtractor(self.rgd.latest_game().url)
+
+        self.rdl.d_game = True
+        self.rdl.d_lcu = True
+        self.rdl.download_resources(
+            r"DATA/FINAL/Champions/\w+.zh_CN.wad.client|content-metadata.json",
+            rf"Plugins/rcp-be-lol-game-data/{self.region}-assets.wad",
+        )
+
+    @staticmethod
+    def to_relative_path(path: StrPath) -> Optional[StrPath]:
+        """
+        将本地路径转换为 清单中相对路径
+        :param path:
+        :return:
+        """
+
+        path = Path(path)
+
+        # 将路径标准化为 POSIX 格式
+        file_path = path.as_posix()
+        # 匹配路径中的关键字
+        match = re.search(r"/(DATA|Plugins)/", file_path, re.IGNORECASE)
+        if not match:
+            return None
+
+        # 提取从匹配模式开始的路径部分
+        return file_path[match.start() + 1 :]
+
+    def _get_out_path(self, files: Union[str, List[str]] = "") -> Path:
         """
         获取输出路径
         :param files: 文件, 可传入数组 则为多级目录
@@ -56,9 +135,9 @@ class GameData:
             files = [files]
         elif not isinstance(files, list):
             raise TypeError("files 必须是字符串或字符串列表")
-        return (self.out_path / self.region).joinpath(*files)
+        return (self.out_dir / self.region).joinpath(*files)
 
-    def _open_file(self, filename: [str, list[str]]) -> dict:
+    def _open_file(self, filename: Union[str, List[str]]) -> Dict:
         """
         打开并读取 JSON 文件
         :param filename: 文件名
@@ -79,21 +158,21 @@ class GameData:
             logger.debug(traceback.format_exc())
         return {}
 
-    def get_summary(self):
+    def get_summary(self) -> Dict:
         """
         获取英雄列表
         :return:
         """
         return self._open_file("champion-summary.json")
 
-    def get_skins(self):
+    def get_skins(self) -> Dict:
         """
         获取皮肤列表
         :return:
         """
         return self._open_file("skins.json")
 
-    def get_skinlines(self):
+    def get_skinlines(self) -> Dict:
         """
         获取皮肤系列列表
         :return:
@@ -102,17 +181,14 @@ class GameData:
         result = {item["id"]: item["name"] for item in temp}
         return result
 
-    def get_maps(self):
+    def get_maps(self) -> Dict:
         """
         获取地图列表
         :return:
         """
         return self._open_file("maps.json")
 
-    def get_champion_detail_by_id(
-        self,
-        cid,
-    ):
+    def get_champion_detail_by_id(self, cid: int) -> Dict:
         """
         根据英雄ID获取英雄详情
         :param cid:
@@ -120,7 +196,7 @@ class GameData:
         """
         return self._open_file(["champions", f"{cid}.json"])
 
-    def get_champion_name(self, name, chinese=True):
+    def get_champion_name(self, name: str, chinese: bool = True) -> Optional[Union[str, tuple]]:
         """
         根据游戏数据获取中文名称
         :param name:
@@ -135,7 +211,7 @@ class GameData:
                 else:
                     return item["alias"]
 
-    def get_champions_name(self):
+    def get_champions_name(self) -> Dict[str, str]:
         """
         获取英雄名字, 说是名字, 其实json中是title
         :return:
@@ -150,40 +226,46 @@ class GameData:
             res[item["alias"]] = this["title"]
         return res
 
-    def get_champions_alias(self):
+    def get_champions_alias(self) -> Dict[str, str]:
         """
         获取英雄代号, 说是代号，其实json中是name
         :return:
         """
         return {item["alias"].lower(): item["name"] for item in self.get_summary()}
 
-    def get_champions_id(self):
+    def get_champions_id(self) -> List[int]:
         """
         获取英雄ID
         :return:
         """
         return [item["id"] for item in self.get_summary()]
 
-    def get_maps_id(self):
+    def get_maps_id(self) -> List[int]:
         """
         获取地图ID
         :return:
         """
         return [item["id"] for item in self.get_maps()]
 
-    def get_manifest(self):
+    def get_data(self):
         """
         获取文件清单
         :return:
         """
         logger.trace("获取文件清单")
-        if self.region == "en_us":
-            region = "default"
 
         def output_file_name(path: str):
-            old = f"plugins/rcp-be-lol-game-data/global/{region}/v1/"
-            new = path.replace(old, "")
+            reg = re.compile(rf"plugins/rcp-be-lol-game-data/global/{self.region}/v1/", re.IGNORECASE)
+            new = reg.sub('', path)
             return self._get_out_path() / Path(new)
+
+        wad_file = (
+            self.game_path
+            / "LeagueClient"
+            / "Plugins"
+            / "rcp-be-lol-game-data"
+            / f"{format_region(self.region)}-assets.wad"
+        )
 
         hash_table = [
             f"plugins/rcp-be-lol-game-data/global/{self.region}/v1/champion-summary.json",
@@ -193,14 +275,11 @@ class GameData:
             f"plugins/rcp-be-lol-game-data/global/{self.region}/v1/items.json",
             f"plugins/rcp-be-lol-game-data/global/{self.region}/v1/universes.json",
         ]
-        WAD(self.wad_file_region).extract(hash_table, out_dir=output_file_name)
-        WAD(self.wad_file_region).extract(
-            [
-                f"plugins/rcp-be-lol-game-data/global/{self.region}/v1/champions/" f'{item["id"]}.json'
+        self.wad_extract(wad_file, hash_table, output_file_name)
+        self.wad_extract(wad_file, [
+                rf"plugins/rcp-be-lol-game-data/global/{self.region}/v1/champions/{item['id']}.json"
                 for item in self.get_summary()
-            ],
-            out_dir=output_file_name,
-        )
+            ], output_file_name)
 
     def get_images(self):
         """
@@ -219,7 +298,7 @@ class GameData:
             new = path.replace(old, "")
             new = new.replace(loading, "champion-loadscreen")
 
-            return self.out_path / "images" / Path(new)
+            return self.out_dir / "images" / Path(new)
 
         champions = self.get_summary()
         for champion in champions:
@@ -244,65 +323,89 @@ class GameData:
                     _hash_list.append(f'{_head}/v1/chromaPath/{cid}/{item["id"]}.jpg')
                     for chroma in item["chromas"]:
                         _hash_list.append(f'{_head}/v1/champion-chroma-images/{cid}/{item["id"]}/{chroma["id"]}.jpg')
-        WAD(self.wad_file_default).extract(_hash_list, out_dir=output_file_name)
 
-    def get_game_version(self, default="99.99"):
+        wad_file = self.game_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data" / "default-assets.wad"
+        self.wad_extract(wad_file, _hash_list, out_dir=output_file_name)
+    # C:\Users\Virace\Downloads\Programs\1\manifest\14.17\zh_CN\plugins\rcp-be-lol-game-data\global\zh_CN\v1
+    # C:\Users\Virace\Downloads\Programs\1\manifest\14.17\zh_CN\champion-summary.json
+    def get_game_version(self):
         """
         获取游戏版本
-        :param default:
         :return:
         """
         meta = self.game_path / "Game" / "content-metadata.json"
-        if meta.exists():
-            with open(meta, encoding="utf-8") as f:
-                data = json.load(f)
-            version_v = data["version"]
-        else:
-            return default
+        if not meta.exists():
+            raise FileNotFoundError("content-metadata.json 文件不存在无法判断版本信息")
+
+        with open(meta, encoding="utf-8") as f:
+            data = json.load(f)
+
+        version_v = data["version"]
+
         if m := re.match(r"^(\d+\.\d+)\.", version_v):
             return m.group(1)
 
-    def get_latest_version(self):
+    def get_latest_version(self) -> str:
         """
-        获取最新版本
-        :return:
+        获取最新版本。
+
+        :return: 最新版本号。
         """
-        return requests.get(self._version_api).json()[0]
+        try:
+            return requests.get(self._version_api).json()[0]
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"获取最新版本时发生错误: {str(e)}")
+            return ""
 
-    def update_data(self):
+    def wad_extract(
+        self,
+        wad_file: StrPath,
+        hash_table: List[str],
+        out_dir: Optional[Union[StrPath, Callable[[StrPath], StrPath]]] = None,
+        raw: bool = False,
+    ) -> Optional[List]:
         """
-        根据本地游戏文件获取 数据文件
-        :return:
+        解包 WAD 文件。如果 WAD 文件不存在，则使用 WADExtractor 类从网络获取。
+
+        :param wad_file: WAD 文件的路径
+        :param hash_table: 用于解包的哈希表
+        :param out_dir: 输出目录
+        :param raw: 是否返回原始数据
+        :return: 解包后的数据或文件
         """
-        _region = self.region
-        # 游戏内英文文件作为default默认存在
-        if self.region == "en_us":
-            _region = "default"
+        wad_file = Path(wad_file)
 
-        def output_file_name(path):
-            old = f"plugins/rcp-be-lol-game-data/global/{_region}/v1/"
-            new = path.replace(old, "")
-            return self.out_path / _region / Path(new)
+        if wad_file.exists():
+            # 如果文件存在，直接使用本地解包
+            return WAD(wad_file).extract(hash_table, out_dir, raw)
 
-        data_path = self.game_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data"
+        file_path = self.to_relative_path(wad_file)
 
-        wad_file = data_path / f"{format_region(_region) if _region != 'default' else _region}-assets.wad"
-        hash_table = [
-            f"plugins/rcp-be-lol-game-data/global/{_region}/v1/champion-summary.json",
-            f"plugins/rcp-be-lol-game-data/global/{_region}/v1/skinlines.json",
-            f"plugins/rcp-be-lol-game-data/global/{_region}/v1/skins.json",
-            f"plugins/rcp-be-lol-game-data/global/{_region}/v1/maps.json",
-            f"plugins/rcp-be-lol-game-data/global/{_region}/v1/items.json",
-            f"plugins/rcp-be-lol-game-data/global/{_region}/v1/universes.json",
-        ]
-        WAD(wad_file).extract(hash_table, out_dir=output_file_name)
-        WAD(wad_file).extract(
-            [
-                f'plugins/rcp-be-lol-game-data/global/{_region}/v1/champions/{item["id"]}.json'
-                for item in self.get_summary()
-            ],
-            out_dir=output_file_name,
-        )
+        # 根据路径前缀选择合适的 WADExtractor
+        wad_extractor = None
+        if file_path.startswith("DATA"):
+            wad_extractor = WADExtractor(self.rgd.latest_game().url)
+        elif file_path.startswith("Plugins"):
+            wad_extractor = WADExtractor(self.rgd.lastest_lcu().url)
+
+        if wad_extractor is None:
+            return
+
+        # 从网络提取文件
+        file_raw = wad_extractor.extract_files({file_path: hash_table})
+        if raw:
+            return file_raw.get(file_path)
+
+        # 保存文件到指定目录
+        for item, data in file_raw.get(file_path, {}).items():
+            if data:
+                if callable(out_dir):
+                    output_file = out_dir(item)
+                else:
+                    output_file = Path(out_dir) / item
+                output_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(output_file, "wb") as f:
+                    f.write(data)
 
 
 def compare_version(version1: str, version2: str) -> None:
