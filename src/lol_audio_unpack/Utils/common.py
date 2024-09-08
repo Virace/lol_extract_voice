@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/16 0:15
-# @Update  : 2024/8/21 23:25
+# @Update  : 2024/9/8 19:44
 # @Detail  : 通用函数
 
 import json
@@ -100,6 +100,8 @@ def format_region(region: str) -> str:
     :param region:
     :return:
     """
+    if region.lower() == "default":
+        return region
     return region[:3].lower() + region[3:].upper()
 
 
@@ -138,20 +140,17 @@ def check_time(func: callable) -> Callable:
     def wrapper(*args, **kwargs):
         st = time.time()
         ret = func(*args, **kwargs)
-        logger.info(
-            f"Func: {func.__module__}.{func.__name__}, "
-            f"Time Spent: {round(time.time() - st, 2)}"
-        )
+        logger.info(f"Func: {func.__module__}.{func.__name__}, " f"Time Spent: {round(time.time() - st, 2)}")
         return ret
 
     return wrapper
 
 
 def dump_json(
-        obj,
-        path: Union[str, PathLike, Path],
-        ensure_ascii: bool = False,
-        cls: Type[JSONEncoder] | None = None,
+    obj,
+    path: Union[str, PathLike, Path],
+    ensure_ascii: bool = False,
+    cls: Type[JSONEncoder] | None = None,
 ):
     """
     将对象写入json文件
@@ -222,8 +221,16 @@ def download_file(url: str, path: Union[str, PathLike, Path]) -> Path:
     return path
 
 
-def fetch_json_data(url: str, method: str = 'GET', retries: int = 5, delay: int = 2, params: dict = None,
-                    data: dict = None, headers: dict = None, callback: callable = None) -> dict:
+def fetch_json_data(
+    url: str,
+    method: str = "GET",
+    retries: int = 5,
+    delay: int = 2,
+    params: dict = None,
+    data: dict = None,
+    headers: dict = None,
+    callback: callable = None,
+) -> dict:
     """
     从给定的URL获取JSON数据
 
@@ -242,9 +249,9 @@ def fetch_json_data(url: str, method: str = 'GET', retries: int = 5, delay: int 
         try:
             logger.trace(f"第 {attempt + 1} 次尝试访问 URL: {url}，总共尝试次数: {retries}")
 
-            if method.upper() == 'GET':
+            if method.upper() == "GET":
                 response = requests.get(url, params=params, headers=headers)
-            elif method.upper() == 'POST':
+            elif method.upper() == "POST":
                 response = requests.post(url, params=params, data=data, headers=headers)
             else:
                 raise ValueError("无效的请求方法。请使用 'GET' 或 'POST'。")
