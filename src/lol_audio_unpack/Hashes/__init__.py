@@ -4,12 +4,10 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:10
-# @Update  : 2024/3/12 13:21
+# @Update  : 2024/9/8 19:42
 # @Detail  : HashManager
 
 
-__all__ = [
-    'HashManager'
-]
+__all__ = ["HashManager"]
 
-from Hashes.manager import HashManager
+from lol_audio_unpack.Hashes.manager import HashManager
