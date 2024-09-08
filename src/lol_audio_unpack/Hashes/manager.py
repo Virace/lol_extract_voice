@@ -4,21 +4,32 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/3/12 13:20
-# @Update  : 2024/9/3 10:24
+# @Update  : 2024/9/8 19:43
 # @Detail  : 
 
 import gc
 import re
 import sys
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from threading import Lock
+from typing import Dict, List, Optional, Union
 
 import league_tools
-from league_tools.formats import BIN, WAD, StringHash
+from league_tools.formats import BIN, StringHash, WAD
 from loguru import logger
 
 from lol_audio_unpack.Data.Manifest import GameData
-from lol_audio_unpack.Utils.common import EnhancedPath, de_duplication, dump_json, load_json, makedirs, tree, capitalize_first_letter
+from lol_audio_unpack.Utils.common import (
+    EnhancedPath,
+    capitalize_first_letter,
+    de_duplication,
+    dump_json,
+    load_json,
+    makedirs,
+    tree,
+)
 from lol_audio_unpack.Utils.type_hints import StrPath
 
 
@@ -29,13 +40,19 @@ class HashManager:
         manifest_path: StrPath,
         hash_path: StrPath,
         region: str = "zh_CN",
-        log_path: StrPath | None = None,
+        mode: str = "local",
+        log_path: Optional[StrPath] = None,
     ):
         """
-        哈希表管理器
-        :param hash_path:
-        :param region:
-        :param log_path:
+        初始化哈希表管理器
+
+        :param game_path: 游戏路径
+        :param manifest_path: 清单路径
+        :param hash_path: 哈希表存储路径
+        :param region: 区域代码，默认为 "zh_CN"
+        :param mode: 模式，接受 "local" 或 "remote"
+        :param log_path: 日志文件路径，默认为 None
+        :raises ValueError: 如果模式不合法
         """
         game_path = Path(game_path)
         manifest_path = Path(manifest_path)
@@ -43,8 +60,16 @@ class HashManager:
         if log_path:
             log_path = Path(log_path)
 
-        self.game_data = GameData(game_path, manifest_path, region)
-        self.game_data_default = GameData(game_path, manifest_path, "en_us")
+        if mode not in ("local", "remote"):
+            raise ValueError("错误的模式. 只接受local、remote")
+
+        self.game_data = GameData(
+            out_dir=manifest_path, mode=mode, game_path=game_path, region=region, temp_path=game_path  # todo
+        )
+
+        self.game_data_default = GameData(
+            out_dir=manifest_path, mode=mode, game_path=game_path, region="en_us", temp_path=game_path  # todo
+        )
 
         self.game_version: str = self.game_data.get_game_version()
 
@@ -101,37 +126,40 @@ class HashManager:
         ]
 
     @classmethod
-    def _load_json_file(cls, filepath: Path, update=False):
+    def _load_json_file(cls, filepath: Path, update: bool = False) -> dict:
         """
-        读取json文件
-        :param filepath:
-        :param update:
-        :return:
+        读取JSON文件
+
+        :param filepath: 文件路径
+        :param update: 是否强制更新
+        :return: 文件内容字典
         """
         if filepath.exists() and not update:
             return load_json(filepath)
         return {}
 
     @classmethod
-    def _save_json_file(cls, filepath: Path, data, _cls=None):
+    def _save_json_file(cls, filepath: Path, data: Union[dict, list], _cls=None) -> None:
         """
-        保存json文件
-        :param filepath:
-        :param data:
-        :return:
+        保存数据到JSON文件
+
+        :param filepath: 文件路径
+        :param data: 要保存的数据
+        :param _cls: JSON序列化类
         """
         dump_json(data, filepath, cls=_cls)
 
     @classmethod
-    def file_classify(cls, b, region: str = ""):
+    def file_classify(cls, b: dict, region: str = "") -> dict:
         """
-        分类, 区分事件和资源文件
-        :param b: 好几层的dict
-        :param region:
-        :return:
+        分类，区分事件和资源文件
+
+        :param b: 多层嵌套的字典
+        :param region: 区域代码
+        :return: 分类后的字典
         """
 
-        def check_path(paths):
+        def check_path(paths: List[str]) -> str:
             for p in paths:
                 p = p.lower()
                 if "_sfx_" in p:
@@ -171,13 +199,11 @@ class HashManager:
 
     def get_bin_hashes(self, update: bool = False) -> dict:
         """
-        穷举皮肤ID， 0~100， 取出bin哈希表
-        这个哈希表是用来从wad中提取bin文件用的。
-        所以 就算 实际皮肤ID不存在也无所谓。
-        :param update: 强制更新
-        :return:
-        """
+        获取bin文件的哈希表
 
+        :param update: 是否强制更新
+        :return: 哈希表字典
+        """
         if data := self._load_json_file(self.bin_hash_file, update):
             return data
 
@@ -211,80 +237,94 @@ class HashManager:
 
     def get_bnk_hashes(self, update: bool = False) -> tree:
         """
-        从bin文件中取出实际调用的音频文件列表
-        regin不需要实际安装，比如获取其他语言的哈希表，不需要实际安装外服
+        从bin文件中获取音频文件的哈希表，并行处理WAD文件以提高性能。
 
-        :param update: 是否强制更新所有已知哈希表
-        :return: 一个tree结构, 就是一个分好类的json
+        :param update: 是否强制更新
+        :return: 分类后的哈希表树结构
         """
-
         if res := self._load_json_file(self.bnk_hash_file, update):
             return res
-        else:
-            bin_hash = self.get_bin_hashes(update)
 
-            res = tree()
-            for kind, parts in bin_hash.items():
-                # companions为云顶小英雄特效音,
-                # 英雄的bin文件中没有事件信息，应该在其他bin里面
-                # 但是音频音效都是重复的，也没多大关系，这里就跳过了
-                if kind == "companions":
-                    continue
-                for name, bins in parts.items():
+        bin_hash = self.get_bin_hashes(update)
+        res = tree()
+        lock = Lock()
 
-                    if kind == "characters":
-                        wad_file = self.game_data.GAME_CHAMPION_PATH / f"{capitalize_first_letter(name)}.wad.client"
-                    elif kind == "maps":
-                        wad_file = self.game_data.GAME_MAPS_PATH / f"{capitalize_first_letter(name)}.wad.client"
-                    else:
-                        wad_file = self.game_data.GAME_MAPS_PATH / "Map22.wad.client"
+        def process_wad_file(kind: str, name: str, bins: Dict[str, str]) -> None:
+            """
+            处理单个WAD文件，提取音频文件并更新结果。
 
-                    if not wad_file.exists():
-                        logger.warning(f"文件缺失: {wad_file}......跳过")
+            :param kind: 类型（如characters, maps）
+            :param name: 名称（如英雄名称或地图名称）
+            :param bins: 包含bin文件路径的字典
+            """
+            try:
+                # 确定WAD文件路径
+                if kind == "characters":
+                    wad_file = self.game_data.GAME_CHAMPION_PATH / f"{capitalize_first_letter(name)}.wad.client"
+                elif kind == "maps":
+                    wad_file = self.game_data.GAME_MAPS_PATH / f"{capitalize_first_letter(name)}.wad.client"
+                else:
+                    wad_file = self.game_data.GAME_MAPS_PATH / "Map22.wad.client"
+
+                bin_paths = list(bins.values())
+                ids = [Path(item).stem for item in bin_paths]
+
+                # 提取WAD文件内容
+                raw_bins = self.game_data.wad_extract(wad_file, bin_paths, raw=True)
+
+                # 处理提取的数据
+                bs = []
+                temp = set()
+                for _id, raw in zip(ids, raw_bins):
+                    if not raw:
                         continue
-
-                    bin_paths = list(bins.values())
-                    ids = [Path(item).stem for item in bin_paths]
-                    # extract 函数使用 list[path]作为参数, 可保证返回顺序
-                    raw_bins = WAD(wad_file).extract(bin_paths, raw=True)
-
-                    bs = []
-                    temp = set()
-                    for _id, raw in zip(ids, raw_bins):
-                        if not raw:
-                            continue
-                        # 解析Bin文件
-                        b = BIN(raw)
-                        # 音频文件列表
-                        p = b.audio_files
-                        # 去重
-                        temp, fs = de_duplication(temp, p)
-                        if fs:
-                            bs.append(b)
+                    b = BIN(raw)
+                    p = b.audio_files
+                    temp, fs = de_duplication(temp, p)
+                    if fs:
+                        bs.append(b)
+                        with lock:
                             res[kind][name][_id] = list(fs)
-                        elif p:
-                            bs.append(b)
-                    del raw_bins
-                    if bs:
-                        self.get_event_hashes(kind, name, bs, True)
+                    elif p:
+                        bs.append(b)
 
-            # 这里其实不返回值也可以, 浅拷贝修改
-            # res = file_classify(res, GAME_REGION)
-            # 傻逼RIOT，zh_cn的文件名字是en_us
-            res = self.file_classify(res)
+                if bs:
+                    self.get_event_hashes(kind, name, bs, True)
 
-            self._save_json_file(self.bnk_hash_file, res)
+            except Exception as e:
+                logger.error(f"Error processing WAD file for {kind}/{name}: {e}")
+
+        # 使用线程池并行处理WAD文件
+        with ThreadPoolExecutor() as executor:
+            futures = [
+                executor.submit(process_wad_file, kind, name, bins)
+                for kind, parts in bin_hash.items()
+                if kind != "companions"
+                for name, bins in parts.items()
+            ]
+
+            # 处理完成的任务
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.error(f"Unhandled exception during WAD processing: {e}")
+
+        # 将结果分类并保存
+        res = self.file_classify(res)
+        self._save_json_file(self.bnk_hash_file, res)
 
         return res
 
-    def get_event_hashes(self, kind, name, bin_datas: list[BIN] = None, update=False) -> list:
+    def get_event_hashes(self, kind: str, name: str, bin_datas: List[BIN] = None, update: bool = False) -> List:
         """
-        根据bin文件获取事件哈希表
-        :param kind:
-        :param name:
-        :param bin_datas: BIN对象列表，
-        :param update:
-        :return:
+        获取事件哈希表
+
+        :param kind: 类型
+        :param name: 名称
+        :param bin_datas: BIN对象列表
+        :param update: 是否强制更新
+        :return: 事件哈希表列表
         """
         target = self.event_hash_tpl.format(kind=kind, name=name)
         if res := self._load_json_file(target, update):
@@ -306,7 +346,17 @@ class HashManager:
         del bin_datas
         return res
 
-    def get_audio_hashes(self, items, wad_file, event_hashes, _type, kind, name, skin, update=False) -> None:
+    def get_audio_hashes(
+        self,
+        items: List[Dict[str, Union[str, List[str]]]],
+        wad_file: Path,
+        event_hashes: List,
+        _type: str,
+        kind: str,
+        name: str,
+        skin: str,
+        update: bool = False,
+    ) -> None:
         """
         根据提供的信息生成事件ID与音频ID的哈希表
         :param items: 由bin_to_data返回的数据, 格式如下
@@ -331,15 +381,25 @@ class HashManager:
         warn_item = []
         game_version = self.game_data.get_game_version()
 
-        def tt(value):
-            temp = False
-            if isinstance(value, list):
-                for t in value:
-                    temp = temp or t
-                return bool(temp)
-            return bool(value)
+        # def tt(value):
+        #     temp = False
+        #     if isinstance(value, list):
+        #         for t in value:
+        #             temp = temp or t
+        #         return bool(temp)
+        #     return bool(value)
+        def contains_non_none(values: Union[List[Optional[bytes]], Optional[bytes]]) -> bool:
+            """
+            检查列表中是否包含非None的元素。
 
-        region_match = re.compile(r"\w{2}_\w{2}").search(str(wad_file))
+            :param values: 可以是一个字节对象或包含字节对象的列表
+            :return: 如果包含至少一个非None的元素，返回True；否则返回False
+            """
+            if isinstance(values, list):
+                return any(value is not None for value in values)
+            return values is not None
+
+        region_match = re.search(r"\w{2}_\w{2}", str(wad_file))
         region = region_match.group() if region_match and region_match.group() in self.region_map else "Default"
 
         target = self.audio_hash_tpl.format(type=_type, kind=kind, name=name, skin=skin, region=region)
@@ -363,8 +423,9 @@ class HashManager:
                     return
 
                 files = [item["events"], *item["audio"]]
-                data_raw = WAD(wad_file).extract(files, raw=True)
-                if not tt(data_raw):
+                # data_raw = WAD(wad_file).extract(files, raw=True)
+                data_raw = self.game_data.wad_extract(wad_file=wad_file, hash_table=files, raw=True)
+                if not contains_non_none(data_raw):
                     warn_item.append((wad_file, item["events"]))
                     logger.trace(f"WAD无文件解包: {wad_file}, " f'{name}, {skin}, {_type}, {item["events"]}')
                     continue
