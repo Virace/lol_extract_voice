@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/3/12 13:20
-# @Update  : 2024/9/8 19:43
+# @Update  : 2024/9/9 10:24
 # @Detail  : 
 
 import gc
@@ -46,7 +46,7 @@ class HashManager:
         """
         初始化哈希表管理器
 
-        :param game_path: 游戏路径
+        :param game_path: 游戏路径 当模式为remote时为 游戏资源下载路径
         :param manifest_path: 清单路径
         :param hash_path: 哈希表存储路径
         :param region: 区域代码，默认为 "zh_CN"
@@ -63,12 +63,17 @@ class HashManager:
         if mode not in ("local", "remote"):
             raise ValueError("错误的模式. 只接受local、remote")
 
+        if mode == "remote":
+            # 检测游戏可执行文件是否存在， 如果存在则提供的路径不适合执行远程模式
+            if (game_path / "Game" / "League of Legends.exe").exists():
+                raise ValueError('检测到 League of Legends.exe 文件存在，当前路径不适合使用 "remote" 模式')
+
         self.game_data = GameData(
-            out_dir=manifest_path, mode=mode, game_path=game_path, region=region, temp_path=game_path  # todo
+            out_dir=manifest_path, mode=mode, game_path=game_path, region=region, temp_path=game_path
         )
 
         self.game_data_default = GameData(
-            out_dir=manifest_path, mode=mode, game_path=game_path, region="en_us", temp_path=game_path  # todo
+            out_dir=manifest_path, mode=mode, game_path=game_path, region="en_us", temp_path=game_path
         )
 
         self.game_version: str = self.game_data.get_game_version()
