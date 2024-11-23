@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/3/12 13:20
-# @Update  : 2024/11/23 0:25
+# @Update  : 2024/11/23 16:05
 # @Detail  : 
 
 import gc
@@ -472,7 +472,7 @@ class HashManager:
 
             del res
             gc.collect()
-            print(f'get_audio_hashes done: {kind}, {name}, {skin}, {_type}')
+            # print(f'get_audio_hashes done: {kind}, {name}, {skin}, {_type}')
         # if self.log_path:
         #     _log_file = self.log_path / f"{func_name}.{self.region}.log"
         #     with _log_file.open("a+", encoding="utf-8") as f:

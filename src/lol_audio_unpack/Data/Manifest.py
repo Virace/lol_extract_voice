@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:56
-# @Update  : 2024/11/23 15:40
+# @Update  : 2024/11/23 21:55
 # @Detail  : 游戏数据
 
 import json
@@ -240,7 +240,7 @@ class GameData:
 
             wad_file = [(self.game_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data" / f"{_head}-assets.wad")]
 
-        logger.debug(wad_file)
+        logger.trace(wad_file)
 
         hash_table = [
             f"plugins/rcp-be-lol-game-data/global/{self.region}/v1/champion-summary.json",

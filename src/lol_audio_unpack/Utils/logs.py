@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/27 12:07
-# @Update  : 2024/9/9 11:27
+# @Update  : 2024/11/23 23:09
 # @Detail  : 描述
 
 import traceback
@@ -55,7 +55,7 @@ def task_done_callback(future, task_info):
     """
     try:
         future.result()
-        logger.info(f"任务完成: {task_info}")
+        logger.debug(f"任务完成: {task_info}")
     except Exception as exc:
         error_info = traceback.format_exc()
         logger.error(f"任务失败: {task_info}")
