@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:56
-# @Update  : 2024/9/8 19:30
+# @Update  : 2024/11/23 15:40
 # @Detail  : 游戏数据
 
 import json
@@ -16,7 +16,6 @@ from typing import Callable, Dict, List, Optional, Union
 import requests
 from league_tools.formats import WAD
 from loguru import logger
-from riotmanifest import ResourceDL, RiotGameData, WADExtractor
 
 from lol_audio_unpack.Utils.common import format_region
 from lol_audio_unpack.Utils.type_hints import StrPath
@@ -50,11 +49,6 @@ class GameData:
         self.game_path = None
         self.remote_path = None
 
-        self.rdl: Optional[ResourceDL] = None
-        self.rgd: Optional[RiotGameData] = None
-        self.lcu_extractor: Optional[WADExtractor] = None
-        self.game_extractor: Optional[WADExtractor] = None
-
         if self.mode == "local":
             if game_path is None:
                 raise ValueError("local 模式不可缺少 game_path")
@@ -65,14 +59,11 @@ class GameData:
                 raise ValueError("remote 模式不可缺少 temp_path")
             self.remote_path = Path(temp_path) / "remote"
             self.game_path = self.remote_path
-            self._remote_initialize()
+            # self._remote_initialize()
         else:
             raise ValueError("错误的模式. 只接受local、remote")
 
         self.out_dir = Path(out_dir) / self.get_game_version()
-
-        if self.mode in ["remote"]:
-            self.rdl = ResourceDL(self.game_path)
 
         if self.region.lower() == "en_us":
             self.region = "default"
@@ -84,26 +75,6 @@ class GameData:
 
         # 游戏地图(公共)文件目录 (Game/DATA/FINAL/Maps/Shipping)
         self.GAME_MAPS_PATH = self.game_path / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping"
-
-        self.rgd = RiotGameData()
-        self.rgd.load_lcu_data()
-        self.rgd.load_game_data()
-        self.lcu_extractor = WADExtractor(self.rgd.lastest_lcu().url)
-        self.game_extractor = WADExtractor(self.rgd.latest_game().url)
-
-    def _remote_initialize(self):
-        """
-        创建各种对象，并且根据正则下载文件，
-        :return:
-        """
-        logger.debug("remote模式，开始下载所需文件.")
-        self.rdl = ResourceDL(self.game_path)
-        self.rdl.d_game = True
-        self.rdl.d_lcu = True
-        self.rdl.download_resources(
-            r"DATA/FINAL/Champions/\w+.zh_CN.wad.client|content-metadata.json",
-            rf"Plugins/rcp-be-lol-game-data/{self.region}-assets.wad",
-        )
 
     @staticmethod
     def to_relative_path(path: StrPath) -> Optional[StrPath]:
@@ -259,13 +230,17 @@ class GameData:
             new = reg.sub("", path)
             return self._get_out_path() / Path(new)
 
-        wad_file = (
-            self.game_path
-            / "LeagueClient"
-            / "Plugins"
-            / "rcp-be-lol-game-data"
-            / f"{format_region(self.region)}-assets.wad"
-        )
+        # 前缀
+        _head = format_region(self.region)
+        # 目录下可能有多个 default-assets开头的文件，例如 default-assets.wad default-assets2.wad 等等
+        # 如果_head == 'default'则 wad_file为数组 包含所有default-assets开头的文件
+        if _head == "default":
+            wad_file = list(self.game_path.glob("LeagueClient/Plugins/rcp-be-lol-game-data/default-assets*.wad"))
+        else:
+
+            wad_file = [(self.game_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data" / f"{_head}-assets.wad")]
+
+        logger.debug(wad_file)
 
         hash_table = [
             f"plugins/rcp-be-lol-game-data/global/{self.region}/v1/champion-summary.json",
@@ -275,15 +250,16 @@ class GameData:
             f"plugins/rcp-be-lol-game-data/global/{self.region}/v1/items.json",
             f"plugins/rcp-be-lol-game-data/global/{self.region}/v1/universes.json",
         ]
-        self.wad_extract(wad_file, hash_table, output_file_name)
-        self.wad_extract(
-            wad_file,
-            [
-                rf"plugins/rcp-be-lol-game-data/global/{self.region}/v1/champions/{item['id']}.json"
-                for item in self.get_summary()
-            ],
-            output_file_name,
-        )
+        for file in wad_file:
+            self.wad_extract(file, hash_table, output_file_name)
+            self.wad_extract(
+                file,
+                [
+                    rf"plugins/rcp-be-lol-game-data/global/{self.region}/v1/champions/{item['id']}.json"
+                    for item in self.get_summary()
+                ],
+                output_file_name,
+            )
 
     def get_images(self):
         """
@@ -381,15 +357,17 @@ class GameData:
         if wad_file.exists():
             # 如果文件存在，直接使用本地解包
             return WAD(wad_file).extract(hash_table, "" if out_dir is None else out_dir, raw)
-
+        logger.error(f"文件不存在: {wad_file}")
+        return None
+        # raise ValueError(f'文件不存在: {wad_file}')
         file_path = self.to_relative_path(wad_file)
 
         # 根据路径前缀选择合适的 WADExtractor
         wad_extractor = None
-        if file_path.startswith("DATA"):
-            wad_extractor = self.game_extractor
-        elif file_path.startswith("Plugins"):
-            wad_extractor = self.lcu_extractor
+        # if file_path.startswith("DATA"):
+        #     wad_extractor = self.rgd.game_wad
+        # elif file_path.startswith("Plugins"):
+        #     wad_extractor = self.rgd.lcu_wad
 
         if wad_extractor is None:
             return
