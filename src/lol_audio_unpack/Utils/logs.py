@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/27 12:07
-# @Update  : 2024/9/3 10:24
+# @Update  : 2024/9/9 11:27
 # @Detail  : 描述
 
 import traceback
@@ -31,7 +31,6 @@ def log_result(fs, func_name, region: Optional[str] = "", log_path: StrPath = ""
     for f in as_completed(fs):
         try:
             f.result()
-            logger.debug(f"{func_name}, 完成: {fs[f]}")
         except Exception as exc:
             error_list.append((fs[f], exc))
             logger.warning(f"{func_name}, 遇到错误: {exc}, {fs[f]}")
