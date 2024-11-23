@@ -4,15 +4,18 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:00
-# @Update  : 2024/9/3 10:42
+# @Update  : 2024/11/23 22:39
 # @Detail  : config.py
 
 import json
 import os
+import sys
 
 from dotenv import load_dotenv
 from typing import Dict
 from pathlib import Path
+
+from loguru import logger
 
 from lol_audio_unpack.Utils.type_hints import StrPath
 
@@ -35,7 +38,7 @@ class Config:
     def __new__(cls):
         if not cls._instance:
             cls._instance = super(Config, cls).__new__(cls)
-            cls._load_and_set_env(cls._instance)
+            cls.reload_config(cls._instance)
 
         return cls._instance
 
@@ -134,6 +137,20 @@ class Config:
         :return:
         """
         self._load_and_set_env(self)
+        '''
+        TRACE 5
+        DEBUG 10
+        INFO 20
+        SUCCESS 25
+        WARNING 30
+        ERROR 40
+        CRITICAL 50
+        '''
+        logger.configure(handlers=[{"sink": sys.stdout, "level": int(getattr(self, 'DEBUG')), "enqueue": True}])
+        # 调试输出当前类中所有属性
+        logger.debug("完整配置信息:")
+        for key, value in self.__dict__.items():
+            logger.debug(f"{key}: {value}")
 
 
 config_instance = Config()
