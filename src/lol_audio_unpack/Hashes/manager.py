@@ -4,7 +4,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/3/12 13:20
-# @Update  : 2024/9/9 10:24
+# @Update  : 2024/11/23 0:25
 # @Detail  : 
 
 import gc
@@ -275,7 +275,7 @@ class HashManager:
                 ids = [Path(item).stem for item in bin_paths]
 
                 # 提取WAD文件内容
-                raw_bins = self.game_data.wad_extract(wad_file, bin_paths, raw=True)
+                raw_bins = WAD(wad_file).extract(bin_paths, raw=True)
 
                 # 处理提取的数据
                 bs = []
@@ -382,9 +382,7 @@ class HashManager:
         :return:
         """
         func_name = sys._getframe().f_code.co_name
-
         warn_item = []
-        game_version = self.game_data.get_game_version()
 
         # def tt(value):
         #     temp = False
@@ -409,6 +407,7 @@ class HashManager:
 
         target = self.audio_hash_tpl.format(type=_type, kind=kind, name=name, skin=skin, region=region)
         if target.exists() and not update:
+            print(f'{target}已存在跳过.')
             # 可以直接pass 这里json加载用来校验文件是否正常
             # d = json.load(open(target, encoding='utf-8'))
             # del d
@@ -421,18 +420,19 @@ class HashManager:
             index = parts.index("Game")
             relative_wad_path = Path(*parts[index:])
             # relative_wad_path = "Game" + wad_file.split("Game")[-1].replace("\\", "/")
-            logger.info(f"开始处理: {kind}, {name}, {skin}, {_type}")
+            # print(f"开始处理: {kind}, {name}, {skin}, {_type}")
             for item in items:
                 if not item["events"]:
                     logger.info(f"无事件文件: {kind}, {name}, {skin}, {_type}")
                     return
 
                 files = [item["events"], *item["audio"]]
-                # data_raw = WAD(wad_file).extract(files, raw=True)
-                data_raw = self.game_data.wad_extract(wad_file=wad_file, hash_table=files, raw=True)
+                data_raw = WAD(wad_file).extract(files, raw=True)
+                # data_raw = self.game_data.wad_extract(wad_file=wad_file, hash_table=files, raw=True)
+                # data_raw = [None]
                 if not contains_non_none(data_raw):
                     warn_item.append((wad_file, item["events"]))
-                    logger.trace(f"WAD无文件解包: {wad_file}, " f'{name}, {skin}, {_type}, {item["events"]}')
+                    logger.debug(f"WAD无文件解包: {wad_file}, " f'{name}, {skin}, {_type}, {item["events"]}')
                     continue
 
                 # 事件就一个，音频可能有多个，一般是两个
@@ -454,6 +454,7 @@ class HashManager:
                 del event_raw
                 del data_raw
                 del audio_raw
+                # gc.collect()
 
             if res:
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -464,16 +465,16 @@ class HashManager:
                     "type": _type,
                     "region": self.region,
                     "wad": str(relative_wad_path),
-                    "version": game_version,
+                    "version": self.game_version,
                 }
 
                 self._save_json_file(target, res)
 
             del res
             gc.collect()
-            # log.info(f'to_audio_hashtable: {kind}, {name}, {skin}, {_type}')
-        if self.log_path:
-            _log_file = self.log_path / f"{func_name}.{self.region}.log"
-            with _log_file.open("a+", encoding="utf-8") as f:
-                for item in warn_item:
-                    f.write(f"{item}\n")
+            print(f'get_audio_hashes done: {kind}, {name}, {skin}, {_type}')
+        # if self.log_path:
+        #     _log_file = self.log_path / f"{func_name}.{self.region}.log"
+        #     with _log_file.open("a+", encoding="utf-8") as f:
+        #         for item in warn_item:
+        #             f.write(f"{item}\n")
