@@ -4,13 +4,14 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/15 23:53
-# @Update  : 2024/9/7 8:24
+# @Update  : 2024/11/24 23:52
 # @Detail  : 描述
 
 import json
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+from typing import Union, List
 
 from league_tools import get_audio_files
 from league_tools.formats import WAD
@@ -18,10 +19,10 @@ from loguru import logger
 
 from lol_audio_unpack.Data.Manifest import compare_version
 from lol_audio_unpack.Hashes import HashManager
-from lol_audio_unpack.Utils.common import format_region, makedirs, capitalize_first_letter
+from lol_audio_unpack.Utils.common import format_region, makedirs, capitalize_first_letter, check_time
+from lol_audio_unpack.Utils.config import config_instance
 from lol_audio_unpack.Utils.logs import log_result, task_done_callback
 from lol_audio_unpack.Utils.type_hints import StrPath
-from lol_audio_unpack.Utils.config import config_instance
 
 HASH_MANAGER = HashManager(
     game_path=config_instance.GAME_PATH,
@@ -47,11 +48,7 @@ def get_wad_file_name(kind, name, _type, region) -> StrPath:
     if kind == "companions":
         name = "map22"
 
-    path = (
-        config_instance.GAME_CHAMPION_PATH
-        if kind == "characters"
-        else config_instance.GAME_MAPS_PATH
-    )
+    path = config_instance.GAME_CHAMPION_PATH if kind == "characters" else config_instance.GAME_MAPS_PATH
 
     filename = f"{capitalize_first_letter(name)}.wad.client"
     if _type == "VO" and region2 != "en_US":
@@ -91,9 +88,7 @@ def get_event_audio_hash_table(update=False, max_works=None) -> None:
                         # and skin == 'skin61' and _type == 'SFX'):
                         #     continue
 
-                        wad_file = get_wad_file_name(
-                            kind, name, _type, config_instance.GAME_REGION
-                        )
+                        wad_file = get_wad_file_name(kind, name, _type, config_instance.GAME_REGION)
                         # HASH_MANAGER.get_audio_hashes(value, wad_file,
                         # event_hashes, _type, kind, name,
                         #                  skin, update)
@@ -111,7 +106,7 @@ def get_event_audio_hash_table(update=False, max_works=None) -> None:
                                     kind,
                                     name,
                                     skin,
-                                    update,
+                                    True,
                                 ): f"{kind}, {name}, {skin}, {_type}"
                             }
                         )
@@ -142,14 +137,9 @@ def get_lcu_audio():
         return get_path
 
     wad_sfx_file = config_instance.GAME_LCU_PATH / "default-assets.wad"
-    wad_vo_file = (
-            config_instance.GAME_LCU_PATH
-            / f"{format_region(config_instance.GAME_REGION)}-assets.wad"
-    )
+    wad_vo_file = config_instance.GAME_LCU_PATH / f"{format_region(config_instance.GAME_REGION)}-assets.wad"
     for cid in HASH_MANAGER.game_data.get_champions_id():
-        sfx.append(
-            f"plugins/rcp-be-lol-game-data/global/default/v1/champion-sfx-audios/{cid}.ogg"
-        )
+        sfx.append(f"plugins/rcp-be-lol-game-data/global/default/v1/champion-sfx-audios/{cid}.ogg")
         vo.extend(
             [
                 f"plugins/rcp-be-lol-game-data/global/{config_instance.GAME_REGION}/v1/champion-choose-vo/{cid}.ogg",
@@ -161,9 +151,81 @@ def get_lcu_audio():
     WAD(wad_vo_file).extract(vo, out_dir=output_file_name(config_instance.GAME_REGION))
 
 
-def get_game_audio(
-        hash_path: StrPath = HASH_MANAGER.e2a_hash_path, audio_format="wav", max_works=None
-):
+def filter_files(
+    base_path: Union[str, Path],
+    type_filters: Union[str, List[str]] = None,
+    category_filters: Union[str, List[str]] = None,
+    name_filters: Union[str, List[str]] = None,
+) -> List[Path]:
+    """
+    根据提供的过滤条件筛选指定目录中的文件路径。
+
+    :param base_path: 基础路径，文件筛选的起始目录。
+    :param type_filters: 文件类型过滤条件（支持字符串或列表），如 "VO" 或 ["SFX", "VO"]。
+    :param category_filters: 分类过滤条件（支持字符串或列表），如 "maps" 或 ["characters", "maps"]。
+    :param name_filters: 名称过滤条件（支持字符串或列表），如 "Aatrox" 或 ["map11", "map12"]。
+    :return: 符合条件的文件路径列表。
+
+    **使用示例**::
+        >>> filter_files("path/to/root", type_filters="VO", category_filters=["characters"], name_filters="Aatrox")
+        [Path("zh_CN/VO/characters/Aatrox/skin0.json"), ...]
+    """
+    base_path = Path(base_path)
+    if not base_path.is_dir():
+        raise ValueError(f"指定的路径 {base_path} 不是有效目录。")
+
+    # 如果过滤条件是字符串，转换为列表处理
+    if isinstance(type_filters, str):
+        type_filters = [type_filters.lower()]
+    elif type_filters:
+        type_filters = [_filter.lower() for _filter in type_filters]
+
+    if isinstance(category_filters, str):
+        category_filters = [category_filters.lower()]
+    elif category_filters:
+        category_filters = [_filter.lower() for _filter in category_filters]
+
+    if isinstance(name_filters, str):
+        name_filters = [name_filters.lower()]
+    elif name_filters:
+        name_filters = [_filter.lower() for _filter in name_filters]
+
+    filtered_files = []
+
+    # 遍历目录并筛选文件
+    for file_path in base_path.rglob("*.json"):
+        # 分离路径部分（相对路径）
+        parts = file_path.relative_to(base_path).parts
+
+        # 确保路径至少有 3 层（如 zh_CN/VO/maps/map11/map11.json）
+        if len(parts) < 3:
+            continue
+
+        # 提取路径部分
+        top_level = parts[0].lower()  # 顶层分类（如 zh_CN）
+        type_part = parts[1].lower()  # 类型部分（如 VO）
+        category_part = parts[2].lower()  # 分类部分（如 maps）
+        name_part = parts[3].lower() if len(parts) > 3 else None  # 名称部分（如 map11）
+
+        # 类型过滤
+        if type_filters and type_part not in type_filters:
+            continue
+
+        # 分类过滤
+        if category_filters and category_part not in category_filters:
+            continue
+
+        # 名称过滤
+        if name_filters and name_part and name_part not in name_filters:
+            continue
+
+        # 符合条件的文件添加到结果列表
+        filtered_files.append(file_path)
+
+    return filtered_files
+
+
+def get_game_audio(hash_path: StrPath = None, audio_format="wav", max_works=None):
     """
     根据提供的哈希表, 提取游戏音频资源
     如果默认则为全部哈希表
@@ -173,21 +235,19 @@ def get_game_audio(
     :param max_works: 最大进程数
     :return:
     """
-    logger.info(
-        f"开始提取游戏内音频. hash_path:{hash_path}, audio_format:{audio_format}"
-    )
+
+    if hash_path is None:
+        hash_path = HASH_MANAGER.e2a_hash_path
+
+    logger.info(f"开始提取游戏内音频. hash_path:{hash_path}, audio_format:{audio_format}")
 
     # 当前游戏版本
     current_version = HASH_MANAGER.game_data.get_game_version()
 
     with ProcessPoolExecutor(max_workers=max_works) as executor:
-        for file in Path(hash_path).rglob("*.json"):
+        files = filter_files(hash_path)
 
-            # 排除不需要的文件夹
-            _tt = file.parent.parent.parent.name
-            if _tt in config_instance.EXCLUDE_TYPE:
-                logger.debug(f"排除: {_tt}")
-                continue
+        for file in files:
 
             with file.open(encoding="utf-8") as f:
                 data = json.load(f)
@@ -202,10 +262,7 @@ def get_game_audio(
 
                 logger.info(f"获取{kind} {name} {detail} {_type}音频")
                 # 拼接wad文件名字
-                wad_file = (
-                        Path(config_instance.GAME_PATH)
-                        / Path(data["info"]["wad"]).as_posix()
-                )
+                wad_file = Path(config_instance.GAME_PATH) / Path(data["info"]["wad"]).as_posix()
 
                 # 取出bnk音频文件 字节类型
                 audio_raws = WAD(wad_file).extract(list(data["data"].keys()), raw=True)
@@ -226,17 +283,13 @@ def get_game_audio(
 
                             thisname = i.filename if i.filename else f"{i.id}.wem"
                             filename = (
-                                    Path(AUDIO_PATH)
-                                    / (
-                                        config_instance.GAME_REGION
-                                        if _type == "VO"
-                                        else "default"
-                                    )
-                                    / _type
-                                    / kind
-                                    / name
-                                    / detail
-                                    / thisname.replace("wem", audio_format)
+                                Path(AUDIO_PATH)
+                                / (config_instance.GAME_REGION if _type == "VO" else "default")
+                                / _type
+                                / kind
+                                / name
+                                / detail
+                                / thisname.replace("wem", audio_format)
                             )
 
                             filename.parent.mkdir(parents=True, exist_ok=True)
@@ -249,9 +302,7 @@ def get_game_audio(
                                 config_instance.VGMSTREAM_PATH,
                             )
                             task_info = (_type, kind, name, detail, wad_file)
-                            future.add_done_callback(
-                                lambda _f, t=task_info: task_done_callback(_f, t)
-                            )
+                            future.add_done_callback(lambda _f, t=task_info: task_done_callback(_f, t))
 
         logger.info("提取游戏内音频完毕.")
 
@@ -273,9 +324,9 @@ def main(audio_format="wem", max_works=None):
     # HASH_MANAGER.game_data.get_images()
 
     # 更新哈希表
-    get_event_audio_hash_table(False)
+    # get_event_audio_hash_table(True)
 
-    get_lcu_audio()
+    # get_lcu_audio()
     get_game_audio(audio_format=audio_format, max_works=max_works)
 
 
@@ -288,11 +339,8 @@ def init():
 
 
 if __name__ == "__main__":
-    logger.configure(handlers=[
-        dict(sink=sys.stdout, level="INFO")
-    ])
+    logger.configure(handlers=[dict(sink=sys.stdout, level="INFO")])
     logger.enable("league_tools")
 
     init()
     main(audio_format="wav")
-
