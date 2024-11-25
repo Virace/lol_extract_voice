@@ -1,0 +1,39 @@
+{
+    "GAME_PATH": {
+        "type": "path",
+        "required": true,
+        "help": "游戏根目录"
+    },
+    "GAME_REGION": {
+        "type": "str",
+        "default": "zh_CN",
+        "help": "游戏区域"
+    },
+    "OUTPUT_PATH": {
+        "type": "path",
+        "required": true,
+        "help": "输出目录"
+    },
+    "INCLUDE_TYPE": {
+        "type": "list",
+        "default": "VO, SFX, MUSIC",
+        "help": "排除的类型，例如 VO, SFX, MUSIC"
+    },
+    "INCLUDE_NAME": {
+        "type": "list",
+        "help": "名称过滤条件，例如 map11, Aatrox"
+    },
+    "INCLUDE_CATEGORY": {
+        "type": "list",
+        "help": "分类过滤条件，例如 maps, characters"
+    },
+    "VGMSTREAM_PATH": {
+        "type": "path",
+        "help": "VGMSTREAM 路径"
+    },
+    "DEBUG":{
+        "type": "str",
+        "default": "5",
+        "help": "调试等级，TRACE 5, DEBUG 10, INFO 20, SUCCESS 25, WARNING 30, ERROR 40, CRITICAL 50"
+    }
+}
