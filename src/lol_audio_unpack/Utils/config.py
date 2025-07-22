@@ -1,17 +1,19 @@
-# -*- coding: utf-8 -*-
+# 🐍 If the implementation is hard to explain, it's a bad idea.
+# 🐼 很难解释的，必然是坏方法
 # @Author  : Virace
 # @Email   : Virace@aliyun.com
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:00
-# @Update  : 2024/11/25 21:52
+# @Update  : 2025/7/23 5:09
 # @Detail  : config.py
+
 
 import json
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -27,7 +29,7 @@ class Config:
     def __new__(cls, *args, **kwargs):
         # 暂时设置成单例模式，目前没有多实例的用途
         if not cls._instance:
-            cls._instance = super(Config, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 
@@ -69,7 +71,7 @@ class Config:
         self.logger_init()
 
     @classmethod
-    def _load_params(cls) -> Dict[str, Any]:
+    def _load_params(cls) -> dict[str, Any]:
         """
         加载参数定义文件 params.json。
         :return: 参数定义字典
@@ -93,7 +95,7 @@ class Config:
         else:
             logger.warning(f"环境变量文件未找到: {env_file}")
 
-    def _load_from_kwargs(self, kwargs: Dict[str, Any]):
+    def _load_from_kwargs(self, kwargs: dict[str, Any]):
         """
         处理传入的 kwargs 参数，并同步更新到环境变量。
         """

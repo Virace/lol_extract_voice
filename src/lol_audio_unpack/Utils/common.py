@@ -1,22 +1,25 @@
-# -*- coding: utf-8 -*-
+# 🐍 Sparse is better than dense.
+# 🐼 稀疏优于稠密
 # @Author  : Virace
 # @Email   : Virace@aliyun.com
 # @Site    : x-item.com
 # @Software: Pycharm
-# @Create  : 2022/8/16 0:15
-# @Update  : 2024/9/8 19:44
+# @Create  : 2024/5/6 1:19
+# @Update  : 2025/7/23 5:05
 # @Detail  : 通用函数
+
 
 import json
 import os
 import re
 import shutil
+import threading
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from json import JSONEncoder
 from os import PathLike
 from pathlib import Path, PosixPath, WindowsPath
-from typing import Callable, Dict, Type, Union
 
 import requests
 from loguru import logger
@@ -47,6 +50,29 @@ class EnhancedPath(BasePath):
         return EnhancedPath(super().__str__().format(**kwargs))
 
 
+class Singleton(type):
+    """
+    线程安全的单例元类
+
+    使用方式:
+    ```
+    class MyClass(metaclass=Singleton):
+        pass
+    ```
+    """
+
+    _instances = {}
+    _lock = threading.Lock()
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            with cls._lock:
+                if cls not in cls._instances:
+                    # super(Singleton, cls)
+                    cls._instances[cls] = super().__call__(*args, **kwargs)
+        return cls._instances[cls]
+
+
 def str_get_number(s, threshold=1000):
     """
     从字符串中提取数字
@@ -72,7 +98,7 @@ def tree():
     return defaultdict(tree)
 
 
-def makedirs(path: Union[str, PathLike, Path], clear: bool = False):
+def makedirs(path: str | PathLike | Path, clear: bool = False):
     """
     如果文件夹不存在，则使用os.makedirs创建文件，存在则不处理
     :param path: 路径
@@ -140,7 +166,7 @@ def check_time(func: callable) -> Callable:
     def wrapper(*args, **kwargs):
         st = time.time()
         ret = func(*args, **kwargs)
-        logger.info(f"Func: {func.__module__}.{func.__name__}, " f"Time Spent: {round(time.time() - st, 2)}")
+        logger.info(f"Func: {func.__module__}.{func.__name__}, Time Spent: {round(time.time() - st, 2)}")
         return ret
 
     return wrapper
@@ -148,9 +174,9 @@ def check_time(func: callable) -> Callable:
 
 def dump_json(
     obj,
-    path: Union[str, PathLike, Path],
+    path: str | PathLike | Path,
     ensure_ascii: bool = False,
-    cls: Type[JSONEncoder] | None = None,
+    cls: type[JSONEncoder] | None = None,
 ):
     """
     将对象写入json文件
@@ -166,7 +192,7 @@ def dump_json(
         json.dump(obj, f, ensure_ascii=ensure_ascii, cls=cls)
 
 
-def load_json(path: Union[str, PathLike, Path]) -> Dict:
+def load_json(path: str | PathLike | Path) -> dict:
     """
     读取json文件
     :param path:
@@ -204,7 +230,7 @@ def list2dict(data, key):
     return {item[key]: item for item in data}
 
 
-def download_file(url: str, path: Union[str, PathLike, Path]) -> Path:
+def download_file(url: str, path: str | PathLike | Path) -> Path:
     """
     下载文件
     :param url: 下载链接
@@ -278,7 +304,7 @@ def fetch_json_data(
     raise ValueError(f"多次尝试后仍无法从 URL: {url} 获取JSON数据，已达到最大重试次数: {retries}")
 
 
-def replace(data: str, repl: Dict[str, str]) -> str:
+def replace(data: str, repl: dict[str, str]) -> str:
     """
     替换
     :param data:
@@ -290,7 +316,7 @@ def replace(data: str, repl: Dict[str, str]) -> str:
     return data
 
 
-def re_replace(data: str, repl: Dict[str, str]) -> str:
+def re_replace(data: str, repl: dict[str, str]) -> str:
     """
     正则替换
     :param data:
