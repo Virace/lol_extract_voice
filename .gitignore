@@ -116,6 +116,7 @@ test.py
 *.json
 hashes.*.txt
 Temp
+.cursor/
 
 
 !/params.json

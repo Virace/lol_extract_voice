@@ -8,11 +8,11 @@ authors = [
 dependencies = [
     "requests>=2.31.0",
     "python-dotenv>=1.0.1",
-    "league-tools>=0.2.3",
-    "cython>=3.0.11",
+    "tinydb>=4.8.2",
+    "league-tools",
 ]
 readme = "README.md"
-requires-python = ">= 3.12"
+requires-python = ">= 3.13"
 
 [project.scripts]
 "unpack" = "lol_audio_unpack.__main__:main"
@@ -21,7 +21,7 @@ requires-python = ">= 3.12"
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.rye]
+[tool.uv]
 managed = true
 dev-dependencies = [
     "memory-profiler>=0.61.0",
@@ -35,7 +35,9 @@ packages = ["src/lol_audio_unpack"]
 
 [tool.ruff]
 line-length = 120
+target-version = "py313"
 
+[tool.ruff.lint]
 select = [
     "E", # pycodestyle Errors
     "W", # pycodestyle Warnings
@@ -43,12 +45,14 @@ select = [
     "B", # flake8-bugbear
     "PL", # Pylint
     "UP", # pyupgrade
-    "I" # isort
+    "I"  # isort
 ]
-
 ignore = [ "F401" ]
 
-# Exclude a variety of commonly ignored directories.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+per-file-ignores = {}
+
+# 排除目录部分保持不变
 exclude = [
     ".bzr",
     ".direnv",
@@ -77,20 +81,18 @@ exclude = [
     "site-packages",
     "venv",
 ]
-per-file-ignores = {}
 
-# Allow unused variables when underscore-prefixed.
-dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
-
-# Assume Python 3.10.
-target-version = "py312"
-
-[tool.ruff.mccabe]
-# Unlike Flake8, default to a complexity level of 10.
+[tool.ruff.lint.mccabe]
 max-complexity = 10
-
-[tool.ruff.lint]
-max-args = 8
 
 [tool.ruff.format]
 docstring-code-format = true
+
+[[tool.uv.index]]
+name = "testpypi"
+url = "https://test.pypi.org/simple/"
+publish-url = "https://test.pypi.org/legacy/"
+explicit = true
+
+[tool.uv.sources]
+league-tools = { path = "../league-tools", editable = true }
