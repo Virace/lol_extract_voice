@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:00
-# @Update  : 2025/7/23 6:40
+# @Update  : 2025/7/23 16:53
 # @Detail  : config.py
 
 
@@ -33,7 +33,8 @@ from loguru import logger
 from lol_audio_unpack.Utils.common import Singleton
 from lol_audio_unpack.Utils.type_hints import StrPath
 
-ROOT_PATH = Path(__file__).resolve().parent.parent
+# 当前工作目录（通常是项目的根目录）
+WORK_DIR = Path(os.getcwd())
 
 
 class Config(metaclass=Singleton):
@@ -67,13 +68,20 @@ class Config(metaclass=Singleton):
         },
     }
 
-    def __init__(self, env_path: StrPath | None = None, env_prefix: str = "LOL_", force_reload: bool = False):
+    def __init__(
+        self,
+        env_path: StrPath | None = None,
+        env_prefix: str = "LOL_",
+        force_reload: bool = False,
+        dev_mode: bool = False,
+    ):
         """
         初始化配置管理
 
         :param env_path: 环境变量文件路径（.env文件）
         :param env_prefix: 环境变量前缀
         :param force_reload: 是否强制重新加载配置，即使是单例的重复初始化
+        :param dev_mode: 是否使用开发环境配置
         :return: None
         """
         # 检查是否已经初始化（单例模式下，__init__可能会被多次调用）
@@ -87,12 +95,22 @@ class Config(metaclass=Singleton):
         self.params = self.DEFAULT_PARAMS  # 使用内置参数定义
         self.settings: dict[str, Any] = {}  # 保存配置值
         self.sources: dict[str, str] = {}  # 记录配置来源
+        self.dev_mode = dev_mode  # 是否处于开发环境
+        self.using_work_dir = False  # 是否使用工作目录作为默认路径
 
-        logger.debug(f"初始化Config实例: env_path={env_path}, env_prefix={env_prefix}, force_reload={force_reload}")
+        logger.debug(
+            f"初始化Config实例: env_path={env_path}, env_prefix={env_prefix}, "
+            f"force_reload={force_reload}, dev_mode={dev_mode}"
+        )
+
+        # 如果未指定env_path，则使用当前工作目录
+        if env_path is None:
+            env_path = WORK_DIR
+            self.using_work_dir = True
+            logger.debug(f"未指定env_path，使用当前工作目录: {env_path}")
 
         # 加载环境变量文件
-        if env_path:
-            self._load_env_file(env_path)
+        self._load_env_file(env_path, dev_mode)
 
         # 加载所有配置
         self._load_configs()
@@ -106,19 +124,37 @@ class Config(metaclass=Singleton):
         # 初始化日志
         self._setup_logging()
 
-    def reload(self, env_path: StrPath | None = None, env_prefix: str | None = None):
+    def __str__(self):
+        """提供配置实例的字符串表示，用于调试和测试"""
+        info = [
+            f"Config(env_prefix={self.env_prefix}",
+            f"dev_mode={self.dev_mode}",
+            f"settings_count={len(self.settings)}",
+        ]
+
+        if self.using_work_dir:
+            info.append("Using working directory as default")
+
+        return ", ".join(info) + ")"
+
+    def reload(self, env_path: StrPath | None = None, env_prefix: str | None = None, dev_mode: bool | None = None):
         """
         重新加载配置（从环境变量或默认值）
 
         :param env_path: 环境变量文件路径（.env文件）
         :param env_prefix: 环境变量前缀
+        :param dev_mode: 是否使用开发环境配置
         :return: None
         """
-        logger.debug(f"重新加载配置: env_path={env_path}, env_prefix={env_prefix}")
+        logger.debug(f"重新加载配置: env_path={env_path}, env_prefix={env_prefix}, dev_mode={dev_mode}")
 
         # 如果提供了新的环境变量前缀，则更新
         if env_prefix is not None:
             self.env_prefix = env_prefix
+
+        # 如果提供了新的开发模式设置，则更新
+        if dev_mode is not None:
+            self.dev_mode = dev_mode
 
         # 清空当前设置和来源记录
         prev_count = len(self.settings)
@@ -126,9 +162,16 @@ class Config(metaclass=Singleton):
         self.sources.clear()
         logger.debug(f"已清除 {prev_count} 项配置设置")
 
+        # 如果未指定env_path，则使用当前工作目录
+        if env_path is None:
+            env_path = WORK_DIR
+            self.using_work_dir = True
+            logger.debug(f"未指定env_path，使用当前工作目录: {env_path}")
+        else:
+            self.using_work_dir = False
+
         # 加载环境变量文件
-        if env_path:
-            self._load_env_file(env_path)
+        self._load_env_file(env_path, self.dev_mode)
 
         # 重新加载所有配置
         self._load_configs()
@@ -144,18 +187,39 @@ class Config(metaclass=Singleton):
 
         logger.debug(f"配置重新加载完成，共 {len(self.settings)} 项")
 
-    def _load_env_file(self, env_path: StrPath):
+    def _load_env_file(self, env_path: StrPath, dev_mode: bool = False):
         """
         加载环境变量文件
 
         :param env_path: 环境变量文件路径
+        :param dev_mode: 是否使用开发环境配置
         :return: None
         """
+        # 常规环境变量文件
         env_file = Path(env_path) / ".lol.env"
+
+        # 开发环境变量文件
+        dev_env_file = Path(env_path) / ".lol.env.dev"
+
+        # 根据模式选择使用的文件
+        target_file = dev_env_file if dev_mode and dev_env_file.exists() else env_file
+
         try:
-            if env_file.exists():
+            if target_file.exists():
+                load_dotenv(dotenv_path=target_file, override=True)
+                logger.debug(f"已加载环境变量文件: {target_file}" + (" (开发环境)" if dev_mode else ""))
+                return
+
+            # 如果请求开发环境但文件不存在，则提示并回退到常规环境文件
+            if dev_mode and not dev_env_file.exists() and env_file.exists():
+                logger.warning(f"开发环境文件 {dev_env_file} 不存在，使用常规环境文件 {env_file}")
                 load_dotenv(dotenv_path=env_file, override=True)
                 logger.debug(f"已加载环境变量文件: {env_file}")
+            elif env_file.exists():
+                load_dotenv(dotenv_path=env_file, override=True)
+                logger.debug(f"已加载环境变量文件: {env_file}")
+            else:
+                logger.warning(f"环境变量文件不存在: {target_file}")
         except Exception as e:
             logger.error(f"加载环境变量文件失败: {str(e)}")
 
@@ -185,6 +249,13 @@ class Config(metaclass=Singleton):
                 logger.debug(f"配置项无环境变量且无默认值: {param_name}")
 
         logger.debug(f"配置加载完成，共 {len(self.settings)} 项")
+
+        # 输出所有配置项的详细信息
+        # 使用日志级别DEBUG或更低时详细输出
+        logger.debug("当前所有配置项:")
+        for key, value in sorted(self.settings.items()):
+            source = self.sources.get(key, "unknown")
+            logger.debug(f"  - {key} = {value} (来源: {source})")
 
     def _set_value(self, key: str, value: Any, source: str):
         """
@@ -226,31 +297,46 @@ class Config(metaclass=Singleton):
 
     def _generate_paths(self):
         """
-        生成派生路径配置
+        生成派生路径配置，并创建相应目录
 
         :return: None
         """
         if "OUTPUT_PATH" not in self.settings or "GAME_PATH" not in self.settings:
             return
 
+        logger.debug(
+            f"生成派生路径: OUTPUT_PATH={self.settings['OUTPUT_PATH']}, GAME_PATH={self.settings['GAME_PATH']}"
+        )
         out_path = Path(self.settings["OUTPUT_PATH"])
         game_path = Path(self.settings["GAME_PATH"])
 
         # 设置派生路径
+        paths_to_create = []
+
         # 音频目录, 最终解包生成的音频文件都放在这
-        self.set("AUDIO_PATH", out_path / "audios", source="derived")
+        audio_path = out_path / "audios"
+        self.set("AUDIO_PATH", audio_path, source="derived")
+        paths_to_create.append(audio_path)
 
         # 缓存目录, 解包生成的一些文件会放在这里, 可以删除
-        self.set("TEMP_PATH", out_path / "temps", source="derived")
+        temp_path = out_path / "temps"
+        self.set("TEMP_PATH", temp_path, source="derived")
+        paths_to_create.append(temp_path)
 
         # 日志目录, 一些文件解析错误不会关闭程序而是记录在日志中
-        self.set("LOG_PATH", out_path / "logs", source="derived")
+        log_path = out_path / "logs"
+        self.set("LOG_PATH", log_path, source="derived")
+        paths_to_create.append(log_path)
 
         # 哈希目录, 存放所有与 k,v 相关数据
-        self.set("HASH_PATH", out_path / "hashes", source="derived")
+        hash_path = out_path / "hashes"
+        self.set("HASH_PATH", hash_path, source="derived")
+        paths_to_create.append(hash_path)
 
         # 有关于游戏内的数据文件
-        self.set("MANIFEST_PATH", out_path / "manifest", source="derived")
+        manifest_path = out_path / "manifest"
+        self.set("MANIFEST_PATH", manifest_path, source="derived")
+        paths_to_create.append(manifest_path)
 
         # 游戏版本文件, 用来记录当前解包文件的版本
         self.set("LOCAL_VERSION_FILE", out_path / "game_version", source="derived")
@@ -268,6 +354,38 @@ class Config(metaclass=Singleton):
         # 修正区域配置
         if self.get("GAME_REGION", "").lower() == "en_us":
             self.set("GAME_REGION", "default", source="derived")
+
+        # 创建必要的目录
+        for path in paths_to_create:
+            try:
+                if not path.exists():
+                    logger.debug(f"创建目录: {path}")
+                    path.mkdir(parents=True, exist_ok=True)
+            except Exception as e:
+                logger.warning(f"创建目录失败: {path} - {str(e)}")
+
+        # 输出所有派生路径的详细信息
+        logger.debug("派生路径配置完成，当前所有路径相关配置:")
+        for key, value in sorted(self.settings.items()):
+            if isinstance(value, Path) or (isinstance(value, str) and ("PATH" in key or "DIR" in key)):
+                source = self.sources.get(key, "unknown")
+                logger.debug(f"  - {key} = {value} (来源: {source})")
+
+    def __getattr__(self, name):
+        """
+        允许通过属性访问配置值
+        例如: config.GAME_PATH 等同于 config.get("GAME_PATH")
+
+        :param name: 配置键
+        :return: 配置值
+        :raises AttributeError: 如果配置键不存在
+        """
+        # 如果是大写的配置键，尝试从配置中获取
+        if name.isupper() and name in self.settings:
+            return self.settings[name]
+
+        # 对于其他属性，引发AttributeError
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
     def _validate_required(self):
         """
@@ -360,9 +478,108 @@ class Config(metaclass=Singleton):
         else:
             logger.debug("Config单例实例不存在，无需重置")
 
+    def is_dev_mode(self) -> bool:
+        """
+        检查是否处于开发模式
 
-# 创建全局配置实例
-config = Config()
+        :return: 是否处于开发模式
+        """
+        return self.dev_mode
+
+
+class ConfigProxy:
+    """
+    Config类的代理，实现延迟初始化
+
+    允许在需要时才真正初始化Config实例，用于处理CLI或GUI程序中
+    配置文件可能在程序启动后才指定的情况。
+    """
+
+    def __init__(self):
+        """
+        初始化代理
+
+        :return: None
+        """
+        self._real_config = None
+        self._default_env_path = None
+        self._default_env_prefix = "LOL_"
+        self._default_dev_mode = False
+
+    def set_default_params(self, env_path=None, env_prefix="LOL_", dev_mode=False):
+        """
+        设置默认初始化参数，但不立即初始化Config
+
+        :param env_path: 环境变量文件路径
+        :param env_prefix: 环境变量前缀
+        :param dev_mode: 是否使用开发环境配置
+        :return: self (用于链式调用)
+        """
+        self._default_env_path = env_path
+        self._default_env_prefix = env_prefix
+        self._default_dev_mode = dev_mode
+        logger.debug(f"ConfigProxy: 设置默认参数 env_path={env_path}, env_prefix={env_prefix}, dev_mode={dev_mode}")
+        return self
+
+    def __getattr__(self, name):
+        """
+        拦截属性访问，确保实例存在
+
+        :param name: 属性名称
+        :return: 属性值
+        """
+        # 如果尚未创建实例，则使用默认或预设的参数创建
+        if self._real_config is None:
+            logger.debug(
+                f"ConfigProxy: 首次访问时自动创建Config实例，使用预设参数 env_path={self._default_env_path}, dev_mode={self._default_dev_mode}"
+            )
+            self._real_config = Config(
+                env_path=self._default_env_path, env_prefix=self._default_env_prefix, dev_mode=self._default_dev_mode
+            )
+
+        # 转发属性访问到实际的Config实例
+        return getattr(self._real_config, name)
+
+    def initialize(self, env_path=None, env_prefix=None, force_reload=False, dev_mode=None):
+        """
+        显式初始化配置
+
+        :param env_path: 环境变量文件路径
+        :param env_prefix: 环境变量前缀
+        :param force_reload: 是否强制重新加载配置
+        :param dev_mode: 是否使用开发环境配置
+        :return: 配置实例
+        """
+        # 如果未指定参数，则使用预设参数
+        if env_path is None:
+            env_path = self._default_env_path
+        if env_prefix is None:
+            env_prefix = self._default_env_prefix
+        if dev_mode is None:
+            dev_mode = self._default_dev_mode
+
+        logger.debug(f"ConfigProxy: 显式初始化 env_path={env_path}, env_prefix={env_prefix}, dev_mode={dev_mode}")
+
+        if self._real_config is None:
+            # 首次初始化
+            self._real_config = Config(env_path=env_path, env_prefix=env_prefix, dev_mode=dev_mode)
+        elif force_reload:
+            # 强制重新加载
+            self._real_config.reload(env_path=env_path, env_prefix=env_prefix, dev_mode=dev_mode)
+
+        return self._real_config
+
+    def is_initialized(self):
+        """
+        检查是否已经初始化
+
+        :return: 是否已初始化
+        """
+        return self._real_config is not None
+
+
+# 创建全局配置代理实例
+config = ConfigProxy()
 
 # 在模块级别导出
-__all__ = ["Config", "config"]
+__all__ = ["Config", "config", "ConfigProxy"]
