@@ -1,5 +1,0 @@
-VolcanoGod              Ornn
-RenektonDice            SliceandDice
-RenektonExecute         RenektonPreExecute
-SuperExecute            满怒气RenektonPreExecute
-RageReady               怒气就绪

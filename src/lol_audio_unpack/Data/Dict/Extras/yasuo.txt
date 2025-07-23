@@ -1,2 +1,0 @@
-YasuoQ(\d+)?Wrapper             斩钢闪(Q技能){}
-YasuoDashWrapper                EQ连招

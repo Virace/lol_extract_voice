@@ -1,3 +1,0 @@
-KindredLegendPassive        敌人身上有印记
-OverrideLightBombFinal      触发E技能
-DeathVO                     等待复活时

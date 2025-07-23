@@ -1,4 +1,0 @@
-ShockBlast      电能震荡(Q技能)
-StanceGtH        从炮变成锤
-StanceHtG        从锤变成炮
-WallSound        E技能强化

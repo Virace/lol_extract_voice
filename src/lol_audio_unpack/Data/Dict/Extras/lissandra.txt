@@ -1,2 +1,0 @@
-ThreeSistersStartSound          嚎哭深渊地图游戏开始
-ThreeSistersVictorySound        嚎哭深渊地图游戏胜利

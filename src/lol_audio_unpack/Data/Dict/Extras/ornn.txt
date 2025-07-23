@@ -1,8 +1,0 @@
-destoryterrain          摧毁地形
-finishforging           锻造完毕
-allypurchasesitem       队友购买物品
-DrinkPotion             喝药水
-LastStanding            场上唯一幸存者
-InBase                  在基地
-P_ForgeItem_humming     被动打装备时哼曲
-OrnnRCharge_OrnnR       OrnnRCharge

@@ -1,4 +1,0 @@
-ClearCamp           击杀野怪
-HasteRun            快速移动
-willump             威朗普
-BloodBoil           血之沸腾(已删除技能)

@@ -1,6 +1,0 @@
-KledRider           骑乘状态
-KledRiderSkin09     骑乘状态
-AnimalThreshold     斯嘎尔低生命值状态
-KledDisMountDash    斯嘎尔跑了
-KledReMountDash     斯嘎尔回来了
-_champ_             英雄
