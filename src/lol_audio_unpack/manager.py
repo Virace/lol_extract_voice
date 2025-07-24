@@ -5,22 +5,19 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/5/6 1:19
-# @Update  : 2025/7/24 8:47
+# @Update  : 2025/7/24 9:21
 # @Detail  : 游戏数据管理器
 
 
 import json
 import re
 import shutil
-import sys
 import tempfile
 import traceback
-from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import requests
 from league_tools.formats import BIN, WAD
 from loguru import logger
 
@@ -76,7 +73,7 @@ class ProgressTracker:
         logger.success(f"{self.description}完成，共 {self.current}/{self.total} 项，用时 {elapsed:.1f}秒")
 
 
-class GameDataUpdater:
+class DataUpdater:
     """
     负责游戏数据的更新和多语言JSON合并
     """
@@ -96,10 +93,10 @@ class GameDataUpdater:
             languages = ["zh_CN"]
 
         # 准备处理语言列表
-        process_languages = GameDataUpdater._prepare_language_list(languages)
+        process_languages = DataUpdater._prepare_language_list(languages)
 
         # 获取游戏版本
-        version = GameDataUpdater._get_game_version(game_path)
+        version = DataUpdater._get_game_version(game_path)
 
         # 检查输出目录并创建
         out_path = Path(out_dir) / version
@@ -109,7 +106,7 @@ class GameDataUpdater:
         merged_file = out_path / "merged_data.json"
 
         # 检查是否需要更新
-        if not GameDataUpdater._needs_update(merged_file, process_languages):
+        if not DataUpdater._needs_update(merged_file, process_languages):
             return merged_file
 
         # 创建临时目录并处理数据
@@ -118,7 +115,7 @@ class GameDataUpdater:
             logger.info(f"创建临时目录用于解包: {temp_path}")
 
             # 提取和处理数据
-            GameDataUpdater._process_data(game_path, temp_path, out_path, version, process_languages, merged_file)
+            DataUpdater._process_data(game_path, temp_path, out_path, version, process_languages, merged_file)
 
         # 临时目录会自动删除
         logger.info("临时文件已清理")
@@ -195,21 +192,21 @@ class GameDataUpdater:
         # 提取需要的数据
         for language in languages:
             logger.info(f"正在处理 {language} 语言数据...")
-            GameDataUpdater._extract_wad_data(game_path, temp_path, language, version)
+            DataUpdater._extract_wad_data(game_path, temp_path, language, version)
             progress.update()
         progress.finish()
 
         # 合并多语言数据
         logger.info("合并多语言数据...")
-        GameDataUpdater._merge_language_data(temp_path, version, languages)
+        DataUpdater._merge_language_data(temp_path, version, languages)
 
         # 验证WAD文件是否存在并更新路径信息
         logger.info("验证WAD文件路径...")
-        GameDataUpdater._verify_wad_paths(game_path, temp_path, version)
+        DataUpdater._verify_wad_paths(game_path, temp_path, version)
 
         # 处理BIN文件，提取音频路径
         logger.info("处理BIN文件，提取音频路径...")
-        GameDataUpdater._process_bin_files(game_path, temp_path, version)
+        DataUpdater._process_bin_files(game_path, temp_path, version)
 
         # 将合并后的数据文件复制到输出目录
         temp_merged_file = temp_path / version / "merged_data.json"
@@ -254,7 +251,7 @@ class GameDataUpdater:
 
             # 遍历所有英雄
             for champion_id, champion_data in champions.items():
-                GameDataUpdater._extract_champion_audio(game_path, champion_data, champion_id)
+                DataUpdater._extract_champion_audio(game_path, champion_data, champion_id)
                 progress.update()
 
             progress.finish()
@@ -296,7 +293,7 @@ class GameDataUpdater:
             return
 
         # 构造所有皮肤和炫彩的BIN文件路径和映射
-        bin_paths, bin_mapping = GameDataUpdater._build_bin_path_mapping(champion_data, champion_id, alias)
+        bin_paths, bin_mapping = DataUpdater._build_bin_path_mapping(champion_data, champion_id, alias)
 
         if not bin_paths:
             return
@@ -312,7 +309,7 @@ class GameDataUpdater:
         try:
             # 提取BIN文件
             bin_raws = WAD(full_wad_path).extract(bin_paths, raw=True)
-            GameDataUpdater._process_bin_raw_data(bin_raws, bin_paths, bin_mapping, champion_data)
+            DataUpdater._process_bin_raw_data(bin_raws, bin_paths, bin_mapping, champion_data)
 
         except Exception as e:
             logger.error(f"处理英雄 {alias} 的BIN文件时出错: {str(e)}")
@@ -344,37 +341,79 @@ class GameDataUpdater:
 
         # 如果找到基础皮肤，先处理它
         if base_skin_index is not None:
-            skin = champion_data["skins"][base_skin_index]
-            skin_id = GameDataUpdater._parse_skin_id(skin.get("id"), int(champion_id))
-            bin_path = f"data/characters/{alias}/skins/skin{skin_id}.bin"
-            # 保存BIN文件路径到皮肤数据中
-            champion_data["skins"][base_skin_index]["binPath"] = bin_path
-            bin_paths.append(bin_path)
-            bin_mapping[bin_path] = {"type": "skin", "index": base_skin_index}
+            DataUpdater._process_skin_bin_path(
+                champion_data, champion_id, alias, base_skin_index, bin_paths, bin_mapping
+            )
 
         # 处理其他所有皮肤
         for i, skin in enumerate(champion_data.get("skins", [])):
             if i == base_skin_index:  # 跳过已处理的基础皮肤
                 continue
 
-            # 提取皮肤ID
-            skin_id = GameDataUpdater._parse_skin_id(skin.get("id"), int(champion_id))
-            bin_path = f"data/characters/{alias}/skins/skin{skin_id}.bin"
-            # 保存BIN文件路径到皮肤数据中
-            champion_data["skins"][i]["binPath"] = bin_path
-            bin_paths.append(bin_path)
-            bin_mapping[bin_path] = {"type": "skin", "index": i}
+            # 处理普通皮肤
+            DataUpdater._process_skin_bin_path(champion_data, champion_id, alias, i, bin_paths, bin_mapping)
 
             # 处理该皮肤的所有炫彩
             for j, chroma in enumerate(skin.get("chromas", [])):
-                chroma_id = GameDataUpdater._parse_skin_id(chroma.get("id"), int(champion_id))
-                chroma_bin_path = f"data/characters/{alias}/skins/skin{chroma_id}.bin"
-                # 保存BIN文件路径到炫彩皮肤数据中
-                champion_data["skins"][i]["chromas"][j]["binPath"] = chroma_bin_path
-                bin_paths.append(chroma_bin_path)
-                bin_mapping[chroma_bin_path] = {"type": "chroma", "skin_index": i, "chroma_index": j}
+                DataUpdater._process_chroma_bin_path(champion_data, champion_id, alias, i, j, bin_paths, bin_mapping)
 
         return bin_paths, bin_mapping
+
+    @staticmethod
+    def _process_skin_bin_path(
+        champion_data: ChampionData,
+        champion_id: str,
+        alias: str,
+        skin_index: int,
+        bin_paths: list[str],
+        bin_mapping: BinMapping,
+    ) -> None:
+        """
+        处理单个皮肤的BIN文件路径
+
+        :param champion_data: 英雄数据
+        :param champion_id: 英雄ID
+        :param alias: 英雄别名
+        :param skin_index: 皮肤索引
+        :param bin_paths: BIN路径列表，将会被修改
+        :param bin_mapping: BIN路径映射，将会被修改
+        """
+        skin = champion_data["skins"][skin_index]
+        skin_id = DataUpdater._parse_skin_id(skin.get("id"), int(champion_id))
+        bin_path = f"data/characters/{alias}/skins/skin{skin_id}.bin"
+        # 保存BIN文件路径到皮肤数据中
+        champion_data["skins"][skin_index]["binPath"] = bin_path
+        bin_paths.append(bin_path)
+        bin_mapping[bin_path] = {"type": "skin", "index": skin_index}
+
+    @staticmethod
+    def _process_chroma_bin_path(
+        champion_data: ChampionData,
+        champion_id: str,
+        alias: str,
+        skin_index: int,
+        chroma_index: int,
+        bin_paths: list[str],
+        bin_mapping: BinMapping,
+    ) -> None:
+        """
+        处理单个炫彩皮肤的BIN文件路径
+
+        :param champion_data: 英雄数据
+        :param champion_id: 英雄ID
+        :param alias: 英雄别名
+        :param skin_index: 皮肤索引
+        :param chroma_index: 炫彩索引
+        :param bin_paths: BIN路径列表，将会被修改
+        :param bin_mapping: BIN路径映射，将会被修改
+        """
+        chroma = champion_data["skins"][skin_index]["chromas"][chroma_index]
+        chroma_id = DataUpdater._parse_skin_id(chroma.get("id"), int(champion_id))
+        chroma_bin_path = f"data/characters/{alias}/skins/skin{chroma_id}.bin"
+        # 保存BIN文件路径到炫彩皮肤数据中
+        champion_data["skins"][skin_index]["chromas"][chroma_index]["binPath"] = chroma_bin_path
+        bin_paths.append(chroma_bin_path)
+        bin_mapping[chroma_bin_path] = {"type": "chroma", "skin_index": skin_index, "chroma_index": chroma_index}
 
     @staticmethod
     def _process_bin_raw_data(
@@ -392,10 +431,10 @@ class GameDataUpdater:
         :param champion_data: 英雄数据
         """
         # 首先提取基础皮肤的数据，用于后续去重
-        base_categories = GameDataUpdater._process_base_skin_bin(bin_raws, bin_paths, bin_mapping, champion_data)
+        base_categories = DataUpdater._process_base_skin_bin(bin_raws, bin_paths, bin_mapping, champion_data)
 
         # 处理其他皮肤数据
-        GameDataUpdater._process_other_skins_bin(bin_raws, bin_paths, bin_mapping, champion_data, base_categories)
+        DataUpdater._process_other_skins_bin(bin_raws, bin_paths, bin_mapping, champion_data, base_categories)
 
     @staticmethod
     def _process_base_skin_bin(
@@ -521,10 +560,10 @@ class GameDataUpdater:
                         # champion_data["themeMusic"][str(skin_id)] = bin_file.theme_music
 
                 # 收集当前皮肤的所有音频数据
-                skin_audio_data = GameDataUpdater._collect_skin_audio_data(bin_file, base_categories)
+                skin_audio_data = DataUpdater._collect_skin_audio_data(bin_file, base_categories)
 
                 # 更新皮肤或炫彩的音频数据
-                GameDataUpdater._update_skin_audio_data(champion_data, mapping_info, skin_audio_data)
+                DataUpdater._update_skin_audio_data(champion_data, mapping_info, skin_audio_data)
 
             except Exception as e:
                 logger.error(f"解析BIN文件失败: {bin_path}, 错误: {e}")
@@ -723,7 +762,7 @@ class GameDataUpdater:
             return
 
         # 第一步：读取所有语言的champion-summary.json
-        champion_summaries = GameDataUpdater._load_language_summaries(base_path, languages)
+        champion_summaries = DataUpdater._load_language_summaries(base_path, languages)
 
         # 如果没有找到default语言的数据，无法继续
         if "default" not in champion_summaries:
@@ -731,27 +770,27 @@ class GameDataUpdater:
             return
 
         # 检查各个语言文件的字段情况
-        field_availability = GameDataUpdater._analyze_field_availability(champion_summaries)
+        field_availability = DataUpdater._analyze_field_availability(champion_summaries)
 
         # 初始化结果结构
-        result = GameDataUpdater._initialize_result_structure(version)
+        result = DataUpdater._initialize_result_structure(version)
 
         # 创建进度跟踪器
         champions_count = len(champion_summaries["default"])
         progress = ProgressTracker(champions_count, "英雄数据处理", log_interval=10)
 
         # 处理default语言的英雄数据
-        GameDataUpdater._process_default_champions(
+        DataUpdater._process_default_champions(
             result, champion_summaries["default"], field_availability, base_path, progress
         )
 
         # 处理其他语言的数据
-        GameDataUpdater._merge_other_languages(result, champion_summaries, field_availability, base_path, languages)
+        DataUpdater._merge_other_languages(result, champion_summaries, field_availability, base_path, languages)
 
         progress.finish()
 
         # 创建索引并完成结果
-        final_result = GameDataUpdater._finalize_result(result, languages)
+        final_result = DataUpdater._finalize_result(result, languages)
 
         # 保存合并后的数据
         merged_file = base_path / "merged_data.json"
@@ -772,7 +811,7 @@ class GameDataUpdater:
         """
         for language in languages:
             if language != "default" and language.lower() != "en_us" and language in champion_summaries:
-                GameDataUpdater._process_other_language_data(
+                DataUpdater._process_other_language_data(
                     result, champion_summaries[language], field_availability, base_path, language
                 )
 
@@ -802,10 +841,10 @@ class GameDataUpdater:
             result["champions"][champ_id]["descriptions"] = {"default": champion["description"]}
 
         # 添加WAD文件路径信息
-        GameDataUpdater._add_wad_paths(result["champions"][champ_id], champion["alias"])
+        DataUpdater._add_wad_paths(result["champions"][champ_id], champion["alias"])
 
         # 处理英雄详细信息
-        GameDataUpdater._process_champion_detail(result, champ_id, champion, default_path)
+        DataUpdater._process_champion_detail(result, champ_id, champion, default_path)
 
     @staticmethod
     def _load_language_summaries(base_path: Path, languages: list[str]) -> dict[str, list]:
@@ -895,7 +934,7 @@ class GameDataUpdater:
             champ_id = str(champion["id"])
 
             # 构建英雄数据并添加到结果中
-            GameDataUpdater._build_champion_data(result, champion, champ_id, has_description, default_path)
+            DataUpdater._build_champion_data(result, champion, champ_id, has_description, default_path)
 
             # 更新进度
             if progress:
@@ -942,9 +981,7 @@ class GameDataUpdater:
 
             # 添加皮肤信息
             if "skins" in champion_detail:
-                result["champions"][champ_id]["skins"] = GameDataUpdater._process_champion_skins(
-                    champion_detail["skins"]
-                )
+                result["champions"][champ_id]["skins"] = DataUpdater._process_champion_skins(champion_detail["skins"])
 
         except Exception as e:
             logger.error(f"处理英雄 {champion['id']} default语言详细信息失败: {str(e)}")
@@ -1024,7 +1061,7 @@ class GameDataUpdater:
                 result["champions"][champ_id]["descriptions"][language] = champion["description"]
 
             # 处理该语言的英雄详细信息
-            GameDataUpdater._process_other_language_champion_detail(result, champ_id, champion, base_path, language)
+            DataUpdater._process_other_language_champion_detail(result, champ_id, champion, base_path, language)
 
     @staticmethod
     def _process_other_language_champion_detail(
@@ -1055,7 +1092,7 @@ class GameDataUpdater:
 
             # 处理皮肤名称翻译
             if "skins" in champion_detail and "skins" in result["champions"][champ_id]:
-                GameDataUpdater._process_other_language_skins(
+                DataUpdater._process_other_language_skins(
                     result["champions"][champ_id]["skins"], champion_detail["skins"], language
                 )
 
@@ -1113,7 +1150,7 @@ class GameDataUpdater:
         :return: 最终的结果数据
         """
         # 添加WAD语言文件路径
-        GameDataUpdater._add_language_wad_paths(result, languages)
+        DataUpdater._add_language_wad_paths(result, languages)
 
         # 添加统计信息日志
         champion_count = len(result["champions"])
@@ -1126,7 +1163,7 @@ class GameDataUpdater:
             skin_count += len(champ.get("skins", []))
 
         # 创建索引
-        GameDataUpdater._create_indices(result)
+        DataUpdater._create_indices(result)
 
         # 添加语言信息（不包括默认的en_us/default）
         supported_languages = [lang for lang in languages_found if lang != "default" and lang.lower() != "en_us"]
@@ -1232,7 +1269,7 @@ class GameDataUpdater:
             logger.debug(traceback.format_exc())
 
 
-class GameDataReader(metaclass=Singleton):
+class DataReader(metaclass=Singleton):
     """
     从合并后的数据文件读取游戏数据
     """
@@ -1260,12 +1297,11 @@ class GameDataReader(metaclass=Singleton):
         :param data_file: JSON数据文件路径
         :return: 加载的数据
         """
-        try:
-            with open(data_file, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"加载数据文件时出错: {str(e)}")
+        data = load_json(data_file)
+        if not data:
+            logger.error(f"无法加载数据文件: {data_file}")
             return {"champions": {}, "gameVersion": "unknown"}
+        return data
 
     def set_language(self, language: str) -> None:
         """
