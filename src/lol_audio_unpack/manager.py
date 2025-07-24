@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/5/6 1:19
-# @Update  : 2025/7/25 2:51
+# @Update  : 2025/7/25 4:20
 # @Detail  : 游戏数据管理器
 
 
@@ -31,6 +31,28 @@ ChampionData = dict[str, Any]
 SkinData = dict[str, Any]
 AudioData = dict[str, list[str]]
 BinMapping = dict[str, dict[str, Any]]
+
+
+def get_game_version(game_path: Path) -> str:
+    """
+    获取游戏版本
+
+    :param game_path: 游戏根目录路径
+    :return: 游戏版本号
+    """
+    meta = game_path / "Game" / "content-metadata.json"
+    if not meta.exists():
+        raise FileNotFoundError("content-metadata.json 文件不存在，无法判断版本信息")
+
+    with open(meta, encoding="utf-8") as f:
+        data = json.load(f)
+
+    version_v = data["version"]
+
+    if m := re.match(r"^(\d+\.\d+)\.", version_v):
+        return m.group(1)
+
+    raise ValueError(f"无法解析版本号: {version_v}")
 
 
 class ProgressTracker:
@@ -80,22 +102,6 @@ class DataUpdater:
     负责游戏数据的更新和多语言JSON合并
     """
 
-    # 音频类型常量定义
-    AUDIO_TYPE_SFX = "SFX"  # 音效
-    AUDIO_TYPE_VO = "VO"  # 语音
-    AUDIO_TYPE_SFX_OUTOFGAME = "SFX_OutOfGame"  # 游戏外音效(如大厅、选择英雄时)
-    AUDIO_TYPE_VO_OUTOFGAME = "VO_OutOfGame"  # 游戏外语音
-    AUDIO_TYPE_REWORK_SFX = "Rework_SFX"  # Skarner重做的特殊音效类型
-
-    # 已知的音频类型集合，用于验证
-    KNOWN_AUDIO_TYPES = {
-        AUDIO_TYPE_SFX,
-        AUDIO_TYPE_VO,
-        AUDIO_TYPE_SFX_OUTOFGAME,
-        AUDIO_TYPE_VO_OUTOFGAME,
-        AUDIO_TYPE_REWORK_SFX,
-    }
-
     def __init__(self, languages: list[str] | None = None) -> None:
         """
         初始化数据更新器
@@ -123,81 +129,16 @@ class DataUpdater:
             self.languages: list[str] = languages
 
         # 当前游戏版本，如 "14.14"
-        self.version: str = self._get_game_version()
+        self.version: str = get_game_version(self.game_path)
         # 特定版本的数据清单文件目录
         self.version_manifest_path: Path = self.manifest_path / self.version
         # 最终合并的数据文件路径
-        self.merged_file: Path = self.version_manifest_path / "merged_data.json"
+        self.data_file: Path = self.version_manifest_path / "data.json"
         # 实际处理的语言列表，包含 "default"
         self.process_languages: list[str] = self._prepare_language_list(self.languages)
 
         # 确保版本清单目录存在
         self.version_manifest_path.mkdir(parents=True, exist_ok=True)
-
-    def _extract_audio_type(self, category: str) -> str:
-        """
-        从分类字符串中提取音频类型标识
-
-        :param category: 原始分类字符串(如'Aatrox_Base_SFX'或'Draven_Base_SFX_OutOfGame')
-        :return: 音频类型标识(如'SFX'或'SFX_OutOfGame')
-        """
-        parts = category.split("_")
-        if len(parts) < 3:
-            logger.warning(f"异常的音频分类格式: {category}")
-            return "unknown"
-
-        # 特殊情况处理: Skarner重做, 实际上和SFX内容是一样的，先保留代码，万一呢？
-        if parts[0] == "Skarner" and parts[1] == "Rework" and len(parts) >= 4:
-            logger.debug(f"检测到特殊的Skarner重做分类: {category}")
-            return self.AUDIO_TYPE_REWORK_SFX  # 返回特殊类型标识
-
-        # 通常格式为 [英雄名]_[皮肤]_[类型] 或 [英雄名]_[皮肤]_[类型]_[子类型]
-        # 先尝试判断是否为已知的复合类型
-        if len(parts) >= 4:
-            potential_compound_type = "_".join(parts[2:])  # 合并第三个部分之后的所有部分
-            if potential_compound_type in self.KNOWN_AUDIO_TYPES:
-                return potential_compound_type
-
-        # 如果不是复合类型，则返回第三个部分
-        _type = parts[2]
-
-        # 检查是否为已知类型，如果不是，记录警告
-        if _type not in self.KNOWN_AUDIO_TYPES:
-            logger.warning(f"发现未知的音频类型: {_type}，来自分类: {category}，可能需要额外处理")
-
-        return _type
-
-    def check_and_update(self) -> Path:
-        """
-        检查游戏版本并更新数据
-
-        :return: 合并后的数据文件路径
-        """
-        # 检查是否需要更新
-        if not self._needs_update():
-            return self.merged_file
-
-        # 使用config中的TEMP_PATH创建本次运行的临时目录
-        # 通过添加时间戳确保每次运行的目录唯一
-        run_temp_path = self.temp_path / f"update_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
-        run_temp_path.mkdir(parents=True, exist_ok=True)
-        logger.info(f"创建临时目录用于解包: {run_temp_path}")
-
-        try:
-            # 提取和处理数据
-            self._process_data(run_temp_path)
-            logger.success(f"数据更新完成: {self.merged_file}")
-            return self.merged_file
-        finally:
-            # 根据是否为开发模式决定是否删除临时目录
-            if not config.is_dev_mode():
-                try:
-                    shutil.rmtree(run_temp_path)
-                    logger.info(f"已清理临时目录: {run_temp_path}")
-                except OSError as e:
-                    logger.error(f"清理临时目录失败: {run_temp_path}, error: {e}")
-            else:
-                logger.warning(f"开发模式，临时目录未删除: {run_temp_path}")
 
     def _prepare_language_list(self, languages: list[str]) -> list[str]:
         """
@@ -212,17 +153,49 @@ class DataUpdater:
                 process_languages.append(lang)
         return process_languages
 
+    def check_and_update(self) -> Path:
+        """
+        检查游戏版本并更新数据
+
+        :return: 合并后的数据文件路径
+        """
+        # 检查是否需要更新
+        if not self._needs_update():
+            return self.data_file
+
+        # 使用config中的TEMP_PATH创建本次运行的临时目录
+        # 通过添加时间戳确保每次运行的目录唯一
+        run_temp_path = self.temp_path / f"update_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+        run_temp_path.mkdir(parents=True, exist_ok=True)
+        logger.info(f"创建临时目录用于解包: {run_temp_path}")
+
+        try:
+            # 提取和处理数据
+            self._process_data(run_temp_path)
+            logger.success(f"数据更新完成: {self.data_file}")
+            return self.data_file
+        finally:
+            # 根据是否为开发模式决定是否删除临时目录
+            if not config.is_dev_mode():
+                try:
+                    shutil.rmtree(run_temp_path)
+                    logger.info(f"已清理临时目录: {run_temp_path}")
+                except OSError as e:
+                    logger.error(f"清理临时目录失败: {run_temp_path}, error: {e}")
+            else:
+                logger.warning(f"开发模式，临时目录未删除: {run_temp_path}")
+
     def _needs_update(self) -> bool:
         """
         检查是否需要更新数据
 
         :return: 是否需要更新
         """
-        if not self.merged_file.exists():
+        if not self.data_file.exists():
             return True
 
         try:
-            with open(self.merged_file, encoding="utf-8") as f:
+            with open(self.data_file, encoding="utf-8") as f:
                 existing_data = json.load(f)
 
             # 检查现有文件包含的语言
@@ -269,466 +242,14 @@ class DataUpdater:
         logger.info("验证WAD文件路径...")
         self._verify_wad_paths(temp_path)
 
-        # 处理BIN文件，提取音频路径
-        logger.info("处理BIN文件，提取音频路径...")
-        self._process_bin_files(temp_path)
-
         # 将合并后的数据文件复制到输出目录
-        temp_merged_file = temp_path / self.version / "merged_data.json"
-        if temp_merged_file.exists():
+        temp_data_file = temp_path / self.version / "data.json"
+        if temp_data_file.exists():
             self.version_manifest_path.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(temp_merged_file, self.merged_file)
-            logger.info(f"已复制合并数据到: {self.merged_file}")
+            shutil.copy2(temp_data_file, self.data_file)
+            logger.info(f"已复制合并数据到: {self.data_file}")
         else:
-            raise FileNotFoundError(f"未能创建合并数据文件: {temp_merged_file}")
-
-    def _process_bin_files(self, temp_path: Path) -> None:
-        """
-        处理BIN文件，提取音频路径并添加到皮肤数据中
-
-        :param temp_path: 临时目录路径
-        """
-        merged_file = temp_path / self.version / "merged_data.json"
-
-        if not merged_file.exists():
-            logger.error(f"合并数据文件不存在: {merged_file}")
-            return
-
-        try:
-            # 使用common.py中的load_json函数
-            data = load_json(merged_file)
-            if not data:
-                logger.error(f"无法加载合并数据文件: {merged_file}")
-                return
-
-            # 获取英雄总数并创建进度跟踪器
-            champions = data.get("champions", {})
-            champion_count = len(champions)
-            progress = ProgressTracker(champion_count, "英雄音频数据处理", log_interval=5)
-
-            # 遍历所有英雄
-            for champion_id, champion_data in champions.items():
-                self._extract_champion_audio(champion_data, champion_id)
-                progress.update()
-
-            progress.finish()
-
-            # 使用common.py中的dump_json函数保存更新后的数据
-            dump_json(data, merged_file)
-
-        except Exception as e:
-            logger.error(f"处理BIN文件时出错: {str(e)}")
-            logger.debug(traceback.format_exc())
-
-    def _extract_champion_audio(self, champion_data: ChampionData, champion_id: str) -> None:
-        """
-        提取单个英雄的音频数据
-
-        :param champion_data: 英雄数据
-        :param champion_id: 英雄ID
-        """
-        if "wad" not in champion_data or "skins" not in champion_data:
-            return
-
-        alias = champion_data.get("alias", "").lower()
-        if not alias:
-            return
-
-        # 获取基础WAD路径
-        root_wad_path = champion_data["wad"].get("root")
-        if not root_wad_path:
-            return
-
-        full_wad_path = self.game_path / root_wad_path
-        if not full_wad_path.exists():
-            logger.error(f"英雄 {alias} 的WAD文件不存在: {full_wad_path}")
-            return
-
-        # 构造所有皮肤和炫彩的BIN文件路径和映射
-        bin_paths, bin_mapping = self._build_bin_path_mapping(champion_data, champion_id, alias)
-
-        if not bin_paths:
-            return
-
-        # 记录映射示例用于调试
-        if bin_mapping:
-            sample_mapping = dict(list(bin_mapping.items())[:2])
-            logger.debug(f"BIN路径映射示例: {sample_mapping}")
-
-        # 从WAD中提取BIN文件
-        logger.debug(f"从 {alias} 提取 {len(bin_paths)} 个BIN文件")
-
-        try:
-            # 提取BIN文件
-            bin_raws = WAD(full_wad_path).extract(bin_paths, raw=True)
-            self._process_bin_raw_data(bin_raws, bin_paths, bin_mapping, champion_data)
-
-        except Exception as e:
-            logger.error(f"处理英雄 {alias} 的BIN文件时出错: {str(e)}")
-            logger.debug(traceback.format_exc())
-
-    def _build_bin_path_mapping(
-        self, champion_data: ChampionData, champion_id: str, alias: str
-    ) -> tuple[list[str], BinMapping]:
-        """
-        构建BIN文件路径和数据映射关系
-
-        :param champion_data: 英雄数据
-        :param champion_id: 英雄ID
-        :param alias: 英雄别名
-        :return: BIN路径列表和映射字典
-        """
-        bin_paths = []
-        bin_mapping = {}
-
-        # 处理普通皮肤，确保基础皮肤(skin0)在最前面
-        base_skin_index = None
-
-        # 第一遍查找基础皮肤索引
-        for i, skin in enumerate(champion_data.get("skins", [])):
-            if skin.get("isBase", False):
-                base_skin_index = i
-                break
-
-        # 如果找到基础皮肤，先处理它
-        if base_skin_index is not None:
-            self._process_skin_bin_path(champion_data, champion_id, alias, base_skin_index, bin_paths, bin_mapping)
-
-        # 处理其他所有皮肤
-        for i, skin in enumerate(champion_data.get("skins", [])):
-            if i == base_skin_index:  # 跳过已处理的基础皮肤
-                continue
-
-            # 处理普通皮肤
-            self._process_skin_bin_path(champion_data, champion_id, alias, i, bin_paths, bin_mapping)
-
-            # 处理该皮肤的所有炫彩
-            for j, chroma in enumerate(skin.get("chromas", [])):
-                self._process_chroma_bin_path(champion_data, champion_id, alias, i, j, bin_paths, bin_mapping)
-
-        return bin_paths, bin_mapping
-
-    def _process_skin_bin_path(
-        self,
-        champion_data: ChampionData,
-        champion_id: str,
-        alias: str,
-        skin_index: int,
-        bin_paths: list[str],
-        bin_mapping: BinMapping,
-    ) -> None:
-        """
-        处理单个皮肤的BIN文件路径
-
-        :param champion_data: 英雄数据
-        :param champion_id: 英雄ID
-        :param alias: 英雄别名
-        :param skin_index: 皮肤索引
-        :param bin_paths: BIN路径列表，将会被修改
-        :param bin_mapping: BIN路径映射，将会被修改
-        """
-        skin = champion_data["skins"][skin_index]
-        skin_id = self._parse_skin_id(skin.get("id"), int(champion_id))
-        bin_path = f"data/characters/{alias}/skins/skin{skin_id}.bin"
-        # 保存BIN文件路径到皮肤数据中
-        champion_data["skins"][skin_index]["binPath"] = bin_path
-        bin_paths.append(bin_path)
-        bin_mapping[bin_path] = {"type": "skin", "index": skin_index}
-
-    def _process_chroma_bin_path(
-        self,
-        champion_data: ChampionData,
-        champion_id: str,
-        alias: str,
-        skin_index: int,
-        chroma_index: int,
-        bin_paths: list[str],
-        bin_mapping: BinMapping,
-    ) -> None:
-        """
-        处理单个炫彩皮肤的BIN文件路径
-
-        :param champion_data: 英雄数据
-        :param champion_id: 英雄ID
-        :param alias: 英雄别名
-        :param skin_index: 皮肤索引
-        :param chroma_index: 炫彩索引
-        :param bin_paths: BIN路径列表，将会被修改
-        :param bin_mapping: BIN路径映射，将会被修改
-        """
-        chroma = champion_data["skins"][skin_index]["chromas"][chroma_index]
-        chroma_id = self._parse_skin_id(chroma.get("id"), int(champion_id))
-        chroma_bin_path = f"data/characters/{alias}/skins/skin{chroma_id}.bin"
-        # 保存BIN文件路径到炫彩皮肤数据中
-        champion_data["skins"][skin_index]["chromas"][chroma_index]["binPath"] = chroma_bin_path
-        bin_paths.append(chroma_bin_path)
-        bin_mapping[chroma_bin_path] = {"type": "chroma", "skin_index": skin_index, "chroma_index": chroma_index}
-
-    def _process_bin_raw_data(
-        self,
-        bin_raws: list[bytes],
-        bin_paths: list[str],
-        bin_mapping: BinMapping,
-        champion_data: ChampionData,
-    ) -> None:
-        """
-        处理BIN文件原始数据并更新英雄数据
-
-        :param bin_raws: BIN文件原始数据列表
-        :param bin_paths: BIN文件路径列表
-        :param bin_mapping: BIN路径到数据映射
-        :param champion_data: 英雄数据
-        """
-        # 首先提取基础皮肤的数据，用于后续去重
-        base_categories = self._process_base_skin_bin(bin_raws, bin_paths, bin_mapping, champion_data)
-
-        # 处理其他皮肤数据
-        self._process_other_skins_bin(bin_raws, bin_paths, bin_mapping, champion_data, base_categories)
-
-    def _iterate_bin_banks(self, bin_file: BIN) -> "Generator[tuple[str, str, list[str]]]":
-        """
-        遍历BIN文件中的所有bank，并根据bank_path进行去重。
-
-        :param bin_file: BIN文件对象
-        :yield: (类型, 分类, bank路径)
-        """
-        processed_bank_paths: set[tuple] = set()
-        for entry in bin_file.data:
-            for bank in entry.bank_units:
-                if not bank.bank_path:
-                    continue
-
-                bank_path_tuple = tuple(bank.bank_path)
-                if bank_path_tuple in processed_bank_paths:
-                    continue
-                processed_bank_paths.add(bank_path_tuple)
-
-                _type = self._extract_audio_type(bank.category)
-                yield _type, bank.category, bank.bank_path
-
-    def _process_base_skin_bin(
-        self,
-        bin_raws: list[bytes],
-        bin_paths: list[str],
-        bin_mapping: BinMapping,
-        champion_data: ChampionData,
-    ) -> dict[str, list[str]]:
-        """
-        处理基础皮肤的BIN文件
-
-        :param bin_raws: BIN文件原始数据列表
-        :param bin_paths: BIN文件路径列表
-        :param bin_mapping: BIN路径到数据映射
-        :param champion_data: 英雄数据
-        :return: 基础皮肤的音频分类信息，用于后续去重
-        """
-        base_categories = {}
-        base_skin_path = None
-        base_skin_index = None
-
-        # 查找基础皮肤的BIN路径和索引
-        for path, info in bin_mapping.items():
-            if info["type"] == "skin":
-                skin_index = info["index"]
-                if champion_data["skins"][skin_index].get("isBase", False):
-                    base_skin_path = path
-                    base_skin_index = skin_index
-                    break
-
-        # 如果找到基础皮肤路径，先处理它的数据
-        if base_skin_path and base_skin_index is not None:
-            base_path_index = bin_paths.index(base_skin_path)
-            if base_path_index < len(bin_raws) and bin_raws[base_path_index]:
-                try:
-                    bin_file = BIN(bin_raws[base_path_index])
-                    # 处理主题音乐
-                    if bin_file.theme_music:
-                        logger.info(f"发现英雄主题音乐 数量: {len(bin_file.theme_music)}")
-                        # 暂不做任何处理
-                        # if "themeMusic" not in champion_data:
-                        #     champion_data["themeMusic"] = bin_file.theme_music
-
-                    for _type, category, bank_path in self._iterate_bin_banks(bin_file):
-                        if _type not in base_categories:
-                            base_categories[_type] = []
-                        base_categories[_type].append(category)
-
-                        # 初始化基础皮肤的audioData结构
-                        if "audioData" not in champion_data["skins"][base_skin_index]:
-                            champion_data["skins"][base_skin_index]["audioData"] = {}
-
-                        # 为基础皮肤添加音频数据
-                        if _type not in champion_data["skins"][base_skin_index]["audioData"]:
-                            champion_data["skins"][base_skin_index]["audioData"][_type] = []
-
-                        champion_data["skins"][base_skin_index]["audioData"][_type].append(bank_path)
-
-                except Exception as e:
-                    logger.error(f"解析基础皮肤BIN文件失败: {base_skin_path}, 错误: {e}")
-                    logger.debug(traceback.format_exc())
-
-        return base_categories
-
-    def _process_other_skins_bin(
-        self,
-        bin_raws: list[bytes],
-        bin_paths: list[str],
-        bin_mapping: BinMapping,
-        champion_data: ChampionData,
-        base_categories: dict[str, list[str]],
-    ) -> None:
-        """
-        处理非基础皮肤的BIN文件
-
-        :param bin_raws: BIN文件原始数据列表
-        :param bin_paths: BIN文件路径列表
-        :param bin_mapping: BIN路径到数据映射
-        :param champion_data: 英雄数据
-        :param base_categories: 基础皮肤的音频分类信息，用于去重
-        """
-        # 查找基础皮肤路径
-        base_skin_path = None
-        for path, info in bin_mapping.items():
-            if info["type"] == "skin" and champion_data["skins"][info["index"]].get("isBase", False):
-                base_skin_path = path
-                break
-
-        # 处理所有皮肤数据
-        for i, bin_path in enumerate(bin_paths):
-            if i >= len(bin_raws) or bin_path == base_skin_path:  # 跳过已处理的基础皮肤
-                continue
-
-            bin_raw = bin_raws[i]
-            if not bin_raw:
-                continue
-
-            # 获取该BIN文件对应的映射信息
-            mapping_info = bin_mapping.get(bin_path)
-            if not mapping_info:
-                continue
-
-            try:
-                bin_file = BIN(bin_raw)
-
-                # 处理主题音乐 - 非基础皮肤也可能有主题音乐
-                if bin_file.theme_music:
-                    skin_id = None
-                    if mapping_info["type"] == "skin":
-                        skin_id = champion_data["skins"][mapping_info["index"]].get("id")
-                    elif mapping_info["type"] == "chroma":
-                        skin_idx = mapping_info["skin_index"]
-                        chroma_idx = mapping_info["chroma_index"]
-                        skin_id = champion_data["skins"][skin_idx]["chromas"][chroma_idx].get("id")
-
-                    if skin_id:
-                        logger.info(f"发现皮肤 {skin_id} 的主题音乐 数量: {len(bin_file.theme_music)}")
-                        # 暂不做任何处理
-                        # if "themeMusic" not in champion_data:
-                        #     champion_data["themeMusic"] = {}
-                        # champion_data["themeMusic"][str(skin_id)] = bin_file.theme_music
-
-                # 收集当前皮肤的所有音频数据
-                skin_audio_data = self._collect_skin_audio_data(bin_file, base_categories)
-
-                # 更新皮肤或炫彩的音频数据
-                self._update_skin_audio_data(champion_data, mapping_info, skin_audio_data)
-
-            except Exception as e:
-                logger.error(f"解析BIN文件失败: {bin_path}, 错误: {e}")
-                logger.debug(traceback.format_exc())
-
-    def _collect_skin_audio_data(self, bin_file: BIN, base_categories: dict[str, list[str]]) -> AudioData:
-        """
-        从BIN文件中收集皮肤的音频数据
-
-        :param bin_file: BIN文件对象
-        :param base_categories: 基础皮肤的音频分类信息，用于去重
-        :return: 收集到的音频数据
-        """
-        skin_audio_data = {}
-
-        for _type, category, bank_path in self._iterate_bin_banks(bin_file):
-            # 检查是否是基础皮肤已有的类别
-            is_base_category = False
-            if _type in base_categories and category in base_categories[_type]:
-                is_base_category = True
-
-            # 如果不是基础皮肤的类别，则添加
-            if not is_base_category:
-                if _type not in skin_audio_data:
-                    skin_audio_data[_type] = []
-                skin_audio_data[_type].append(bank_path)
-
-        return skin_audio_data
-
-    def _update_skin_audio_data(
-        self, champion_data: ChampionData, mapping_info: dict[str, Any], skin_audio_data: AudioData
-    ) -> None:
-        """
-        更新皮肤或炫彩的音频数据
-
-        :param champion_data: 英雄数据
-        :param mapping_info: 映射信息
-        :param skin_audio_data: 音频数据
-        """
-        if mapping_info["type"] == "skin":
-            # 初始化皮肤的audioData结构
-            if "audioData" not in champion_data["skins"][mapping_info["index"]]:
-                champion_data["skins"][mapping_info["index"]]["audioData"] = {}
-
-            # 更新普通皮肤的音频数据
-            for _type, paths in skin_audio_data.items():
-                if paths:  # 只有当有数据时才更新
-                    champion_data["skins"][mapping_info["index"]]["audioData"][_type] = paths
-        else:  # 处理炫彩皮肤
-            skin_idx = mapping_info["skin_index"]
-            chroma_idx = mapping_info["chroma_index"]
-
-            # 初始化炫彩皮肤的audioData结构
-            if "audioData" not in champion_data["skins"][skin_idx]["chromas"][chroma_idx]:
-                champion_data["skins"][skin_idx]["chromas"][chroma_idx]["audioData"] = {}
-
-            # 更新炫彩皮肤的音频数据
-            for _type, paths in skin_audio_data.items():
-                if paths:  # 只有当有数据时才更新
-                    champion_data["skins"][skin_idx]["chromas"][chroma_idx]["audioData"][_type] = paths
-
-    def _parse_skin_id(self, full_id: int, champion_id: int) -> int:
-        """
-        从完整的皮肤ID中提取皮肤编号
-
-        :param full_id: 完整ID，如1001
-        :param champion_id: 英雄ID，如1
-        :return: 皮肤编号，如1
-        """
-        # 将champion_id转为字符串，计算位数
-        champion_id_len = len(str(champion_id))
-
-        # 将完整ID转为字符串，截取champion_id之后的部分
-        skin_id_str = str(full_id)[champion_id_len:]
-
-        # 转回整数（会自动去除前导零）
-        return int(skin_id_str)
-
-    def _get_game_version(self) -> str:
-        """
-        获取游戏版本
-
-        :return: 游戏版本号
-        """
-        meta = self.game_path / "Game" / "content-metadata.json"
-        if not meta.exists():
-            raise FileNotFoundError("content-metadata.json 文件不存在，无法判断版本信息")
-
-        with open(meta, encoding="utf-8") as f:
-            data = json.load(f)
-
-        version_v = data["version"]
-
-        if m := re.match(r"^(\d+\.\d+)\.", version_v):
-            return m.group(1)
-
-        raise ValueError(f"无法解析版本号: {version_v}")
+            raise FileNotFoundError(f"未能创建合并数据文件: {temp_data_file}")
 
     def _extract_wad_data(self, out_dir: StrPath, region: str) -> None:
         """
@@ -842,7 +363,7 @@ class DataUpdater:
         final_result = self._finalize_result()
 
         # 保存合并后的数据
-        merged_file = base_path / "merged_data.json"
+        merged_file = base_path / "data.json"
         dump_json(final_result, merged_file)
 
     def _merge_other_languages(self, field_availability: dict, base_path: Path, champion_summaries: dict) -> None:
@@ -1011,39 +532,44 @@ class DataUpdater:
 
             # 添加皮肤信息
             if "skins" in champion_detail:
-                self.result["champions"][champ_id]["skins"] = self._process_champion_skins(champion_detail["skins"])
+                self.result["champions"][champ_id]["skins"] = self._process_champion_skins(
+                    champion_detail["skins"], champ_id, champion["alias"]
+                )
 
         except Exception as e:
             logger.error(f"处理英雄 {champion['id']} default语言详细信息失败: {str(e)}")
 
-    def _process_champion_skins(self, skins: list) -> list:
+    def _process_champion_skins(self, skins: list, champ_id: str, alias: str) -> list:
         """
         处理英雄的皮肤信息
 
         :param skins: 皮肤数据列表
+        :param champ_id: 英雄ID
+        :param alias: 英雄别名
         :return: 处理后的皮肤数据列表
         """
         processed_skins = []
 
         for skin in skins:
+            skin_id_num = self._parse_skin_id(skin["id"], int(champ_id))
+            bin_path = f"data/characters/{alias}/skins/skin{skin_id_num}.bin"
             skin_data = {
                 "id": skin["id"],
                 "isBase": skin.get("isBase", False),
-                # "contentId": skin.get("contentId", ""),
                 "skinNames": {"default": skin["name"]},
-                "audioData": {},  # 添加音频路径字段，初始为空字典
-                "binPath": "",  # 添加BIN文件相对路径字段
+                "binPath": bin_path,
             }
 
             # 处理炫彩皮肤
             if "chromas" in skin:
                 skin_data["chromas"] = []
                 for chroma in skin["chromas"]:
+                    chroma_id_num = self._parse_skin_id(chroma["id"], int(champ_id))
+                    chroma_bin_path = f"data/characters/{alias}/skins/skin{chroma_id_num}.bin"
                     chroma_data = {
                         "id": chroma["id"],
                         "chromaNames": {"default": chroma.get("name", "")},
-                        "audioData": {},  # 也为炫彩皮肤添加音频路径字段
-                        "binPath": "",  # 添加BIN文件相对路径字段
+                        "binPath": chroma_bin_path,
                     }
                     skin_data["chromas"].append(chroma_data)
 
@@ -1224,7 +750,7 @@ class DataUpdater:
 
         :param temp_path: 临时目录路径
         """
-        merged_file = temp_path / self.version / "merged_data.json"
+        merged_file = temp_path / self.version / "data.json"
 
         if not merged_file.exists():
             logger.error(f"合并数据文件不存在: {merged_file}")
@@ -1280,26 +806,469 @@ class DataUpdater:
             logger.error(f"验证WAD路径时出错: {str(e)}")
             logger.debug(traceback.format_exc())
 
+    def _parse_skin_id(self, full_id: int, champion_id: int) -> int:
+        """
+        从完整的皮肤ID中提取皮肤编号
+
+        :param full_id: 完整ID，如1001
+        :param champion_id: 英雄ID，如1
+        :return: 皮肤编号，如1
+        """
+        # 将champion_id转为字符串，计算位数
+        champion_id_len = len(str(champion_id))
+
+        # 将完整ID转为字符串，截取champion_id之后的部分
+        skin_id_str = str(full_id)[champion_id_len:]
+
+        # 转回整数（会自动去除前导零）
+        return int(skin_id_str)
+
+
+class BinUpdater:
+    """
+    负责从BIN文件提取音频数据并更新到数据文件中
+    """
+
+    # 音频类型常量定义
+    AUDIO_TYPE_SFX = "SFX"  # 音效
+    AUDIO_TYPE_VO = "VO"  # 语音
+    AUDIO_TYPE_SFX_OUTOFGAME = "SFX_OutOfGame"  # 游戏外音效(如大厅、选择英雄时)
+    AUDIO_TYPE_VO_OUTOFGAME = "VO_OutOfGame"  # 游戏外语音
+    AUDIO_TYPE_REWORK_SFX = "Rework_SFX"  # Skarner重做的特殊音效类型
+
+    # 已知的音频类型集合，用于验证
+    KNOWN_AUDIO_TYPES = {
+        AUDIO_TYPE_SFX,
+        AUDIO_TYPE_VO,
+        AUDIO_TYPE_SFX_OUTOFGAME,
+        AUDIO_TYPE_VO_OUTOFGAME,
+        AUDIO_TYPE_REWORK_SFX,
+    }
+
+    def __init__(self):
+        """
+        初始化BIN音频更新器
+        """
+        self.game_path: Path = config.GAME_PATH
+        self.manifest_path: Path = config.MANIFEST_PATH
+        if not self.game_path or not self.manifest_path:
+            raise ValueError("GAME_PATH 和 MANIFEST_PATH 必须在配置中设置")
+
+        self.version: str = get_game_version(self.game_path)
+        self.version_manifest_path: Path = self.manifest_path / self.version
+        self.data_file: Path = self.version_manifest_path / "data.json"
+        self.bin_file: Path = self.version_manifest_path / "bin.json"
+
+    def update(self) -> Path:
+        """
+        处理BIN文件，提取音频路径并创建独立的bin.json文件
+
+        :return: 更新后的数据文件路径
+        """
+        if not self.data_file.exists():
+            logger.error(f"数据文件不存在，请先运行DataUpdater: {self.data_file}")
+            raise FileNotFoundError(f"数据文件不存在: {self.data_file}")
+
+        try:
+            # 使用common.py中的load_json函数
+            data = load_json(self.data_file)
+            if not data:
+                logger.error(f"无法加载数据文件: {self.data_file}")
+                raise ValueError(f"无法加载或解析JSON文件: {self.data_file}")
+
+            # 初始化新的bin.json结构
+            self.bin_result = {
+                "gameVersion": self.version,
+                "languages": data.get("languages", []),
+                "lastUpdate": datetime.now().isoformat(),
+                "champions": {},
+            }
+
+            # 获取英雄总数并创建进度跟踪器
+            champions = data.get("champions", {})
+            champion_count = len(champions)
+            progress = ProgressTracker(champion_count, "英雄音频数据处理", log_interval=5)
+
+            # 遍历所有英雄
+            for champion_id, champion_data in champions.items():
+                self._extract_champion_audio(champion_data, champion_id)
+                progress.update()
+
+            progress.finish()
+
+            # 使用common.py中的dump_json函数保存新的bin.json文件
+            dump_json(self.bin_result, self.bin_file)
+            logger.success(f"音频数据更新完成: {self.bin_file}")
+            return self.bin_file
+
+        except Exception as e:
+            logger.error(f"处理BIN文件时出错: {str(e)}")
+            logger.debug(traceback.format_exc())
+            raise
+
+    def _extract_champion_audio(self, champion_data: ChampionData, champion_id: str) -> None:
+        """
+        提取单个英雄的音频数据
+
+        :param champion_data: 英雄数据
+        :param champion_id: 英雄ID
+        """
+        if "wad" not in champion_data or "skins" not in champion_data:
+            return
+
+        alias = champion_data.get("alias", "").lower()
+        if not alias:
+            return
+
+        # 获取基础WAD路径
+        root_wad_path = champion_data["wad"].get("root")
+        if not root_wad_path:
+            return
+
+        full_wad_path = self.game_path / root_wad_path
+        if not full_wad_path.exists():
+            logger.error(f"英雄 {alias} 的WAD文件不存在: {full_wad_path}")
+            return
+
+        # 构造所有皮肤和炫彩的BIN文件路径和映射
+        bin_paths, bin_mapping = self._build_bin_path_mapping(champion_data, champion_id, alias)
+
+        if not bin_paths:
+            return
+
+        # 记录映射示例用于调试
+        if bin_mapping:
+            sample_mapping = dict(list(bin_mapping.items())[:2])
+            logger.debug(f"BIN路径映射示例: {sample_mapping}")
+
+        # 从WAD中提取BIN文件
+        logger.debug(f"从 {alias} 提取 {len(bin_paths)} 个BIN文件")
+
+        try:
+            # 提取BIN文件
+            bin_raws = WAD(full_wad_path).extract(bin_paths, raw=True)
+            self._process_bin_raw_data(bin_raws, bin_paths, bin_mapping, champion_data)
+
+        except Exception as e:
+            logger.error(f"处理英雄 {alias} 的BIN文件时出错: {str(e)}")
+            logger.debug(traceback.format_exc())
+
+    def _build_bin_path_mapping(
+        self, champion_data: ChampionData, champion_id: str, alias: str
+    ) -> tuple[list[str], BinMapping]:
+        """
+        从英雄数据中收集BIN文件路径和数据映射关系
+
+        :param champion_data: 英雄数据
+        :param champion_id: 英雄ID (当前未使用，保留兼容性)
+        :param alias: 英雄别名 (当前未使用，保留兼容性)
+        :return: BIN路径列表和映射字典
+        """
+        bin_paths = []
+        bin_mapping = {}
+
+        # 遍历所有皮肤
+        for skin_index, skin in enumerate(champion_data.get("skins", [])):
+            if skin.get("binPath"):
+                bin_path = skin["binPath"]
+                bin_paths.append(bin_path)
+                bin_mapping[bin_path] = {"type": "skin", "index": skin_index}
+
+            # 遍历该皮肤的所有炫彩
+            for chroma_index, chroma in enumerate(skin.get("chromas", [])):
+                if chroma.get("binPath"):
+                    chroma_bin_path = chroma["binPath"]
+                    bin_paths.append(chroma_bin_path)
+                    bin_mapping[chroma_bin_path] = {
+                        "type": "chroma",
+                        "skin_index": skin_index,
+                        "chroma_index": chroma_index,
+                    }
+
+        return bin_paths, bin_mapping
+
+    def _process_bin_raw_data(
+        self,
+        bin_raws: list[bytes],
+        bin_paths: list[str],
+        bin_mapping: BinMapping,
+        champion_data: ChampionData,
+    ) -> None:
+        """
+        处理BIN文件原始数据并更新英雄数据
+
+        :param bin_raws: BIN文件原始数据列表
+        :param bin_paths: BIN文件路径列表
+        :param bin_mapping: BIN路径到数据映射
+        :param champion_data: 英雄数据
+        """
+        # 首先提取基础皮肤的数据，用于后续去重
+        base_categories = self._process_base_skin_bin(bin_raws, bin_paths, bin_mapping, champion_data)
+
+        # 处理其他皮肤数据
+        self._process_other_skins_bin(bin_raws, bin_paths, bin_mapping, champion_data, base_categories)
+
+    def _iterate_bin_banks(self, bin_file: BIN) -> "Generator[tuple[str, str, list[str]]]":
+        """
+        遍历BIN文件中的所有bank，并根据bank_path进行去重。
+
+        :param bin_file: BIN文件对象
+        :yield: (类型, 分类, bank路径)
+        """
+        processed_bank_paths: set[tuple] = set()
+        for entry in bin_file.data:
+            for bank in entry.bank_units:
+                if not bank.bank_path:
+                    continue
+
+                bank_path_tuple = tuple(bank.bank_path)
+                if bank_path_tuple in processed_bank_paths:
+                    continue
+                processed_bank_paths.add(bank_path_tuple)
+
+                _type = self._extract_audio_type(bank.category)
+                yield _type, bank.category, bank.bank_path
+
+    def _process_base_skin_bin(
+        self,
+        bin_raws: list[bytes],
+        bin_paths: list[str],
+        bin_mapping: BinMapping,
+        champion_data: ChampionData,
+    ) -> dict[str, list[str]]:
+        """
+        处理基础皮肤的BIN文件
+
+        :param bin_raws: BIN文件原始数据列表
+        :param bin_paths: BIN文件路径列表
+        :param bin_mapping: BIN路径到数据映射
+        :param champion_data: 英雄数据
+        :return: 基础皮肤的音频分类信息，用于后续去重
+        """
+        base_categories = {}
+        base_skin_path = None
+        base_skin_index = None
+        base_skin_audio_data = {}
+
+        # 查找基础皮肤的BIN路径和索引
+        for path, info in bin_mapping.items():
+            if info["type"] == "skin":
+                skin_index = info["index"]
+                if champion_data["skins"][skin_index].get("isBase", False):
+                    base_skin_path = path
+                    base_skin_index = skin_index
+                    break
+
+        # 如果找到基础皮肤路径，先处理它的数据
+        if base_skin_path and base_skin_index is not None:
+            base_path_index = bin_paths.index(base_skin_path)
+            if base_path_index < len(bin_raws) and bin_raws[base_path_index]:
+                try:
+                    bin_file = BIN(bin_raws[base_path_index])
+                    # 处理主题音乐
+                    if bin_file.theme_music:
+                        logger.debug(f"发现英雄主题音乐 数量: {len(bin_file.theme_music)}")
+                        # 暂不做任何处理
+                        # if "themeMusic" not in champion_data:
+                        #     champion_data["themeMusic"] = bin_file.theme_music
+
+                    for _type, category, bank_path in self._iterate_bin_banks(bin_file):
+                        if _type not in base_categories:
+                            base_categories[_type] = []
+                        base_categories[_type].append(category)
+
+                        if _type not in base_skin_audio_data:
+                            base_skin_audio_data[_type] = []
+                        base_skin_audio_data[_type].append(bank_path)
+
+                    # 循环结束后，更新结果
+                    if base_skin_audio_data and base_skin_index is not None:
+                        mapping_info = {"type": "skin", "index": base_skin_index}
+                        self._update_skin_audio_data(champion_data, mapping_info, base_skin_audio_data)
+
+                except Exception as e:
+                    logger.error(f"解析基础皮肤BIN文件失败: {base_skin_path}, 错误: {e}")
+                    logger.debug(traceback.format_exc())
+
+        return base_categories
+
+    def _process_other_skins_bin(
+        self,
+        bin_raws: list[bytes],
+        bin_paths: list[str],
+        bin_mapping: BinMapping,
+        champion_data: ChampionData,
+        base_categories: dict[str, list[str]],
+    ) -> None:
+        """
+        处理非基础皮肤的BIN文件
+
+        :param bin_raws: BIN文件原始数据列表
+        :param bin_paths: BIN文件路径列表
+        :param bin_mapping: BIN路径到数据映射
+        :param champion_data: 英雄数据
+        :param base_categories: 基础皮肤的音频分类信息，用于去重
+        """
+        # 查找基础皮肤路径
+        base_skin_path = None
+        for path, info in bin_mapping.items():
+            if info["type"] == "skin" and champion_data["skins"][info["index"]].get("isBase", False):
+                base_skin_path = path
+                break
+
+        # 处理所有皮肤数据
+        for i, bin_path in enumerate(bin_paths):
+            if i >= len(bin_raws) or bin_path == base_skin_path:  # 跳过已处理的基础皮肤
+                continue
+
+            bin_raw = bin_raws[i]
+            if not bin_raw:
+                continue
+
+            # 获取该BIN文件对应的映射信息
+            mapping_info = bin_mapping.get(bin_path)
+            if not mapping_info:
+                continue
+
+            try:
+                bin_file = BIN(bin_raw)
+
+                # 处理主题音乐 - 非基础皮肤也可能有主题音乐
+                if bin_file.theme_music:
+                    skin_id = None
+                    if mapping_info["type"] == "skin":
+                        skin_id = champion_data["skins"][mapping_info["index"]].get("id")
+                    elif mapping_info["type"] == "chroma":
+                        skin_idx = mapping_info["skin_index"]
+                        chroma_idx = mapping_info["chroma_index"]
+                        skin_id = champion_data["skins"][skin_idx]["chromas"][chroma_idx].get("id")
+
+                    if skin_id:
+                        logger.info(f"发现皮肤 {skin_id} 的主题音乐 数量: {len(bin_file.theme_music)}")
+                        # 暂不做任何处理
+                        # if "themeMusic" not in champion_data:
+                        #     champion_data["themeMusic"] = {}
+                        # champion_data["themeMusic"][str(skin_id)] = bin_file.theme_music
+
+                # 收集当前皮肤的所有音频数据
+                skin_audio_data = self._collect_skin_audio_data(bin_file, base_categories)
+
+                # 更新皮肤或炫彩的音频数据
+                self._update_skin_audio_data(champion_data, mapping_info, skin_audio_data)
+
+            except Exception as e:
+                logger.error(f"解析BIN文件失败: {bin_path}, 错误: {e}")
+                logger.debug(traceback.format_exc())
+
+    def _collect_skin_audio_data(self, bin_file: BIN, base_categories: dict[str, list[str]]) -> AudioData:
+        """
+        从BIN文件中收集皮肤的音频数据
+
+        :param bin_file: BIN文件对象
+        :param base_categories: 基础皮肤的音频分类信息，用于去重
+        :return: 收集到的音频数据
+        """
+        skin_audio_data = {}
+
+        for _type, category, bank_path in self._iterate_bin_banks(bin_file):
+            # 检查是否是基础皮肤已有的类别
+            is_base_category = False
+            if _type in base_categories and category in base_categories[_type]:
+                is_base_category = True
+
+            # 如果不是基础皮肤的类别，则添加
+            if not is_base_category:
+                if _type not in skin_audio_data:
+                    skin_audio_data[_type] = []
+                skin_audio_data[_type].append(bank_path)
+
+        return skin_audio_data
+
+    def _update_skin_audio_data(
+        self, champion_data: ChampionData, mapping_info: dict[str, Any], skin_audio_data: AudioData
+    ) -> None:
+        """
+        更新皮肤或炫彩的音频数据
+
+        :param champion_data: 英雄数据
+        :param mapping_info: 映射信息
+        :param skin_audio_data: 音频数据
+        """
+        if not skin_audio_data:
+            return
+
+        if mapping_info["type"] == "skin":
+            skin_id = champion_data["skins"][mapping_info["index"]]["id"]
+            self.bin_result["champions"][str(skin_id)] = skin_audio_data
+        else:  # 处理炫彩皮肤
+            skin_idx = mapping_info["skin_index"]
+            chroma_idx = mapping_info["chroma_index"]
+            chroma_id = champion_data["skins"][skin_idx]["chromas"][chroma_idx]["id"]
+            self.bin_result["champions"][str(chroma_id)] = skin_audio_data
+
+    def _extract_audio_type(self, category: str) -> str:
+        """
+        从分类字符串中提取音频类型标识
+
+        :param category: 原始分类字符串(如'Aatrox_Base_SFX'或'Draven_Base_SFX_OutOfGame')
+        :return: 音频类型标识(如'SFX'或'SFX_OutOfGame')
+        """
+        parts = category.split("_")
+        if len(parts) < 3:
+            logger.warning(f"异常的音频分类格式: {category}")
+            return "unknown"
+
+        # 特殊情况处理: Skarner重做, 实际上和SFX内容是一样的，先保留代码，万一呢？
+        if parts[0] == "Skarner" and parts[1] == "Rework" and len(parts) >= 4:
+            logger.debug(f"检测到特殊的Skarner重做分类: {category}")
+            return self.AUDIO_TYPE_REWORK_SFX  # 返回特殊类型标识
+
+        # 通常格式为 [英雄名]_[皮肤]_[类型] 或 [英雄名]_[皮肤]_[类型]_[子类型]
+        # 先尝试判断是否为已知的复合类型
+        if len(parts) >= 4:
+            potential_compound_type = "_".join(parts[2:])  # 合并第三个部分之后的所有部分
+            if potential_compound_type in self.KNOWN_AUDIO_TYPES:
+                return potential_compound_type
+
+        # 如果不是复合类型，则返回第三个部分
+        _type = parts[2]
+
+        # 检查是否为已知类型，如果不是，记录警告
+        if _type not in self.KNOWN_AUDIO_TYPES:
+            logger.warning(f"发现未知的音频类型: {_type}，来自分类: {category}，可能需要额外处理")
+
+        return _type
+
 
 class DataReader(metaclass=Singleton):
     """
     从合并后的数据文件读取游戏数据
     """
 
-    def __init__(self, data_file: StrPath, default_language: str = "default"):
+    def __init__(self, default_language: str = "default"):
         """
         初始化数据读取器
 
-        :param data_file: 合并后的JSON数据文件路径
         :param default_language: 默认使用的语言
         """
         # 防止单例被重复初始化
         if hasattr(self, "initialized"):
             return
 
-        self.default_language = default_language
+        self.game_path: Path = config.GAME_PATH
+        self.manifest_path: Path = config.MANIFEST_PATH
+        if not self.game_path or not self.manifest_path:
+            raise ValueError("GAME_PATH 和 MANIFEST_PATH 必须在配置中设置")
+
+        self.version: str = get_game_version(self.game_path)
+        self.version_manifest_path: Path = self.manifest_path / self.version
+
+        data_file = self.version_manifest_path / "data.json"
+        bin_file = self.version_manifest_path / "bin.json"
+
         self.data = self._load_data(data_file)
-        self.version = self.data.get("gameVersion", "unknown")
+        self.bin_data = self._load_data(bin_file)
+        self.default_language = default_language
         self.initialized = True
 
     def _load_data(self, data_file: StrPath) -> dict:
@@ -1309,10 +1278,15 @@ class DataReader(metaclass=Singleton):
         :param data_file: JSON数据文件路径
         :return: 加载的数据
         """
-        data = load_json(data_file)
+        path = Path(data_file)
+        if not path.exists():
+            logger.warning(f"数据文件不存在: {data_file}，将返回空字典")
+            return {}
+
+        data = load_json(path)
         if not data:
             logger.error(f"无法加载数据文件: {data_file}")
-            return {"champions": {}, "gameVersion": "unknown"}
+            return {}
         return data
 
     def set_language(self, language: str) -> None:
@@ -1340,6 +1314,15 @@ class DataReader(metaclass=Singleton):
         for champion in self.data.get("champions", {}).values():
             languages.update(champion.get("names", {}).keys())
         return list(languages)
+
+    def get_champion_bank(self, skin_id: int) -> dict:
+        """
+        根据皮肤ID获取音频资源集合数据
+
+        :param skin_id: 皮肤ID
+        :return: 音频数据
+        """
+        return self.bin_data.get("champions", {}).get(str(skin_id), {})
 
     def get_champion(self, champion_id: int) -> dict:
         """
