@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/9/3 10:14
-# @Update  : 2025/7/25 2:49
+# @Update  : 2025/7/25 4:02
 # @Detail  : Application setup
 
 
@@ -14,7 +14,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from .manager import DataReader, DataUpdater
+from .manager import BinUpdater, DataReader, DataUpdater
 from .Utils.config import config
 
 
@@ -45,4 +45,4 @@ def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs):
     logger.info("Application setup complete.")
 
 
-__all__ = ["setup_app", "config", "DataUpdater", "DataReader"]
+__all__ = ["setup_app", "BinUpdater", "config", "DataUpdater", "DataReader"]
