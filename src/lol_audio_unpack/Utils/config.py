@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:00
-# @Update  : 2025/7/23 16:53
+# @Update  : 2025/7/25 2:49
 # @Detail  : config.py
 
 
@@ -59,12 +59,6 @@ class Config(metaclass=Singleton):
             "default": "wem",
             "help": "输出音频格式，VGMSTREAM支持的转码格式，常见的wav、mp3、ogg等均支持",
             "short": "f",
-        },
-        "DEBUG": {
-            "type": "str",
-            "default": "5",
-            "help": "调试等级，TRACE 5, DEBUG 10, INFO 20, SUCCESS 25, WARNING 30, ERROR 40, CRITICAL 50",
-            "short": "d",
         },
     }
 
@@ -120,9 +114,6 @@ class Config(metaclass=Singleton):
 
         # 验证必须的参数
         self._validate_required()
-
-        # 初始化日志
-        self._setup_logging()
 
     def __str__(self):
         """提供配置实例的字符串表示，用于调试和测试"""
@@ -181,9 +172,6 @@ class Config(metaclass=Singleton):
 
         # 验证必须的参数
         self._validate_required()
-
-        # 重新初始化日志
-        self._setup_logging()
 
         logger.debug(f"配置重新加载完成，共 {len(self.settings)} 项")
 
@@ -402,25 +390,6 @@ class Config(metaclass=Singleton):
             logger.error(f"缺少必要的配置项: {', '.join(missing)}")
             # 对于严重的配置缺失，可以考虑抛出异常
             # raise ValueError(f"缺少必要的配置项: {', '.join(missing)}")
-
-    def _setup_logging(self):
-        """
-        设置日志记录器
-
-        :return: None
-        """
-        try:
-            debug_level = int(self.get("DEBUG", 20))
-            logger.configure(handlers=[{"sink": sys.stdout, "level": debug_level, "enqueue": True}])
-
-            log_path = self.get("LOG_PATH")
-            if log_path:
-                Path(log_path).mkdir(parents=True, exist_ok=True)
-                logger.add(
-                    Path(log_path) / "{time:YYYY-MM-DD}.log", rotation="00:00", retention="7 days", level="DEBUG"
-                )
-        except Exception as e:
-            print(f"日志初始化失败: {str(e)}")
 
     def get(self, key: str, default: Any = None) -> Any:
         """
