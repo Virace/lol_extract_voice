@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/5/6 1:19
-# @Update  : 2025/7/24 9:21
+# @Update  : 2025/7/24 23:40
 # @Detail  : 游戏数据管理器
 
 
@@ -22,6 +22,7 @@ from league_tools.formats import BIN, WAD
 from loguru import logger
 
 from lol_audio_unpack.Utils.common import Singleton, dump_json, format_region, load_json
+from lol_audio_unpack.Utils.config import config
 from lol_audio_unpack.Utils.type_hints import StrPath
 
 # 类型别名定义
@@ -78,16 +79,63 @@ class DataUpdater:
     负责游戏数据的更新和多语言JSON合并
     """
 
+    # 音频类型常量定义
+    AUDIO_TYPE_SFX = "SFX"  # 音效
+    AUDIO_TYPE_VO = "VO"  # 语音
+    AUDIO_TYPE_SFX_OUTOFGAME = "SFX_OutOfGame"  # 游戏外音效(如大厅、选择英雄时)
+    AUDIO_TYPE_REWORK_SFX = "Rework_SFX"  # Skarner重做的特殊音效类型
+
+    # 已知的音频类型集合，用于验证
+    KNOWN_AUDIO_TYPES = {AUDIO_TYPE_SFX, AUDIO_TYPE_VO, AUDIO_TYPE_SFX_OUTOFGAME, AUDIO_TYPE_REWORK_SFX}
+
     @staticmethod
-    def check_and_update(game_path: StrPath, out_dir: StrPath, languages=None) -> Path:
+    def _extract_audio_type(category: str) -> str:
+        """
+        从分类字符串中提取音频类型标识
+
+        :param category: 原始分类字符串(如'Aatrox_Base_SFX'或'Draven_Base_SFX_OutOfGame')
+        :return: 音频类型标识(如'SFX'或'SFX_OutOfGame')
+        """
+        parts = category.split("_")
+        if len(parts) < 3:
+            logger.warning(f"异常的音频分类格式: {category}")
+            return "unknown"
+
+        # 特殊情况处理: Skarner重做, 实际上和SFX内容是一样的，先保留代码，万一呢？
+        if parts[0] == "Skarner" and parts[1] == "Rework" and len(parts) >= 4:
+            logger.debug(f"检测到特殊的Skarner重做分类: {category}")
+            return DataUpdater.AUDIO_TYPE_REWORK_SFX  # 返回特殊类型标识
+
+        # 通常格式为 [英雄名]_[皮肤]_[类型] 或 [英雄名]_[皮肤]_[类型]_[子类型]
+        # 先尝试判断是否为已知的复合类型
+        if len(parts) >= 4:
+            potential_compound_type = "_".join(parts[2:])  # 合并第三个部分之后的所有部分
+            if potential_compound_type in DataUpdater.KNOWN_AUDIO_TYPES:
+                return potential_compound_type
+
+            # 如果特殊处理了SFX_OutOfGame
+            if parts[2] == "SFX" and parts[3] == "OutOfGame":
+                return DataUpdater.AUDIO_TYPE_SFX_OUTOFGAME
+
+        # 如果不是复合类型，则返回第三个部分
+        _type = parts[2]
+
+        # 检查是否为已知类型，如果不是，记录警告
+        if _type not in DataUpdater.KNOWN_AUDIO_TYPES:
+            logger.warning(f"发现未知的音频类型: {_type}，来自分类: {category}，可能需要额外处理")
+
+        return _type
+
+    @staticmethod
+    def check_and_update(languages=None) -> Path:
         """
         检查游戏版本并更新数据
 
-        :param game_path: 游戏路径
-        :param out_dir: 输出目录
         :param languages: 需要处理的语言列表（不包括default，default会自动添加）
         :return: 合并后的数据文件路径
         """
+        game_path = config.GAME_PATH
+        out_dir = config.MANIFEST_PATH
         # 默认语言设置
         if languages is None:
             languages = ["zh_CN"]
@@ -110,7 +158,7 @@ class DataUpdater:
             return merged_file
 
         # 创建临时目录并处理数据
-        with tempfile.TemporaryDirectory(prefix="lol_data_", delete=True) as temp_dir:
+        with tempfile.TemporaryDirectory(prefix="lol_data_", delete=False) as temp_dir:
             temp_path = Path(temp_dir)
             logger.info(f"创建临时目录用于解包: {temp_path}")
 
@@ -226,7 +274,7 @@ class DataUpdater:
         :param out_dir: 输出目录
         :param version: 游戏版本
         """
-        game_path = Path(game_path)
+        game_path = config.GAME_PATH
         merged_file = Path(out_dir) / version / "merged_data.json"
 
         if not merged_file.exists():
@@ -239,10 +287,6 @@ class DataUpdater:
             if not data:
                 logger.error(f"无法加载合并数据文件: {merged_file}")
                 return
-
-            # 创建临时目录存放提取的BIN文件
-            temp_bin_dir = Path(out_dir) / "bin_temp"
-            temp_bin_dir.mkdir(parents=True, exist_ok=True)
 
             # 获取英雄总数并创建进度跟踪器
             champions = data.get("champions", {})
@@ -258,9 +302,6 @@ class DataUpdater:
 
             # 使用common.py中的dump_json函数保存更新后的数据
             dump_json(data, merged_file)
-
-            # 清理临时目录
-            shutil.rmtree(temp_bin_dir, ignore_errors=True)
 
         except Exception as e:
             logger.error(f"处理BIN文件时出错: {str(e)}")
@@ -480,7 +521,10 @@ class DataUpdater:
 
                     for entry in bin_file.data:
                         for bank in entry.bank_units:
-                            _type = bank.category.split("_")[-1]
+                            if not bank.bank_path:
+                                continue
+
+                            _type = DataUpdater._extract_audio_type(bank.category)
                             if _type not in base_categories:
                                 base_categories[_type] = []
                             base_categories[_type].append(bank.category)
@@ -582,7 +626,10 @@ class DataUpdater:
 
         for entry in bin_file.data:
             for bank in entry.bank_units:
-                _type = bank.category.split("_")[-1]
+                if not bank.bank_path:
+                    continue
+
+                _type = DataUpdater._extract_audio_type(bank.category)
 
                 # 检查是否是基础皮肤已有的类别
                 is_base_category = False
