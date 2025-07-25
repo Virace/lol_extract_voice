@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/5/6 1:19
-# @Update  : 2025/7/23 5:05
+# @Update  : 2025/7/25 11:49
 # @Detail  : 通用函数
 
 
@@ -34,6 +34,20 @@ def capitalize_first_letter(word):
     if not word:
         return word  # 处理空字符串的情况
     return word[0].upper() + word[1:]
+
+
+def sanitize_filename(filename: str, replacement: str = "_") -> str:
+    """
+    清理文件名中的非法字符，使其在Windows等操作系统中安全可用。
+
+    :param filename: 原始文件名或路径片段。
+    :param replacement: 用于替换非法字符的字符串，默认为下划线 "_".
+    :return: 清理后的安全文件名。
+    """
+    # Windows 文件名非法字符: < > : " / \ | ? *
+    # 同时包括控制字符 (ASCII 0-31)
+    illegal_chars_re = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+    return illegal_chars_re.sub(replacement, filename)
 
 
 class EnhancedPath(BasePath):

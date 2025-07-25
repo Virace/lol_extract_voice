@@ -5,18 +5,21 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/23 12:27
-# @Update  : 2025/7/25 10:39
+# @Update  : 2025/7/26 0:12
 # @Detail  : 解包音频
 
 
 import os
+import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from league_tools.formats import BNK, WAD, WPK
 from loguru import logger
 
 from lol_audio_unpack.manager import DataReader
+from lol_audio_unpack.Utils.common import sanitize_filename
 from lol_audio_unpack.Utils.config import config
 
 
@@ -121,23 +124,29 @@ def unpack_audio(hero_id: int, reader: DataReader):
     logger.success(f"所有皮肤的VO文件解包完成，共 {len(unpacked_vo_data)} 个皮肤。开始处理解包后的文件...")
 
     # --- 阶段 4: 保存解包后的文件 ---
-    hero_path = config.AUDIO_PATH / "Champions" / f"{hero_id}·{alias}·{name}"
+    # 清理名称中的非法字符
+    safe_alias = sanitize_filename(alias)
+    safe_name = sanitize_filename(name)
+    hero_path = config.AUDIO_PATH / "Champions" / f"{hero_id}·{safe_alias}·{safe_name}"
 
     for skin_id, skin_data in unpacked_vo_data.items():
         skin_name = skin_data["name"]
         files = skin_data["files"]
 
         # 创建一个文件夹，用来存放解包后的文件
-        skin_path = hero_path / f"{skin_id}·{skin_name}"
+        safe_skin_name = sanitize_filename(skin_name, "'")
+        skin_path = hero_path / f"{skin_id}·{safe_skin_name}"
         skin_path.mkdir(parents=True, exist_ok=True)
-        logger.info(f"正在为皮肤 '{skin_name}' (ID: {skin_id}) 保存 {len(files)} 个文件至 {skin_path}")
+        logger.info(f"正在处理皮肤 '{skin_name}' (ID: {skin_id}) , 工作目录: {skin_path}")
 
+        success_count, container_skipped_count, subfile_skipped_count, error_count = 0, 0, 0, 0
         for file_info in files:
             file_size = len(file_info["raw"]) if file_info["raw"] else 0
 
             logger.debug(f"  - 类型: {file_info['suffix']}, 大小: {file_size} 字节")
 
             if file_size == 0:
+                container_skipped_count += 1
                 continue
 
             # 判断文件类型
@@ -145,19 +154,95 @@ def unpack_audio(hero_id: int, reader: DataReader):
                 # 解包bnk文件
                 try:
                     bnk = BNK(file_info["raw"])
-                    for file in bnk.get_data_files():
-                        file.save_file(f"{skin_path}/{file.filename}")
-                        logger.trace(f"BNK, 已解包 {file.filename} 文件")
+                    for file in bnk.extract_files():
+                        if not file.data:
+                            logger.warning(f"BNK, 文件 {file.id} 没有数据，跳过保存")
+                            subfile_skipped_count += 1
+                            continue
+
+                        file.save_file(f"{skin_path}/{file.id}.wem")
+                        logger.trace(f"BNK, 已解包 {file.id} 文件")
+                        success_count += 1
                 except Exception as e:
                     logger.warning(f"处理BNK文件失败: {e}")
+                    error_count += 1
             elif file_info["suffix"] == ".wpk":
                 # 解包wpk文件
                 try:
                     wpk = WPK(file_info["raw"])
-                    for file in wpk.get_files_data():
+                    for file in wpk.extract_files():
                         file.save_file(f"{skin_path}/{file.filename}")
                         logger.trace(f"WPK, 已解包 {file.filename} 文件")
+                        success_count += 1
                 except Exception as e:
                     logger.warning(f"处理WPK文件失败: {e}")
+                    error_count += 1
             else:
                 logger.warning(f"未知的文件类型: {file_info['suffix']}")
+                error_count += 1
+
+        # 输出处理统计
+        summary_message = f"皮肤 '{skin_name}' 处理完成。结果: 成功 {success_count} 个"
+        details = []
+        if subfile_skipped_count > 0:
+            details.append(f"跳过空子文件 {subfile_skipped_count} 个")
+        if container_skipped_count > 0:
+            details.append(f"跳过空容器 {container_skipped_count} 个")
+        if error_count > 0:
+            details.append(f"处理失败 {error_count} 个")
+
+        if details:
+            summary_message += f" ({', '.join(details)})"
+        summary_message += "."
+
+        if error_count > 0 or container_skipped_count > 0:
+            logger.warning(summary_message)
+        else:
+            logger.success(summary_message)
+
+
+def unpack_audio_all(reader: DataReader, max_workers: int = 4):
+    """
+    使用线程池并发解包所有英雄的音频文件。
+
+    通过设置 max_workers=1 可以切换到单线程顺序执行模式，以对比性能。
+
+    :param reader: 一个已经初始化并加载了数据的DataReader实例
+    :param max_workers: 使用的最大线程数 (1: 单线程, >1: 多线程)
+    """
+    start_time = time.time()
+    champions = reader.get_champions()
+    champion_ids = [champion.get("id") for champion in champions]
+    total_heroes = len(champion_ids)
+    logger.info(
+        f"开始解包所有 {total_heroes} 个英雄，模式: {'多线程' if max_workers > 1 else '单线程'} (workers: {max_workers})"
+    )
+
+    if max_workers > 1:
+        # --- 多线程模式 ---
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_hero = {executor.submit(unpack_audio, hero_id, reader): hero_id for hero_id in champion_ids}
+            completed_count = 0
+            for future in as_completed(future_to_hero):
+                hero_id = future_to_hero[future]
+                completed_count += 1
+                try:
+                    future.result()  # 获取结果，如果函数中出现异常，这里会重新抛出
+                    logger.info(f"进度: {completed_count}/{total_heroes} - 英雄ID {hero_id} 解包完成。")
+                except Exception as exc:
+                    logger.error(f"英雄ID {hero_id} 解包时发生错误: {exc}")
+                    logger.debug(traceback.format_exc())
+    else:
+        # --- 单线程模式 ---
+        completed_count = 0
+        for hero_id in champion_ids:
+            try:
+                unpack_audio(hero_id, reader)
+                completed_count += 1
+                logger.info(f"进度: {completed_count}/{total_heroes} - 英雄ID {hero_id} 解包完成。")
+            except Exception as exc:
+                logger.error(f"英雄ID {hero_id} 解包时发生错误: {exc}")
+                logger.debug(traceback.format_exc())
+
+    end_time = time.time()
+    logger.success(f"全部 {total_heroes} 个英雄解包完成，总耗时: {end_time - start_time:.2f} 秒。")
