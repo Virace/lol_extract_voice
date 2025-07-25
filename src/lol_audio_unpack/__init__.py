@@ -5,9 +5,11 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/9/3 10:14
-# @Update  : 2025/7/25 4:02
-# @Detail  : Application setup
+# @Update  : 2025/7/26 0:44
+# @Detail  : lol_audio_unpack
 
+
+__version__ = "3.0.0-lite"
 
 import sys
 from pathlib import Path
@@ -40,7 +42,13 @@ def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs):
     if log_path:
         Path(log_path).mkdir(parents=True, exist_ok=True)
         # 文件日志通常记录更详细的信息
-        logger.add(Path(log_path) / "{time:YYYY-MM-DD}.log", rotation="00:00", retention="7 days", level="DEBUG")
+        logger.add(
+            Path(log_path) / "{time:YYYY-MM-DD}.log",
+            rotation="00:00",
+            retention="7 days",
+            level="DEBUG",
+            enqueue=True,  # 确保文件日志也是线程安全的
+        )
 
     logger.info("Application setup complete.")
 
