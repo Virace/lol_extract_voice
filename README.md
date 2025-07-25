@@ -78,7 +78,27 @@ LOL_INCLUDE_TYPE='VO'
 ### 后续处理：音频转码
 本工具输出的音频文件为 `.wem` 格式。为了方便播放和使用，你可能需要将它们转换为 `.mp3` 或 `.wav` 等常见格式。
 
-我们计划提供一个独立的 **PowerShell 脚本 (`.ps1`)** 来帮助你批量完成这个转换过程。该脚本会调用 [vgmstream-cli](https://github.com/vgmstream/vgmstream) 工具，你需要预先下载并配置好它。
+我们现在提供了一个**魔改版的 [vgmstream-cli](https://github.com/Virace/vgmstream-cli-build)** 工具，它支持以下增强功能：
+
+1. **目录递归处理**：可以直接指定包含 `.wem` 文件的目录，工具会自动递归扫描并处理所有文件。
+2. **增强的输出路径通配符**：
+   * `?p`: 代表源文件的完整路径（包含最后的路径分隔符）。
+   * `?b`: 代表源文件的基础名称（不含扩展名）。
+3. **源文件删除选项**：通过 `-Y` 参数可以在转换成功后删除源文件。**⚠️ 注意：这是一个危险操作，请谨慎使用！**
+
+#### 使用示例
+
+假设你的音频文件位于 `D:/audios` 目录下：
+
+```bash
+# 将所有 .wem 文件转换为 .wav 格式，并保持原始目录结构
+.\vgmstream-cli.exe -o "?p?b.wav" "D:/audios"
+
+# 转换并删除原始的 .wem 文件（谨慎使用！）
+.\vgmstream-cli.exe -o "?p?b.wav" "D:/audios" -Y
+```
+
+你可以从 [Virace/vgmstream-cli-build](https://github.com/Virace/vgmstream-cli-build/releases) 下载最新版本的魔改工具。
 
 这种方式将转码与核心逻辑分离，让你可以自由选择是否需要以及如何进行格式转换。
 
