@@ -54,7 +54,7 @@ wheels = [
 [[package]]
 name = "league-tools"
 version = "1.0.0a4"
-source = { editable = "../league-tools" }
+source = { registry = "https://test.pypi.org/simple/" }
 dependencies = [
     { name = "loguru" },
     { name = "lxml" },
@@ -63,19 +63,10 @@ dependencies = [
     { name = "xxhash" },
     { name = "zstd" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "loguru", specifier = ">=0.7.2" },
-    { name = "lxml", specifier = ">=5.4.0" },
-    { name = "quick-xmltodict", specifier = ">=0.1.3" },
-    { name = "requests", specifier = ">=2.32.3" },
-    { name = "xxhash", specifier = ">=3.4.1" },
-    { name = "zstd", specifier = ">=1.5.5.1" },
+sdist = { url = "https://test-files.pythonhosted.org/packages/13/4a/3ceb4058f52bb34edfbef14c9d1b996ebe3ee793f7bdf9cc96d9037871ae/league_tools-1.0.0a4.tar.gz", hash = "sha256:96a82e27e24e9f0b908b032af8777717c164fc16a479c895026aace3ba90f32e", size = 114354, upload-time = "2025-07-25T17:02:35.76Z" }
+wheels = [
+    { url = "https://test-files.pythonhosted.org/packages/5c/79/6840e95501eaf90f2fb4838034d76a71868376a5a4f48b876cccb16d2177/league_tools-1.0.0a4-py3-none-any.whl", hash = "sha256:fa612460900fc03f5830bf2732305e8baf6c36a4270bdf21290586b2cc506127", size = 95002, upload-time = "2025-07-25T17:02:33.221Z" },
 ]
-
-[package.metadata.requires-dev]
-dev = [{ name = "psutil", specifier = ">=7.0.0" }]
 
 [[package]]
 name = "loguru"
@@ -98,7 +89,6 @@ dependencies = [
     { name = "league-tools" },
     { name = "python-dotenv" },
     { name = "requests" },
-    { name = "tinydb" },
 ]
 
 [package.dev-dependencies]
@@ -108,10 +98,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "league-tools", editable = "../league-tools" },
+    { name = "league-tools", specifier = "==1.0.0a4", index = "https://test.pypi.org/simple/" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "requests", specifier = ">=2.31.0" },
-    { name = "tinydb", specifier = ">=4.8.2" },
 ]
 
 [package.metadata.requires-dev]
@@ -212,15 +201,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/e1/0a/929373653770d8a0d7ea76c37de6e41f11eb07559b103b1c02cafb3f7cf8/requests-2.32.4.tar.gz", hash = "sha256:27d0316682c8a29834d3264820024b62a36942083d52caf2f14c0591336d3422", size = 135258, upload-time = "2025-06-09T16:43:07.34Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7c/e4/56027c4a6b4ae70ca9de302488c5ca95ad4a39e190093d6c1a8ace08341b/requests-2.32.4-py3-none-any.whl", hash = "sha256:27babd3cda2a6d50b30443204ee89830707d396671944c998b5975b031ac2b2c", size = 64847, upload-time = "2025-06-09T16:43:05.728Z" },
-]
-
-[[package]]
-name = "tinydb"
-version = "4.8.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a0/79/4af51e2bb214b6ea58f857c51183d92beba85b23f7ba61c983ab3de56c33/tinydb-4.8.2.tar.gz", hash = "sha256:f7dfc39b8d7fda7a1ca62a8dbb449ffd340a117c1206b68c50b1a481fb95181d", size = 32566, upload-time = "2024-10-12T15:24:01.13Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/78/17/853354204e1ca022d6b7d011ca7f3206c4f8faa3cc743e92609b49c1d83f/tinydb-4.8.2-py3-none-any.whl", hash = "sha256:f97030ee5cbc91eeadd1d7af07ab0e48ceb04aa63d4a983adbaca4cba16e86c3", size = 24888, upload-time = "2024-10-12T15:23:59.833Z" },
 ]
 
 [[package]]

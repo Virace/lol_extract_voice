@@ -8,8 +8,7 @@ authors = [
 dependencies = [
     "requests>=2.31.0",
     "python-dotenv>=1.0.1",
-    "tinydb>=4.8.2",
-    "league-tools",
+    "league-tools==1.0.0a4",
 ]
 readme = "README.md"
 requires-python = ">= 3.13"
@@ -95,4 +94,4 @@ publish-url = "https://test.pypi.org/legacy/"
 explicit = true
 
 [tool.uv.sources]
-league-tools = { path = "../league-tools", editable = true }
+"league-tools" = { index = "testpypi" }
