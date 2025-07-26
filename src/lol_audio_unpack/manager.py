@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/5/6 1:19
-# @Update  : 2025/7/26 0:12
+# @Update  : 2025/7/26 9:15
 # @Detail  : 游戏数据管理器
 
 
@@ -152,6 +152,18 @@ class DataUpdater:
                 process_languages.append(lang)
         return process_languages
 
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        """
+        标准化文本，替换不间断空格等与下游工具不兼容的字符
+
+        :param text: 输入文本
+        :return: 标准化后的文本
+        """
+        if not isinstance(text, str):
+            return text
+        return text.replace("\u00a0", " ")
+
     def check_and_update(self) -> Path:
         """
         检查游戏版本并更新数据
@@ -284,21 +296,25 @@ class DataUpdater:
             if champ_id == "-1":
                 continue
 
-            alias = default_summary["alias"]
+            alias = self._normalize_text(default_summary["alias"])
             details = self._load_language_json(base_path, f"champions/{champ_id}.json")
             default_details = details.get("default", {})
 
             # 1. 合并英雄基础信息 (name, title, description)
-            names = {lang: summ[i]["name"] for lang, summ in summaries.items() if i < len(summ)}
-            titles = {lang: det.get("title", "") for lang, det in details.items()}
-            descriptions = {lang: summ[i].get("description", "") for lang, summ in summaries.items() if i < len(summ)}
+            names = {lang: self._normalize_text(summ[i]["name"]) for lang, summ in summaries.items() if i < len(summ)}
+            titles = {lang: self._normalize_text(det.get("title", "")) for lang, det in details.items()}
+            descriptions = {
+                lang: self._normalize_text(summ[i].get("description", ""))
+                for lang, summ in summaries.items()
+                if i < len(summ)
+            }
 
             # 2. 构建皮肤和炫彩信息
             processed_skins = []
             for i, skin_detail in enumerate(default_details.get("skins", [])):
                 skin_id_num = self._parse_skin_id(skin_detail["id"], int(champ_id))
                 skin_names = {
-                    lang: det.get("skins", [])[i].get("name", "")
+                    lang: self._normalize_text(det.get("skins", [])[i].get("name", ""))
                     for lang, det in details.items()
                     if i < len(det.get("skins", []))
                 }
@@ -314,7 +330,7 @@ class DataUpdater:
                 for j, chroma_detail in enumerate(skin_detail.get("chromas", [])):
                     chroma_id_num = self._parse_skin_id(chroma_detail["id"], int(champ_id))
                     chroma_names = {
-                        lang: det.get("skins", [])[i].get("chromas", [])[j].get("name", "")
+                        lang: self._normalize_text(det.get("skins", [])[i].get("chromas", [])[j].get("name", ""))
                         for lang, det in details.items()
                         if i < len(det.get("skins", [])) and j < len(det.get("skins", [])[i].get("chromas", []))
                     }
