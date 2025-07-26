@@ -117,6 +117,8 @@ test.py
 hashes.*.txt
 Temp
 .cursor/
+src/lol_audio_unpack/packer.py
+*.env.dev
 
 
 !/params.json
