@@ -53,8 +53,8 @@ wheels = [
 
 [[package]]
 name = "league-tools"
-version = "1.0.0"
-source = { registry = "https://pypi.org/simple" }
+version = "1.0.0a1"
+source = { registry = "https://test.pypi.org/simple/" }
 dependencies = [
     { name = "loguru" },
     { name = "lxml" },
@@ -63,9 +63,9 @@ dependencies = [
     { name = "xxhash" },
     { name = "zstd" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2d/f9/16ff191be16364ed04f2640ed374ed3696790bc240b0fc131edc03e62f80/league_tools-1.0.0.tar.gz", hash = "sha256:4c8288dab48379c66c045ff21f98b878c253d7424127670246fef8333f2c3871", size = 103060, upload-time = "2025-07-26T18:22:16.465Z" }
+sdist = { url = "https://test-files.pythonhosted.org/packages/7e/43/2d401353eb390967cf880280b7d281ff98627763102f071671fe06ac4b32/league_tools-1.0.0a1.tar.gz", hash = "sha256:bfe225aaaea33ac516af15ad433d35116ffbf0082403dea9db643353077ed270", size = 108886, upload-time = "2025-07-15T14:51:00.797Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c3/0e/f2336af336bd7a0c16019d3cf1ff1a63fc77ef4c4dd891f2ce1293a2535f/league_tools-1.0.0-py3-none-any.whl", hash = "sha256:622172ca6f2b6e576f6270a704ca751d8e5f8b07b781f820cabbb18f248cbfbb", size = 81502, upload-time = "2025-07-26T18:22:14.469Z" },
+    { url = "https://test-files.pythonhosted.org/packages/ce/7b/c87f8c36bdcaf596ce812fbc2cb3d11f7c1ee89c7af42c05b2767e758137/league_tools-1.0.0a1-py3-none-any.whl", hash = "sha256:1af08b9c4f6be471e511f43e6ef6f8bfc7bbd6237243f70393b1585876fb2f3e", size = 27475, upload-time = "2025-07-15T14:50:57.754Z" },
 ]
 
 [[package]]
@@ -98,7 +98,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "league-tools", specifier = "==1.0.0" },
+    { name = "league-tools", specifier = "==1.0.0a1", index = "https://test.pypi.org/simple/" },
     { name = "python-dotenv", specifier = ">=1.0.1" },
     { name = "requests", specifier = ">=2.31.0" },
 ]
