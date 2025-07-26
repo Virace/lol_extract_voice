@@ -22,6 +22,7 @@
 - [介绍](#介绍)
 - [使用方法](#使用方法)
 - [设计哲学](#设计哲学)
+- [性能参考](#性能参考)
 - [后续处理：音频转码](#后续处理音频转码)
 - [维护者](#维护者)
 - [感谢](#感谢)
@@ -37,18 +38,39 @@
     git clone https://github.com/Virace/lol_audio_unpack.git -b v3-lite
     cd lol_audio_unpack
     ```
-2.  **安装依赖**: (推荐使用 `uv`)
-    ```bash
-    # 安装uv (如果尚未安装)
-    pip install uv
-    # 使用uv安装依赖
-    uv pip install .
-    ```
+
+2.  **安装依赖**:
+    *   **方式一: 使用 `uv` (推荐)**
+        ```bash
+        # 安装uv (如果尚未安装)
+        pip install uv
+        # 使用uv安装依赖和项目
+        uv pip install .
+        ```
+    *   **方式二: 使用 `pip`**
+        ```bash
+        pip install .
+        ```
+
 3.  **编写配置文件**:
     在项目根目录创建 `.lol.env` 或 `.lol.env.dev` 文件。详见[配置文件](#配置文件)。
+
 4.  **运行脚本**:
+    所有命令都需要在项目根目录执行。
+
     ```bash
-    python src/lol_audio_unpack/main.py
+    # 1. 更新数据 (首次运行或游戏更新后执行一次即可)
+    python -m lol_audio_unpack --update-data
+
+    # 2. 解包音频
+    # 解包所有英雄 (使用默认4线程)
+    python -m lol_audio_unpack --all
+
+    # 或，解包所有英雄 (使用8个线程)
+    python -m lol_audio_unpack --all --max-workers 8
+
+    # 或，解包指定ID的英雄 (例如，解包英雄ID为555的派克)
+    python -m lol_audio_unpack --hero-id 555
     ```
 
 #### 配置文件
@@ -67,6 +89,7 @@ LOL_GAME_REGION='zh_CN'
 LOL_OUTPUT_PATH=''
 
 # 包含的音频类型 (VO: 语音, SFX: 特效, MUSIC: 音乐), 使用英文逗号分割
+# 注意：当前解包逻辑主要针对 VO 类型，其他类型可能无法正确解包
 LOL_INCLUDE_TYPE='VO'
 ```
 
@@ -74,6 +97,11 @@ LOL_INCLUDE_TYPE='VO'
 -   **速度优先**: 通过简化的处理流程和优化的文件I/O，最大化解包效率。
 -   **数据纯粹**: 不对文件进行任何形式的重命名或分类。文件名即ID，保留了数据的原始性，方便后续工具进行二次处理。
 -   **责任分离**: 核心解包功能与音频转码等后处理步骤完全解耦。本工具只做一件事：快速解包。
+
+### 性能参考
+在典型的开发环境 (SSD, 多核CPU)下，测试数据如下：
+- **解包**: 使用4线程解包全部英雄语音，耗时约 **15 秒**。
+- **转码**: 将所有解包后的 `.wem` 文件转码为 `.wav`，耗时约 **15 分钟**。
 
 ### 后续处理：音频转码
 本工具输出的音频文件为 `.wem` 格式。为了方便播放和使用，你可能需要将它们转换为 `.mp3` 或 `.wav` 等常见格式。
@@ -86,17 +114,22 @@ LOL_INCLUDE_TYPE='VO'
    * `?b`: 代表源文件的基础名称（不含扩展名）。
 3. **源文件删除选项**：通过 `-Y` 参数可以在转换成功后删除源文件。**⚠️ 注意：这是一个危险操作，请谨慎使用！**
 
-#### 使用示例
+#### 使用方法
+- **命令行直接调用**:
+  假设你的音频文件位于 `D:/audios` 目录下：
+  ```bash
+  # 将所有 .wem 文件转换为 .wav 格式，并保持原始目录结构
+  .\vgmstream-cli.exe -o "?p?b.wav" "D:/audios"
 
-假设你的音频文件位于 `D:/audios` 目录下：
-
-```bash
-# 将所有 .wem 文件转换为 .wav 格式，并保持原始目录结构
-.\vgmstream-cli.exe -o "?p?b.wav" "D:/audios"
-
-# 转换并删除原始的 .wem 文件（谨慎使用！）
-.\vgmstream-cli.exe -o "?p?b.wav" "D:/audios" -Y
-```
+  # 转换并删除原始的 .wem 文件（谨慎使用！）
+  .\vgmstream-cli.exe -o "?p?b.wav" "D:/audios" -Y
+  ```
+- **使用测试脚本进行批量转码**:
+  项目提供了一个测试脚本，可以方便地进行批量转码并验证结果。
+  ```bash
+  python tests/test_transcode.py
+  ```
+  > **注意**: 脚本中的 `vgmstream-cli.exe` 路径是硬编码的。如果你的路径不同，请直接修改 `tests/test_transcode.py` 文件中的路径。
 
 你可以从 [Virace/vgmstream-cli-build](https://github.com/Virace/vgmstream-cli-build/releases) 下载最新版本的魔改工具。
 

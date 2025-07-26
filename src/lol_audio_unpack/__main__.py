@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/26 0:34
-# @Update  : 2025/7/26 1:16
+# @Update  : 2025/7/26 9:34
 # @Detail  : 项目命令行入口
 
 
@@ -57,6 +57,13 @@ def main():
     )
 
     # 通用配置参数
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=4,
+        metavar="N",
+        help="当解包所有英雄时，设置使用的最大线程数。默认为 4。",
+    )
     parser.add_argument(
         "-l",
         "--log-level",
@@ -117,7 +124,7 @@ def main():
                 unpack_audio(hero_id=args.hero_id, reader=reader)
             elif args.all:
                 logger.info("准备解包所有英雄...")
-                unpack_audio_all(reader=reader)
+                unpack_audio_all(reader=reader, max_workers=args.max_workers)
 
         else:
             # 理论上因为 group(required=True) 不会到这里，但作为保险
