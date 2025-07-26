@@ -133,6 +133,8 @@ LOL_INCLUDE_TYPE='VO'
 
 你可以从 [Virace/vgmstream-cli-build](https://github.com/Virace/vgmstream-cli-build/releases) 下载最新版本的魔改工具。
 
+**注意**: 如果你准备将所有提取的英雄语音转码为WAV格式，请确保有足够的硬盘空间。15.14版本所有VO相关WEM音频总共大小接近3G，转码后文件大小接近**40G**。
+
 这种方式将转码与核心逻辑分离，让你可以自由选择是否需要以及如何进行格式转换。
 
 ### 维护者
