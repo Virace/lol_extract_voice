@@ -1,11 +1,11 @@
-# lol_audio_unpack (v3-lite)
+# lol_audio_unpack 
 ![](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 
 一个极简、高效的英雄联盟音频提取工具。
 
 ---
 
-### **关于 v3-lite 分支**
+### **基于 v3-lite 分支**
 `v3-lite` 是一个追求**速度**和**纯粹性**的轻量级分支。它的核心目标是以最快的方式解包英雄相关的音频文件，不进行任何多余的分析和处理。
 
 -   **专注核心功能**: 仅包含英雄音频解包。
@@ -35,7 +35,7 @@
 ### 使用方法
 1.  **克隆仓库**:
     ```bash
-    git clone https://github.com/Virace/lol_audio_unpack.git -b v3-lite
+    git clone https://github.com/Virace/lol_audio_unpack.git
     cd lol_audio_unpack
     ```
 
