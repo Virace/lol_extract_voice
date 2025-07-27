@@ -16,9 +16,6 @@ requires-python = ">= 3.13"
 [project.scripts]
 "unpack" = "lol_audio_unpack.__main__:main"
 
-[tool.uv.sources]
-league-tools = { path = "../league-tools", editable = true }
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -95,3 +92,6 @@ name = "testpypi"
 url = "https://test.pypi.org/simple/"
 publish-url = "https://test.pypi.org/legacy/"
 explicit = true
+
+[tool.uv.sources]
+league-tools = { path = "../league-tools", editable = true }
