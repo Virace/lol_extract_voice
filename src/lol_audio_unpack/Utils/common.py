@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/5/6 1:19
-# @Update  : 2025/7/25 11:49
+# @Update  : 2025/7/27 23:00
 # @Detail  : 通用函数
 
 
@@ -191,6 +191,7 @@ def dump_json(
     path: str | PathLike | Path,
     ensure_ascii: bool = False,
     cls: type[JSONEncoder] | None = None,
+    indent: int = None,
 ):
     """
     将对象写入json文件
@@ -198,12 +199,13 @@ def dump_json(
     :param path: 路径
     :param ensure_ascii: 是否转义
     :param cls: 类
+    :param indent: 缩进级别, None 或 0 表示紧凑输出
     :return:
     """
     path = Path(path)
 
     with path.open("w+", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=ensure_ascii, cls=cls)
+        json.dump(obj, f, ensure_ascii=ensure_ascii, cls=cls, indent=indent)
 
 
 def load_json(path: str | PathLike | Path) -> dict:
