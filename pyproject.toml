@@ -8,7 +8,7 @@ authors = [
 dependencies = [
     "requests>=2.31.0",
     "python-dotenv>=1.0.1",
-    "league-tools==1.0.0a1",
+    "league-tools",
 ]
 readme = "README.md"
 requires-python = ">= 3.13"
@@ -17,7 +17,7 @@ requires-python = ">= 3.13"
 "unpack" = "lol_audio_unpack.__main__:main"
 
 [tool.uv.sources]
-"league-tools" = { index = "testpypi" }
+league-tools = { path = "../league-tools", editable = true }
 
 [build-system]
 requires = ["hatchling"]
