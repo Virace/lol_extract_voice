@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/26 0:34
-# @Update  : 2025/7/26 9:34
+# @Update  : 2025/7/28 4:23
 # @Detail  : 项目命令行入口
 
 
@@ -41,8 +41,15 @@ def main():
     action_group = parser.add_mutually_exclusive_group()
     action_group.add_argument(
         "--update-data",
-        action="store_true",
-        help="更新并生成所有必要的数据文件 (data.json, bin.json)。",
+        nargs="?",
+        const="all",
+        choices=["skin", "map", "all"],
+        help="""更新并生成所有必要的数据文件。
+可以指定只更新特定部分:
+- 'skin': 只更新皮肤数据
+- 'map': 只更新地图数据
+- (无值): 更新所有数据 (默认)
+""",
     )
     action_group.add_argument(
         "--hero-id",
@@ -110,10 +117,12 @@ def main():
     # 3. 根据参数执行相应操作
     try:
         if args.update_data:
-            logger.info("开始更新数据...")
+            target = args.update_data
+            logger.info(f"开始更新数据 (目标: {target})...")
+            # DataUpdater总是需要先运行，以确保有最新的data.json
             DataUpdater().check_and_update()
-            BinUpdater().update()
-            logger.success("所有数据更新完成！")
+            BinUpdater(target=target).update()
+            logger.success(f"数据更新完成 (目标: {target})！")
 
         elif args.hero_id or args.all:
             logger.info("加载数据读取器...")
