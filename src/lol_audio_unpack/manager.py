@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/5/6 1:19
-# @Update  : 2025/7/28 3:33
+# @Update  : 2025/7/28 4:24
 # @Detail  : 游戏数据管理器
 
 
@@ -528,26 +528,31 @@ class BinUpdater:
     负责从BIN文件提取音频数据并更新到数据文件中
     """
 
-    def __init__(self):
+    def __init__(self, target: str = "all"):
         """
         初始化BIN音频更新器
+
+        :param target: 更新目标, 'skin', 'map', 或 'all'
         """
         self.game_path: Path = config.GAME_PATH
         self.manifest_path: Path = config.MANIFEST_PATH
         if not self.game_path or not self.manifest_path:
             raise ValueError("GAME_PATH 和 MANIFEST_PATH 必须在配置中设置")
 
+        self.target = target
         self.version: str = get_game_version(self.game_path)
         self.version_manifest_path: Path = self.manifest_path / self.version
         self.data_file: Path = self.version_manifest_path / "data.json"
-        self.bank_paths_file: Path = self.version_manifest_path / "skins-bank-paths.json"
-        self.events_file: Path = self.version_manifest_path / "skins-events.json"
+        self.skin_bank_paths_file: Path = self.version_manifest_path / "skins-bank-paths.json"
+        self.skin_events_file: Path = self.version_manifest_path / "skins-events.json"
+        self.map_bank_paths_file: Path = self.version_manifest_path / "maps-bank-paths.json"
+        self.map_events_file: Path = self.version_manifest_path / "maps-events.json"
 
-    def update(self) -> Path:
+    def update(self) -> Path | None:
         """
-        处理BIN文件，提取音频路径和事件数据
+        处理BIN文件，提取皮肤和地图的音频路径和事件数据
 
-        :return: 更新后的 bank paths 数据文件路径
+        :return: 如果有更新，返回 skin bank paths 数据文件路径, 否则返回 None
         """
         if not self.data_file.exists():
             logger.error(f"数据文件不存在，请先运行DataUpdater: {self.data_file}")
@@ -559,51 +564,80 @@ class BinUpdater:
                 logger.error(f"无法加载数据文件: {self.data_file}")
                 raise ValueError(f"无法加载或解析JSON文件: {self.data_file}")
 
-            # 初始化 bank paths 输出结构
-            self.bank_paths_data = {
-                "gameVersion": self.version,
-                "languages": data.get("languages", []),
-                "lastUpdate": datetime.now().isoformat(),
-                "skinToChampion": {},
-                "championBaseSkins": {},
-                "skinAudioMappings": {},
-                "skins": {},
-            }
+            # 根据target决定执行哪些操作
+            if self.target in ["skin", "all"]:
+                self._update_skins(data)
 
-            # 初始化 events 输出结构
-            self.events_data = self.bank_paths_data.copy()
-            self.events_data["skins"] = {}
-            # events.json 不需要映射关系
-            del self.events_data["skinAudioMappings"]
+            if self.target in ["map", "all"]:
+                self._update_maps(data)
 
-            # 全局资源注册表: {bank_path_fingerprint: owner_skin_id}
-            bank_path_to_owner_map: dict[tuple, str] = {}
-
-            champions = data.get("champions", {})
-            champion_count = len(champions)
-            progress = ProgressTracker(champion_count, "英雄皮肤音频数据处理", log_interval=5)
-
-            # 按英雄ID排序，确保处理顺序稳定
-            sorted_champion_ids = sorted(champions.keys(), key=int)
-
-            for champion_id in sorted_champion_ids:
-                champion_data = champions[champion_id]
-                self._process_champion_skins(champion_data, champion_id, bank_path_to_owner_map)
-                progress.update()
-
-            progress.finish()
-
-            self._optimize_mappings()
-            dump_json(self.bank_paths_data, self.bank_paths_file, indent=4 if config.is_dev_mode() else None)
-            dump_json(self.events_data, self.events_file, indent=4 if config.is_dev_mode() else None)
-            logger.success(f"皮肤音频资源集合数据更新完成: {self.bank_paths_file}")
-            logger.success(f"皮肤事件数据更新完成: {self.events_file}")
-            return self.bank_paths_file
+            logger.success(f"BinUpdater 更新完成 (目标: {self.target})")
+            return self.skin_bank_paths_file if self.target in ["skin", "all"] else self.map_bank_paths_file
 
         except Exception as e:
             logger.error(f"处理BIN文件时出错: {str(e)}")
-            logger.debug(traceback.format_exc())
-            raise
+            if config.is_dev_mode():
+                raise
+            return None
+
+    def _update_skins(self, data: dict) -> None:
+        """处理皮肤数据"""
+        logger.info("开始处理皮肤音频数据...")
+        # --- 初始化皮肤数据结构 ---
+        self.skin_bank_paths_data = {
+            "gameVersion": self.version,
+            "languages": data.get("languages", []),
+            "lastUpdate": datetime.now().isoformat(),
+            "skinToChampion": {},
+            "championBaseSkins": {},
+            "skinAudioMappings": {},
+            "skins": {},
+        }
+        self.skin_events_data = self.skin_bank_paths_data.copy()
+        del self.skin_events_data["skinAudioMappings"]
+        self.skin_events_data["skins"] = {}
+
+        # --- 处理皮肤数据 ---
+        bank_path_to_owner_map: dict[tuple, str] = {}
+        champions = data.get("champions", {})
+        champion_count = len(champions)
+        progress = ProgressTracker(champion_count, "英雄皮肤音频数据处理", log_interval=5)
+        sorted_champion_ids = sorted(champions.keys(), key=int)
+        for champion_id in sorted_champion_ids:
+            champion_data = champions[champion_id]
+            self._process_champion_skins(champion_data, champion_id, bank_path_to_owner_map)
+            progress.update()
+        progress.finish()
+        self._optimize_mappings()
+
+        dump_json(self.skin_bank_paths_data, self.skin_bank_paths_file, indent=4 if config.is_dev_mode() else None)
+        dump_json(self.skin_events_data, self.skin_events_file, indent=4 if config.is_dev_mode() else None)
+        logger.success("皮肤数据更新完成")
+
+    def _update_maps(self, data: dict) -> None:
+        """处理地图数据"""
+        logger.info("开始处理地图音频数据...")
+        # --- 初始化地图数据结构 ---
+        self.map_bank_paths_data = {
+            "gameVersion": self.version,
+            "languages": data.get("languages", []),
+            "lastUpdate": datetime.now().isoformat(),
+            "maps": {},
+        }
+        self.map_events_data = self.map_bank_paths_data.copy()
+        self.map_events_data["maps"] = {}
+
+        # --- 处理地图数据 ---
+        maps = data.get("maps", {})
+        map_progress = ProgressTracker(len(maps), "地图音频数据处理", log_interval=1)
+        for map_data in maps.values():
+            self._process_map_bin(map_data)
+            map_progress.update()
+        map_progress.finish()
+
+        dump_json(self.map_bank_paths_data, self.map_bank_paths_file, indent=4 if config.is_dev_mode() else None)
+        dump_json(self.map_events_data, self.map_events_file, indent=4 if config.is_dev_mode() else None)
+        logger.success("地图数据更新完成")
 
     def _process_champion_skins(
         self, champion_data: ChampionData, champion_id: str, bank_path_to_owner_map: dict
@@ -629,20 +663,20 @@ class BinUpdater:
         for skin in sorted_skins_data:
             skin_id_str = str(skin["id"])
             # 建立 skin -> champion 索引
-            self.bank_paths_data["skinToChampion"][skin_id_str] = champion_id
-            self.events_data["skinToChampion"][skin_id_str] = champion_id
+            self.skin_bank_paths_data["skinToChampion"][skin_id_str] = champion_id
+            self.skin_events_data["skinToChampion"][skin_id_str] = champion_id
             if skin.get("isBase"):
                 base_skin_id = skin_id_str
                 # 建立 champion -> base_skin 索引
-                self.bank_paths_data["championBaseSkins"][champion_id] = base_skin_id
-                self.events_data["championBaseSkins"][champion_id] = base_skin_id
+                self.skin_bank_paths_data["championBaseSkins"][champion_id] = base_skin_id
+                self.skin_events_data["championBaseSkins"][champion_id] = base_skin_id
 
             if bin_path := skin.get("binPath"):
                 path_to_skin_id_map[bin_path] = skin_id_str
             for chroma in skin.get("chromas", []):
                 chroma_id_str = str(chroma["id"])
-                self.bank_paths_data["skinToChampion"][chroma_id_str] = champion_id
-                self.events_data["skinToChampion"][chroma_id_str] = champion_id
+                self.skin_bank_paths_data["skinToChampion"][chroma_id_str] = champion_id
+                self.skin_events_data["skinToChampion"][chroma_id_str] = champion_id
                 if bin_path := chroma.get("binPath"):
                     path_to_skin_id_map[bin_path] = chroma_id_str
 
@@ -691,21 +725,21 @@ class BinUpdater:
 
                             if owner_id := bank_path_to_owner_map.get(bank_path_fingerprint):
                                 if skin_id != owner_id and "_Base_" not in category:
-                                    if skin_id not in self.bank_paths_data["skinAudioMappings"]:
-                                        self.bank_paths_data["skinAudioMappings"][skin_id] = {}
-                                    self.bank_paths_data["skinAudioMappings"][skin_id][category] = owner_id
+                                    if skin_id not in self.skin_bank_paths_data["skinAudioMappings"]:
+                                        self.skin_bank_paths_data["skinAudioMappings"][skin_id] = {}
+                                    self.skin_bank_paths_data["skinAudioMappings"][skin_id][category] = owner_id
                             else:
                                 bank_path_to_owner_map[bank_path_fingerprint] = skin_id
-                                if skin_id not in self.bank_paths_data["skins"]:
-                                    self.bank_paths_data["skins"][skin_id] = {}
-                                if category not in self.bank_paths_data["skins"][skin_id]:
-                                    self.bank_paths_data["skins"][skin_id][category] = []
-                                self.bank_paths_data["skins"][skin_id][category].append(event_data.bank_path)
+                                if skin_id not in self.skin_bank_paths_data["skins"]:
+                                    self.skin_bank_paths_data["skins"][skin_id] = {}
+                                if category not in self.skin_bank_paths_data["skins"][skin_id]:
+                                    self.skin_bank_paths_data["skins"][skin_id][category] = []
+                                self.skin_bank_paths_data["skins"][skin_id][category].append(event_data.bank_path)
 
                                 # --- 事件数据处理 ---
                                 # 只有当bank path被认领时，才提取相关的事件数据
                                 if is_new_skin_entry:
-                                    self._extract_events_data(skin_id, bin_file, base_skin_id)
+                                    self._extract_skin_events(skin_id, bin_file, base_skin_id)
                                     is_new_skin_entry = False
 
             except Exception as e:
@@ -713,31 +747,25 @@ class BinUpdater:
                 if config.is_dev_mode():
                     raise
 
-    def _extract_events_data(self, skin_id: str, bin_file: BIN, base_skin_id: str | None) -> None:
+    def _extract_skin_events(self, skin_id: str, bin_file: BIN, base_skin_id: str | None) -> None:
         """
-        提取一个BIN文件中的所有事件数据
+        提取一个皮肤BIN文件中的所有事件数据
 
         :param skin_id: 皮肤ID
         :param bin_file: BIN文件对象
         :param base_skin_id: 该英雄的基础皮肤ID
         """
         skin_events = {}
-        # 1. 提取 theme_music
         if bin_file.theme_music:
             skin_events["theme_music"] = bin_file.theme_music
 
-        # 2. 提取 music 和 events
         all_events_by_category = {}
         for group in bin_file.data:
-            # 皮肤独有的音乐数据，与category无关，直接提取
             if group.music:
                 skin_events["music"] = group.music.to_dict()
-
             for event_data in group.bank_units:
-                # 如果当前处理的是非基础皮肤，则明确跳过所有基础分类的事件
-                if skin_id != base_skin_id and "_Base_" in event_data.category:
+                if base_skin_id and skin_id != base_skin_id and "_Base_" in event_data.category:
                     continue
-
                 if event_data.events:
                     category = event_data.category
                     if category not in all_events_by_category:
@@ -748,13 +776,88 @@ class BinUpdater:
             skin_events["events"] = all_events_by_category
 
         if skin_events:
-            self.events_data["skins"][skin_id] = skin_events
+            self.skin_events_data["skins"][skin_id] = skin_events
+
+    def _process_map_bin(self, map_data: dict) -> None:
+        """
+        处理单个地图的BIN文件，提取bank paths和事件数据
+
+        :param map_data: 地图数据
+        """
+        map_id = str(map_data["id"])
+
+        if not map_data.get("wad") or not map_data.get("binPath"):
+            logger.debug(f"地图 {map_id} 缺少 WAD 或 binPath 信息，已跳过。")
+            return
+
+        wad_path = self.game_path / map_data["wad"]["root"]
+        bin_path = map_data["binPath"]
+
+        if not wad_path.exists():
+            logger.warning(f"地图 {map_id} 的WAD文件不存在，已跳过: {wad_path}")
+            return
+
+        try:
+            logger.debug(f"正在提取地图 {map_id} 的BIN文件: {bin_path}")
+            bin_raws = WAD(wad_path).extract([bin_path], raw=True)
+            if not bin_raws or not bin_raws[0]:
+                logger.warning(f"从地图 {map_id} 的WAD文件中未能提取到有效的BIN数据。")
+                return
+            bin_file = BIN(bin_raws[0])
+        except Exception as e:
+            logger.error(f"提取或解析地图 {map_id} 的BIN文件时出错: {e}")
+            if config.is_dev_mode():
+                raise
+            return
+
+        # --- 提取 Bank Paths ---
+        map_bank_paths = {}
+        for group in bin_file.data:
+            for event_data in group.bank_units:
+                if event_data.bank_path:
+                    category = event_data.category
+                    if category not in map_bank_paths:
+                        map_bank_paths[category] = []
+                    map_bank_paths[category].append(event_data.bank_path)
+        if map_bank_paths:
+            self.map_bank_paths_data["maps"][map_id] = map_bank_paths
+
+        # --- 提取 Events ---
+        self._extract_map_events(map_id, bin_file)
+
+    def _extract_map_events(self, map_id: str, bin_file: BIN) -> None:
+        """
+        提取一个地图BIN文件中的所有事件数据
+
+        :param map_id: 地图ID
+        :param bin_file: BIN文件对象
+        """
+        map_events = {}
+        if bin_file.theme_music:
+            map_events["theme_music"] = bin_file.theme_music
+
+        all_events_by_category = {}
+        for group in bin_file.data:
+            if group.music:
+                map_events["music"] = group.music.to_dict()
+            for event_data in group.bank_units:
+                if event_data.events:
+                    category = event_data.category
+                    if category not in all_events_by_category:
+                        all_events_by_category[category] = []
+                    all_events_by_category[category].extend([e.to_dict() for e in event_data.events])
+
+        if all_events_by_category:
+            map_events["events"] = all_events_by_category
+
+        if map_events:
+            self.map_events_data["maps"][map_id] = map_events
 
     def _optimize_mappings(self) -> None:
         """
         优化映射关系，将部分共享升级为完全共享
         """
-        for skin_id, mappings in self.bank_paths_data["skinAudioMappings"].copy().items():
+        for skin_id, mappings in self.skin_bank_paths_data["skinAudioMappings"].copy().items():
             if not isinstance(mappings, dict):
                 continue
 
@@ -765,8 +868,8 @@ class BinUpdater:
             if len(owner_ids) == 1:
                 owner_id = owner_ids.pop()
                 # 检查该皮肤是否还有自己的独立音频，如果没有，才能安全升级
-                if skin_id not in self.bank_paths_data["skins"]:
-                    self.bank_paths_data["skinAudioMappings"][skin_id] = owner_id
+                if skin_id not in self.skin_bank_paths_data["skins"]:
+                    self.skin_bank_paths_data["skinAudioMappings"][skin_id] = owner_id
 
 
 class DataReader(metaclass=Singleton):
