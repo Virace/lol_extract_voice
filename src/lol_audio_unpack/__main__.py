@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/26 0:34
-# @Update  : 2025/7/28 4:23
+# @Update  : 2025/7/28 6:01
 # @Detail  : 项目命令行入口
 
 
@@ -85,6 +85,12 @@ def main():
         help="启用开发者模式，会加载 .lol.env.dev 配置文件并保留临时文件。",
     )
     parser.add_argument(
+        "-f",
+        "--force",
+        action="store_true",
+        help="强制更新数据，忽略版本检查。仅在 --update-data 模式下有效。",
+    )
+    parser.add_argument(
         "--enable-league-tools-log",
         action="store_true",
         help="启用 'league_tools' 模块的日志输出，用于深度调试。",
@@ -118,10 +124,13 @@ def main():
     try:
         if args.update_data:
             target = args.update_data
+            force = args.force
+            if force:
+                logger.warning("已启用强制更新模式，将忽略现有文件的版本检查。")
             logger.info(f"开始更新数据 (目标: {target})...")
             # DataUpdater总是需要先运行，以确保有最新的data.json
-            DataUpdater().check_and_update()
-            BinUpdater(target=target).update()
+            DataUpdater(force_update=force).check_and_update()
+            BinUpdater(target=target, force_update=force).update()
             logger.success(f"数据更新完成 (目标: {target})！")
 
         elif args.hero_id or args.all:

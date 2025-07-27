@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/23 12:27
-# @Update  : 2025/7/26 0:12
+# @Update  : 2025/7/28 7:18
 # @Detail  : 解包音频
 
 
@@ -75,8 +75,9 @@ def unpack_audio(hero_id: int, reader: DataReader):
         if not banks:
             continue
 
-        for key, banks_list in banks.items():
-            if "VO" in key:
+        for category, banks_list in banks.items():
+            audio_type = reader.get_audio_type(category)
+            if audio_type == reader.AUDIO_TYPE_VO:
                 for bank in banks_list:
                     for path in bank:
                         paths_to_extract.add(path)
@@ -246,3 +247,6 @@ def unpack_audio_all(reader: DataReader, max_workers: int = 4):
 
     end_time = time.time()
     logger.success(f"全部 {total_heroes} 个英雄解包完成，总耗时: {end_time - start_time:.2f} 秒。")
+
+    # 在所有操作完成后，将收集到的未知分类写入文件
+    reader.write_unknown_categories_to_file()

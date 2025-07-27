@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/5/6 1:19
-# @Update  : 2025/7/28 5:06
+# @Update  : 2025/7/28 7:10
 # @Detail  : 游戏数据管理器
 
 
@@ -52,6 +52,32 @@ def get_game_version(game_path: Path) -> str:
         return m.group(1)
 
     raise ValueError(f"无法解析版本号: {version_v}")
+
+
+def _needs_update(file_path: Path, current_version: str, force_update: bool) -> bool:
+    """
+    检查文件是否需要更新的通用函数
+
+    :param file_path: 要检查的文件路径
+    :param current_version: 当前游戏版本
+    :param force_update: 是否强制更新
+    :return: 如果需要更新，则返回True
+    """
+    if force_update:
+        return True
+    if not file_path.exists():
+        return True
+
+    try:
+        with open(file_path, encoding="utf-8") as f:
+            data = json.load(f)
+        if data.get("gameVersion") == current_version:
+            logger.debug(f"文件已是最新版本 ({current_version})，跳过更新: {file_path.name}")
+            return False
+        return True
+    except (json.JSONDecodeError, KeyError):
+        # 文件损坏或格式不正确，需要更新
+        return True
 
 
 class ProgressTracker:
@@ -101,12 +127,13 @@ class DataUpdater:
     负责游戏数据的更新和多语言JSON合并
     """
 
-    def __init__(self, languages: list[str] | None = None) -> None:
+    def __init__(self, languages: list[str] | None = None, force_update: bool = False) -> None:
         """
         初始化数据更新器
 
         :param languages: 需要处理的语言列表（不包括default，default会自动添加）。
                         如果为None，则使用config中的GAME_REGION。
+        :param force_update: 是否强制更新
         """
         # 从配置中获取游戏根目录
         self.game_path: Path = config.GAME_PATH
@@ -135,6 +162,8 @@ class DataUpdater:
         self.data_file: Path = self.version_manifest_path / "data.json"
         # 实际处理的语言列表，包含 "default"
         self.process_languages: list[str] = self._prepare_language_list(self.languages)
+        # 强制更新标志
+        self.force_update = force_update
 
         # 确保版本清单目录存在
         self.version_manifest_path.mkdir(parents=True, exist_ok=True)
@@ -171,7 +200,8 @@ class DataUpdater:
         :return: 合并后的数据文件路径
         """
         # 检查是否需要更新
-        if not self._needs_update():
+        if not _needs_update(self.data_file, self.version, self.force_update) and self._check_languages():
+            logger.info(f"数据文件已是最新版本 {self.version} 且包含所有请求的语言，无需更新。")
             return self.data_file
 
         # 使用config中的TEMP_PATH创建本次运行的临时目录
@@ -195,6 +225,25 @@ class DataUpdater:
                     logger.error(f"清理临时目录失败: {run_temp_path}, error: {e}")
             else:
                 logger.warning(f"开发模式，临时目录未删除: {run_temp_path}")
+
+    def _check_languages(self) -> bool:
+        """检查现有数据文件是否包含所有请求的语言"""
+        try:
+            with open(self.data_file, encoding="utf-8") as f:
+                existing_data = json.load(f)
+
+            existing_languages = set(existing_data.get("languages", []))
+            existing_languages.add("default")
+            requested_languages = set(self.process_languages)
+
+            if requested_languages.issubset(existing_languages):
+                return True
+            else:
+                missing_langs = requested_languages - existing_languages
+                logger.info(f"需要更新数据文件，缺少语言: {missing_langs}")
+                return False
+        except (FileNotFoundError, json.JSONDecodeError, KeyError):
+            return False
 
     def _needs_update(self) -> bool:
         """
@@ -251,8 +300,9 @@ class DataUpdater:
         logger.info("合并多语言数据...")
         self._merge_and_build_data(temp_path)
 
-        # 将合并后的数据文件复制到输出目录
+        # 最终合并的数据文件路径
         temp_data_file = temp_path / self.version / "data.json"
+        # 如果需要，将合并后的数据文件复制到输出目录
         if temp_data_file.exists():
             self.version_manifest_path.mkdir(parents=True, exist_ok=True)
             shutil.copy2(temp_data_file, self.data_file)
@@ -369,7 +419,7 @@ class DataUpdater:
             progress.update()
         progress.finish()
 
-        # 4. 构建最终结果文件
+        # 4. 构建最终结果文件，确保元数据在前
         final_result = {
             "gameVersion": self.version,
             "languages": [lang for lang in self.process_languages if lang != "default"],
@@ -528,11 +578,12 @@ class BinUpdater:
     负责从BIN文件提取音频数据并更新到数据文件中
     """
 
-    def __init__(self, target: str = "all"):
+    def __init__(self, target: str = "all", force_update: bool = False):
         """
         初始化BIN音频更新器
 
         :param target: 更新目标, 'skin', 'map', 或 'all'
+        :param force_update: 是否强制更新
         """
         self.game_path: Path = config.GAME_PATH
         self.manifest_path: Path = config.MANIFEST_PATH
@@ -540,13 +591,15 @@ class BinUpdater:
             raise ValueError("GAME_PATH 和 MANIFEST_PATH 必须在配置中设置")
 
         self.target = target
+        self.force_update = force_update
         self.version: str = get_game_version(self.game_path)
         self.version_manifest_path: Path = self.manifest_path / self.version
         self.data_file: Path = self.version_manifest_path / "data.json"
         self.skin_bank_paths_file: Path = self.version_manifest_path / "skins-bank-paths.json"
-        self.skin_events_file: Path = self.version_manifest_path / "skins-events.json"
         self.map_bank_paths_file: Path = self.version_manifest_path / "maps-bank-paths.json"
-        self.map_events_file: Path = self.version_manifest_path / "maps-events.json"
+        # 事件数据将被拆分到单独的目录中
+        self.skin_events_dir: Path = self.version_manifest_path / "events" / "skins"
+        self.map_events_dir: Path = self.version_manifest_path / "events" / "maps"
 
     def update(self) -> Path | None:
         """
@@ -582,8 +635,13 @@ class BinUpdater:
 
     def _update_skins(self, data: dict) -> None:
         """处理皮肤数据"""
+        # --- 检查是否需要更新 ---
+        if not _needs_update(self.skin_bank_paths_file, self.version, self.force_update):
+            logger.info("皮肤Bank Paths数据已是最新，跳过处理。")
+            return
+
         logger.info("开始处理皮肤音频数据...")
-        # --- 初始化皮肤数据结构 ---
+        # --- 初始化皮肤 bank paths 数据结构 ---
         self.skin_bank_paths_data = {
             "gameVersion": self.version,
             "languages": data.get("languages", []),
@@ -593,9 +651,8 @@ class BinUpdater:
             "skinAudioMappings": {},
             "skins": {},
         }
-        self.skin_events_data = self.skin_bank_paths_data.copy()
-        del self.skin_events_data["skinAudioMappings"]
-        self.skin_events_data["skins"] = {}
+        # 确保事件目录存在
+        self.skin_events_dir.mkdir(parents=True, exist_ok=True)
 
         # --- 处理皮肤数据 ---
         bank_path_to_owner_map: dict[tuple, str] = {}
@@ -611,36 +668,67 @@ class BinUpdater:
         self._optimize_mappings()
 
         dump_json(self.skin_bank_paths_data, self.skin_bank_paths_file, indent=4 if config.is_dev_mode() else None)
-        dump_json(self.skin_events_data, self.skin_events_file, indent=4 if config.is_dev_mode() else None)
-        logger.success("皮肤数据更新完成")
+        logger.success("皮肤Bank Paths数据更新完成")
 
     def _update_maps(self, data: dict) -> None:
         """处理地图数据"""
+        # --- 检查是否需要更新 ---
+        if not _needs_update(self.map_bank_paths_file, self.version, self.force_update):
+            logger.info("地图Bank Paths数据已是最新，跳过处理。")
+            return
+
         logger.info("开始处理地图音频数据...")
-        # --- 初始化地图数据结构 ---
+        # --- 初始化地图 bank paths 数据结构 ---
         self.map_bank_paths_data = {
             "gameVersion": self.version,
             "languages": data.get("languages", []),
             "lastUpdate": datetime.now().isoformat(),
             "maps": {},
         }
-        self.map_events_data = self.map_bank_paths_data.copy()
-        self.map_events_data["maps"] = {}
+        # 确保事件目录存在
+        self.map_events_dir.mkdir(parents=True, exist_ok=True)
 
-        # --- 处理地图数据 ---
         maps = data.get("maps", {})
-        map_progress = ProgressTracker(len(maps), "地图音频数据处理", log_interval=1)
-        for map_data in maps.values():
-            self._process_map_bin(map_data)
+
+        # --- 1. 预处理公共地图(ID 0)的事件，用于后续去重 ---
+        common_events_set = set()
+        if "0" in maps:
+            logger.debug("正在预处理公共地图(ID 0)的事件数据...")
+            try:
+                # 提取并保存ID 0的事件数据
+                if map_events := self._process_map_events_for_id("0", maps["0"]):
+                    # 将其事件内容加入公共集合
+                    if "events" in map_events:
+                        for events_list in map_events["events"].values():
+                            for event in events_list:
+                                common_events_set.add(frozenset(event.items()))
+            except Exception as e:
+                logger.error(f"预处理公共地图(ID 0)的事件时出错: {e}")
+                if config.is_dev_mode():
+                    raise
+
+        # --- 2. 处理所有地图的Bank Paths 和 Events ---
+        map_progress = ProgressTracker(len(maps), "地图音频与事件数据处理", log_interval=1)
+        for map_id, map_data in maps.items():
+            # 地图的bank paths是独立的，直接处理
+            self._process_map_bank_paths(map_id, map_data)
+
+            # 地图的事件需要基于公共事件去重 (ID 0 已在上面处理过)
+            if map_id != "0":
+                try:
+                    self._process_map_events_for_id(map_id, map_data, common_events_set)
+                except Exception as e:
+                    logger.error(f"处理地图 {map_id} 的事件时出错: {e}")
+                    if config.is_dev_mode():
+                        raise
             map_progress.update()
         map_progress.finish()
 
-        # --- 地图数据去重 ---
-        self._deduplicate_maps_data()
+        # --- 3. 地图Bank Paths数据全局去重 ---
+        self._deduplicate_map_bank_paths()
 
         dump_json(self.map_bank_paths_data, self.map_bank_paths_file, indent=4 if config.is_dev_mode() else None)
-        dump_json(self.map_events_data, self.map_events_file, indent=4 if config.is_dev_mode() else None)
-        logger.success("地图数据更新完成")
+        logger.success("地图Bank Paths数据更新完成")
 
     def _process_champion_skins(
         self, champion_data: ChampionData, champion_id: str, bank_path_to_owner_map: dict
@@ -667,19 +755,16 @@ class BinUpdater:
             skin_id_str = str(skin["id"])
             # 建立 skin -> champion 索引
             self.skin_bank_paths_data["skinToChampion"][skin_id_str] = champion_id
-            self.skin_events_data["skinToChampion"][skin_id_str] = champion_id
             if skin.get("isBase"):
                 base_skin_id = skin_id_str
                 # 建立 champion -> base_skin 索引
                 self.skin_bank_paths_data["championBaseSkins"][champion_id] = base_skin_id
-                self.skin_events_data["championBaseSkins"][champion_id] = base_skin_id
 
             if bin_path := skin.get("binPath"):
                 path_to_skin_id_map[bin_path] = skin_id_str
             for chroma in skin.get("chromas", []):
                 chroma_id_str = str(chroma["id"])
                 self.skin_bank_paths_data["skinToChampion"][chroma_id_str] = champion_id
-                self.skin_events_data["skinToChampion"][chroma_id_str] = champion_id
                 if bin_path := chroma.get("binPath"):
                     path_to_skin_id_map[bin_path] = chroma_id_str
 
@@ -710,6 +795,7 @@ class BinUpdater:
         skin_ids_sorted = sorted(path_to_skin_id_map.values(), key=int)
         path_to_id_reversed = {v: k for k, v in path_to_skin_id_map.items()}
 
+        champion_skin_events = {}
         for skin_id in skin_ids_sorted:
             path = path_to_id_reversed[skin_id]
             if not (bin_raw := raw_data_map.get(path)):
@@ -742,7 +828,8 @@ class BinUpdater:
                                 # --- 事件数据处理 ---
                                 # 只有当bank path被认领时，才提取相关的事件数据
                                 if is_new_skin_entry:
-                                    self._extract_skin_events(skin_id, bin_file, base_skin_id)
+                                    if skin_events := self._extract_skin_events(bin_file, base_skin_id, skin_id):
+                                        champion_skin_events[skin_id] = skin_events
                                     is_new_skin_entry = False
 
             except Exception as e:
@@ -750,13 +837,27 @@ class BinUpdater:
                 if config.is_dev_mode():
                     raise
 
-    def _extract_skin_events(self, skin_id: str, bin_file: BIN, base_skin_id: str | None) -> None:
+        # 将该英雄的所有皮肤事件数据写入一个文件
+        if champion_skin_events:
+            event_file_path = self.skin_events_dir / f"{champion_id}.json"
+            if _needs_update(event_file_path, self.version, self.force_update):
+                # 为事件文件添加元数据
+                final_event_data = {
+                    "gameVersion": self.version,
+                    "languages": self.skin_bank_paths_data.get("languages", []),
+                    "lastUpdate": datetime.now().isoformat(),
+                    "skins": champion_skin_events,
+                }
+                dump_json(final_event_data, event_file_path, indent=4 if config.is_dev_mode() else None)
+
+    def _extract_skin_events(self, bin_file: BIN, base_skin_id: str | None, current_skin_id: str) -> dict | None:
         """
         提取一个皮肤BIN文件中的所有事件数据
 
-        :param skin_id: 皮肤ID
         :param bin_file: BIN文件对象
         :param base_skin_id: 该英雄的基础皮肤ID
+        :param current_skin_id: 当前正在处理的皮肤ID
+        :return: 包含事件数据的字典，如果没有则返回None
         """
         skin_events = {}
         if bin_file.theme_music:
@@ -767,7 +868,7 @@ class BinUpdater:
             if group.music:
                 skin_events["music"] = group.music.to_dict()
             for event_data in group.bank_units:
-                if base_skin_id and skin_id != base_skin_id and "_Base_" in event_data.category:
+                if base_skin_id and current_skin_id != base_skin_id and "_Base_" in event_data.category:
                     continue
                 if event_data.events:
                     category = event_data.category
@@ -778,33 +879,22 @@ class BinUpdater:
         if all_events_by_category:
             skin_events["events"] = all_events_by_category
 
-        if skin_events:
-            self.skin_events_data["skins"][skin_id] = skin_events
+        return skin_events if skin_events else None
 
-    def _process_map_bin(self, map_data: dict) -> None:
-        """
-        处理单个地图的BIN文件，提取bank paths和事件数据
-
-        :param map_data: 地图数据
-        """
-        map_id = str(map_data["id"])
-
+    def _process_map_bank_paths(self, map_id: str, map_data: dict) -> None:
+        """处理单个地图的Bank Paths"""
         if not map_data.get("wad") or not map_data.get("binPath"):
-            logger.debug(f"地图 {map_id} 缺少 WAD 或 binPath 信息，已跳过。")
             return
 
         wad_path = self.game_path / map_data["wad"]["root"]
         bin_path = map_data["binPath"]
 
         if not wad_path.exists():
-            logger.warning(f"地图 {map_id} 的WAD文件不存在，已跳过: {wad_path}")
             return
 
         try:
-            logger.debug(f"正在提取地图 {map_id} 的BIN文件: {bin_path}")
             bin_raws = WAD(wad_path).extract([bin_path], raw=True)
             if not bin_raws or not bin_raws[0]:
-                logger.warning(f"从地图 {map_id} 的WAD文件中未能提取到有效的BIN数据。")
                 return
             bin_file = BIN(bin_raws[0])
         except Exception as e:
@@ -813,7 +903,6 @@ class BinUpdater:
                 raise
             return
 
-        # --- 提取 Bank Paths ---
         map_bank_paths = {}
         for group in bin_file.data:
             for event_data in group.bank_units:
@@ -823,26 +912,67 @@ class BinUpdater:
                         map_bank_paths[category] = []
                     map_bank_paths[category].append(event_data.bank_path)
 
-        # 内部去重：一个category下可能包含多个完全相同的bank path列表
         for category, paths in map_bank_paths.items():
-            # 利用元组可哈希的特性，通过dict.fromkeys实现高效去重
             unique_paths_tuples = dict.fromkeys(tuple(sorted(p)) for p in paths)
-            # 将去重后的元组转回列表
             map_bank_paths[category] = [list(p) for p in unique_paths_tuples]
 
         if map_bank_paths:
             self.map_bank_paths_data["maps"][map_id] = map_bank_paths
 
-        # --- 提取 Events ---
-        # 复用事件提取逻辑，地图没有base_skin_id的概念，传None
-        self._extract_map_events(map_id, bin_file)
-
-    def _extract_map_events(self, map_id: str, bin_file: BIN) -> None:
+    def _process_map_events_for_id(
+        self, map_id: str, map_data: dict, common_events_set: set | None = None
+    ) -> dict | None:
         """
-        提取一个地图BIN文件中的所有事件数据
-
+        提取、去重并保存单个地图的事件数据
         :param map_id: 地图ID
+        :param map_data: 地图元数据
+        :param common_events_set: 用于去重的公共事件集合
+        :return: 提取到的事件数据字典
+        """
+        if not map_data.get("wad") or not map_data.get("binPath"):
+            logger.debug(f"地图 {map_id} 缺少 WAD 或 binPath 信息，跳过事件处理。")
+            return None
+
+        wad_path = self.game_path / map_data["wad"]["root"]
+        bin_path = map_data["binPath"]
+
+        if not wad_path.exists():
+            logger.warning(f"地图 {map_id} 的WAD文件不存在，跳过事件处理: {wad_path}")
+            return None
+
+        try:
+            logger.debug(f"正在提取地图 {map_id} 的事件数据: {bin_path}")
+            bin_raws = WAD(wad_path).extract([bin_path], raw=True)
+            if not bin_raws or not bin_raws[0]:
+                logger.warning(f"从地图 {map_id} 的WAD文件中未能提取到有效的事件BIN数据。")
+                return None
+            bin_file = BIN(bin_raws[0])
+        except Exception:
+            # 错误已在 _process_map_bank_paths 中记录，这里不再重复
+            return None
+
+        # --- 提取并去重 Events ---
+        if map_events := self._extract_map_events(bin_file, common_events_set):
+            event_file_path = self.map_events_dir / f"{map_id}.json"
+            if _needs_update(event_file_path, self.version, self.force_update):
+                # 为事件文件添加元数据
+                final_event_data = {
+                    "gameVersion": self.version,
+                    "languages": self.map_bank_paths_data.get("languages", []),
+                    "lastUpdate": datetime.now().isoformat(),
+                    "map": map_events,
+                }
+                dump_json(final_event_data, event_file_path, indent=4 if config.is_dev_mode() else None)
+            return map_events
+        return None
+
+    def _extract_map_events(self, bin_file: BIN, common_events_set: set | None = None) -> dict | None:
+        """
+        从BIN文件中提取并根据公共事件集合进行去重
+
         :param bin_file: BIN文件对象
+        :param common_events_set: 公共事件集合，用于去重
+        :return: 包含事件数据的字典，如果没有则返回None
         """
         map_events = {}
         if bin_file.theme_music:
@@ -853,96 +983,65 @@ class BinUpdater:
             if group.music:
                 map_events["music"] = group.music.to_dict()
             for event_data in group.bank_units:
-                if event_data.events:
+                if not event_data.events:
+                    continue
+
+                # 将StringHash对象转换为字典列表
+                events_as_dicts = [e.to_dict() for e in event_data.events]
+
+                # 内部去重
+                unique_events_in_group = list({frozenset(event.items()): event for event in events_as_dicts}.values())
+
+                # 全局去重
+                if common_events_set:
+                    unique_events_in_group = [
+                        e for e in unique_events_in_group if frozenset(e.items()) not in common_events_set
+                    ]
+
+                if unique_events_in_group:
                     category = event_data.category
                     if category not in all_events_by_category:
                         all_events_by_category[category] = []
-                    all_events_by_category[category].extend([e.to_dict() for e in event_data.events])
-
-        # 内部去重：一个category下可能包含多个完全相同的event对象
-        for category, events in all_events_by_category.items():
-            # frozenset(event.items())为每个字典生成一个可哈希且顺序无关的唯一标识
-            unique_events = list({frozenset(event.items()): event for event in events}.values())
-            all_events_by_category[category] = unique_events
+                    all_events_by_category[category].extend(unique_events_in_group)
 
         if all_events_by_category:
             map_events["events"] = all_events_by_category
 
-        if map_events:
-            self.map_events_data["maps"][map_id] = map_events
+        return map_events if map_events else None
 
-    def _deduplicate_maps_data(self) -> None:
+    def _deduplicate_map_bank_paths(self) -> None:
         """
-        对地图数据进行两步去重，确保数据精简。
-        第一步：在提取时进行内部去重，解决单个BIN文件内的重复数据。
-        第二步：在此函数中进行全局去重，移除所有地图中与ID为0的公共地图重复的数据。
+        基于ID为0的地图数据，对其他地图的Bank Paths进行去重
         """
-        logger.info("开始对地图数据进行全局去重...")
-
-        # --- 1. 对 Bank Paths 数据进行全局去重 ---
+        logger.info("开始对地图bank path数据进行全局去重...")
         common_bank_paths = self.map_bank_paths_data["maps"].get("0", {})
         if not common_bank_paths:
             logger.warning("未找到ID为0的公共地图bank path数据，跳过 bank path 去重。")
-        else:
-            # 将公共数据中的bank path列表转换为元组集合，便于O(1)复杂度的快速查找
-            common_paths_set = set()
-            for paths_list in common_bank_paths.values():
-                for path in paths_list:
-                    common_paths_set.add(tuple(sorted(path)))
-
-            # 遍历其他地图，移除与公共数据重复的部分
-            for map_id, categories in self.map_bank_paths_data["maps"].copy().items():
-                if map_id == "0":
-                    continue
-
-                for category, paths_list in categories.copy().items():
-                    # 筛选出当前地图独有的、非公共的bank path
-                    unique_to_map = [path for path in paths_list if tuple(sorted(path)) not in common_paths_set]
-
-                    if unique_to_map:
-                        categories[category] = unique_to_map
-                    else:
-                        del categories[category]  # 如果该category下所有数据都是公共的，则移除
-
-                if not categories:
-                    del self.map_bank_paths_data["maps"][map_id]  # 如果该地图所有数据都是公共的，则移除
-            logger.success("地图bank path数据去重完成。")
-
-        # --- 2. 对 Events 数据进行全局去重 ---
-        common_events = self.map_events_data["maps"].get("0", {})
-        if not common_events:
-            logger.warning("未找到ID为0的公共地图事件数据，跳过 events 去重。")
             return
 
-        # 将公共事件数据转换为可哈希的frozenset集合，便于O(1)复杂度的快速查找
-        common_events_set = set()
-        if "events" in common_events:
-            for events_list in common_events["events"].values():
-                for event in events_list:
-                    # frozenset(event.items())为每个字典生成一个可哈希且顺序无关的唯一标识
-                    common_events_set.add(frozenset(event.items()))
+        # 将公共数据中的bank path列表转换为元组集合，便于O(1)复杂度的快速查找
+        common_paths_set = set()
+        for paths_list in common_bank_paths.values():
+            for path in paths_list:
+                common_paths_set.add(tuple(sorted(path)))
 
-        # 遍历其他地图，移除与公共事件重复的部分
-        for map_id, map_content in self.map_events_data["maps"].copy().items():
-            if map_id == "0" or "events" not in map_content:
+        # 遍历其他地图，移除与公共数据重复的部分
+        for map_id, categories in self.map_bank_paths_data["maps"].copy().items():
+            if map_id == "0":
                 continue
 
-            for category, events_list in map_content["events"].copy().items():
-                # 筛选出当前地图独有的、非公共的事件
-                unique_events = [event for event in events_list if frozenset(event.items()) not in common_events_set]
-                if unique_events:
-                    map_content["events"][category] = unique_events
+            for category, paths_list in categories.copy().items():
+                # 筛选出当前地图独有的、非公共的bank path
+                unique_to_map = [path for path in paths_list if tuple(sorted(path)) not in common_paths_set]
+
+                if unique_to_map:
+                    categories[category] = unique_to_map
                 else:
-                    del map_content["events"][category]  # 如果该category下所有事件都是公共的，则移除
+                    del categories[category]  # 如果该category下所有数据都是公共的，则移除
 
-            # 如果去重后events为空，但music数据还存在，则只移除events键
-            if not map_content.get("events"):
-                map_content.pop("events", None)
-            # 如果整个地图条目都已为空（没有music和events），则移除该地图
-            if not map_content:
-                del self.map_events_data["maps"][map_id]
-
-        logger.success("地图events数据去重完成。")
+            if not categories:
+                del self.map_bank_paths_data["maps"][map_id]  # 如果该地图所有数据都是公共的，则移除
+        logger.success("地图bank path数据去重完成。")
 
     def _optimize_mappings(self) -> None:
         """
@@ -968,19 +1067,15 @@ class DataReader(metaclass=Singleton):
     从合并后的数据文件读取游戏数据
     """
 
-    # 音频类型常量定义 (与BinUpdater保持一致)
-    AUDIO_TYPE_SFX = "SFX"
+    # 音频类型常量定义
     AUDIO_TYPE_VO = "VO"
-    AUDIO_TYPE_SFX_OUTOFGAME = "SFX_OutOfGame"
-    AUDIO_TYPE_VO_OUTOFGAME = "VO_OutOfGame"
-    AUDIO_TYPE_REWORK_SFX = "Rework_SFX"
+    AUDIO_TYPE_SFX = "SFX"
+    AUDIO_TYPE_MUSIC = "MUSIC"
 
     KNOWN_AUDIO_TYPES = {
-        AUDIO_TYPE_SFX,
         AUDIO_TYPE_VO,
-        AUDIO_TYPE_SFX_OUTOFGAME,
-        AUDIO_TYPE_VO_OUTOFGAME,
-        AUDIO_TYPE_REWORK_SFX,
+        AUDIO_TYPE_SFX,
+        AUDIO_TYPE_MUSIC,
     }
 
     def __init__(self, default_language: str = "default"):
@@ -1003,12 +1098,14 @@ class DataReader(metaclass=Singleton):
 
         data_file = self.version_manifest_path / "data.json"
         bank_paths_file = self.version_manifest_path / "skins-bank-paths.json"
-        events_file = self.version_manifest_path / "skins-events.json"
+        self.skin_events_dir: Path = self.version_manifest_path / "events" / "skins"
+        self.map_events_dir: Path = self.version_manifest_path / "events" / "maps"
+        self.unknown_categories_file: Path = self.version_manifest_path / "unknown-category.txt"
 
         self.data = self._load_data(data_file)
         self.bin_data = self._load_data(bank_paths_file)  # DataReader主要还是用bank_path的数据
-        self.events_data = self._load_data(events_file)
         self.default_language = default_language
+        self.unknown_categories = set()
         self.initialized = True
 
     def _load_data(self, data_file: StrPath) -> dict:
@@ -1039,27 +1136,35 @@ class DataReader(metaclass=Singleton):
 
     def get_audio_type(self, category: str) -> str:
         """
-        从分类字符串中提取音频类型标识
+        从分类字符串中识别出音频的大类（VO, SFX, MUSIC）。
+        这是一个基于经验规则的分类器，能处理各种不规范的category命名。
+        未知类型将被归类为SFX并记录。
 
-        :param category: 原始分类字符串(如'Aatrox_Base_SFX')
-        :return: 音频类型标识(如'SFX'或'SFX_OutOfGame')
+        :param category: 原始分类字符串
+        :return: 音频大类 ('VO', 'SFX', 'MUSIC')
         """
-        parts = category.split("_")
-        if len(parts) < 3:
-            return "unknown"
+        # 统一转为大写以便进行不区分大小写的比较
+        category_upper = category.upper()
 
-        # 特殊情况处理: Skarner重做
-        if parts[0] == "Skarner" and parts[1] == "Rework" and len(parts) >= 4:
-            return self.AUDIO_TYPE_REWORK_SFX
+        # 优先级 1: 语音 (VO)
+        # 语音类别的标识最明确，包括英雄语音和各种播报员。
+        if "ANNOUNCER" in category_upper or "_VO" in category_upper:
+            return self.AUDIO_TYPE_VO
 
-        # 通常格式为 [英雄名]_[皮肤]_[类型] 或 [英雄名]_[皮肤]_[类型]_[子类型]
-        if len(parts) >= 4:
-            potential_compound_type = "_".join(parts[2:])
-            if potential_compound_type in self.KNOWN_AUDIO_TYPES:
-                return potential_compound_type
+        # 优先级 2: 音乐 (MUSIC)
+        # 音乐的标识多样，包括'MUS_'前缀和包含'MUSIC'的字符串。
+        if category_upper.startswith("MUS_") or "MUSIC" in category_upper:
+            return self.AUDIO_TYPE_MUSIC
 
-        _type = parts[2]
-        return _type if _type in self.KNOWN_AUDIO_TYPES else "unknown"
+        # 优先级 3: 已知音效 (SFX)
+        # 音效是范围最广的类别，包含标准SFX、UI音效(HUD)和地图初始化音效(Init)。
+        if "_SFX" in category_upper or category_upper == "INIT" or "HUD" in category_upper:
+            return self.AUDIO_TYPE_SFX
+
+        # 保险机制：如果所有规则都匹配不上，则归为SFX，并记录以备后续分析
+        logger.warning(f"发现未知音频分类: '{category}'，已自动归类为SFX。")
+        self.unknown_categories.add(category)
+        return self.AUDIO_TYPE_SFX
 
     def get_languages(self) -> list[str]:
         """
@@ -1081,41 +1186,96 @@ class DataReader(metaclass=Singleton):
 
     def get_skin_bank(self, skin_id: int) -> dict:
         """
-        根据皮肤ID获取音频资源集合数据
+        根据皮肤ID获取其所有音频资源集合数据，正确处理独有、完全共享和部分共享的资源。
 
         :param skin_id: 皮肤ID
-        :return: 音频数据
+        :return: 包含该皮肤所有可用音频数据的字典
         """
         skin_id_str = str(skin_id)
         mappings = self.bin_data.get("skinAudioMappings", {})
         skins_data = self.bin_data.get("skins", {})
 
-        # 1. 检查是否存在完全重定向映射
+        # 1. 检查是否存在完全重定向映射（例如炫彩皮肤指向原皮肤）
         mapping_info = mappings.get(skin_id_str)
         if isinstance(mapping_info, str):
-            # 递归调用以处理可能的链式映射
+            # 如果是完全重定向，则递归获取目标皮肤的数据
             return self.get_skin_bank(int(mapping_info))
 
-        # 2. 获取基础皮肤的音频数据作为底座
-        result = {}
-        champion_id = self.bin_data.get("skinToChampion", {}).get(skin_id_str)
-        if champion_id:
-            base_skin_id = self.bin_data.get("championBaseSkins", {}).get(champion_id)
-            if base_skin_id:
-                result = skins_data.get(base_skin_id, {}).copy()
+        # 2. 从该皮肤自己的独立音频数据开始
+        result = skins_data.get(skin_id_str, {}).copy()
 
-        # 3. 合并当前皮肤自己的独立音频数据
-        if skin_data := skins_data.get(skin_id_str):
-            result.update(skin_data)
-
-        # 4. 合并部分共享的音频数据
+        # 3. 合并部分共享的音频数据
+        # mapping_info 是一个字典，格式为: {<category>: <owner_skin_id>}
         if isinstance(mapping_info, dict):
             for category, owner_id in mapping_info.items():
+                # 从源皮肤的数据中获取指定分类的音频数据
                 owner_data = skins_data.get(owner_id, {})
                 if category in owner_data:
+                    # 将共享的分类数据添加到结果中
                     result[category] = owner_data[category]
 
         return result
+
+    def write_unknown_categories_to_file(self) -> None:
+        """
+        将本次运行中收集到的所有未知分类写入到文件中。
+        """
+        if not self.unknown_categories:
+            logger.debug("本次运行未发现新的未知音频分类。")
+            return
+
+        try:
+            # 读取已有的未知分类，避免重复写入
+            existing_unknowns = set()
+            if self.unknown_categories_file.exists():
+                with open(self.unknown_categories_file, encoding="utf-8") as f:
+                    existing_unknowns = {line.strip() for line in f if line.strip()}
+
+            new_unknowns = self.unknown_categories - existing_unknowns
+
+            if not new_unknowns:
+                logger.info("所有发现的未知分类已存在于 unknown-category.txt 文件中。")
+                return
+
+            with open(self.unknown_categories_file, "a", encoding="utf-8") as f:
+                for category in sorted(list(new_unknowns)):
+                    f.write(f"{category}\n")
+
+            logger.success(f"已将 {len(new_unknowns)} 个新的未知音频分类追加到: {self.unknown_categories_file}")
+
+        except Exception as e:
+            logger.error(f"写入未知分类文件时出错: {e}")
+
+    def get_skin_events(self, skin_id: int) -> dict | None:
+        """
+        按需加载并返回指定皮肤的事件数据
+
+        :param skin_id: 皮肤ID
+        :return: 事件数据字典, 如果不存在则返回None
+        """
+        skin_id_str = str(skin_id)
+        champion_id = self.bin_data.get("skinToChampion", {}).get(skin_id_str)
+        if not champion_id:
+            return None
+
+        event_file = self.skin_events_dir / f"{champion_id}.json"
+        if not event_file.exists():
+            return None
+
+        all_champion_events = load_json(event_file)
+        return all_champion_events.get(skin_id_str)
+
+    def get_map_events(self, map_id: int) -> dict | None:
+        """
+        按需加载并返回指定地图的事件数据
+
+        :param map_id: 地图ID
+        :return: 事件数据字典, 如果不存在则返回None
+        """
+        event_file = self.map_events_dir / f"{map_id}.json"
+        if not event_file.exists():
+            return None
+        return load_json(event_file)
 
     def get_champion(self, champion_id: int) -> dict:
         """
