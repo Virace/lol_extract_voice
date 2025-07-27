@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/5/6 1:19
-# @Update  : 2025/7/28 4:24
+# @Update  : 2025/7/28 5:06
 # @Detail  : 游戏数据管理器
 
 
@@ -635,6 +635,9 @@ class BinUpdater:
             map_progress.update()
         map_progress.finish()
 
+        # --- 地图数据去重 ---
+        self._deduplicate_maps_data()
+
         dump_json(self.map_bank_paths_data, self.map_bank_paths_file, indent=4 if config.is_dev_mode() else None)
         dump_json(self.map_events_data, self.map_events_file, indent=4 if config.is_dev_mode() else None)
         logger.success("地图数据更新完成")
@@ -819,10 +822,19 @@ class BinUpdater:
                     if category not in map_bank_paths:
                         map_bank_paths[category] = []
                     map_bank_paths[category].append(event_data.bank_path)
+
+        # 内部去重：一个category下可能包含多个完全相同的bank path列表
+        for category, paths in map_bank_paths.items():
+            # 利用元组可哈希的特性，通过dict.fromkeys实现高效去重
+            unique_paths_tuples = dict.fromkeys(tuple(sorted(p)) for p in paths)
+            # 将去重后的元组转回列表
+            map_bank_paths[category] = [list(p) for p in unique_paths_tuples]
+
         if map_bank_paths:
             self.map_bank_paths_data["maps"][map_id] = map_bank_paths
 
         # --- 提取 Events ---
+        # 复用事件提取逻辑，地图没有base_skin_id的概念，传None
         self._extract_map_events(map_id, bin_file)
 
     def _extract_map_events(self, map_id: str, bin_file: BIN) -> None:
@@ -847,11 +859,90 @@ class BinUpdater:
                         all_events_by_category[category] = []
                     all_events_by_category[category].extend([e.to_dict() for e in event_data.events])
 
+        # 内部去重：一个category下可能包含多个完全相同的event对象
+        for category, events in all_events_by_category.items():
+            # frozenset(event.items())为每个字典生成一个可哈希且顺序无关的唯一标识
+            unique_events = list({frozenset(event.items()): event for event in events}.values())
+            all_events_by_category[category] = unique_events
+
         if all_events_by_category:
             map_events["events"] = all_events_by_category
 
         if map_events:
             self.map_events_data["maps"][map_id] = map_events
+
+    def _deduplicate_maps_data(self) -> None:
+        """
+        对地图数据进行两步去重，确保数据精简。
+        第一步：在提取时进行内部去重，解决单个BIN文件内的重复数据。
+        第二步：在此函数中进行全局去重，移除所有地图中与ID为0的公共地图重复的数据。
+        """
+        logger.info("开始对地图数据进行全局去重...")
+
+        # --- 1. 对 Bank Paths 数据进行全局去重 ---
+        common_bank_paths = self.map_bank_paths_data["maps"].get("0", {})
+        if not common_bank_paths:
+            logger.warning("未找到ID为0的公共地图bank path数据，跳过 bank path 去重。")
+        else:
+            # 将公共数据中的bank path列表转换为元组集合，便于O(1)复杂度的快速查找
+            common_paths_set = set()
+            for paths_list in common_bank_paths.values():
+                for path in paths_list:
+                    common_paths_set.add(tuple(sorted(path)))
+
+            # 遍历其他地图，移除与公共数据重复的部分
+            for map_id, categories in self.map_bank_paths_data["maps"].copy().items():
+                if map_id == "0":
+                    continue
+
+                for category, paths_list in categories.copy().items():
+                    # 筛选出当前地图独有的、非公共的bank path
+                    unique_to_map = [path for path in paths_list if tuple(sorted(path)) not in common_paths_set]
+
+                    if unique_to_map:
+                        categories[category] = unique_to_map
+                    else:
+                        del categories[category]  # 如果该category下所有数据都是公共的，则移除
+
+                if not categories:
+                    del self.map_bank_paths_data["maps"][map_id]  # 如果该地图所有数据都是公共的，则移除
+            logger.success("地图bank path数据去重完成。")
+
+        # --- 2. 对 Events 数据进行全局去重 ---
+        common_events = self.map_events_data["maps"].get("0", {})
+        if not common_events:
+            logger.warning("未找到ID为0的公共地图事件数据，跳过 events 去重。")
+            return
+
+        # 将公共事件数据转换为可哈希的frozenset集合，便于O(1)复杂度的快速查找
+        common_events_set = set()
+        if "events" in common_events:
+            for events_list in common_events["events"].values():
+                for event in events_list:
+                    # frozenset(event.items())为每个字典生成一个可哈希且顺序无关的唯一标识
+                    common_events_set.add(frozenset(event.items()))
+
+        # 遍历其他地图，移除与公共事件重复的部分
+        for map_id, map_content in self.map_events_data["maps"].copy().items():
+            if map_id == "0" or "events" not in map_content:
+                continue
+
+            for category, events_list in map_content["events"].copy().items():
+                # 筛选出当前地图独有的、非公共的事件
+                unique_events = [event for event in events_list if frozenset(event.items()) not in common_events_set]
+                if unique_events:
+                    map_content["events"][category] = unique_events
+                else:
+                    del map_content["events"][category]  # 如果该category下所有事件都是公共的，则移除
+
+            # 如果去重后events为空，但music数据还存在，则只移除events键
+            if not map_content.get("events"):
+                map_content.pop("events", None)
+            # 如果整个地图条目都已为空（没有music和events），则移除该地图
+            if not map_content:
+                del self.map_events_data["maps"][map_id]
+
+        logger.success("地图events数据去重完成。")
 
     def _optimize_mappings(self) -> None:
         """
