@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/23 12:27
-# @Update  : 2025/7/28 7:18
+# @Update  : 2025/7/28 7:45
 # @Detail  : 解包音频
 
 
@@ -33,6 +33,13 @@ def unpack_audio(hero_id: int, reader: DataReader):
     language = config.GAME_REGION
     logger.info(f"开始解包英雄ID {hero_id} 的音频文件，语言: {language}")
 
+    # 读取并处理排除配置
+    excluded_types = {t.strip().upper() for t in config.EXCLUDE_TYPE if t.strip()}
+    logger.info(
+        f"将要解包的音频类型 (已排除: {excluded_types if excluded_types else '无'}): "
+        f"{[t for t in [reader.AUDIO_TYPE_VO, reader.AUDIO_TYPE_SFX, reader.AUDIO_TYPE_MUSIC] if t not in excluded_types]}"
+    )
+
     # 步骤1: 读取游戏数据
     champion = reader.get_champion(hero_id)
 
@@ -46,28 +53,20 @@ def unpack_audio(hero_id: int, reader: DataReader):
 
     logger.info(f"英雄信息: ID={hero_id}, 别名={alias}, 名称={name}")
 
-    # --- 阶段 1: 确定唯一的WAD文件并收集所有皮肤的VO文件路径 ---
-    logger.info("阶段 1: 收集所有皮肤的VO文件路径...")
+    # --- 阶段 1: 收集所有需要解包的音频文件路径 ---
+    logger.info("阶段 1: 收集所有需要解包的音频文件路径...")
 
-    # 为单个英雄和语言确定唯一的WAD文件
-    wad_file = champion.get("wad", {}).get(language)
-    if not wad_file:
-        logger.error(f"在英雄 '{alias}' 的数据中未找到语言 '{language}' 对应的WAD文件。")
-        return
-    wad_path = config.GAME_PATH / wad_file
-    if not wad_path.exists():
-        logger.error(f"WAD文件不存在: {wad_path}。无法继续解包。")
-        return
-
-    # paths_to_extract: {"file_a", "file_b", "file_c"}
-    paths_to_extract = set()
-    # path_to_skin_info_map: { "file_a": {"id": 1, "name": "皮肤1"}, "file_b": {"id": 1, "name": "皮肤1"} }
-    path_to_skin_info_map = {}
+    # 分类存放不同类型的路径和映射信息
+    # VO 文件通常在特定语言的 WAD 中
+    vo_paths_to_extract = set()
+    vo_path_to_skin_info_map = {}
+    # SFX 和 Music 文件通常在根 WAD 中
+    other_paths_to_extract = set()
+    other_path_to_skin_info_map = {}
 
     for skin in champion.get("skins", []):
         skin_name_raw = skin.get("skinNames").get(language, skin.get("skinNames").get("default", ""))
         is_base_skin = skin.get("isBase", False)
-        # 根据用户要求，基础皮肤使用固定名称 "基础皮肤"
         skin_name = "基础皮肤" if is_base_skin else skin_name_raw
         skin_id = skin.get("id")
 
@@ -77,34 +76,69 @@ def unpack_audio(hero_id: int, reader: DataReader):
 
         for category, banks_list in banks.items():
             audio_type = reader.get_audio_type(category)
+
+            # 根据配置排除类型
+            if audio_type in excluded_types:
+                continue
+
+            # 为路径关联上皮肤信息和音频类型
+            skin_info_with_type = {"id": skin_id, "name": skin_name, "type": audio_type}
+
             if audio_type == reader.AUDIO_TYPE_VO:
                 for bank in banks_list:
                     for path in bank:
-                        paths_to_extract.add(path)
-                        path_to_skin_info_map[path] = {"id": skin_id, "name": skin_name}
+                        vo_paths_to_extract.add(path)
+                        vo_path_to_skin_info_map[path] = skin_info_with_type
+            else:  # SFX 和 MUSIC
+                for bank in banks_list:
+                    for path in bank:
+                        other_paths_to_extract.add(path)
+                        other_path_to_skin_info_map[path] = skin_info_with_type
 
-    if not paths_to_extract:
-        logger.warning(f"英雄 '{name}' 未找到任何需要解包的VO音频文件。")
+    if not vo_paths_to_extract and not other_paths_to_extract:
+        logger.warning(f"英雄 '{name}' 未找到任何需要解包的音频文件 (检查排除类型配置)。")
         return
 
-    # --- 阶段 2: 对唯一的WAD文件执行一次解包操作 ---
+    # --- 阶段 2: 根据不同WAD文件，批量解包 ---
     logger.info("阶段 2: 开始批量解包WAD文件...")
     path_to_raw_data_map = {}
-    path_list = sorted(list(paths_to_extract))  # 排序以保证顺序
 
-    try:
-        logger.info(f"正在从 {wad_path.name} 解包 {len(path_list)} 个文件...")
-        file_raws = WAD(wad_path).extract(path_list, raw=True)
-        # 将解包后的数据与原始路径对应起来
-        path_to_raw_data_map.update(zip(path_list, file_raws, strict=False))
-    except Exception as e:
-        logger.error(f"解包WAD文件 '{wad_path.name}' 时出错: {e}")
-        logger.debug(traceback.format_exc())
-        return
+    # 2.1 从特定语言的 WAD 解包 VO
+    lang_wad_file = champion.get("wad", {}).get(language)
+    if lang_wad_file and vo_paths_to_extract:
+        lang_wad_path = config.GAME_PATH / lang_wad_file
+        if lang_wad_path.exists():
+            vo_path_list = sorted(list(vo_paths_to_extract))
+            try:
+                logger.info(f"正在从 {lang_wad_path.name} 解包 {len(vo_path_list)} 个VO文件...")
+                file_raws = WAD(lang_wad_path).extract(vo_path_list, raw=True)
+                path_to_raw_data_map.update(zip(vo_path_list, file_raws, strict=False))
+            except Exception as e:
+                logger.error(f"解包语言WAD文件 '{lang_wad_path.name}' 时出错: {e}")
+                logger.debug(traceback.format_exc())
+        else:
+            logger.warning(f"语言WAD文件不存在: {lang_wad_path}, 跳过VO解包。")
+
+    # 2.2 从根 WAD 解包 SFX 和 Music
+    root_wad_file = champion.get("wad", {}).get("root")
+    if root_wad_file and other_paths_to_extract:
+        root_wad_path = config.GAME_PATH / root_wad_file
+        if root_wad_path.exists():
+            other_path_list = sorted(list(other_paths_to_extract))
+            try:
+                logger.info(f"正在从 {root_wad_path.name} 解包 {len(other_path_list)} 个SFX/Music文件...")
+                file_raws = WAD(root_wad_path).extract(other_path_list, raw=True)
+                path_to_raw_data_map.update(zip(other_path_list, file_raws, strict=False))
+            except Exception as e:
+                logger.error(f"解包根WAD文件 '{root_wad_path.name}' 时出错: {e}")
+                logger.debug(traceback.format_exc())
+        else:
+            logger.warning(f"根WAD文件不存在: {root_wad_path}, 跳过SFX/Music解包。")
 
     # --- 阶段 3: 组装最终数据 ---
     logger.info("阶段 3: 组装并处理最终数据...")
-    unpacked_vo_data = {}
+    path_to_skin_info_map = {**vo_path_to_skin_info_map, **other_path_to_skin_info_map}
+    unpacked_audio_data = {}
     for path, raw_data in path_to_raw_data_map.items():
         skin_info = path_to_skin_info_map.get(path)
         if not skin_info:
@@ -112,94 +146,112 @@ def unpack_audio(hero_id: int, reader: DataReader):
 
         skin_id = skin_info["id"]
         # 确保皮肤条目在结果字典中存在
-        if skin_id not in unpacked_vo_data:
-            unpacked_vo_data[skin_id] = {"name": skin_info["name"], "files": []}
+        if skin_id not in unpacked_audio_data:
+            unpacked_audio_data[skin_id] = {"name": skin_info["name"], "files": []}
 
         file_info = {
             "suffix": Path(path).suffix,
             "raw": raw_data,
+            "type": skin_info["type"],  # 直接传递音频类型
         }
-        unpacked_vo_data[skin_id]["files"].append(file_info)
+        unpacked_audio_data[skin_id]["files"].append(file_info)
 
     # 最终处理完成
-    logger.success(f"所有皮肤的VO文件解包完成，共 {len(unpacked_vo_data)} 个皮肤。开始处理解包后的文件...")
+    logger.success(f"所有皮肤的音频文件解包完成，共 {len(unpacked_audio_data)} 个皮肤。开始处理解包后的文件...")
 
     # --- 阶段 4: 保存解包后的文件 ---
     # 清理名称中的非法字符
     safe_alias = sanitize_filename(alias)
     safe_name = sanitize_filename(name)
-    hero_path = config.AUDIO_PATH / "Champions" / f"{hero_id}·{safe_alias}·{safe_name}"
+    hero_path_base = config.AUDIO_PATH
+    hero_path_segment = Path("Champions") / f"{hero_id}·{safe_alias}·{safe_name}"
 
-    for skin_id, skin_data in unpacked_vo_data.items():
+    for skin_id, skin_data in unpacked_audio_data.items():
         skin_name = skin_data["name"]
         files = skin_data["files"]
-
-        # 创建一个文件夹，用来存放解包后的文件
         safe_skin_name = sanitize_filename(skin_name, "'")
-        skin_path = hero_path / f"{skin_id}·{safe_skin_name}"
-        skin_path.mkdir(parents=True, exist_ok=True)
-        logger.info(f"正在处理皮肤 '{skin_name}' (ID: {skin_id}) , 工作目录: {skin_path}")
+        skin_path_segment = Path(f"{skin_id}·{safe_skin_name}")
 
-        success_count, container_skipped_count, subfile_skipped_count, error_count = 0, 0, 0, 0
+        # 为该皮肤创建一个文件类型 -> 文件列表的映射，方便后续按类型分目录
+        files_by_type = {}
         for file_info in files:
-            file_size = len(file_info["raw"]) if file_info["raw"] else 0
+            audio_type = file_info["type"]
+            if audio_type not in files_by_type:
+                files_by_type[audio_type] = []
+            files_by_type[audio_type].append(file_info)
 
-            logger.debug(f"  - 类型: {file_info['suffix']}, 大小: {file_size} 字节")
-
-            if file_size == 0:
-                container_skipped_count += 1
-                continue
-
-            # 判断文件类型
-            if file_info["suffix"] == ".bnk":
-                # 解包bnk文件
-                try:
-                    bnk = BNK(file_info["raw"])
-                    for file in bnk.extract_files():
-                        if not file.data:
-                            logger.warning(f"BNK, 文件 {file.id} 没有数据，跳过保存")
-                            subfile_skipped_count += 1
-                            continue
-
-                        file.save_file(f"{skin_path}/{file.id}.wem")
-                        logger.trace(f"BNK, 已解包 {file.id} 文件")
-                        success_count += 1
-                except Exception as e:
-                    logger.warning(f"处理BNK文件失败: {e}")
-                    error_count += 1
-            elif file_info["suffix"] == ".wpk":
-                # 解包wpk文件
-                try:
-                    wpk = WPK(file_info["raw"])
-                    for file in wpk.extract_files():
-                        file.save_file(f"{skin_path}/{file.filename}")
-                        logger.trace(f"WPK, 已解包 {file.filename} 文件")
-                        success_count += 1
-                except Exception as e:
-                    logger.warning(f"处理WPK文件失败: {e}")
-                    error_count += 1
+        for audio_type, files_in_type in files_by_type.items():
+            # 根据 config.GROUP_BY_TYPE 动态构建输出路径
+            if config.GROUP_BY_TYPE:
+                # 方案一： audios/类型/Champions/英雄/皮肤
+                output_path = hero_path_base / audio_type / hero_path_segment / skin_path_segment
             else:
-                logger.warning(f"未知的文件类型: {file_info['suffix']}")
-                error_count += 1
+                # 方案二： audios/Champions/英雄/皮肤/类型
+                output_path = hero_path_base / hero_path_segment / skin_path_segment / audio_type
 
-        # 输出处理统计
-        summary_message = f"皮肤 '{skin_name}' 处理完成。结果: 成功 {success_count} 个"
-        details = []
-        if subfile_skipped_count > 0:
-            details.append(f"跳过空子文件 {subfile_skipped_count} 个")
-        if container_skipped_count > 0:
-            details.append(f"跳过空容器 {container_skipped_count} 个")
-        if error_count > 0:
-            details.append(f"处理失败 {error_count} 个")
+            output_path.mkdir(parents=True, exist_ok=True)
+            logger.info(f"正在处理皮肤 '{skin_name}' (ID: {skin_id}, 类型: {audio_type}) , 工作目录: {output_path}")
 
-        if details:
-            summary_message += f" ({', '.join(details)})"
-        summary_message += "."
+            success_count, container_skipped_count, subfile_skipped_count, error_count = 0, 0, 0, 0
+            for file_info in files_in_type:
+                file_size = len(file_info["raw"]) if file_info["raw"] else 0
 
-        if error_count > 0 or container_skipped_count > 0:
-            logger.warning(summary_message)
-        else:
-            logger.success(summary_message)
+                logger.debug(f"  - 类型: {file_info['suffix']}, 大小: {file_size} 字节")
+
+                if file_size == 0:
+                    container_skipped_count += 1
+                    continue
+
+                # 判断文件类型
+                if file_info["suffix"] == ".bnk":
+                    # 解包bnk文件
+                    try:
+                        bnk = BNK(file_info["raw"])
+                        for file in bnk.extract_files():
+                            if not file.data:
+                                logger.warning(f"BNK, 文件 {file.id} 没有数据，跳过保存")
+                                subfile_skipped_count += 1
+                                continue
+
+                            file.save_file(output_path / f"{file.id}.wem")
+                            logger.trace(f"BNK, 已解包 {file.id} 文件")
+                            success_count += 1
+                    except Exception as e:
+                        logger.warning(f"处理BNK文件失败: {e}")
+                        error_count += 1
+                elif file_info["suffix"] == ".wpk":
+                    # 解包wpk文件
+                    try:
+                        wpk = WPK(file_info["raw"])
+                        for file in wpk.extract_files():
+                            file.save_file(output_path / f"{file.filename}")
+                            logger.trace(f"WPK, 已解包 {file.filename} 文件")
+                            success_count += 1
+                    except Exception as e:
+                        logger.warning(f"处理WPK文件失败: {e}")
+                        error_count += 1
+                else:
+                    logger.warning(f"未知的文件类型: {file_info['suffix']}")
+                    error_count += 1
+
+            # 输出处理统计
+            summary_message = f"皮肤 '{skin_name}' (类型: {audio_type}) 处理完成。结果: 成功 {success_count} 个"
+            details = []
+            if subfile_skipped_count > 0:
+                details.append(f"跳过空子文件 {subfile_skipped_count} 个")
+            if container_skipped_count > 0:
+                details.append(f"跳过空容器 {container_skipped_count} 个")
+            if error_count > 0:
+                details.append(f"处理失败 {error_count} 个")
+
+            if details:
+                summary_message += f" ({', '.join(details)})"
+            summary_message += "."
+
+            if error_count > 0 or container_skipped_count > 0:
+                logger.warning(summary_message)
+            else:
+                logger.success(summary_message)
 
 
 def unpack_audio_all(reader: DataReader, max_workers: int = 4):
