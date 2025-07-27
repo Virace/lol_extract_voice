@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/5/6 1:19
-# @Update  : 2025/7/28 2:09
+# @Update  : 2025/7/28 2:23
 # @Detail  : 游戏数据管理器
 
 
@@ -13,7 +13,6 @@ import json
 import re
 import shutil
 import traceback
-from collections.abc import Generator
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -475,22 +474,6 @@ class BinUpdater:
     负责从BIN文件提取音频数据并更新到数据文件中
     """
 
-    # 音频类型常量定义
-    AUDIO_TYPE_SFX = "SFX"  # 音效
-    AUDIO_TYPE_VO = "VO"  # 语音
-    AUDIO_TYPE_SFX_OUTOFGAME = "SFX_OutOfGame"  # 游戏外音效(如大厅、选择英雄时)
-    AUDIO_TYPE_VO_OUTOFGAME = "VO_OutOfGame"  # 游戏外语音
-    AUDIO_TYPE_REWORK_SFX = "Rework_SFX"  # Skarner重做的特殊音效类型
-
-    # 已知的音频类型集合，用于验证
-    KNOWN_AUDIO_TYPES = {
-        AUDIO_TYPE_SFX,
-        AUDIO_TYPE_VO,
-        AUDIO_TYPE_SFX_OUTOFGAME,
-        AUDIO_TYPE_VO_OUTOFGAME,
-        AUDIO_TYPE_REWORK_SFX,
-    }
-
     def __init__(self):
         """
         初始化BIN音频更新器
@@ -681,39 +664,6 @@ class BinUpdater:
                 # 检查该皮肤是否还有自己的独立音频，如果没有，才能安全升级
                 if skin_id not in self.output_data["skins"]:
                     self.output_data["skinAudioMappings"][skin_id] = owner_id
-
-    def _get_audio_type_from_category(self, category: str) -> str:
-        """
-        从分类字符串中提取音频类型标识
-
-        :param category: 原始分类字符串(如'Aatrox_Base_SFX'或'Draven_Base_SFX_OutOfGame')
-        :return: 音频类型标识(如'SFX'或'SFX_OutOfGame')
-        """
-        parts = category.split("_")
-        if len(parts) < 3:
-            logger.warning(f"异常的音频分类格式: {category}")
-            return "unknown"
-
-        # 特殊情况处理: Skarner重做, 实际上和SFX内容是一样的，先保留代码，万一呢？
-        if parts[0] == "Skarner" and parts[1] == "Rework" and len(parts) >= 4:
-            logger.debug(f"检测到特殊的Skarner重做分类: {category}")
-            return self.AUDIO_TYPE_REWORK_SFX  # 返回特殊类型标识
-
-        # 通常格式为 [英雄名]_[皮肤]_[类型] 或 [英雄名]_[皮肤]_[类型]_[子类型]
-        # 先尝试判断是否为已知的复合类型
-        if len(parts) >= 4:
-            potential_compound_type = "_".join(parts[2:])  # 合并第三个部分之后的所有部分
-            if potential_compound_type in self.KNOWN_AUDIO_TYPES:
-                return potential_compound_type
-
-        # 如果不是复合类型，则返回第三个部分
-        _type = parts[2]
-
-        # 检查是否为已知类型，如果不是，记录警告
-        if _type not in self.KNOWN_AUDIO_TYPES:
-            logger.warning(f"发现未知的音频类型: {_type}，来自分类: {category}，可能需要额外处理")
-
-        return _type
 
 
 class DataReader(metaclass=Singleton):
