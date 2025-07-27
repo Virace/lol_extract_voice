@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/5/6 1:19
-# @Update  : 2025/7/28 2:23
+# @Update  : 2025/7/28 2:41
 # @Detail  : 游戏数据管理器
 
 
@@ -486,13 +486,14 @@ class BinUpdater:
         self.version: str = get_game_version(self.game_path)
         self.version_manifest_path: Path = self.manifest_path / self.version
         self.data_file: Path = self.version_manifest_path / "data.json"
-        self.output_file: Path = self.version_manifest_path / "skins-bank-paths.json"
+        self.bank_paths_file: Path = self.version_manifest_path / "skins-bank-paths.json"
+        self.events_file: Path = self.version_manifest_path / "skins-events.json"
 
     def update(self) -> Path:
         """
-        处理BIN文件，提取音频路径并创建独立的 skins-bank-paths.json 文件
+        处理BIN文件，提取音频路径和事件数据
 
-        :return: 更新后的数据文件路径
+        :return: 更新后的 bank paths 数据文件路径
         """
         if not self.data_file.exists():
             logger.error(f"数据文件不存在，请先运行DataUpdater: {self.data_file}")
@@ -504,8 +505,8 @@ class BinUpdater:
                 logger.error(f"无法加载数据文件: {self.data_file}")
                 raise ValueError(f"无法加载或解析JSON文件: {self.data_file}")
 
-            # 初始化最终输出结构
-            self.output_data = {
+            # 初始化 bank paths 输出结构
+            self.bank_paths_data = {
                 "gameVersion": self.version,
                 "languages": data.get("languages", []),
                 "lastUpdate": datetime.now().isoformat(),
@@ -514,6 +515,12 @@ class BinUpdater:
                 "skinAudioMappings": {},
                 "skins": {},
             }
+
+            # 初始化 events 输出结构
+            self.events_data = self.bank_paths_data.copy()
+            self.events_data["skins"] = {}
+            # events.json 不需要映射关系
+            del self.events_data["skinAudioMappings"]
 
             # 全局资源注册表: {bank_path_fingerprint: owner_skin_id}
             bank_path_to_owner_map: dict[tuple, str] = {}
@@ -533,9 +540,11 @@ class BinUpdater:
             progress.finish()
 
             self._optimize_mappings()
-            dump_json(self.output_data, self.output_file, indent=4 if config.is_dev_mode() else None)
-            logger.success(f"皮肤音频资源集合数据更新完成: {self.output_file}")
-            return self.output_file
+            dump_json(self.bank_paths_data, self.bank_paths_file, indent=4 if config.is_dev_mode() else None)
+            dump_json(self.events_data, self.events_file, indent=4 if config.is_dev_mode() else None)
+            logger.success(f"皮肤音频资源集合数据更新完成: {self.bank_paths_file}")
+            logger.success(f"皮肤事件数据更新完成: {self.events_file}")
+            return self.bank_paths_file
 
         except Exception as e:
             logger.error(f"处理BIN文件时出错: {str(e)}")
@@ -566,17 +575,20 @@ class BinUpdater:
         for skin in sorted_skins_data:
             skin_id_str = str(skin["id"])
             # 建立 skin -> champion 索引
-            self.output_data["skinToChampion"][skin_id_str] = champion_id
+            self.bank_paths_data["skinToChampion"][skin_id_str] = champion_id
+            self.events_data["skinToChampion"][skin_id_str] = champion_id
             if skin.get("isBase"):
                 base_skin_id = skin_id_str
                 # 建立 champion -> base_skin 索引
-                self.output_data["championBaseSkins"][champion_id] = base_skin_id
+                self.bank_paths_data["championBaseSkins"][champion_id] = base_skin_id
+                self.events_data["championBaseSkins"][champion_id] = base_skin_id
 
             if bin_path := skin.get("binPath"):
                 path_to_skin_id_map[bin_path] = skin_id_str
             for chroma in skin.get("chromas", []):
                 chroma_id_str = str(chroma["id"])
-                self.output_data["skinToChampion"][chroma_id_str] = champion_id
+                self.bank_paths_data["skinToChampion"][chroma_id_str] = champion_id
+                self.events_data["skinToChampion"][chroma_id_str] = champion_id
                 if bin_path := chroma.get("binPath"):
                     path_to_skin_id_map[bin_path] = chroma_id_str
 
@@ -614,44 +626,81 @@ class BinUpdater:
 
             try:
                 bin_file = BIN(bin_raw)
+                is_new_skin_entry = True  # 标记是否是该皮肤的第一个被认领的资源
+
                 for group in bin_file.data:
                     for event_data in group.bank_units:
-                        if not event_data.bank_path:
-                            continue
+                        # bank path 处理
+                        if event_data.bank_path:
+                            bank_path_fingerprint = tuple(sorted(event_data.bank_path))
+                            category = event_data.category
 
-                        # 生成资源指纹
-                        bank_path_fingerprint = tuple(sorted(event_data.bank_path))
-                        category = event_data.category
+                            if owner_id := bank_path_to_owner_map.get(bank_path_fingerprint):
+                                if skin_id != owner_id and "_Base_" not in category:
+                                    if skin_id not in self.bank_paths_data["skinAudioMappings"]:
+                                        self.bank_paths_data["skinAudioMappings"][skin_id] = {}
+                                    self.bank_paths_data["skinAudioMappings"][skin_id][category] = owner_id
+                            else:
+                                bank_path_to_owner_map[bank_path_fingerprint] = skin_id
+                                if skin_id not in self.bank_paths_data["skins"]:
+                                    self.bank_paths_data["skins"][skin_id] = {}
+                                if category not in self.bank_paths_data["skins"][skin_id]:
+                                    self.bank_paths_data["skins"][skin_id][category] = []
+                                self.bank_paths_data["skins"][skin_id][category].append(event_data.bank_path)
 
-                        # 检查资源是否已被注册
-                        if owner_id := bank_path_to_owner_map.get(bank_path_fingerprint):
-                            # 已被注册，说明是共享资源，建立映射
-                            if skin_id != owner_id:
-                                # 仅为非基础音频组创建映射
-                                if "_Base_" not in category:
-                                    if skin_id not in self.output_data["skinAudioMappings"]:
-                                        self.output_data["skinAudioMappings"][skin_id] = {}
-                                    self.output_data["skinAudioMappings"][skin_id][category] = owner_id
-                        else:
-                            # 未被注册，当前皮肤认领该资源
-                            bank_path_to_owner_map[bank_path_fingerprint] = skin_id
-                            # 将数据写入skins
-                            if skin_id not in self.output_data["skins"]:
-                                self.output_data["skins"][skin_id] = {}
-                            if category not in self.output_data["skins"][skin_id]:
-                                self.output_data["skins"][skin_id][category] = []
-                            self.output_data["skins"][skin_id][category].append(event_data.bank_path)
+                                # --- 事件数据处理 ---
+                                # 只有当bank path被认领时，才提取相关的事件数据
+                                if is_new_skin_entry:
+                                    self._extract_events_data(skin_id, bin_file, base_skin_id)
+                                    is_new_skin_entry = False
 
             except Exception as e:
                 logger.error(f"解析皮肤BIN失败: {path}, 错误: {e}")
                 if config.is_dev_mode():
                     raise
 
+    def _extract_events_data(self, skin_id: str, bin_file: BIN, base_skin_id: str | None) -> None:
+        """
+        提取一个BIN文件中的所有事件数据
+
+        :param skin_id: 皮肤ID
+        :param bin_file: BIN文件对象
+        :param base_skin_id: 该英雄的基础皮肤ID
+        """
+        skin_events = {}
+        # 1. 提取 theme_music
+        if bin_file.theme_music:
+            skin_events["theme_music"] = bin_file.theme_music
+
+        # 2. 提取 music 和 events
+        all_events_by_category = {}
+        for group in bin_file.data:
+            # 皮肤独有的音乐数据，与category无关，直接提取
+            if group.music:
+                skin_events["music"] = group.music.to_dict()
+
+            for event_data in group.bank_units:
+                # 如果当前处理的是非基础皮肤，则明确跳过所有基础分类的事件
+                if skin_id != base_skin_id and "_Base_" in event_data.category:
+                    continue
+
+                if event_data.events:
+                    category = event_data.category
+                    if category not in all_events_by_category:
+                        all_events_by_category[category] = []
+                    all_events_by_category[category].extend([e.to_dict() for e in event_data.events])
+
+        if all_events_by_category:
+            skin_events["events"] = all_events_by_category
+
+        if skin_events:
+            self.events_data["skins"][skin_id] = skin_events
+
     def _optimize_mappings(self) -> None:
         """
         优化映射关系，将部分共享升级为完全共享
         """
-        for skin_id, mappings in self.output_data["skinAudioMappings"].copy().items():
+        for skin_id, mappings in self.bank_paths_data["skinAudioMappings"].copy().items():
             if not isinstance(mappings, dict):
                 continue
 
@@ -662,8 +711,8 @@ class BinUpdater:
             if len(owner_ids) == 1:
                 owner_id = owner_ids.pop()
                 # 检查该皮肤是否还有自己的独立音频，如果没有，才能安全升级
-                if skin_id not in self.output_data["skins"]:
-                    self.output_data["skinAudioMappings"][skin_id] = owner_id
+                if skin_id not in self.bank_paths_data["skins"]:
+                    self.bank_paths_data["skinAudioMappings"][skin_id] = owner_id
 
 
 class DataReader(metaclass=Singleton):
@@ -705,10 +754,12 @@ class DataReader(metaclass=Singleton):
         self.version_manifest_path: Path = self.manifest_path / self.version
 
         data_file = self.version_manifest_path / "data.json"
-        bin_file = self.version_manifest_path / "skins-bank-paths.json"
+        bank_paths_file = self.version_manifest_path / "skins-bank-paths.json"
+        events_file = self.version_manifest_path / "skins-events.json"
 
         self.data = self._load_data(data_file)
-        self.bin_data = self._load_data(bin_file)
+        self.bin_data = self._load_data(bank_paths_file)  # DataReader主要还是用bank_path的数据
+        self.events_data = self._load_data(events_file)
         self.default_language = default_language
         self.initialized = True
 
