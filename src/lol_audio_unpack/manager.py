@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/5/6 1:19
-# @Update  : 2025/7/28 2:41
+# @Update  : 2025/7/28 3:33
 # @Detail  : 游戏数据管理器
 
 
@@ -371,12 +371,66 @@ class DataUpdater:
 
         # 4. 构建最终结果文件
         final_result = {
-            "indices": {"alias": {champ["alias"].lower(): champ_id for champ_id, champ in final_champions.items()}},
-            "champions": final_champions,
             "gameVersion": self.version,
             "languages": [lang for lang in self.process_languages if lang != "default"],
             "lastUpdate": datetime.now().isoformat(),
+            "indices": {"alias": {champ["alias"].lower(): champ_id for champ_id, champ in final_champions.items()}},
+            "champions": final_champions,
         }
+
+        # --- 地图数据处理 ---
+        logger.info("合并地图数据...")
+        maps_by_lang = self._load_language_json(base_path, "maps.json")
+        if "default" in maps_by_lang:
+            final_maps = {}
+            map_id_to_index_per_lang = {
+                lang: {m["id"]: i for i, m in enumerate(maps)} for lang, maps in maps_by_lang.items()
+            }
+
+            for default_map in maps_by_lang["default"]:
+                map_id = default_map["id"]
+                map_string_id = default_map["mapStringId"]
+
+                names = {}
+                for lang, maps in maps_by_lang.items():
+                    if map_id in map_id_to_index_per_lang.get(lang, {}):
+                        idx = map_id_to_index_per_lang[lang][map_id]
+                        names[lang] = self._normalize_text(maps[idx]["name"])
+
+                map_data = {"id": map_id, "mapStringId": map_string_id, "names": names}
+
+                # --- WAD信息处理 ---
+                wad_prefix = f"Map{map_id}" if map_id != 0 else "Common"
+                try:
+                    relative_wad_path_base = config.GAME_MAPS_PATH.relative_to(self.game_path).as_posix()
+                    wad_path_base = f"{relative_wad_path_base}/{wad_prefix}"
+
+                    # 拼接binPath
+                    map_data["binPath"] = f"data/maps/shipping/{wad_prefix.lower()}/{wad_prefix.lower()}.bin"
+
+                    wad_info = {
+                        "root": f"{wad_path_base}.wad.client",
+                        **{
+                            lang: f"{wad_path_base}.{lang}.wad.client"
+                            for lang in self.process_languages
+                            if lang != "default"
+                        },
+                    }
+                    # 验证文件是否存在
+                    if (self.game_path / wad_info["root"]).exists():
+                        map_data["wad"] = wad_info
+                    else:
+                        logger.warning(
+                            f"地图 {wad_prefix} 的WAD文件不存在，已跳过: {self.game_path / wad_info['root']}"
+                        )
+                except ValueError:
+                    logger.error("GAME_MAPS_PATH 配置似乎不正确，无法生成相对路径。")
+
+                final_maps[str(map_id)] = map_data
+            final_result["maps"] = final_maps
+        else:
+            logger.warning("未找到default语言的地图数据，跳过处理。")
+        # --- 地图数据处理结束 ---
 
         # 5. 保存
         dump_json(final_result, base_path / "data.json", indent=4 if config.is_dev_mode() else None)
