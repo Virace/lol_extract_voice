@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:00
-# @Update  : 2025/7/25 2:49
+# @Update  : 2025/7/28 7:44
 # @Detail  : config.py
 
 
@@ -45,11 +45,19 @@ class Config(metaclass=Singleton):
         "GAME_PATH": {"type": "path", "required": True, "help": "游戏根目录", "short": "g"},
         "GAME_REGION": {"type": "str", "default": "zh_CN", "help": "游戏区域", "short": "r"},
         "OUTPUT_PATH": {"type": "path", "required": True, "help": "输出目录", "short": "o"},
-        "INCLUDE_TYPE": {
+        "EXCLUDE_TYPE": {
             "type": "list",
-            "default": "VO, SFX, MUSIC",
-            "help": "排除的类型，例如 VO, SFX, MUSIC",
+            "default": "SFX,MUSIC",
+            "help": "排除的音频类型 (逗号分隔), 例如 'SFX,MUSIC'。可用类型: VO, SFX, MUSIC",
             "short": "t",
+        },
+        "GROUP_BY_TYPE": {
+            "type": "bool",
+            "default": False,
+            "help": """是否按音频类型对输出目录进行分组. 
+# False (默认): audios/Champions/英雄/皮肤/类型/...
+# True: audios/类型/Champions/英雄/皮肤/...""",
+            "short": "b",
         },
         "INCLUDE_NAME": {"type": "list", "help": "名称过滤条件，例如 map11, Aatrox", "short": "n"},
         "INCLUDE_CATEGORY": {"type": "list", "help": "分类过滤条件，例如 maps, characters", "short": "c"},
