@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:00
-# @Update  : 2025/7/28 7:44
+# @Update  : 2025/7/30 7:55
 # @Detail  : config.py
 
 
@@ -13,7 +13,7 @@
 配置管理模块 - 提供全局配置访问
 
 使用方法:
-    from lol_audio_unpack.Utils.config import config
+    from lol_audio_unpack.utils.config import config
 
     # 获取配置
     game_path = config.get("GAME_PATH")
@@ -22,6 +22,8 @@
     config.set("DEBUG", 10)
 """
 
+import inspect
+import json
 import os
 import sys
 from pathlib import Path
@@ -30,8 +32,8 @@ from typing import Any
 from dotenv import load_dotenv
 from loguru import logger
 
-from lol_audio_unpack.Utils.common import Singleton
-from lol_audio_unpack.Utils.type_hints import StrPath
+from lol_audio_unpack.utils.common import Singleton
+from lol_audio_unpack.utils.type_hints import StrPath
 
 # 当前工作目录（通常是项目的根目录）
 WORK_DIR = Path(os.getcwd())

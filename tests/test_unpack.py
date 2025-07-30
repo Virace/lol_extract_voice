@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/25 2:54
-# @Update  : 2025/7/25 23:25
+# @Update  : 2025/7/28 22:57
 # @Detail  : 
 
 
@@ -20,5 +20,5 @@ if __name__ == "__main__":
     setup_app(dev_mode=True, log_level="INFO")
     logger.disable("league_tools")
     reader = DataReader()
-    # unpack_audio_all(reader, max_workers=16)
-    unpack_audio(555, reader)
+    unpack_audio_all(reader, max_workers=16)
+    # unpack_audio(555, reader)

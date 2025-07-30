@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/9/3 10:14
-# @Update  : 2025/7/26 0:44
+# @Update  : 2025/7/30 7:55
 # @Detail  : lol_audio_unpack
 
 
@@ -17,7 +17,7 @@ from pathlib import Path
 from loguru import logger
 
 from .manager import BinUpdater, DataReader, DataUpdater
-from .Utils.config import config
+from .utils.config import config
 
 
 def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs):

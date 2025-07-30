@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/5/6 1:19
-# @Update  : 2025/7/27 23:00
+# @Update  : 2025/7/30 7:54
 # @Detail  : 通用函数
 
 
@@ -21,8 +21,10 @@ from json import JSONEncoder
 from os import PathLike
 from pathlib import Path, PosixPath, WindowsPath
 
+import msgpack
 import requests
 from loguru import logger
+from ruamel.yaml import YAML
 
 if os.name == "nt":
     BasePath = WindowsPath
@@ -233,6 +235,74 @@ def load_json(path: str | PathLike | Path) -> dict:
         return {}
     except Exception as e:
         logger.error(f"未知错误， 位置: {path}, 错误: {e}")
+        return {}
+
+
+def dump_msgpack(obj, path: str | PathLike | Path):
+    """
+    将对象使用 MessagePack 序列化并写入文件
+
+    :param obj: 要序列化的对象
+    :param path: 文件路径
+    """
+    path = Path(path)
+    with path.open("wb") as f:
+        msgpack.dump(obj, f)
+
+
+def load_msgpack(path: str | PathLike | Path) -> dict:
+    """
+    从文件读取并使用 MessagePack 反序列化对象
+
+    :param path: 文件路径
+    :return: 反序列化后的对象
+    """
+    path = Path(path)
+    if not path.exists():
+        return {}
+
+    try:
+        with path.open("rb") as f:
+            return msgpack.load(f, raw=False)
+    except msgpack.exceptions.UnpackException as e:
+        logger.error(f"MessagePack 解析错误，位置: {path}, 错误: {e}")
+        return {}
+    except Exception as e:
+        logger.error(f"加载 MessagePack 文件时发生未知错误，位置: {path}, 错误: {e}")
+        return {}
+
+
+def dump_yaml(data: dict, path: PathLike | str | Path) -> None:
+    """
+    将字典写入YAML文件，保留格式和顺序。
+
+    :param data: 要写入的字典数据。
+    :param path: 输出文件路径。
+    """
+    path = Path(path)
+    yaml = YAML()
+    yaml.indent(mapping=2, sequence=4, offset=2)
+    with path.open("w", encoding="utf-8") as f:
+        yaml.dump(data, f)
+
+
+def load_yaml(path: PathLike | str | Path) -> dict:
+    """
+    从YAML文件加载数据。
+
+    :param path: 输入文件路径。
+    :return: 从YAML文件加载的字典数据。
+    """
+    path = Path(path)
+    if not path.exists():
+        return {}
+
+    yaml = YAML(typ="safe")
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return yaml.load(f) or {}
+    except Exception as e:
+        logger.error(f"加载 YAML 文件时出错: {path}, 错误: {e}")
         return {}
 
 

@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/26 0:34
-# @Update  : 2025/7/28 6:01
+# @Update  : 2025/7/30 7:55
 # @Detail  : 项目命令行入口
 
 
@@ -18,7 +18,7 @@ from loguru import logger
 
 from . import BinUpdater, DataReader, DataUpdater, __version__, setup_app
 from .unpack import unpack_audio, unpack_audio_all
-from .Utils.config import config
+from .utils.config import config
 
 
 def main():

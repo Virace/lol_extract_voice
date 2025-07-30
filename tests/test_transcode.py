@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/26 15:30
-# @Update  : 2025/7/26 9:11
+# @Update  : 2025/7/30 7:48
 # @Detail  : 测试魔改版 vgmstream-cli 转码时间
 
 
@@ -17,7 +17,7 @@ from pathlib import Path
 from loguru import logger
 
 from lol_audio_unpack import setup_app
-from lol_audio_unpack.Utils.config import config
+from lol_audio_unpack.utils.config import config
 
 
 def transcode_audio_files(vgmstream_path=None, delete_source=True):
