@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:00
-# @Update  : 2025/7/30 7:55
+# @Update  : 2025/7/30 8:32
 # @Detail  : config.py
 
 
@@ -25,6 +25,7 @@
 import inspect
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -56,7 +57,7 @@ class Config(metaclass=Singleton):
         "GROUP_BY_TYPE": {
             "type": "bool",
             "default": False,
-            "help": """是否按音频类型对输出目录进行分组. 
+            "help": """是否按音频类型对输出目录进行分组.
 # False (默认): audios/Champions/英雄/皮肤/类型/...
 # True: audios/类型/Champions/英雄/皮肤/...""",
             "short": "b",
@@ -316,10 +317,16 @@ class Config(metaclass=Singleton):
         self.set("AUDIO_PATH", audio_path, source="derived")
         paths_to_create.append(audio_path)
 
-        # 缓存目录, 解包生成的一些文件会放在这里, 可以删除
+        # 缓存目录, 解包生成的一些文件会放在这里, 启动时会自动清理
         temp_path = out_path / "temps"
         self.set("TEMP_PATH", temp_path, source="derived")
-        paths_to_create.append(temp_path)
+        try:
+            if temp_path.exists():
+                logger.trace(f"清理临时目录: {temp_path}")
+                shutil.rmtree(temp_path)
+            temp_path.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            logger.warning(f"处理临时目录失败: {temp_path} - {str(e)}")
 
         # 日志目录, 一些文件解析错误不会关闭程序而是记录在日志中
         log_path = out_path / "logs"
@@ -510,7 +517,8 @@ class ConfigProxy:
         # 如果尚未创建实例，则使用默认或预设的参数创建
         if self._real_config is None:
             logger.debug(
-                f"ConfigProxy: 首次访问时自动创建Config实例，使用预设参数 env_path={self._default_env_path}, dev_mode={self._default_dev_mode}"
+                f"ConfigProxy: 首次访问时自动创建Config实例，使用预设参数 env_path={self._default_env_path}, "
+                f"dev_mode={self._default_dev_mode}"
             )
             self._real_config = Config(
                 env_path=self._default_env_path, env_prefix=self._default_env_prefix, dev_mode=self._default_dev_mode
