@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:40
-# @Update  : 2025/7/30 12:29
+# @Update  : 2025/7/30 12:43
 # @Detail  : BIN文件更新器
 
 
@@ -113,8 +113,8 @@ class BinUpdater:
                 if map_events := self._process_map_events_for_id("0", maps["0"]):
                     if "events" in map_events:
                         for events_list in map_events["events"].values():
-                            for event in events_list:
-                                common_events_set.add(frozenset(event.items()))
+                            for event_string in events_list:
+                                common_events_set.add(event_string)
 
                 # 预处理Banks数据
                 if map_banks := self._process_map_banks_for_id("0", maps["0"]):
@@ -342,9 +342,14 @@ class BinUpdater:
                     category = event_data.category
                     if category not in all_events_by_category:
                         all_events_by_category[category] = []
-                    all_events_by_category[category].extend([e.to_dict() for e in event_data.events])
+                    event_strings = [e.string for e in event_data.events]
+                    # 添加到category，稍后统一去重
+                    all_events_by_category[category].extend(event_strings)
 
         if all_events_by_category:
+            # 对每个category的事件列表进行去重
+            for category, events_list in all_events_by_category.items():
+                all_events_by_category[category] = list(dict.fromkeys(events_list))  # 保持顺序的去重
             skin_events["events"] = all_events_by_category
 
         return skin_events if skin_events else None
@@ -363,13 +368,11 @@ class BinUpdater:
                 if not event_data.events:
                     continue
 
-                events_as_dicts = [e.to_dict() for e in event_data.events]
-                unique_events_in_group = list({frozenset(event.items()): event for event in events_as_dicts}.values())
+                event_strings = [e.string for e in event_data.events]
+                unique_events_in_group = list(dict.fromkeys(event_strings))  # 保持顺序的去重
 
                 if common_events_set:
-                    unique_events_in_group = [
-                        e for e in unique_events_in_group if frozenset(e.items()) not in common_events_set
-                    ]
+                    unique_events_in_group = [e for e in unique_events_in_group if e not in common_events_set]
 
                 if unique_events_in_group:
                     category = event_data.category
