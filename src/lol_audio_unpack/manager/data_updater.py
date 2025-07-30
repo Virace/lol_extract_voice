@@ -5,18 +5,9 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:39
-# @Update  : 2025/7/30 7:54
-# @Detail  : 
-
-
-# 🐍 Explicit is better than implicit.
-# 🐼 明了优于隐晦
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2024/7/30 7:45
+# @Update  : 2025/7/30 8:36
 # @Detail  : 数据更新器
+
 
 import re
 import shutil

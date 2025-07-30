@@ -5,18 +5,9 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:41
-# @Update  : 2025/7/30 8:12
-# @Detail  : 
-
-
-# 🐍 Explicit is better than implicit.
-# 🐼 明了优于隐晦
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2024/7/30 7:52
+# @Update  : 2025/7/30 8:38
 # @Detail  : 数据读取器
+
 
 from pathlib import Path
 

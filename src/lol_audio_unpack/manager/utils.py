@@ -5,18 +5,9 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:38
-# @Update  : 2025/7/30 8:12
-# @Detail  : 
-
-
-# 🐍 Explicit is better than implicit.
-# 🐼 明了优于隐晦
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2024/7/30 7:42
+# @Update  : 2025/7/30 9:22
 # @Detail  : Manager模块的通用函数
+
 
 import json
 import re
@@ -40,34 +31,51 @@ def read_data(path: Path) -> dict:
     :param path: 文件路径（可带或不带后缀）
     :return: 读取的数据字典
     """
+    result = {}
+    files_to_check = []
+
+    # 1. 确定要检查的文件列表
     if path.suffix:
-        suffix = path.suffix
-        if not path.exists():
-            logger.warning(f"数据文件不存在: {path}，将返回空字典")
-            return {}
-        if suffix == ".json":
-            return load_json(path)
-        if suffix == ".msgpack":
-            return load_msgpack(path)
-        if suffix in [".yaml", ".yml"]:
-            return load_yaml(path)
-        logger.error(f"不支持的文件格式: {suffix}")
-        return {}
+        # 如果指定了后缀，只检查这一个文件
+        files_to_check.append(path)
     else:
-        # 开发模式下，优先使用人类可读的格式
-        if config.is_dev_mode():
-            formats_priority = [".yml", ".json", ".msgpack"]
+        # 如果未指定后缀，按优先级生成待检查文件列表
+        formats_priority = [".yml", ".json", ".msgpack"] if config.is_dev_mode() else [".msgpack", ".yml", ".json"]
+        files_to_check = [path.with_suffix(s) for s in formats_priority]
+
+    # 2. 遍历并加载第一个存在的文件
+    for file_to_try in files_to_check:
+        if not file_to_try.exists():
+            continue
+
+        suffix = file_to_try.suffix
+        loader = None
+        if suffix == ".json":
+            loader = load_json
+        elif suffix == ".msgpack":
+            loader = load_msgpack
+        elif suffix in [".yaml", ".yml"]:
+            loader = load_yaml
+
+        if loader:
+            logger.debug(f"找到并读取数据文件: {file_to_try}")
+            try:
+                result = loader(file_to_try)
+                break  # 成功加载后立即退出循环
+            except Exception as e:
+                logger.error(f"读取文件时出错: {file_to_try}, 错误: {e}")
+                # 如果一个文件损坏，可以继续尝试下一个
+                continue
         else:
-            formats_priority = [".msgpack", ".yml", ".json"]
+            logger.error(f"不支持的文件格式: {suffix} (来自: {file_to_try})")
 
-        for suffix in formats_priority:
-            file_to_try = path.with_suffix(suffix)
-            if file_to_try.exists():
-                logger.debug(f"找到并读取数据文件: {file_to_try}")
-                return read_data(file_to_try)
-
+    # 3. 如果循环结束后仍未加载任何文件，记录警告
+    if not result and not path.suffix:
         logger.warning(f"在 {path.parent} 未找到任何格式的数据文件 (base: {path.name})")
-        return {}
+    elif not result and path.suffix and not path.exists():
+        logger.warning(f"指定的数据文件不存在: {path}，将返回空字典")
+
+    return result
 
 
 def write_data(data: dict, base_path: Path) -> None:
@@ -83,6 +91,8 @@ def write_data(data: dict, base_path: Path) -> None:
     try:
         if fmt == "yml":
             dump_yaml(data, path)
+        elif fmt == "json":
+            dump_json(data, path)
         else:
             dump_msgpack(data, path)
         logger.debug(f"成功写入数据到: {path}")
