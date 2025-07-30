@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:40
-# @Update  : 2025/7/30 12:43
+# @Update  : 2025/7/30 22:10
 # @Detail  : BIN文件更新器
 
 
@@ -36,16 +36,17 @@ class BinUpdater:
     负责从BIN文件提取音频数据并更新到数据文件中
     """
 
-    def __init__(self, target: str = "all", force_update: bool = False):
+    def __init__(self, force_update: bool = False):
         """
         初始化BIN音频更新器
+
+        :param force_update: 是否强制更新，忽略版本检查
         """
         self.game_path: Path = config.GAME_PATH
         self.manifest_path: Path = config.MANIFEST_PATH
         if not self.game_path or not self.manifest_path:
             raise ValueError("GAME_PATH 和 MANIFEST_PATH 必须在配置中设置")
 
-        self.target = target
         self.force_update = force_update
         self.version: str = get_game_version(self.game_path)
         self.version_manifest_path: Path = self.manifest_path / self.version
@@ -56,8 +57,19 @@ class BinUpdater:
         self.map_events_dir: Path = self.version_manifest_path / "events" / "maps"
         self.languages: list[str] = []  # 在update()中初始化
 
-    def update(self) -> None:
-        """处理BIN文件，提取皮肤和地图的音频路径和事件数据"""
+    def update(
+        self,
+        target: str = "all",
+        champion_ids: list[str] | None = None,
+        map_ids: list[str] | None = None,
+    ) -> None:
+        """
+        处理BIN文件，提取皮肤和地图的音频路径和事件数据
+
+        :param target: 处理目标，可选值：'all', 'skin', 'map'。当指定具体IDs时该参数被忽略
+        :param champion_ids: 指定要处理的英雄ID列表，为None时处理所有英雄
+        :param map_ids: 指定要处理的地图ID列表，为None时处理所有地图
+        """
         data = read_data(self.data_file_base)
         if not data:
             logger.error(f"数据文件不存在，请先运行DataUpdater: {self.data_file_base}")
@@ -67,18 +79,73 @@ class BinUpdater:
         self.languages = data.get("languages", [])
 
         try:
-            if self.target in ["skin", "all"]:
-                self._update_champions(data)
-            if self.target in ["map", "all"]:
-                self._update_maps(data)
-            logger.success(f"BinUpdater 更新完成 (目标: {self.target})")
+            # 根据传入的IDs构建筛选后的数据
+            if champion_ids or map_ids:
+                # 精确模式：根据具体ID筛选数据
+                filtered_data = self._filter_data_by_ids(data, champion_ids, map_ids)
+                if champion_ids and filtered_data.get("champions"):
+                    self._update_champions(filtered_data)
+                if map_ids and filtered_data.get("maps"):
+                    self._update_maps(filtered_data)
+                logger.success(f"BinUpdater 更新完成 (精确模式: champions={champion_ids}, maps={map_ids})")
+            else:
+                # 批量模式：使用target控制
+                if target in ["skin", "all"]:
+                    self._update_champions(data)
+                if target in ["map", "all"]:
+                    self._update_maps(data)
+                logger.success(f"BinUpdater 更新完成 (批量模式: {target})")
         except Exception as e:
             logger.error(f"处理BIN文件时出错: {str(e)}")
             if config.is_dev_mode():
                 raise
 
+    def _filter_data_by_ids(self, data: dict, champion_ids: list[str] | None, map_ids: list[str] | None) -> dict:
+        """
+        根据指定的ID列表筛选数据
+
+        :param data: 完整的数据字典
+        :param champion_ids: 要筛选的英雄ID列表
+        :param map_ids: 要筛选的地图ID列表
+        :returns: 筛选后的数据字典，保持原有结构
+        """
+        filtered_data = {
+            "languages": data.get("languages", []),
+            # 其他基础字段保持不变
+        }
+
+        # 筛选英雄数据
+        if champion_ids:
+            all_champions = data.get("champions", {})
+            filtered_champions = {}
+            for champion_id in champion_ids:
+                if champion_id in all_champions:
+                    filtered_champions[champion_id] = all_champions[champion_id]
+                else:
+                    logger.warning(f"指定的英雄ID {champion_id} 在数据中不存在")
+            if filtered_champions:
+                filtered_data["champions"] = filtered_champions
+
+        # 筛选地图数据
+        if map_ids:
+            all_maps = data.get("maps", {})
+            filtered_maps = {}
+            for map_id in map_ids:
+                if map_id in all_maps:
+                    filtered_maps[map_id] = all_maps[map_id]
+                else:
+                    logger.warning(f"指定的地图ID {map_id} 在数据中不存在")
+            if filtered_maps:
+                filtered_data["maps"] = filtered_maps
+
+        return filtered_data
+
     def _update_champions(self, data: dict) -> None:
-        """处理英雄数据，按英雄ID分别生成文件"""
+        """
+        处理英雄数据，按英雄ID分别生成文件
+
+        :param data: 包含英雄数据的字典
+        """
         logger.info("开始处理英雄音频数据...")
         self.champion_banks_dir.mkdir(parents=True, exist_ok=True)
         self.champion_events_dir.mkdir(parents=True, exist_ok=True)
@@ -96,7 +163,11 @@ class BinUpdater:
         logger.success("英雄Banks数据更新完成")
 
     def _update_maps(self, data: dict) -> None:
-        """处理地图数据，按地图ID分别生成文件"""
+        """
+        处理地图数据，按地图ID分别生成文件
+
+        :param data: 包含地图数据的字典
+        """
         logger.info("开始处理地图音频数据...")
         self.map_banks_dir.mkdir(parents=True, exist_ok=True)
         self.map_events_dir.mkdir(parents=True, exist_ok=True)
@@ -136,7 +207,12 @@ class BinUpdater:
         logger.success("地图Banks数据更新完成")
 
     def _process_champion_skins(self, champion_data: ChampionData, champion_id: str) -> None:
-        """处理单个英雄的所有皮肤，提取音频数据并生成独立文件"""
+        """
+        处理单个英雄的所有皮肤，提取音频数据并生成独立文件
+
+        :param champion_data: 英雄数据字典
+        :param champion_id: 英雄ID
+        """
         alias = champion_data.get("alias", "").lower()
         if not alias:
             return
@@ -256,7 +332,14 @@ class BinUpdater:
     def _process_single_map(
         self, map_id: str, map_data: dict, common_events_set: set | None = None, common_banks_set: set | None = None
     ) -> None:
-        """处理单个地图的Banks和Events数据"""
+        """
+        处理单个地图的Banks和Events数据
+
+        :param map_id: 地图ID
+        :param map_data: 地图数据字典
+        :param common_events_set: 公共事件集合，用于去重
+        :param common_banks_set: 公共Banks集合，用于去重
+        """
         banks_file_base = self.map_banks_dir / map_id
         events_file_base = self.map_events_dir / map_id
 
@@ -326,7 +409,14 @@ class BinUpdater:
                 self._write_data_with_timestamp(final_event_data, events_file_base)
 
     def _extract_skin_events(self, bin_file: BIN, base_skin_id: str | None, current_skin_id: str) -> dict | None:
-        """提取一个皮肤BIN文件中的所有事件数据"""
+        """
+        提取一个皮肤BIN文件中的所有事件数据
+
+        :param bin_file: BIN文件对象
+        :param base_skin_id: 基础皮肤ID，用于过滤基础皮肤事件
+        :param current_skin_id: 当前皮肤ID
+        :returns: 皮肤事件数据字典，无数据时返回None
+        """
         skin_events = {}
         if bin_file.theme_music:
             skin_events["theme_music"] = bin_file.theme_music
@@ -355,7 +445,13 @@ class BinUpdater:
         return skin_events if skin_events else None
 
     def _extract_map_events(self, bin_file: BIN, common_events_set: set | None = None) -> dict | None:
-        """从BIN文件中提取并根据公共事件集合进行去重"""
+        """
+        从BIN文件中提取并根据公共事件集合进行去重
+
+        :param bin_file: BIN文件对象
+        :param common_events_set: 公共事件集合，用于去重
+        :returns: 地图事件数据字典，无数据时返回None
+        """
         map_events = {}
         if bin_file.theme_music:
             map_events["theme_music"] = bin_file.theme_music
@@ -429,7 +525,11 @@ class BinUpdater:
         )
 
     def _optimize_champion_mappings(self, champion_data: dict) -> None:
-        """优化单个英雄的映射关系，将部分共享升级为完全共享"""
+        """
+        优化单个英雄的映射关系，将部分共享升级为完全共享
+
+        :param champion_data: 英雄数据字典
+        """
         for skin_id, mappings in champion_data["skinAudioMappings"].copy().items():
             if not isinstance(mappings, dict):
                 continue
@@ -443,7 +543,14 @@ class BinUpdater:
     def _process_map_events_for_id(
         self, map_id: str, map_data: dict, common_events_set: set | None = None
     ) -> dict | None:
-        """提取、去重并保存单个地图的事件数据（兼容性方法）"""
+        """
+        提取、去重并保存单个地图的事件数据（兼容性方法）
+
+        :param map_id: 地图ID
+        :param map_data: 地图数据字典
+        :param common_events_set: 公共事件集合，用于去重
+        :returns: 地图事件数据字典，失败时返回None
+        """
         if not map_data.get("wad") or not map_data.get("binPath"):
             return None
 
@@ -464,7 +571,13 @@ class BinUpdater:
         return self._extract_map_events(bin_file, common_events_set)
 
     def _process_map_banks_for_id(self, map_id: str, map_data: dict) -> dict | None:
-        """提取单个地图的Banks数据（用于预处理公共地图数据）"""
+        """
+        提取单个地图的Banks数据（用于预处理公共地图数据）
+
+        :param map_id: 地图ID
+        :param map_data: 地图数据字典
+        :returns: 地图Banks数据字典，失败时返回None
+        """
         if not map_data.get("wad") or not map_data.get("binPath"):
             return None
 
@@ -508,7 +621,7 @@ class BinUpdater:
         :param entity_id: 实体ID（英雄ID或地图ID）
         :param entity_type: 实体类型（'champion' 或 'map'）
         :param extra_fields: 额外字段
-        :return: 基础元数据字典（字段顺序已确定）
+        :returns: 基础元数据字典（字段顺序已确定）
         """
         # 按期望的顺序创建基础元数据，预留 lastUpdate 位置
         base_data = {
@@ -532,7 +645,7 @@ class BinUpdater:
         获取地图名称，优先使用当前语言，回退到默认语言
 
         :param map_data: 地图数据
-        :return: 地图名称
+        :returns: 地图名称
         """
         names = map_data.get("names", {})
         if not names:

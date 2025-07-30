@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/26 0:34
-# @Update  : 2025/7/30 7:55
+# @Update  : 2025/7/30 22:14
 # @Detail  : 项目命令行入口
 
 
@@ -49,6 +49,9 @@ def main():
 - 'skin': 只更新皮肤数据
 - 'map': 只更新地图数据
 - (无值): 更新所有数据 (默认)
+
+可与 --champions/--maps 配合使用指定具体ID:
+示例: --update-data --champions 1,103,222 --maps 11,12
 """,
     )
     action_group.add_argument(
@@ -96,11 +99,31 @@ def main():
         help="启用 'league_tools' 模块的日志输出，用于深度调试。",
     )
 
+    # 精确ID参数（仅与 --update-data 配合使用）
+    parser.add_argument(
+        "--champions",
+        type=str,
+        metavar="IDs",
+        help="指定要更新的英雄ID列表，用逗号分隔。例如: 1,103,222。仅与 --update-data 配合使用。",
+    )
+    parser.add_argument(
+        "--maps",
+        type=str,
+        metavar="IDs",
+        help="指定要更新的地图ID列表，用逗号分隔。例如: 11,12。仅与 --update-data 配合使用。",
+    )
+
     args = parser.parse_args()
 
     # 如果没有提供任何主要操作，则打印帮助信息并退出
     if not (args.update_data or args.hero_id is not None or args.all):
         logger.error("错误：必须提供一个操作参数，例如 --update-data, --hero-id <ID>, 或 --all。")
+        parser.print_help()
+        sys.exit(1)
+
+    # 验证 --champions 和 --maps 只能与 --update-data 一起使用
+    if (args.champions or args.maps) and not args.update_data:
+        logger.error("错误：--champions 和 --maps 参数只能与 --update-data 一起使用。")
         parser.print_help()
         sys.exit(1)
 
@@ -121,37 +144,54 @@ def main():
         sys.exit(1)
 
     # 3. 根据参数执行相应操作
-    try:
-        if args.update_data:
-            target = args.update_data
-            force = args.force
-            if force:
-                logger.warning("已启用强制更新模式，将忽略现有文件的版本检查。")
-            logger.info(f"开始更新数据 (目标: {target})...")
-            # DataUpdater总是需要先运行，以确保有最新的data.json
-            DataUpdater(force_update=force).check_and_update()
-            BinUpdater(target=target, force_update=force).update()
-            logger.success(f"数据更新完成 (目标: {target})！")
 
-        elif args.hero_id or args.all:
-            logger.info("加载数据读取器...")
-            reader = DataReader()
+    if args.update_data:
+        target = args.update_data
+        force = args.force
 
-            if args.hero_id:
-                logger.info(f"准备解包单个英雄，ID: {args.hero_id}")
-                unpack_audio(hero_id=args.hero_id, reader=reader)
-            elif args.all:
-                logger.info("准备解包所有英雄...")
-                unpack_audio_all(reader=reader, max_workers=args.max_workers)
+        # 解析ID列表
+        champion_ids = None
+        map_ids = None
+        if args.champions:
+            champion_ids = [id.strip() for id in args.champions.split(",") if id.strip()]
+        if args.maps:
+            map_ids = [id.strip() for id in args.maps.split(",") if id.strip()]
 
+        if force:
+            logger.warning("已启用强制更新模式，将忽略现有文件的版本检查。")
+
+        # 显示更新信息
+        if champion_ids or map_ids:
+            logger.info(f"开始精确更新数据 (英雄IDs: {champion_ids}, 地图IDs: {map_ids})...")
         else:
-            # 理论上因为 group(required=True) 不会到这里，但作为保险
-            parser.print_help()
+            logger.info(f"开始批量更新数据 (目标: {target})...")
 
-    except Exception as e:
-        logger.critical(f"程序执行过程中发生未捕获的严重错误: {e}")
-        logger.debug(traceback.format_exc())  # if log-level is low enough
-        sys.exit(1)
+        # DataUpdater总是需要先运行，以确保有最新的data.json
+        DataUpdater(force_update=force).check_and_update()
+
+        # 使用新的BinUpdater API
+        updater = BinUpdater(force_update=force)
+        updater.update(target=target, champion_ids=champion_ids, map_ids=map_ids)
+
+        if champion_ids or map_ids:
+            logger.success(f"精确数据更新完成 (英雄IDs: {champion_ids}, 地图IDs: {map_ids})！")
+        else:
+            logger.success(f"批量数据更新完成 (目标: {target})！")
+
+    elif args.hero_id or args.all:
+        logger.info("加载数据读取器...")
+        reader = DataReader()
+
+        if args.hero_id:
+            logger.info(f"准备解包单个英雄，ID: {args.hero_id}")
+            unpack_audio(hero_id=args.hero_id, reader=reader)
+        elif args.all:
+            logger.info("准备解包所有英雄...")
+            unpack_audio_all(reader=reader, max_workers=args.max_workers)
+
+    else:
+        # 理论上因为 group(required=True) 不会到这里，但作为保险
+        parser.print_help()
 
 
 if __name__ == "__main__":
