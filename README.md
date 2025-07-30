@@ -58,20 +58,47 @@
 4.  **运行脚本**:
     所有命令都需要在项目根目录执行。
 
-    ```bash
-    # 1. 更新数据 (首次运行或游戏更新后执行一次即可)
-    python -m lol_audio_unpack --update-data
+    *   **方式一: 使用 `uv` (推荐)**
+        ```bash
+        # 1. 更新数据 (首次运行或游戏更新后执行一次即可)
+        uv run unpack --update-data
 
-    # 2. 解包音频
-    # 解包所有英雄 (使用默认4线程)
-    python -m lol_audio_unpack --all
+        # 2. 解包音频
+        # 解包所有英雄 (使用默认4线程)
+        uv run unpack --all
 
-    # 或，解包所有英雄 (使用8个线程)
-    python -m lol_audio_unpack --all --max-workers 8
+        # 或，解包所有英雄 (使用8个线程)
+        uv run unpack --all --max-workers 8
 
-    # 或，解包指定ID的英雄 (例如，解包英雄ID为555的派克)
-    python -m lol_audio_unpack --hero-id 555
-    ```
+        # 或，解包指定ID的英雄 (例如，解包英雄ID为555的派克)
+        uv run unpack --hero-id 555
+
+        # 3. 精确更新数据 (v3新功能)
+        # 只更新指定英雄的数据
+        uv run unpack --update-data --champions 1,103,555
+
+        # 只更新指定地图的数据
+        uv run unpack --update-data --maps 11,12
+
+        # 同时更新指定英雄和地图
+        uv run unpack --update-data --champions 1,103 --maps 11
+        ```
+
+    *   **方式二: 使用 `python -m` (传统方式)**
+        ```bash
+        # 1. 更新数据
+        python -m lol_audio_unpack --update-data
+
+        # 2. 解包音频
+        python -m lol_audio_unpack --all
+        python -m lol_audio_unpack --all --max-workers 8
+        python -m lol_audio_unpack --hero-id 555
+
+        # 3. 精确更新数据
+        python -m lol_audio_unpack --update-data --champions 1,103,555
+        python -m lol_audio_unpack --update-data --maps 11,12
+        python -m lol_audio_unpack --update-data --champions 1,103 --maps 11
+        ```
 
 #### 配置文件
 项目将从根目录下的 `.lol.env` 文件加载配置。如果存在 `.lol.env.dev` 文件，则会优先加载后者（开发模式）。
