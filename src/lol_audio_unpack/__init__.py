@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/9/3 10:14
-# @Update  : 2025/7/30 7:55
+# @Update  : 2025/8/1 1:13
 # @Detail  : lol_audio_unpack
 
 
@@ -42,10 +42,11 @@ def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs):
     if log_path:
         Path(log_path).mkdir(parents=True, exist_ok=True)
         # 文件日志通常记录更详细的信息
+        # 文件名格式: YYYY-MM-DD_HH-mm-ss.log，保留最近10份日志文件
         logger.add(
-            Path(log_path) / "{time:YYYY-MM-DD}.log",
-            rotation="00:00",
-            retention="7 days",
+            Path(log_path) / "{time:YYYY-MM-DD_HH-mm-ss}.log",
+            rotation="100 MB",  # 当文件达到100MB时轮转
+            retention=10,  # 保留最近10份日志文件
             level="DEBUG",
             enqueue=True,  # 确保文件日志也是线程安全的
         )
