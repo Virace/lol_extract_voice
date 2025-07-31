@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/23 12:27
-# @Update  : 2025/8/1 1:29
+# @Update  : 2025/8/1 6:05
 # @Detail  : 解包音频
 
 
@@ -26,6 +26,8 @@ from lol_audio_unpack.utils.config import config
 
 # todo: ID6, 厄加特, 6009, 西部魔影 厄加特, ASSETS/Sounds/Wwise2016/SFX/Characters/Urgot/Skins/Skin09/Urgot_Skin09_VO_audio.bnk, 该文件在根WAD
 # todo: ID62, 孙悟空，62007, 战斗学院 孙悟空, ASSETS/Sounds/Wwise2016/SFX/Characters/MonkeyKing/Skins/Skin07/MonkeyKing_Skin07_VO_audio.bnk, 该文件在根WAD
+
+# todo: ID11, 召唤师峡谷, ASSETS/Sounds/Wwise2016/VO/en_US/Shared/MISC_Emotes_VO_audio.wpk, 该文件在Common WAD中
 
 
 @dataclass
@@ -532,48 +534,88 @@ def unpack_map_audio(map_id: int, reader: DataReader) -> None:
         return
 
 
-def unpack_audio_all(
-    reader: DataReader, max_workers: int = 4, include_champions: bool = True, include_maps: bool = True
-) -> None:
+def generate_champion_tasks(reader: DataReader, champion_ids: list[int] | None = None) -> list[tuple[str, int, str]]:
+    """生成英雄解包任务集
+
+    :param reader: 数据读取器
+    :param champion_ids: 指定的英雄ID列表，None表示所有英雄
+    :returns: 任务元组列表 [("champion", id, description), ...]
+    :raises ValueError: 当指定的ID不存在时
     """
-    使用线程池并发解包所有英雄和地图的音频文件。
+    champions = reader.get_champions()
+    available_ids = {champ.get("id") for champ in champions if champ.get("id") is not None}
 
-    通过设置 max_workers=1 可以切换到单线程顺序执行模式，以对比性能。
+    if champion_ids is None:
+        # 处理所有英雄
+        return [
+            ("champion", champ.get("id"), f"英雄ID {champ.get('id')}")
+            for champ in champions
+            if champ.get("id") is not None
+        ]
+    else:
+        # 验证指定的ID
+        invalid_ids = [cid for cid in champion_ids if cid not in available_ids]
+        if invalid_ids:
+            raise ValueError(f"无效的英雄ID: {invalid_ids}")
 
-    :param reader: 一个已经初始化并加载了数据的DataReader实例
-    :param max_workers: 使用的最大线程数 (1: 单线程, >1: 多线程)
-    :param include_champions: 是否包含英雄解包
-    :param include_maps: 是否包含地图解包
+        # 生成指定ID的任务
+        return [("champion", cid, f"英雄ID {cid}") for cid in champion_ids]
+
+
+def generate_map_tasks(reader: DataReader, map_ids: list[int] | None = None) -> list[tuple[str, int, str]]:
+    """生成地图解包任务集
+
+    :param reader: 数据读取器
+    :param map_ids: 指定的地图ID列表，None表示所有地图
+    :returns: 任务元组列表 [("map", id, description), ...]
+    :raises ValueError: 当指定的ID不存在时
     """
-    start_time = time.time()
+    maps = reader.get_maps()
+    available_ids = {map_data.get("id") for map_data in maps if map_data.get("id") is not None}
 
-    # 收集所有要解包的任务
-    tasks = []
-
-    if include_champions:
-        champions = reader.get_champions()
-        champion_tasks = [("champion", champion.get("id"), f"英雄ID {champion.get('id')}") for champion in champions]
-        tasks.extend(champion_tasks)
-        logger.info(f"已添加 {len(champion_tasks)} 个英雄解包任务")
-
-    if include_maps:
-        maps = reader.get_maps()
-        map_tasks = [
+    if map_ids is None:
+        # 处理所有地图
+        return [
             ("map", map_data.get("id"), f"地图ID {map_data.get('id')}")
             for map_data in maps
             if map_data.get("id") is not None
         ]
-        tasks.extend(map_tasks)
-        logger.info(f"已添加 {len(map_tasks)} 个地图解包任务")
+    else:
+        # 验证指定的ID
+        invalid_ids = [mid for mid in map_ids if mid not in available_ids]
+        if invalid_ids:
+            raise ValueError(f"无效的地图ID: {invalid_ids}")
 
+        # 生成指定ID的任务
+        return [("map", mid, f"地图ID {mid}") for mid in map_ids]
+
+
+def execute_unpack_tasks(tasks: list[tuple[str, int, str]], reader: DataReader, max_workers: int = 4) -> None:
+    """执行解包任务集
+
+    :param tasks: 任务元组列表 [("entity_type", id, description), ...]
+    :param reader: 数据读取器
+    :param max_workers: 最大工作线程数
+    """
     if not tasks:
-        logger.warning("没有找到任何需要解包的实体")
+        logger.warning("没有任何任务需要执行")
         return
 
+    start_time = time.time()
     total_tasks = len(tasks)
+
+    # 统计任务类型
+    champion_count = sum(1 for entity_type, _, _ in tasks if entity_type == "champion")
+    map_count = sum(1 for entity_type, _, _ in tasks if entity_type == "map")
+
+    summary_parts = []
+    if champion_count > 0:
+        summary_parts.append(f"{champion_count} 个英雄")
+    if map_count > 0:
+        summary_parts.append(f"{map_count} 个地图")
+
     logger.info(
-        f"开始解包所有 {total_tasks} 个实体 "
-        f"({'英雄' if include_champions else ''}{'、' if include_champions and include_maps else ''}{'地图' if include_maps else ''})，"
+        f"开始解包 {total_tasks} 个实体 ({' 和 '.join(summary_parts)})，"
         f"模式: {'多线程' if max_workers > 1 else '单线程'} (workers: {max_workers})"
     )
 
@@ -618,18 +660,66 @@ def unpack_audio_all(
                 logger.debug(traceback.format_exc())
 
     end_time = time.time()
-
-    # 统计信息
-    champion_count = sum(1 for entity_type, _, _ in tasks if entity_type == "champion")
-    map_count = sum(1 for entity_type, _, _ in tasks if entity_type == "map")
-
-    summary_parts = []
-    if champion_count > 0:
-        summary_parts.append(f"{champion_count} 个英雄")
-    if map_count > 0:
-        summary_parts.append(f"{map_count} 个地图")
-
     logger.success(f"全部 {' 和 '.join(summary_parts)} 解包完成，总耗时: {end_time - start_time:.2f} 秒。")
 
     # 在所有操作完成后，将收集到的未知分类写入文件
     reader.write_unknown_categories_to_file()
+
+
+def unpack_audio_all(
+    reader: DataReader, max_workers: int = 4, include_champions: bool = True, include_maps: bool = True
+) -> None:
+    """使用线程池并发解包所有音频文件
+
+    解包所有可用的英雄和地图音频文件。
+    通过设置 max_workers=1 可以切换到单线程顺序执行模式。
+
+    :param reader: 一个已经初始化并加载了数据的DataReader实例
+    :param max_workers: 使用的最大线程数 (1: 单线程, >1: 多线程)
+    :param include_champions: 是否包含英雄解包
+    :param include_maps: 是否包含地图解包
+    """
+    tasks = []
+
+    # 生成英雄任务
+    if include_champions:
+        champion_tasks = generate_champion_tasks(reader, None)
+        tasks.extend(champion_tasks)
+        logger.info(f"已添加 {len(champion_tasks)} 个英雄解包任务")
+
+    # 生成地图任务
+    if include_maps:
+        map_tasks = generate_map_tasks(reader, None)
+        tasks.extend(map_tasks)
+        logger.info(f"已添加 {len(map_tasks)} 个地图解包任务")
+
+    if not tasks:
+        logger.warning("没有找到任何需要解包的实体")
+        return
+
+    # 执行任务
+    execute_unpack_tasks(tasks, reader, max_workers)
+
+
+def unpack_champions(reader: DataReader, champion_ids: list[int], max_workers: int = 4) -> None:
+    """便捷函数：解包指定英雄
+
+    :param reader: 数据读取器
+    :param champion_ids: 英雄ID列表
+    :param max_workers: 最大工作线程数
+    :raises ValueError: 当指定的ID不存在时
+    """
+    tasks = generate_champion_tasks(reader, champion_ids)
+    execute_unpack_tasks(tasks, reader, max_workers)
+
+
+def unpack_maps(reader: DataReader, map_ids: list[int], max_workers: int = 4) -> None:
+    """便捷函数：解包指定地图
+
+    :param reader: 数据读取器
+    :param map_ids: 地图ID列表
+    :param max_workers: 最大工作线程数
+    :raises ValueError: 当指定的ID不存在时
+    """
+    tasks = generate_map_tasks(reader, map_ids)
+    execute_unpack_tasks(tasks, reader, max_workers)
