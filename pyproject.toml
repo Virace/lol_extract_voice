@@ -48,7 +48,7 @@ select = [
     "UP", # pyupgrade
     "I"  # isort
 ]
-ignore = [ "F401" ]
+ignore = [ "E501", "F401", "PLR0915", "PLR0912" ]
 
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 per-file-ignores = {}
