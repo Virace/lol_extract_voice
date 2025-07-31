@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:41
-# @Update  : 2025/7/30 23:57
+# @Update  : 2025/7/31 19:21
 # @Detail  : 数据读取器
 
 
@@ -188,3 +188,20 @@ class DataReader(metaclass=Singleton):
     def get_champions(self) -> list[dict]:
         """获取所有英雄列表"""
         return list(self.data.get("champions", {}).values())
+
+    def get_map(self, map_id: int) -> dict:
+        """
+        根据ID获取地图信息
+
+        :param map_id: 地图ID
+        :returns: 地图信息字典，失败时返回空字典
+        """
+        return self.data.get("maps", {}).get(str(map_id), {})
+
+    def get_maps(self) -> list[dict]:
+        """
+        获取所有地图列表
+
+        :returns: 地图信息列表
+        """
+        return list(self.data.get("maps", {}).values())
