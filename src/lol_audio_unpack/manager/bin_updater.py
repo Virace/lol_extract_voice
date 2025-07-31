@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:40
-# @Update  : 2025/7/30 22:10
+# @Update  : 2025/7/31 14:37
 # @Detail  : BIN文件更新器
 
 
@@ -189,8 +189,8 @@ class BinUpdater:
 
                 # 预处理Banks数据
                 if map_banks := self._process_map_banks_for_id("0", maps["0"]):
-                    if "bankPaths" in map_banks:
-                        for paths_list in map_banks["bankPaths"].values():
+                    if "banks" in map_banks:
+                        for paths_list in map_banks["banks"].values():
                             for path in paths_list:
                                 common_banks_set.add(tuple(sorted(path)))
             except Exception as e:
@@ -387,7 +387,7 @@ class BinUpdater:
         # 写入Banks数据
         if map_banks and needs_update(banks_file_base, self.version, self.force_update):
             map_banks_data = self._create_base_metadata(
-                map_id, "map", name=self._get_map_name(map_data), bankPaths=map_banks
+                map_id, "map", name=self._get_map_name(map_data), banks=map_banks
             )
 
             # 对非公共地图进行去重处理
@@ -395,7 +395,7 @@ class BinUpdater:
                 self._deduplicate_single_map_banks(map_banks_data, common_banks_set)
 
             # 去重后检查是否还有数据需要写入
-            if map_banks_data.get("bankPaths"):
+            if map_banks_data.get("banks"):
                 self._write_data_with_timestamp(map_banks_data, banks_file_base)
             else:
                 logger.debug(f"地图 {map_id} 去重后无独有Banks数据，跳过写入")
@@ -485,13 +485,13 @@ class BinUpdater:
         """
         对单个地图的Banks进行去重处理，移除与公共地图(ID 0)重复的bank path
 
-        :param map_data: 单个地图的完整数据（包含metadata和bankPaths）
+        :param map_data: 单个地图的完整数据（包含metadata和banks）
         :param common_banks_set: 公共地图的bank path集合（元组形式）
         """
-        if "bankPaths" not in map_data:
+        if "banks" not in map_data:
             return
 
-        bank_paths = map_data["bankPaths"]
+        bank_paths = map_data["banks"]
         map_id = map_data.get("mapId", "unknown")
 
         # 记录去重前的统计信息
@@ -611,7 +611,7 @@ class BinUpdater:
             map_banks[category] = [list(p) for p in unique_paths_tuples]
 
         if map_banks:
-            return {"bankPaths": map_banks}
+            return {"banks": map_banks}
         return None
 
     def _create_base_metadata(self, entity_id: str, entity_type: str, **extra_fields) -> dict:
