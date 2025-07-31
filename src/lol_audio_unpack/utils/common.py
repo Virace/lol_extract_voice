@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/5/6 1:19
-# @Update  : 2025/7/30 8:38
+# @Update  : 2025/7/31 23:55
 # @Detail  : 通用函数
 
 
@@ -49,7 +49,13 @@ def sanitize_filename(filename: str, replacement: str = "_") -> str:
     # Windows 文件名非法字符: < > : " / \ | ? *
     # 同时包括控制字符 (ASCII 0-31)
     illegal_chars_re = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
-    return illegal_chars_re.sub(replacement, filename)
+    cleaned = illegal_chars_re.sub(replacement, filename)
+
+    # Windows 不允许文件名以空格或点结尾
+    cleaned = cleaned.rstrip(" .")
+
+    # 如果清理后为空，使用默认名称
+    return cleaned if cleaned else "unnamed"
 
 
 class EnhancedPath(BasePath):
