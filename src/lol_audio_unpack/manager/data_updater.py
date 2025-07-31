@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:39
-# @Update  : 2025/7/31 14:38
+# @Update  : 2025/7/31 20:20
 # @Detail  : 数据更新器
 
 
@@ -245,7 +245,6 @@ class DataUpdater:
             "gameVersion": self.version,
             "languages": [lang for lang in self.process_languages if lang != "default"],
             "lastUpdate": datetime.now().isoformat(),
-            "indices": {"alias": {champ["alias"].lower(): champ_id for champ_id, champ in final_champions.items()}},
             "champions": final_champions,
         }
 

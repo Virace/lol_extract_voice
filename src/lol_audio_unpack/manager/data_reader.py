@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:41
-# @Update  : 2025/7/31 19:21
+# @Update  : 2025/7/31 20:20
 # @Detail  : 数据读取器
 
 
@@ -178,12 +178,6 @@ class DataReader(metaclass=Singleton):
     def get_champion(self, champion_id: int) -> dict:
         """根据ID获取英雄信息"""
         return self.data.get("champions", {}).get(str(champion_id), {})
-
-    def find_champion(self, alias: str) -> dict:
-        """根据别名获取英雄信息"""
-        if champ_id := self.data.get("indices", {}).get("alias", {}).get(alias.lower()):
-            return self.get_champion(int(champ_id))
-        return {}
 
     def get_champions(self) -> list[dict]:
         """获取所有英雄列表"""
