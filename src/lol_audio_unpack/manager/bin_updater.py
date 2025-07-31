@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:40
-# @Update  : 2025/7/31 14:37
+# @Update  : 2025/8/1 6:05
 # @Detail  : BIN文件更新器
 
 
@@ -34,13 +34,16 @@ ChampionData = dict[str, Any]
 class BinUpdater:
     """
     负责从BIN文件提取音频数据并更新到数据文件中
+
+    支持可选的事件处理：设置 process_events=False 可显著提升处理速度，但不会生成事件数据
     """
 
-    def __init__(self, force_update: bool = False):
+    def __init__(self, force_update: bool = False, process_events: bool = True):
         """
         初始化BIN音频更新器
 
         :param force_update: 是否强制更新，忽略版本检查
+        :param process_events: 是否处理事件数据（默认True，设置为False可大幅提升处理速度）
         """
         self.game_path: Path = config.GAME_PATH
         self.manifest_path: Path = config.MANIFEST_PATH
@@ -48,6 +51,7 @@ class BinUpdater:
             raise ValueError("GAME_PATH 和 MANIFEST_PATH 必须在配置中设置")
 
         self.force_update = force_update
+        self.process_events = process_events
         self.version: str = get_game_version(self.game_path)
         self.version_manifest_path: Path = self.manifest_path / self.version
         self.data_file_base: Path = self.version_manifest_path / "data"
@@ -305,7 +309,7 @@ class BinUpdater:
                                     champion_banks_data["skins"][skin_id][category] = []
                                 champion_banks_data["skins"][skin_id][category].append(event_data.bank_path)
 
-                                if is_new_skin_entry:
+                                if is_new_skin_entry and self.process_events:
                                     if skin_events := self._extract_skin_events(bin_file, base_skin_id, skin_id):
                                         champion_skin_events[skin_id] = skin_events
                                     is_new_skin_entry = False
@@ -400,8 +404,8 @@ class BinUpdater:
             else:
                 logger.debug(f"地图 {map_id} 去重后无独有Banks数据，跳过写入")
 
-        # 处理Events数据
-        if needs_update(events_file_base, self.version, self.force_update):
+        # 处理Events数据，只有在启用事件处理时才提取
+        if self.process_events and needs_update(events_file_base, self.version, self.force_update):
             if map_events := self._extract_map_events(bin_file, common_events_set if map_id != "0" else None):
                 final_event_data = self._create_base_metadata(
                     map_id, "map", name=self._get_map_name(map_data), map=map_events
@@ -551,6 +555,10 @@ class BinUpdater:
         :param common_events_set: 公共事件集合，用于去重
         :returns: 地图事件数据字典，失败时返回None
         """
+        # 如果未启用事件处理，直接返回None
+        if not self.process_events:
+            return None
+
         if not map_data.get("wad") or not map_data.get("binPath"):
             return None
 
