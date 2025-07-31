@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:39
-# @Update  : 2025/7/30 8:36
+# @Update  : 2025/7/31 14:38
 # @Detail  : 数据更新器
 
 
@@ -19,7 +19,6 @@ from league_tools.formats import WAD
 from loguru import logger
 
 from lol_audio_unpack.manager.utils import (
-    ProgressTracker,
     get_game_version,
     needs_update,
     read_data,
@@ -125,12 +124,10 @@ class DataUpdater:
 
     def _process_data(self, temp_path: Path) -> None:
         """处理游戏数据，包括提取、合并和验证"""
-        progress = ProgressTracker(len(self.process_languages), "语言数据提取", log_interval=1)
+
         for language in self.process_languages:
             logger.info(f"正在处理 {language} 语言数据...")
             self._extract_wad_data(temp_path, language)
-            progress.update()
-        progress.finish()
 
         logger.info("合并多语言数据...")
         self._merge_and_build_data(temp_path)
@@ -169,7 +166,6 @@ class DataUpdater:
             return
 
         final_champions = {}
-        progress = ProgressTracker(len(summaries["default"]), "英雄数据合并", log_interval=10)
 
         for i, default_summary in enumerate(summaries["default"]):
             champ_id = str(default_summary["id"])
@@ -244,8 +240,6 @@ class DataUpdater:
                     },
                 },
             }
-            progress.update()
-        progress.finish()
 
         final_result = {
             "gameVersion": self.version,
