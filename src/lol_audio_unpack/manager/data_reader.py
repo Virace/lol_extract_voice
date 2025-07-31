@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:41
-# @Update  : 2025/7/30 8:38
+# @Update  : 2025/7/30 23:57
 # @Detail  : 数据读取器
 
 
@@ -28,8 +28,12 @@ class DataReader(metaclass=Singleton):
     AUDIO_TYPE_MUSIC = "MUSIC"
     KNOWN_AUDIO_TYPES = {AUDIO_TYPE_VO, AUDIO_TYPE_SFX, AUDIO_TYPE_MUSIC}
 
-    def __init__(self, default_language: str = "default"):
-        """初始化数据读取器"""
+    def __init__(self):
+        """
+        初始化数据读取器
+
+        从合并后的数据文件和分散的banks/events文件中读取游戏数据
+        """
         if hasattr(self, "initialized"):
             return
 
@@ -43,20 +47,22 @@ class DataReader(metaclass=Singleton):
 
         # 使用不带后缀的基础路径，让read_data自动寻找最佳格式
         self.data = read_data(self.version_manifest_path / "data")
-        self.bin_data = read_data(self.version_manifest_path / "skins-bank-paths")
-        self.map_bin_data = read_data(self.version_manifest_path / "maps-bank-paths")
 
-        self.skin_events_dir: Path = self.version_manifest_path / "events" / "skins"
+        # 更新为新的分散式文件结构路径
+        self.champion_banks_dir: Path = self.version_manifest_path / "banks" / "champions"
+        self.champion_events_dir: Path = self.version_manifest_path / "events" / "champions"
+        self.map_banks_dir: Path = self.version_manifest_path / "banks" / "maps"
         self.map_events_dir: Path = self.version_manifest_path / "events" / "maps"
         self.unknown_categories_file: Path = self.version_manifest_path / "unknown-category.txt"
 
-        self.default_language = default_language
-        self.unknown_categories = set()
-        self.initialized = True
+        # 简单缓存机制避免重复读取
+        self._champion_banks_cache: dict[int, dict] = {}
+        self._champion_events_cache: dict[int, dict] = {}
+        self._map_banks_cache: dict[int, dict] = {}
 
-    def set_language(self, language: str) -> None:
-        """设置默认语言"""
-        self.default_language = language
+        # 防御性开发：记录未知的音频分类
+        self.unknown_categories: set[str] = set()
+        self.initialized = True
 
     def get_audio_type(self, category: str) -> str:
         """从分类字符串中识别出音频的大类（VO, SFX, MUSIC）"""
@@ -78,24 +84,24 @@ class DataReader(metaclass=Singleton):
         languages.add("default")
         return list(languages)
 
-    def get_skin_bank(self, skin_id: int) -> dict:
-        """根据皮肤ID获取其所有音频资源集合数据"""
-        skin_id_str = str(skin_id)
-        mappings = self.bin_data.get("skinAudioMappings", {})
-        skins_data = self.bin_data.get("skins", {})
+    def get_champion_banks(self, champion_id: int) -> dict | None:
+        """
+        读取指定英雄的banks数据
 
-        mapping_info = mappings.get(skin_id_str)
-        if isinstance(mapping_info, str):
-            return self.get_skin_bank(int(mapping_info))
+        :param champion_id: 英雄ID
+        :returns: 英雄banks数据字典，失败时返回None
+        :rtype: dict | None
+        """
+        if champion_id in self._champion_banks_cache:
+            return self._champion_banks_cache[champion_id]
 
-        result = skins_data.get(skin_id_str, {}).copy()
-        if isinstance(mapping_info, dict):
-            for category, owner_id in mapping_info.items():
-                owner_data = skins_data.get(owner_id, {})
-                if category in owner_data:
-                    result[category] = owner_data[category]
+        banks_file_base = self.champion_banks_dir / str(champion_id)
+        banks_data = read_data(banks_file_base)
 
-        return result
+        if banks_data:
+            self._champion_banks_cache[champion_id] = banks_data
+
+        return banks_data
 
     def write_unknown_categories_to_file(self) -> None:
         """将本次运行中收集到的所有未知分类写入到文件中"""
@@ -119,21 +125,54 @@ class DataReader(metaclass=Singleton):
         except Exception as e:
             logger.error(f"写入未知分类文件时出错: {e}")
 
-    def get_skin_events(self, skin_id: int) -> dict | None:
-        """按需加载并返回指定皮肤的事件数据"""
-        skin_id_str = str(skin_id)
-        champion_id = self.bin_data.get("skinToChampion", {}).get(skin_id_str)
-        if not champion_id:
-            return None
+    def get_champion_events(self, champion_id: int) -> dict | None:
+        """
+        读取指定英雄的events数据
 
-        event_file_base = self.skin_events_dir / f"{champion_id}"
-        all_champion_events = read_data(event_file_base)
-        return all_champion_events.get("skins", {}).get(skin_id_str) if all_champion_events else None
+        :param champion_id: 英雄ID
+        :returns: 英雄events数据字典，失败时返回None
+        :rtype: dict | None
+        """
+        if champion_id in self._champion_events_cache:
+            return self._champion_events_cache[champion_id]
+
+        events_file_base = self.champion_events_dir / str(champion_id)
+        events_data = read_data(events_file_base)
+
+        if events_data:
+            self._champion_events_cache[champion_id] = events_data
+
+        return events_data
+
+    def get_map_banks(self, map_id: int) -> dict | None:
+        """
+        读取指定地图的banks数据
+
+        :param map_id: 地图ID
+        :returns: 地图banks数据字典，失败时返回None
+        :rtype: dict | None
+        """
+        if map_id in self._map_banks_cache:
+            return self._map_banks_cache[map_id]
+
+        banks_file_base = self.map_banks_dir / str(map_id)
+        banks_data = read_data(banks_file_base)
+
+        if banks_data:
+            self._map_banks_cache[map_id] = banks_data
+
+        return banks_data
 
     def get_map_events(self, map_id: int) -> dict | None:
-        """按需加载并返回指定地图的事件数据"""
-        event_file_base = self.map_events_dir / f"{map_id}"
-        map_events_data = read_data(event_file_base)
+        """
+        读取指定地图的events数据
+
+        :param map_id: 地图ID
+        :returns: 地图events数据字典，失败时返回None
+        :rtype: dict | None
+        """
+        events_file_base = self.map_events_dir / str(map_id)
+        map_events_data = read_data(events_file_base)
         return map_events_data.get("map") if map_events_data else None
 
     def get_champion(self, champion_id: int) -> dict:
