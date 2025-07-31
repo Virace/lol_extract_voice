@@ -5,12 +5,13 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:38
-# @Update  : 2025/7/30 9:22
+# @Update  : 2025/7/31 19:41
 # @Detail  : Manager模块的通用函数
 
 
 import json
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -31,6 +32,7 @@ def read_data(path: Path) -> dict:
     :param path: 文件路径（可带或不带后缀）
     :return: 读取的数据字典
     """
+    start_time = time.time()
     result = {}
     files_to_check = []
 
@@ -42,6 +44,11 @@ def read_data(path: Path) -> dict:
         # 如果未指定后缀，按优先级生成待检查文件列表
         formats_priority = [".yml", ".json", ".msgpack"] if config.is_dev_mode() else [".msgpack", ".yml", ".json"]
         files_to_check = [path.with_suffix(s) for s in formats_priority]
+
+    file_search_time = time.time()
+    logger.debug(
+        f"文件查找耗时: {(file_search_time - start_time) * 1000:.2f}ms, 候选文件: {[f.name for f in files_to_check]}"
+    )
 
     # 2. 遍历并加载第一个存在的文件
     for file_to_try in files_to_check:
@@ -58,9 +65,18 @@ def read_data(path: Path) -> dict:
             loader = load_yaml
 
         if loader:
-            logger.debug(f"找到并读取数据文件: {file_to_try}")
+            file_size_mb = file_to_try.stat().st_size / (1024 * 1024)
+            logger.debug(f"找到数据文件: {file_to_try} (大小: {file_size_mb:.2f}MB, 格式: {suffix})")
+
             try:
+                read_start_time = time.time()
                 result = loader(file_to_try)
+                read_end_time = time.time()
+
+                read_duration_ms = (read_end_time - read_start_time) * 1000
+                logger.info(
+                    f"文件读取完成: {file_to_try.name} | 耗时: {read_duration_ms:.2f}ms | 读取速度: {file_size_mb / (read_duration_ms / 1000):.2f}MB/s"
+                )
                 break  # 成功加载后立即退出循环
             except Exception as e:
                 logger.error(f"读取文件时出错: {file_to_try}, 错误: {e}")
@@ -74,6 +90,9 @@ def read_data(path: Path) -> dict:
         logger.warning(f"在 {path.parent} 未找到任何格式的数据文件 (base: {path.name})")
     elif not result and path.suffix and not path.exists():
         logger.warning(f"指定的数据文件不存在: {path}，将返回空字典")
+
+    total_time_ms = (time.time() - start_time) * 1000
+    logger.debug(f"read_data 总耗时: {total_time_ms:.2f}ms")
 
     return result
 
