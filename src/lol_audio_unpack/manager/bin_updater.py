@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:40
-# @Update  : 2025/8/1 6:05
+# @Update  : 2025/8/1 10:48
 # @Detail  : BIN文件更新器
 
 
@@ -19,6 +19,7 @@ from loguru import logger
 
 from lol_audio_unpack.manager.utils import (
     ProgressTracker,
+    create_metadata_object,
     get_game_version,
     needs_update,
     read_data,
@@ -79,8 +80,7 @@ class BinUpdater:
             logger.error(f"数据文件不存在，请先运行DataUpdater: {self.data_file_base}")
             raise FileNotFoundError(f"数据文件不存在: {self.data_file_base}")
 
-        # 缓存languages避免重复传递
-        self.languages = data.get("languages", [])
+        self.languages = data.get("metadata", {}).get("languages", [])
 
         try:
             # 根据传入的IDs构建筛选后的数据
@@ -274,7 +274,7 @@ class BinUpdater:
         path_to_id_reversed = {v: k for k, v in path_to_skin_id_map.items()}
 
         # 初始化英雄的banks和events数据
-        champion_banks_data = self._create_base_metadata(
+        champion_banks_data = self._create_base_data(
             champion_id, "champion", alias=alias, skinAudioMappings={}, skins={}
         )
 
@@ -324,14 +324,12 @@ class BinUpdater:
 
         # 写入banks数据
         if needs_update(banks_file_base, self.version, self.force_update):
-            self._write_data_with_timestamp(champion_banks_data, banks_file_base)
+            write_data(champion_banks_data, banks_file_base)
 
         # 写入events数据
         if champion_skin_events and needs_update(events_file_base, self.version, self.force_update):
-            final_event_data = self._create_base_metadata(
-                champion_id, "champion", alias=alias, skins=champion_skin_events
-            )
-            self._write_data_with_timestamp(final_event_data, events_file_base)
+            final_event_data = self._create_base_data(champion_id, "champion", alias=alias, skins=champion_skin_events)
+            write_data(final_event_data, events_file_base)
 
     def _process_single_map(
         self, map_id: str, map_data: dict, common_events_set: set | None = None, common_banks_set: set | None = None
@@ -390,9 +388,7 @@ class BinUpdater:
 
         # 写入Banks数据
         if map_banks and needs_update(banks_file_base, self.version, self.force_update):
-            map_banks_data = self._create_base_metadata(
-                map_id, "map", name=self._get_map_name(map_data), banks=map_banks
-            )
+            map_banks_data = self._create_base_data(map_id, "map", name=self._get_map_name(map_data), banks=map_banks)
 
             # 对非公共地图进行去重处理
             if map_id != "0" and common_banks_set:
@@ -400,17 +396,17 @@ class BinUpdater:
 
             # 去重后检查是否还有数据需要写入
             if map_banks_data.get("banks"):
-                self._write_data_with_timestamp(map_banks_data, banks_file_base)
+                write_data(map_banks_data, banks_file_base)
             else:
                 logger.debug(f"地图 {map_id} 去重后无独有Banks数据，跳过写入")
 
         # 处理Events数据，只有在启用事件处理时才提取
         if self.process_events and needs_update(events_file_base, self.version, self.force_update):
             if map_events := self._extract_map_events(bin_file, common_events_set if map_id != "0" else None):
-                final_event_data = self._create_base_metadata(
+                final_event_data = self._create_base_data(
                     map_id, "map", name=self._get_map_name(map_data), map=map_events
                 )
-                self._write_data_with_timestamp(final_event_data, events_file_base)
+                write_data(final_event_data, events_file_base)
 
     def _extract_skin_events(self, bin_file: BIN, base_skin_id: str | None, current_skin_id: str) -> dict | None:
         """
@@ -622,29 +618,32 @@ class BinUpdater:
             return {"banks": map_banks}
         return None
 
-    def _create_base_metadata(self, entity_id: str, entity_type: str, **extra_fields) -> dict:
+    def _create_base_data(self, entity_id: str, entity_type: str, **extra_fields) -> dict:
         """
-        创建基础元数据结构，预留字段顺序
+        创建包含元数据和实体特定信息的基础数据结构。
 
         :param entity_id: 实体ID（英雄ID或地图ID）
         :param entity_type: 实体类型（'champion' 或 'map'）
-        :param extra_fields: 额外字段
-        :returns: 基础元数据字典（字段顺序已确定）
+        :param extra_fields: 任何要添加到顶层的额外字段
+        :return: 包含元数据和附加字段的基础字典
         """
-        # 按期望的顺序创建基础元数据，预留 lastUpdate 位置
-        base_data = {
-            "gameVersion": self.version,
-            "languages": self.languages,
-            "lastUpdate": None,  # 预留位置，在写入时填充
-        }
+        # 使用通用函数创建包含所有标准元数据的对象
+        base_data = create_metadata_object(self.version, self.languages)
 
-        # 添加实体特定字段
+        # 检查是否为事件文件（通过是否存在'skins'或'map'顶级键来判断）
+        is_event_file = "skins" in extra_fields or "map" in extra_fields
+
+        # 如果是事件文件，则从中移除 'languages' 字段
+        if is_event_file and "metadata" in base_data and "languages" in base_data["metadata"]:
+            del base_data["metadata"]["languages"]
+
+        # 添加实体特定ID
         if entity_type == "champion":
             base_data["championId"] = entity_id
         elif entity_type == "map":
             base_data["mapId"] = entity_id
 
-        # 添加额外字段
+        # 合并任何其他的附加字段
         base_data.update(extra_fields)
         return base_data
 
@@ -666,16 +665,3 @@ class BinUpdater:
 
         # 回退到默认语言
         return names.get("default", map_data.get("mapStringId", ""))
-
-    def _write_data_with_timestamp(self, data: dict, file_base: Path) -> None:
-        """
-        写入数据并统一添加时间戳
-
-        :param data: 要写入的数据（字段顺序已在创建时确定）
-        :param file_base: 文件基础路径
-        """
-        # 填充时间戳到预留位置
-        data["lastUpdate"] = datetime.now().isoformat()
-
-        # 直接写入，字段顺序已在 _create_base_metadata 中确定
-        write_data(data, file_base)

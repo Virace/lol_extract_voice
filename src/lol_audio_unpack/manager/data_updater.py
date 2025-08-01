@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:39
-# @Update  : 2025/7/31 20:20
+# @Update  : 2025/8/1 9:53
 # @Detail  : 数据更新器
 
 
@@ -19,6 +19,7 @@ from league_tools.formats import WAD
 from loguru import logger
 
 from lol_audio_unpack.manager.utils import (
+    create_metadata_object,
     get_game_version,
     needs_update,
     read_data,
@@ -241,12 +242,10 @@ class DataUpdater:
                 },
             }
 
-        final_result = {
-            "gameVersion": self.version,
-            "languages": [lang for lang in self.process_languages if lang != "default"],
-            "lastUpdate": datetime.now().isoformat(),
-            "champions": final_champions,
-        }
+        final_result = create_metadata_object(
+            self.version, [lang for lang in self.process_languages if lang != "default"]
+        )
+        final_result["champions"] = final_champions
 
         logger.info("合并地图数据...")
         maps_by_lang = self._load_language_json(base_path, "maps.json")

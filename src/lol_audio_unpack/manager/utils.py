@@ -5,14 +5,18 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:38
-# @Update  : 2025/7/31 19:41
+# @Update  : 2025/8/1 10:48
 # @Detail  : Manager模块的通用函数
 
 
 import json
+import os
 import re
+import sys
 import time
 from datetime import datetime
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as get_package_version
 from pathlib import Path
 
 from loguru import logger
@@ -137,8 +141,35 @@ def get_game_version(game_path: Path) -> str:
 
     if m := re.match(r"^(\d+\.\d+)\.", version_v):
         return m.group(1)
-
     raise ValueError(f"无法解析版本号: {version_v}")
+
+
+def create_metadata_object(game_version: str, languages: list[str]) -> dict:
+    """
+    创建一个包含标准化元数据的新对象。
+
+    :param game_version: 游戏客户端版本。
+    :param languages: 包含的语言列表。
+    :return: 一个包含所有元数据的字典。
+    """
+    try:
+        script_version = get_package_version("lol-audio-unpack")
+    except PackageNotFoundError:
+        script_version = "0.0.0-dev"
+        logger.warning("无法获取包版本，请使用 'pip install -e .' 在可编辑模式下安装。将版本设置为 '0.0.0-dev'。")
+
+    metadata = {
+        "gameVersion": game_version,
+        "scriptVersion": script_version,
+        "schemaVersion": "1.0",
+        "createdAt": datetime.now().isoformat(),
+        "languages": languages,
+        "platform": {
+            "os": os.name,
+            "pythonVersion": sys.version.split(" ")[0],
+        },
+    }
+    return {"metadata": metadata}
 
 
 def needs_update(base_path: Path, current_version: str, force_update: bool) -> bool:
@@ -157,7 +188,13 @@ def needs_update(base_path: Path, current_version: str, force_update: bool) -> b
     if not data:
         return True  # 文件不存在，需要更新
 
-    if data.get("gameVersion") == current_version:
+    # 从 metadata 对象中获取版本信息
+    data_version = data.get("metadata", {}).get("gameVersion")
+
+    if not data_version:
+        return True  # 没有版本信息，需要更新
+
+    if data_version == current_version:
         logger.debug(f"文件已是最新版本 ({current_version})，跳过更新: {base_path.name}")
         return False
 

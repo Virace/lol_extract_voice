@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:41
-# @Update  : 2025/7/31 20:20
+# @Update  : 2025/8/1 10:54
 # @Detail  : 数据读取器
 
 
@@ -47,6 +47,11 @@ class DataReader(metaclass=Singleton):
 
         # 使用不带后缀的基础路径，让read_data自动寻找最佳格式
         self.data = read_data(self.version_manifest_path / "data")
+        if not self.data:
+            raise FileNotFoundError("核心数据文件 (data.yml/json/msgpack) 不存在，请先运行更新程序。")
+
+        # 校验数据版本
+        self._validate_data_version()
 
         # 更新为新的分散式文件结构路径
         self.champion_banks_dir: Path = self.version_manifest_path / "banks" / "champions"
@@ -64,6 +69,58 @@ class DataReader(metaclass=Singleton):
         self.unknown_categories: set[str] = set()
         self.initialized = True
 
+    def _validate_data_version(self):
+        """
+        校验加载的数据文件版本与当前游戏版本的兼容性。
+
+        - 大版本不一致: 抛出致命错误，程序终止。
+        - 小版本差距过大 (>2): 记录错误日志，但程序继续。
+        - 小版本差距较小 (<=2): 记录警告日志，程序继续。
+        - 构建号不同: 忽略。
+        """
+        data_version_str = self.data.get("metadata", {}).get("gameVersion")
+        if not data_version_str:
+            logger.warning("数据文件中缺少 'gameVersion' 字段，无法进行版本校验。")
+            return
+
+        try:
+            # 分割版本号，例如 "15.14" -> ["15", "14"]
+            current_parts = self.version.split(".")
+            data_parts = data_version_str.split(".")
+
+            if len(current_parts) < 2 or len(data_parts) < 2:
+                logger.error(f"版本号格式无效。当前游戏: '{self.version}', 数据文件: '{data_version_str}'")
+                return
+
+            # 1. 检查大版本 (Major version)
+            if current_parts[0] != data_parts[0]:
+                error_msg = (
+                    f"数据版本与游戏版本严重不匹配 (大版本不同)！\n"
+                    f"  - 当前游戏版本: {self.version}\n"
+                    f"  - 数据文件版本: {data_version_str}\n"
+                    f"请立即运行数据更新程序。"
+                )
+                logger.critical(error_msg)
+                raise ValueError(error_msg)
+
+            # 2. 检查小版本 (Minor version)
+            current_minor = int(current_parts[1])
+            data_minor = int(data_parts[1])
+            minor_diff = abs(current_minor - data_minor)
+
+            if minor_diff > 0:
+                version_msg = (
+                    f"数据版本与当前游戏版本存在差异。\n  - 游戏版本: {self.version}\n  - 数据版本: {data_version_str}"
+                )
+                if minor_diff > 2:
+                    logger.error(f"{version_msg}\n小版本差距过大(>{2})，强烈建议立即更新数据！")
+                else:
+                    logger.warning(f"{version_msg}\n小版本差距较小(≤{2})，建议更新数据以获得最佳体验。")
+
+        except (ValueError, IndexError) as e:
+            logger.error(f"解析版本号时出错: {e}。当前游戏: '{self.version}', 数据文件: '{data_version_str}'")
+            return
+
     def get_audio_type(self, category: str) -> str:
         """从分类字符串中识别出音频的大类（VO, SFX, MUSIC）"""
         category_upper = category.upper()
@@ -80,9 +137,10 @@ class DataReader(metaclass=Singleton):
 
     def get_languages(self) -> list[str]:
         """获取支持的语言列表"""
-        languages = set(self.data.get("languages", []))
-        languages.add("default")
-        return list(languages)
+        languages = self.data.get("metadata", {}).get("languages", [])
+        languages_set = set(languages)
+        languages_set.add("default")
+        return list(languages_set)
 
     def get_champion_banks(self, champion_id: int) -> dict | None:
         """
