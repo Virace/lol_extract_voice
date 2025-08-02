@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:39
-# @Update  : 2025/8/2 17:42
+# @Update  : 2025/8/2 19:08
 # @Detail  : 数据更新器
 
 
@@ -86,7 +86,7 @@ class DataUpdater:
         return text.replace("\u00a0", " ")
 
     @logger.catch
-    @performance_monitor(threshold_ms=5000.0, level="INFO")
+    @performance_monitor(level="INFO")
     def check_and_update(self) -> Path:
         """检查游戏版本并更新数据"""
         if not needs_update(self.data_file_base, self.version, self.force_update) and self._check_languages():
@@ -132,7 +132,7 @@ class DataUpdater:
             logger.info(f"需要更新数据文件，缺少语言: {missing_langs}")
             return False
 
-    @performance_monitor(threshold_ms=10000.0, level="DEBUG")
+    @performance_monitor(level="DEBUG")
     def _process_data(self, temp_path: Path) -> None:
         """处理游戏数据，包括提取、合并和验证"""
 
@@ -173,7 +173,7 @@ class DataUpdater:
         return loaded_data
 
     @logger.catch
-    @performance_monitor(threshold_ms=8000.0, level="DEBUG")
+    @performance_monitor(level="DEBUG")
     def _merge_and_build_data(self, temp_dir: Path) -> None:
         """聚合所有数据处理和合并逻辑"""
         base_path = temp_dir / self.version
@@ -351,7 +351,7 @@ class DataUpdater:
             f"语言: {len(self.process_languages)}"
         )
 
-    @performance_monitor(threshold_ms=3000.0, level="DEBUG")
+    @performance_monitor(level="DEBUG")
     def _extract_wad_data(self, out_dir: StrPath, region: str) -> None:
         """从WAD文件提取JSON数据"""
         out_path = Path(out_dir) / self.version / region

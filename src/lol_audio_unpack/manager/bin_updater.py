@@ -5,11 +5,10 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:40
-# @Update  : 2025/8/1 10:48
+# @Update  : 2025/8/2 21:53
 # @Detail  : BIN文件更新器
 
 
-import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -27,6 +26,7 @@ from lol_audio_unpack.manager.utils import (
 )
 from lol_audio_unpack.utils.common import dump_json
 from lol_audio_unpack.utils.config import config
+from lol_audio_unpack.utils.logging import performance_monitor
 
 # 类型别名定义
 ChampionData = dict[str, Any]
@@ -62,6 +62,8 @@ class BinUpdater:
         self.map_events_dir: Path = self.version_manifest_path / "events" / "maps"
         self.languages: list[str] = []  # 在update()中初始化
 
+    @logger.catch
+    @performance_monitor(level="INFO")
     def update(
         self,
         target: str = "all",
@@ -82,27 +84,22 @@ class BinUpdater:
 
         self.languages = data.get("metadata", {}).get("languages", [])
 
-        try:
-            # 根据传入的IDs构建筛选后的数据
-            if champion_ids or map_ids:
-                # 精确模式：根据具体ID筛选数据
-                filtered_data = self._filter_data_by_ids(data, champion_ids, map_ids)
-                if champion_ids and filtered_data.get("champions"):
-                    self._update_champions(filtered_data)
-                if map_ids and filtered_data.get("maps"):
-                    self._update_maps(filtered_data)
-                logger.success(f"BinUpdater 更新完成 (精确模式: champions={champion_ids}, maps={map_ids})")
-            else:
-                # 批量模式：使用target控制
-                if target in ["skin", "all"]:
-                    self._update_champions(data)
-                if target in ["map", "all"]:
-                    self._update_maps(data)
-                logger.success(f"BinUpdater 更新完成 (批量模式: {target})")
-        except Exception as e:
-            logger.error(f"处理BIN文件时出错: {str(e)}")
-            if config.is_dev_mode():
-                raise
+        # 根据传入的IDs构建筛选后的数据
+        if champion_ids or map_ids:
+            # 精确模式：根据具体ID筛选数据
+            filtered_data = self._filter_data_by_ids(data, champion_ids, map_ids)
+            if champion_ids and filtered_data.get("champions"):
+                self._update_champions(filtered_data)
+            if map_ids and filtered_data.get("maps"):
+                self._update_maps(filtered_data)
+            logger.success(f"BinUpdater 更新完成 (精确模式: champions={champion_ids}, maps={map_ids})")
+        else:
+            # 批量模式：使用target控制
+            if target in ["skin", "all"]:
+                self._update_champions(data)
+            if target in ["map", "all"]:
+                self._update_maps(data)
+            logger.success(f"BinUpdater 更新完成 (批量模式: {target})")
 
     def _filter_data_by_ids(self, data: dict, champion_ids: list[str] | None, map_ids: list[str] | None) -> dict:
         """
@@ -144,6 +141,7 @@ class BinUpdater:
 
         return filtered_data
 
+    @performance_monitor(level="DEBUG")
     def _update_champions(self, data: dict) -> None:
         """
         处理英雄数据，按英雄ID分别生成文件
@@ -166,6 +164,7 @@ class BinUpdater:
 
         logger.success("英雄Banks数据更新完成")
 
+    @performance_monitor(level="DEBUG")
     def _update_maps(self, data: dict) -> None:
         """
         处理地图数据，按地图ID分别生成文件
@@ -197,8 +196,8 @@ class BinUpdater:
                         for paths_list in map_banks["banks"].values():
                             for path in paths_list:
                                 common_banks_set.add(tuple(sorted(path)))
-            except Exception as e:
-                logger.error(f"预处理公共地图(ID 0)的数据时出错: {e}")
+            except Exception:
+                logger.opt(exception=True).error("预处理公共地图(ID 0)的数据时出错")
                 if config.is_dev_mode():
                     raise
 
@@ -210,6 +209,7 @@ class BinUpdater:
 
         logger.success("地图Banks数据更新完成")
 
+    @performance_monitor(level="DEBUG")
     def _process_champion_skins(self, champion_data: ChampionData, champion_id: str) -> None:
         """
         处理单个英雄的所有皮肤，提取音频数据并生成独立文件
@@ -228,7 +228,7 @@ class BinUpdater:
         if not needs_update(banks_file_base, self.version, self.force_update) and not needs_update(
             events_file_base, self.version, self.force_update
         ):
-            logger.debug(f"英雄 {champion_id} ({alias}) 的数据已是最新，跳过处理")
+            logger.trace(f"英雄 {champion_id} ({alias}) 的数据已是最新，跳过处理")
             return
 
         path_to_skin_id_map: dict[str, str] = {}
@@ -262,12 +262,11 @@ class BinUpdater:
 
         bin_paths = list(path_to_skin_id_map.keys())
         try:
-            logger.debug(f"从 {alias} 提取 {len(bin_paths)} 个BIN文件")
+            logger.trace(f"从 {alias} 提取 {len(bin_paths)} 个BIN文件")
             bin_raws = WAD(full_wad_path).extract(bin_paths, raw=True)
             raw_data_map = dict(zip(bin_paths, bin_raws, strict=False))
-        except Exception as e:
-            logger.error(f"处理英雄 {alias} 的WAD文件时出错: {e}")
-            logger.debug(traceback.format_exc())
+        except Exception:
+            logger.opt(exception=True).error(f"处理英雄 {alias} 的WAD文件时出错")
             return
 
         skin_ids_sorted = sorted(path_to_skin_id_map.values(), key=int)
@@ -314,8 +313,8 @@ class BinUpdater:
                                         champion_skin_events[skin_id] = skin_events
                                     is_new_skin_entry = False
 
-            except Exception as e:
-                logger.error(f"解析皮肤BIN失败: {path}, 错误: {e}")
+            except Exception:
+                logger.opt(exception=True).error(f"解析皮肤BIN失败: {path}")
                 if config.is_dev_mode():
                     raise
 
@@ -348,7 +347,7 @@ class BinUpdater:
         if not needs_update(banks_file_base, self.version, self.force_update) and not needs_update(
             events_file_base, self.version, self.force_update
         ):
-            logger.debug(f"地图 {map_id} 的数据已是最新，跳过处理")
+            logger.trace(f"地图 {map_id} 的数据已是最新，跳过处理")
             return
 
         if not map_data.get("wad") or not map_data.get("binPath"):
@@ -365,8 +364,8 @@ class BinUpdater:
             if not bin_raws or not bin_raws[0]:
                 return
             bin_file = BIN(bin_raws[0])
-        except Exception as e:
-            logger.error(f"提取或解析地图 {map_id} 的BIN文件时出错: {e}")
+        except Exception:
+            logger.opt(exception=True).error(f"提取或解析地图 {map_id} 的BIN文件时出错")
             if config.is_dev_mode():
                 raise
             return
@@ -398,7 +397,7 @@ class BinUpdater:
             if map_banks_data.get("banks"):
                 write_data(map_banks_data, banks_file_base)
             else:
-                logger.debug(f"地图 {map_id} 去重后无独有Banks数据，跳过写入")
+                logger.trace(f"地图 {map_id} 去重后无独有Banks数据，跳过写入")
 
         # 处理Events数据，只有在启用事件处理时才提取
         if self.process_events and needs_update(events_file_base, self.version, self.force_update):
@@ -518,7 +517,7 @@ class BinUpdater:
         remaining_categories = len(bank_paths)
         remaining_paths_count = sum(len(paths_list) for paths_list in bank_paths.values())
 
-        logger.debug(
+        logger.trace(
             f"地图 {map_id} Banks去重完成: "
             f"分类 {original_categories}→{remaining_categories}, "
             f"路径 {original_paths_count}→{remaining_paths_count}"
