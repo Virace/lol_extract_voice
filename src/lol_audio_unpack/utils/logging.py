@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/1/15
-# @Update  : 2025/8/2 16:18
+# @Update  : 2025/8/2 18:14
 # @Detail  : Loguru 日志配置工具（独立工具类，无外部依赖）
 
 
@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
+
+from lol_audio_unpack.utils.common import format_duration
 
 
 class LoggingConfiguration:
@@ -118,11 +120,11 @@ class LoggingConfiguration:
         return decorator
 
     @staticmethod
-    def performance_monitor(threshold_ms: float = 1000.0, level: str = "DEBUG"):
+    def performance_monitor(threshold_ms: float = 0, level: str = "DEBUG"):
         """
         性能监控装饰器
 
-        :param threshold_ms: 性能阈值（毫秒），超过此值会记录警告
+        :param threshold_ms: 性能阈值（毫秒）。0表示不进行阈值警告，只记录执行时间
         :param level: 正常情况下的日志级别
         """
 
@@ -134,17 +136,24 @@ class LoggingConfiguration:
                     result = func(*args, **kwargs)
                     duration_ms = (time.time() - start_time) * 1000
 
+                    # 格式化耗时显示
+                    duration_display = format_duration(duration_ms)
+
                     # 记录性能信息
-                    if duration_ms > threshold_ms:
+                    if threshold_ms > 0 and duration_ms > threshold_ms:
+                        # 有阈值且超过阈值，记录警告
+                        threshold_display = format_duration(threshold_ms)
                         logger.warning(
-                            f"函数 {func.__name__} 执行耗时较长: {duration_ms:.2f}ms (超过阈值 {threshold_ms:.2f}ms)"
+                            f"函数 {func.__name__} 执行耗时较长: {duration_display} (超过阈值 {threshold_display})"
                         )
                     else:
-                        logger.log(level, f"函数 {func.__name__} 执行完成，耗时: {duration_ms:.2f}ms")
+                        # 无阈值或未超过阈值，正常记录
+                        logger.log(level, f"函数 {func.__name__} 执行完成，耗时: {duration_display}")
                     return result
                 except Exception:
                     duration_ms = (time.time() - start_time) * 1000
-                    logger.opt(exception=True).error(f"函数 {func.__name__} 执行失败，耗时: {duration_ms:.2f}ms")
+                    duration_display = format_duration(duration_ms)
+                    logger.opt(exception=True).error(f"函数 {func.__name__} 执行失败，耗时: {duration_display}")
                     raise
 
             return wrapper
