@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:38
-# @Update  : 2025/8/1 10:48
+# @Update  : 2025/8/2 17:23
 # @Detail  : Manager模块的通用函数
 
 
@@ -78,7 +78,7 @@ def read_data(path: Path) -> dict:
                 read_end_time = time.time()
 
                 read_duration_ms = (read_end_time - read_start_time) * 1000
-                logger.info(
+                logger.debug(
                     f"文件读取完成: {file_to_try.name} | 耗时: {read_duration_ms:.2f}ms | 读取速度: {file_size_mb / (read_duration_ms / 1000):.2f}MB/s"
                 )
                 break  # 成功加载后立即退出循环
@@ -118,7 +118,7 @@ def write_data(data: dict, base_path: Path) -> None:
             dump_json(data, path)
         else:
             dump_msgpack(data, path)
-        logger.debug(f"成功写入数据到: {path}")
+        logger.trace(f"成功写入数据到: {path}")
     except Exception as e:
         logger.error(f"写入文件失败: {path}, 错误: {e}")
 
