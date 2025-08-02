@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/5/6 1:19
-# @Update  : 2025/7/31 23:55
+# @Update  : 2025/8/2 18:15
 # @Detail  : 通用函数
 
 
@@ -56,6 +56,43 @@ def sanitize_filename(filename: str, replacement: str = "_") -> str:
 
     # 如果清理后为空，使用默认名称
     return cleaned if cleaned else "unnamed"
+
+
+def format_duration(duration_ms: float) -> str:
+    """
+    格式化时间显示，自动选择最合适的单位
+
+    单位转换阈值采用1.5倍关系：
+    - < 1500ms: 显示为毫秒 (如: 800ms)
+    - >= 1500ms 且 < 90s: 显示为秒+毫秒 (如: 1.5s (1500ms))
+    - >= 90s 且 < 5400s(90min): 显示为分+秒 (如: 1.5min (90s))
+    - >= 5400s: 显示为时+分 (如: 1.5h (90min))
+
+    :param duration_ms: 耗时（毫秒）
+    :returns: 格式化后的时间字符串
+    """
+    # 转换阈值（1.5倍关系）
+    MS_TO_S_THRESHOLD = 1500  # 1.5秒
+    S_TO_MIN_THRESHOLD = 90  # 1.5分钟
+    MIN_TO_H_THRESHOLD = 90  # 1.5小时
+
+    if duration_ms < MS_TO_S_THRESHOLD:
+        # 小于1.5秒，只显示毫秒
+        return f"{duration_ms:.0f}ms"
+
+    duration_s = duration_ms / 1000
+    if duration_s < S_TO_MIN_THRESHOLD:
+        # 小于1.5分钟，显示秒+毫秒
+        return f"{duration_s:.1f}s ({duration_ms:.0f}ms)"
+
+    duration_min = duration_s / 60
+    if duration_min < MIN_TO_H_THRESHOLD:
+        # 小于1.5小时，显示分+秒
+        return f"{duration_min:.1f}min ({duration_s:.0f}s)"
+
+    # 大于等于1.5小时，显示时+分
+    duration_h = duration_min / 60
+    return f"{duration_h:.1f}h ({duration_min:.0f}min)"
 
 
 class EnhancedPath(BasePath):
