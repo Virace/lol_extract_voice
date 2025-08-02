@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/23 12:27
-# @Update  : 2025/8/1 6:05
+# @Update  : 2025/8/2 11:00
 # @Detail  : 解包音频
 
 
@@ -26,8 +26,6 @@ from lol_audio_unpack.utils.config import config
 
 # todo: ID6, 厄加特, 6009, 西部魔影 厄加特, ASSETS/Sounds/Wwise2016/SFX/Characters/Urgot/Skins/Skin09/Urgot_Skin09_VO_audio.bnk, 该文件在根WAD
 # todo: ID62, 孙悟空，62007, 战斗学院 孙悟空, ASSETS/Sounds/Wwise2016/SFX/Characters/MonkeyKing/Skins/Skin07/MonkeyKing_Skin07_VO_audio.bnk, 该文件在根WAD
-
-# todo: ID11, 召唤师峡谷, ASSETS/Sounds/Wwise2016/VO/en_US/Shared/MISC_Emotes_VO_audio.wpk, 该文件在Common WAD中
 
 
 @dataclass
