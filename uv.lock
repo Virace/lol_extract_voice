@@ -114,7 +114,7 @@ wheels = [
 
 [[package]]
 name = "lol-audio-unpack"
-version = "3.4.0+lite"
+version = "3.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "alive-progress" },
