@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/23 12:27
-# @Update  : 2025/8/3 15:20
+# @Update  : 2025/8/3 15:39
 # @Detail  : 解包音频
 
 
@@ -211,6 +211,9 @@ def unpack_audio_entity(entity_data: AudioEntityData, reader: DataReader) -> Non
     :raises ValueError: 当实体数据无效时
     """
     language = config.GAME_REGION  # 决定解包哪种语言的音频
+    audio_path = config.AUDIO_PATH / reader.version
+    if not audio_path.exists():
+        audio_path.mkdir(parents=True, exist_ok=True)
 
     # 使用统计上下文管理器，自动处理统计的开始和结束
     stats_context = ProcessingStatsContext(entity_data, language, config.INCLUDE_TYPE, config.EXCLUDE_TYPE)
@@ -367,7 +370,7 @@ def unpack_audio_entity(entity_data: AudioEntityData, reader: DataReader) -> Non
 
             # 遍历每种音频类型的文件组
             for audio_type, files_in_type in files_by_type.items():
-                output_path = generate_output_path(entity_data, sub_id_str, audio_type)
+                output_path = generate_output_path(entity_data, sub_id_str, audio_type, audio_path)
                 output_path.mkdir(parents=True, exist_ok=True)
 
                 logger.debug(f"处理 {sub_name} ({audio_type}) - {len(files_in_type)} 个文件")
@@ -464,10 +467,9 @@ def unpack_audio_entity(entity_data: AudioEntityData, reader: DataReader) -> Non
 
     # 保存简洁的YAML报告
     try:
-        report_filename = f"{entity_data.entity_type}_{entity_data.entity_name}_{entity_data.entity_id}_report.yaml"
-        # 清理文件名中的非法字符
-        safe_filename = sanitize_filename(report_filename)
-        report_path = config.REPORT_PATH / safe_filename
+        report_filename = f"_{entity_data.entity_id}_metadata.yaml"
+
+        report_path = config.REPORT_PATH / reader.version / entity_data.entity_type.capitalize() / report_filename
         report_path.parent.mkdir(parents=True, exist_ok=True)
 
         stats.save_concise_report_to_yaml(report_path)
