@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:41
-# @Update  : 2025/8/1 10:54
+# @Update  : 2025/8/3 9:18
 # @Detail  : 数据读取器
 
 
@@ -16,6 +16,7 @@ from loguru import logger
 from lol_audio_unpack.manager.utils import get_game_version, read_data
 from lol_audio_unpack.utils.common import Singleton
 from lol_audio_unpack.utils.config import config
+from lol_audio_unpack.utils.logging import performance_monitor
 
 
 class DataReader(metaclass=Singleton):
@@ -28,6 +29,10 @@ class DataReader(metaclass=Singleton):
     AUDIO_TYPE_MUSIC = "MUSIC"
     KNOWN_AUDIO_TYPES = {AUDIO_TYPE_VO, AUDIO_TYPE_SFX, AUDIO_TYPE_MUSIC}
 
+    CHECK_VERSION_DIFF = 2
+
+    @logger.catch
+    @performance_monitor(level="DEBUG")
     def __init__(self):
         """
         初始化数据读取器
@@ -88,7 +93,7 @@ class DataReader(metaclass=Singleton):
             current_parts = self.version.split(".")
             data_parts = data_version_str.split(".")
 
-            if len(current_parts) < 2 or len(data_parts) < 2:
+            if len(current_parts) < self.CHECK_VERSION_DIFF or len(data_parts) < self.CHECK_VERSION_DIFF:
                 logger.error(f"版本号格式无效。当前游戏: '{self.version}', 数据文件: '{data_version_str}'")
                 return
 
@@ -112,10 +117,14 @@ class DataReader(metaclass=Singleton):
                 version_msg = (
                     f"数据版本与当前游戏版本存在差异。\n  - 游戏版本: {self.version}\n  - 数据版本: {data_version_str}"
                 )
-                if minor_diff > 2:
-                    logger.error(f"{version_msg}\n小版本差距过大(>{2})，强烈建议立即更新数据！")
+                if minor_diff > self.CHECK_VERSION_DIFF:
+                    logger.error(
+                        f"{version_msg}\n小版本差距过大(>{self.CHECK_VERSION_DIFF})，数据可能不准确，请立即更新数据。"
+                    )
                 else:
-                    logger.warning(f"{version_msg}\n小版本差距较小(≤{2})，建议更新数据以获得最佳体验。")
+                    logger.warning(
+                        f"{version_msg}\n小版本差距较小(≤{self.CHECK_VERSION_DIFF})，数据有可能不准确，建议更新数据。"
+                    )
 
         except (ValueError, IndexError) as e:
             logger.error(f"解析版本号时出错: {e}。当前游戏: '{self.version}', 数据文件: '{data_version_str}'")
@@ -131,7 +140,6 @@ class DataReader(metaclass=Singleton):
         if "_SFX" in category_upper or category_upper == "INIT" or "HUD" in category_upper:
             return self.AUDIO_TYPE_SFX
 
-        logger.warning(f"发现未知音频分类: '{category}'，已自动归类为SFX。")
         self.unknown_categories.add(category)
         return self.AUDIO_TYPE_SFX
 
@@ -142,6 +150,8 @@ class DataReader(metaclass=Singleton):
         languages_set.add("default")
         return list(languages_set)
 
+    @logger.catch
+    @performance_monitor(level="DEBUG")
     def get_champion_banks(self, champion_id: int) -> dict | None:
         """
         读取指定英雄的banks数据
@@ -161,6 +171,8 @@ class DataReader(metaclass=Singleton):
 
         return banks_data
 
+    @logger.catch
+    @performance_monitor(level="DEBUG")
     def write_unknown_categories_to_file(self) -> None:
         """将本次运行中收集到的所有未知分类写入到文件中"""
         if not self.unknown_categories:
@@ -179,10 +191,12 @@ class DataReader(metaclass=Singleton):
             with open(self.unknown_categories_file, "a", encoding="utf-8") as f:
                 for category in sorted(list(new_unknowns)):
                     f.write(f"{category}\n")
-            logger.success(f"已将 {len(new_unknowns)} 个新的未知音频分类追加到: {self.unknown_categories_file}")
+            logger.info(f"已记录 {len(new_unknowns)} 个新的未知音频分类")
         except Exception as e:
             logger.error(f"写入未知分类文件时出错: {e}")
 
+    @logger.catch
+    @performance_monitor(level="DEBUG")
     def get_champion_events(self, champion_id: int) -> dict | None:
         """
         读取指定英雄的events数据
@@ -202,6 +216,8 @@ class DataReader(metaclass=Singleton):
 
         return events_data
 
+    @logger.catch
+    @performance_monitor(level="DEBUG")
     def get_map_banks(self, map_id: int) -> dict | None:
         """
         读取指定地图的banks数据
@@ -221,6 +237,8 @@ class DataReader(metaclass=Singleton):
 
         return banks_data
 
+    @logger.catch
+    @performance_monitor(level="DEBUG")
     def get_map_events(self, map_id: int) -> dict | None:
         """
         读取指定地图的events数据
