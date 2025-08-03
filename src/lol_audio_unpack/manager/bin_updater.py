@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:40
-# @Update  : 2025/8/2 21:53
+# @Update  : 2025/8/3 8:57
 # @Detail  : BIN文件更新器
 
 
@@ -13,18 +13,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from alive_progress import alive_it
 from league_tools.formats import BIN, WAD
 from loguru import logger
 
 from lol_audio_unpack.manager.utils import (
-    ProgressTracker,
     create_metadata_object,
     get_game_version,
     needs_update,
     read_data,
     write_data,
 )
-from lol_audio_unpack.utils.common import dump_json
 from lol_audio_unpack.utils.config import config
 from lol_audio_unpack.utils.logging import performance_monitor
 
@@ -153,14 +152,13 @@ class BinUpdater:
         self.champion_events_dir.mkdir(parents=True, exist_ok=True)
 
         champions = data.get("champions", {})
-        progress = ProgressTracker(len(champions), "英雄音频数据处理", log_interval=5)
         sorted_champion_ids = sorted(champions.keys(), key=int)
 
-        for champion_id in sorted_champion_ids:
+        champion_bar = alive_it(sorted_champion_ids, title="英雄音频数据处理")
+        for champion_id in champion_bar:
             champion_data = champions[champion_id]
+            champion_bar.text(f"处理英雄 {champion_id}")
             self._process_champion_skins(champion_data, champion_id)
-            progress.update()
-        progress.finish()
 
         logger.success("英雄Banks数据更新完成")
 
@@ -201,11 +199,10 @@ class BinUpdater:
                 if config.is_dev_mode():
                     raise
 
-        map_progress = ProgressTracker(len(maps), "地图音频与事件数据处理", log_interval=1)
-        for map_id, map_data in maps.items():
+        map_bar = alive_it(maps.items(), title="地图音频与事件数据处理")
+        for map_id, map_data in map_bar:
+            map_bar.text(f"处理地图 {map_id}")
             self._process_single_map(map_id, map_data, common_events_set, common_banks_set)
-            map_progress.update()
-        map_progress.finish()
 
         logger.success("地图Banks数据更新完成")
 
