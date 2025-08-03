@@ -1,6 +1,6 @@
 [project]
 name = "lol-audio-unpack"
-version = "3.3.0+lite"
+version = "3.4.0+lite"
 description = "英雄联盟游戏音频文件解包工具"
 authors = [
     { name = "Virace", email = "Virace@aliyun.com" }
@@ -8,7 +8,10 @@ authors = [
 dependencies = [
     "requests>=2.31.0",
     "python-dotenv>=1.0.1",
-    "league-tools==1.0.0",
+    "msgpack>=1.1.1",
+    "ruamel-yaml>=0.18.14",
+    "alive-progress>=3.3.0",
+    "league-tools>=1.1.0",
 ]
 readme = "README.md"
 requires-python = ">= 3.13"
@@ -46,7 +49,7 @@ select = [
     "UP", # pyupgrade
     "I"  # isort
 ]
-ignore = [ "F401" ]
+ignore = [ "E501", "F401", "PLR0915", "PLR0912" ]
 
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 per-file-ignores = {}

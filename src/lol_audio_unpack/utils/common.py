@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/5/6 1:19
-# @Update  : 2025/7/25 11:49
+# @Update  : 2025/8/2 18:15
 # @Detail  : 通用函数
 
 
@@ -21,8 +21,10 @@ from json import JSONEncoder
 from os import PathLike
 from pathlib import Path, PosixPath, WindowsPath
 
+import msgpack
 import requests
 from loguru import logger
+from ruamel.yaml import YAML
 
 if os.name == "nt":
     BasePath = WindowsPath
@@ -47,7 +49,50 @@ def sanitize_filename(filename: str, replacement: str = "_") -> str:
     # Windows 文件名非法字符: < > : " / \ | ? *
     # 同时包括控制字符 (ASCII 0-31)
     illegal_chars_re = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
-    return illegal_chars_re.sub(replacement, filename)
+    cleaned = illegal_chars_re.sub(replacement, filename)
+
+    # Windows 不允许文件名以空格或点结尾
+    cleaned = cleaned.rstrip(" .")
+
+    # 如果清理后为空，使用默认名称
+    return cleaned if cleaned else "unnamed"
+
+
+def format_duration(duration_ms: float) -> str:
+    """
+    格式化时间显示，自动选择最合适的单位
+
+    单位转换阈值采用1.5倍关系：
+    - < 1500ms: 显示为毫秒 (如: 800ms)
+    - >= 1500ms 且 < 90s: 显示为秒+毫秒 (如: 1.5s (1500ms))
+    - >= 90s 且 < 5400s(90min): 显示为分+秒 (如: 1.5min (90s))
+    - >= 5400s: 显示为时+分 (如: 1.5h (90min))
+
+    :param duration_ms: 耗时（毫秒）
+    :returns: 格式化后的时间字符串
+    """
+    # 转换阈值（1.5倍关系）
+    MS_TO_S_THRESHOLD = 1500  # 1.5秒
+    S_TO_MIN_THRESHOLD = 90  # 1.5分钟
+    MIN_TO_H_THRESHOLD = 90  # 1.5小时
+
+    if duration_ms < MS_TO_S_THRESHOLD:
+        # 小于1.5秒，只显示毫秒
+        return f"{duration_ms:.0f}ms"
+
+    duration_s = duration_ms / 1000
+    if duration_s < S_TO_MIN_THRESHOLD:
+        # 小于1.5分钟，显示秒+毫秒
+        return f"{duration_s:.1f}s ({duration_ms:.0f}ms)"
+
+    duration_min = duration_s / 60
+    if duration_min < MIN_TO_H_THRESHOLD:
+        # 小于1.5小时，显示分+秒
+        return f"{duration_min:.1f}min ({duration_s:.0f}s)"
+
+    # 大于等于1.5小时，显示时+分
+    duration_h = duration_min / 60
+    return f"{duration_h:.1f}h ({duration_min:.0f}min)"
 
 
 class EnhancedPath(BasePath):
@@ -191,6 +236,7 @@ def dump_json(
     path: str | PathLike | Path,
     ensure_ascii: bool = False,
     cls: type[JSONEncoder] | None = None,
+    indent: int = None,
 ):
     """
     将对象写入json文件
@@ -198,12 +244,13 @@ def dump_json(
     :param path: 路径
     :param ensure_ascii: 是否转义
     :param cls: 类
+    :param indent: 缩进级别, None 或 0 表示紧凑输出
     :return:
     """
     path = Path(path)
 
     with path.open("w+", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=ensure_ascii, cls=cls)
+        json.dump(obj, f, ensure_ascii=ensure_ascii, cls=cls, indent=indent)
 
 
 def load_json(path: str | PathLike | Path) -> dict:
@@ -234,6 +281,74 @@ def load_json(path: str | PathLike | Path) -> dict:
         return {}
 
 
+def dump_msgpack(obj, path: str | PathLike | Path):
+    """
+    将对象使用 MessagePack 序列化并写入文件
+
+    :param obj: 要序列化的对象
+    :param path: 文件路径
+    """
+    path = Path(path)
+    with path.open("wb") as f:
+        msgpack.dump(obj, f)
+
+
+def load_msgpack(path: str | PathLike | Path) -> dict:
+    """
+    从文件读取并使用 MessagePack 反序列化对象
+
+    :param path: 文件路径
+    :return: 反序列化后的对象
+    """
+    path = Path(path)
+    if not path.exists():
+        return {}
+
+    try:
+        with path.open("rb") as f:
+            return msgpack.load(f, raw=False)
+    except msgpack.exceptions.UnpackException as e:
+        logger.error(f"MessagePack 解析错误，位置: {path}, 错误: {e}")
+        return {}
+    except Exception as e:
+        logger.error(f"加载 MessagePack 文件时发生未知错误，位置: {path}, 错误: {e}")
+        return {}
+
+
+def dump_yaml(data: dict, path: PathLike | str | Path) -> None:
+    """
+    将字典写入YAML文件，保留格式和顺序。
+
+    :param data: 要写入的字典数据。
+    :param path: 输出文件路径。
+    """
+    path = Path(path)
+    yaml = YAML()
+    yaml.indent(mapping=2, sequence=4, offset=2)
+    with path.open("w", encoding="utf-8") as f:
+        yaml.dump(data, f)
+
+
+def load_yaml(path: PathLike | str | Path) -> dict:
+    """
+    从YAML文件加载数据。
+
+    :param path: 输入文件路径。
+    :return: 从YAML文件加载的字典数据。
+    """
+    path = Path(path)
+    if not path.exists():
+        return {}
+
+    yaml = YAML(typ="safe")
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            return yaml.load(f) or {}
+    except Exception as e:
+        logger.error(f"加载 YAML 文件时出错: {path}, 错误: {e}")
+        return {}
+
+
 def list2dict(data, key):
     """
     将类似[{'id':1, 'xx':xx}, ...]的列表转换为字典
@@ -261,63 +376,6 @@ def download_file(url: str, path: str | PathLike | Path) -> Path:
     return path
 
 
-def fetch_json_data(
-    url: str,
-    method: str = "GET",
-    retries: int = 5,
-    delay: int = 2,
-    params: dict = None,
-    data: dict = None,
-    headers: dict = None,
-    callback: callable = None,
-) -> dict:
-    """
-    从给定的URL获取JSON数据
-
-    :param url: 要获取数据的URL。
-    :param method: HTTP请求方法 ('GET' 或 'POST')，默认为 'GET'。
-    :param retries: 遇到网络错误时的重试次数，默认为5次。
-    :param delay: 每次重试之间的延迟时间（秒），默认为2秒。
-    :param params: URL中的请求参数（适用于GET请求）。
-    :param data: 请求体中的数据（适用于POST请求）。
-    :param headers: 请求头信息。
-    :param callback: 一个回调函数，用于处理非JSON格式的响应内容。
-    :return: 返回JSON格式的数据（字典），或回调函数的处理结果。
-    :raises ValueError: 如果响应内容不是JSON格式且未提供回调函数，则抛出异常。
-    """
-    for attempt in range(retries):
-        try:
-            logger.trace(f"第 {attempt + 1} 次尝试访问 URL: {url}，总共尝试次数: {retries}")
-
-            if method.upper() == "GET":
-                response = requests.get(url, params=params, headers=headers)
-            elif method.upper() == "POST":
-                response = requests.post(url, params=params, data=data, headers=headers)
-            else:
-                raise ValueError("无效的请求方法。请使用 'GET' 或 'POST'。")
-
-            logger.trace(f"收到来自 URL: {url} 的响应，状态码为: {response.status_code}")
-
-            try:
-                json_data = response.json()
-                logger.debug(f"成功从 URL: {url} 解析出JSON数据")
-                return json_data
-            except ValueError:
-                logger.warning(f"来自 URL: {url} 的响应内容不是JSON格式")
-                if callback:
-                    logger.debug(f"使用回调函数处理来自 URL: {url} 的非JSON响应内容")
-                    return callback(response.text)
-                else:
-                    raise ValueError(f"响应内容不是JSON格式，且未提供回调函数用于处理 URL: {url} 的数据")
-
-        except requests.RequestException as e:
-            logger.error(f"网络错误: {e}，将在 {delay} 秒后重试...")
-            time.sleep(delay)
-
-    logger.error(f"多次尝试后仍无法从 URL: {url} 获取JSON数据，已达到最大重试次数: {retries}")
-    raise ValueError(f"多次尝试后仍无法从 URL: {url} 获取JSON数据，已达到最大重试次数: {retries}")
-
-
 def replace(data: str, repl: dict[str, str]) -> str:
     """
     替换
@@ -327,29 +385,4 @@ def replace(data: str, repl: dict[str, str]) -> str:
     """
     for key, value in repl.items():
         data = data.replace(key, value)
-    return data
-
-
-def re_replace(data: str, repl: dict[str, str]) -> str:
-    """
-    正则替换
-    :param data:
-    :param repl: 键值对
-    :return:
-    """
-
-    def replf(v):
-        def temp(mobj):
-            match = mobj.groups()[0]
-            if match:
-                return v.format(match)
-            else:
-                return v.replace("{}", "")
-
-        return temp
-
-    for key, value in repl.items():
-        if "{}" in value:
-            value = replf(value)
-        data = re.compile(f"{key}", re.I).sub(value, data)
     return data

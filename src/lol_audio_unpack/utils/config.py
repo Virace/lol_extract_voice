@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:00
-# @Update  : 2025/7/25 2:49
+# @Update  : 2025/8/3 15:18
 # @Detail  : config.py
 
 
@@ -13,7 +13,7 @@
 配置管理模块 - 提供全局配置访问
 
 使用方法:
-    from lol_audio_unpack.Utils.config import config
+    from lol_audio_unpack.utils.config import config
 
     # 获取配置
     game_path = config.get("GAME_PATH")
@@ -22,7 +22,10 @@
     config.set("DEBUG", 10)
 """
 
+import inspect
+import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -30,8 +33,8 @@ from typing import Any
 from dotenv import load_dotenv
 from loguru import logger
 
-from lol_audio_unpack.Utils.common import Singleton
-from lol_audio_unpack.Utils.type_hints import StrPath
+from lol_audio_unpack.utils.common import Singleton
+from lol_audio_unpack.utils.type_hints import StrPath
 
 # 当前工作目录（通常是项目的根目录）
 WORK_DIR = Path(os.getcwd())
@@ -45,11 +48,19 @@ class Config(metaclass=Singleton):
         "GAME_PATH": {"type": "path", "required": True, "help": "游戏根目录", "short": "g"},
         "GAME_REGION": {"type": "str", "default": "zh_CN", "help": "游戏区域", "short": "r"},
         "OUTPUT_PATH": {"type": "path", "required": True, "help": "输出目录", "short": "o"},
-        "INCLUDE_TYPE": {
+        "EXCLUDE_TYPE": {
             "type": "list",
-            "default": "VO, SFX, MUSIC",
-            "help": "排除的类型，例如 VO, SFX, MUSIC",
+            "default": "SFX,MUSIC",
+            "help": "排除的音频类型 (逗号分隔), 例如 'SFX,MUSIC'。可用类型: VO, SFX, MUSIC",
             "short": "t",
+        },
+        "GROUP_BY_TYPE": {
+            "type": "bool",
+            "default": False,
+            "help": """是否按音频类型对输出目录进行分组.
+# False (默认): audios/Champions/英雄/皮肤/类型/...
+# True: audios/类型/Champions/英雄/皮肤/...""",
+            "short": "b",
         },
         "INCLUDE_NAME": {"type": "list", "help": "名称过滤条件，例如 map11, Aatrox", "short": "n"},
         "INCLUDE_CATEGORY": {"type": "list", "help": "分类过滤条件，例如 maps, characters", "short": "c"},
@@ -61,6 +72,11 @@ class Config(metaclass=Singleton):
             "short": "f",
         },
     }
+
+    AUDIO_TYPE_VO = "VO"
+    AUDIO_TYPE_SFX = "SFX"
+    AUDIO_TYPE_MUSIC = "MUSIC"
+    KNOWN_AUDIO_TYPES = {AUDIO_TYPE_VO, AUDIO_TYPE_SFX, AUDIO_TYPE_MUSIC}
 
     def __init__(
         self,
@@ -114,6 +130,8 @@ class Config(metaclass=Singleton):
 
         # 验证必须的参数
         self._validate_required()
+
+        self._derived_variables()
 
     def __str__(self):
         """提供配置实例的字符串表示，用于调试和测试"""
@@ -172,6 +190,8 @@ class Config(metaclass=Singleton):
 
         # 验证必须的参数
         self._validate_required()
+
+        self._derived_variables()
 
         logger.debug(f"配置重新加载完成，共 {len(self.settings)} 项")
 
@@ -306,10 +326,16 @@ class Config(metaclass=Singleton):
         self.set("AUDIO_PATH", audio_path, source="derived")
         paths_to_create.append(audio_path)
 
-        # 缓存目录, 解包生成的一些文件会放在这里, 可以删除
+        # 缓存目录, 解包生成的一些文件会放在这里, 启动时会自动清理
         temp_path = out_path / "temps"
         self.set("TEMP_PATH", temp_path, source="derived")
-        paths_to_create.append(temp_path)
+        try:
+            if temp_path.exists():
+                logger.trace(f"清理临时目录: {temp_path}")
+                shutil.rmtree(temp_path)
+            temp_path.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            logger.warning(f"处理临时目录失败: {temp_path} - {str(e)}")
 
         # 日志目录, 一些文件解析错误不会关闭程序而是记录在日志中
         log_path = out_path / "logs"
@@ -320,6 +346,11 @@ class Config(metaclass=Singleton):
         hash_path = out_path / "hashes"
         self.set("HASH_PATH", hash_path, source="derived")
         paths_to_create.append(hash_path)
+
+        # 报告目录, 存放所有解包报告
+        report_path = out_path / "reports"
+        self.set("REPORT_PATH", report_path, source="derived")
+        paths_to_create.append(report_path)
 
         # 有关于游戏内的数据文件
         manifest_path = out_path / "manifest"
@@ -358,6 +389,12 @@ class Config(metaclass=Singleton):
             if isinstance(value, Path) or (isinstance(value, str) and ("PATH" in key or "DIR" in key)):
                 source = self.sources.get(key, "unknown")
                 logger.debug(f"  - {key} = {value} (来源: {source})")
+
+    # 处理派生变量
+    def _derived_variables(self):
+        """处理派生变量"""
+        self.EXCLUDE_TYPE = [t.upper() for t in self.EXCLUDE_TYPE if t]
+        self.INCLUDE_TYPE = [t for t in self.KNOWN_AUDIO_TYPES if t not in self.EXCLUDE_TYPE]
 
     def __getattr__(self, name):
         """
@@ -500,7 +537,8 @@ class ConfigProxy:
         # 如果尚未创建实例，则使用默认或预设的参数创建
         if self._real_config is None:
             logger.debug(
-                f"ConfigProxy: 首次访问时自动创建Config实例，使用预设参数 env_path={self._default_env_path}, dev_mode={self._default_dev_mode}"
+                f"ConfigProxy: 首次访问时自动创建Config实例，使用预设参数 env_path={self._default_env_path}, "
+                f"dev_mode={self._default_dev_mode}"
             )
             self._real_config = Config(
                 env_path=self._default_env_path, env_prefix=self._default_env_prefix, dev_mode=self._default_dev_mode

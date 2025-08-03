@@ -5,14 +5,14 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/23 6:11
-# @Update  : 2025/7/23 16:22
+# @Update  : 2025/7/30 7:55
 # @Detail  : 
 
 
 """
 测试配置模块
 
-测试lol_audio_unpack.Utils.config模块的功能
+测试lol_audio_unpack.u.config模块的功能
 """
 
 import os
@@ -20,12 +20,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 # 添加项目根目录到Python路径
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.lol_audio_unpack.Utils.common import Singleton
-from src.lol_audio_unpack.Utils.config import Config, ConfigProxy, config
+from src.lol_audio_unpack.utils.common import Singleton
+from src.lol_audio_unpack.utils.config import Config, ConfigProxy, config
 
 
 class TestConfig(unittest.TestCase):
@@ -98,7 +99,7 @@ class TestConfig(unittest.TestCase):
         self.assertIs(config1, config2, "Config应该是单例模式")
 
         # 导入全局实例
-        from src.lol_audio_unpack.Utils.config import config as global_config
+        from src.lol_audio_unpack.utils.config import config as global_config
 
         # 打印两个实例的内存地址进行调试
         print(f"config1 id: {id(config1)}")
@@ -337,7 +338,7 @@ class TestConfig(unittest.TestCase):
         Config.reset_instance()
 
         # 获取当前工作目录
-        from src.lol_audio_unpack.Utils.config import WORK_DIR
+        from src.lol_audio_unpack.utils.config import WORK_DIR
 
         try:
             # 在没有指定env_path时测试配置行为
@@ -352,6 +353,19 @@ class TestConfig(unittest.TestCase):
         finally:
             # 确保我们不会影响其他测试
             Config.reset_instance()
+
+    def test_singleton_pattern(self):
+        """测试单例模式是否生效"""
+        from src.lol_audio_unpack.utils.config import config as global_config
+
+        self.assertIs(config, global_config, "Config 实例应该是单例")
+
+    def test_work_dir_constant(self):
+        """测试 WORK_DIR 常量是否正确"""
+        from src.lol_audio_unpack.utils.config import WORK_DIR
+
+        self.assertIsInstance(WORK_DIR, Path)
+        self.assertTrue(str(WORK_DIR).endswith("lol_audio_unpack"))
 
 
 if __name__ == "__main__":
