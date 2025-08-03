@@ -11,7 +11,7 @@ dependencies = [
     "msgpack>=1.1.1",
     "ruamel-yaml>=0.18.14",
     "alive-progress>=3.3.0",
-    "league-tools>=1.1.0",
+    "league-tools",
 ]
 readme = "README.md"
 requires-python = ">= 3.13"
@@ -95,3 +95,6 @@ name = "testpypi"
 url = "https://test.pypi.org/simple/"
 publish-url = "https://test.pypi.org/legacy/"
 explicit = true
+
+[tool.uv.sources]
+league-tools = { path = "../league-tools", editable = true }
