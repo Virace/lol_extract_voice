@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:00
-# @Update  : 2025/7/30 8:32
+# @Update  : 2025/8/3 15:18
 # @Detail  : config.py
 
 
@@ -73,6 +73,11 @@ class Config(metaclass=Singleton):
         },
     }
 
+    AUDIO_TYPE_VO = "VO"
+    AUDIO_TYPE_SFX = "SFX"
+    AUDIO_TYPE_MUSIC = "MUSIC"
+    KNOWN_AUDIO_TYPES = {AUDIO_TYPE_VO, AUDIO_TYPE_SFX, AUDIO_TYPE_MUSIC}
+
     def __init__(
         self,
         env_path: StrPath | None = None,
@@ -125,6 +130,8 @@ class Config(metaclass=Singleton):
 
         # 验证必须的参数
         self._validate_required()
+
+        self._derived_variables()
 
     def __str__(self):
         """提供配置实例的字符串表示，用于调试和测试"""
@@ -183,6 +190,8 @@ class Config(metaclass=Singleton):
 
         # 验证必须的参数
         self._validate_required()
+
+        self._derived_variables()
 
         logger.debug(f"配置重新加载完成，共 {len(self.settings)} 项")
 
@@ -338,6 +347,11 @@ class Config(metaclass=Singleton):
         self.set("HASH_PATH", hash_path, source="derived")
         paths_to_create.append(hash_path)
 
+        # 报告目录, 存放所有解包报告
+        report_path = out_path / "reports"
+        self.set("REPORT_PATH", report_path, source="derived")
+        paths_to_create.append(report_path)
+
         # 有关于游戏内的数据文件
         manifest_path = out_path / "manifest"
         self.set("MANIFEST_PATH", manifest_path, source="derived")
@@ -375,6 +389,12 @@ class Config(metaclass=Singleton):
             if isinstance(value, Path) or (isinstance(value, str) and ("PATH" in key or "DIR" in key)):
                 source = self.sources.get(key, "unknown")
                 logger.debug(f"  - {key} = {value} (来源: {source})")
+
+    # 处理派生变量
+    def _derived_variables(self):
+        """处理派生变量"""
+        self.EXCLUDE_TYPE = [t.upper() for t in self.EXCLUDE_TYPE if t]
+        self.INCLUDE_TYPE = [t for t in self.KNOWN_AUDIO_TYPES if t not in self.EXCLUDE_TYPE]
 
     def __getattr__(self, name):
         """

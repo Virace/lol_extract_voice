@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:41
-# @Update  : 2025/8/3 9:18
+# @Update  : 2025/8/3 15:22
 # @Detail  : 数据读取器
 
 
@@ -23,11 +23,6 @@ class DataReader(metaclass=Singleton):
     """
     从合并后的数据文件读取游戏数据
     """
-
-    AUDIO_TYPE_VO = "VO"
-    AUDIO_TYPE_SFX = "SFX"
-    AUDIO_TYPE_MUSIC = "MUSIC"
-    KNOWN_AUDIO_TYPES = {AUDIO_TYPE_VO, AUDIO_TYPE_SFX, AUDIO_TYPE_MUSIC}
 
     CHECK_VERSION_DIFF = 2
 
@@ -134,14 +129,14 @@ class DataReader(metaclass=Singleton):
         """从分类字符串中识别出音频的大类（VO, SFX, MUSIC）"""
         category_upper = category.upper()
         if "ANNOUNCER" in category_upper or "_VO" in category_upper:
-            return self.AUDIO_TYPE_VO
+            return config.AUDIO_TYPE_VO
         if category_upper.startswith("MUS_") or "MUSIC" in category_upper:
-            return self.AUDIO_TYPE_MUSIC
+            return config.AUDIO_TYPE_MUSIC
         if "_SFX" in category_upper or category_upper == "INIT" or "HUD" in category_upper:
-            return self.AUDIO_TYPE_SFX
+            return config.AUDIO_TYPE_SFX
 
         self.unknown_categories.add(category)
-        return self.AUDIO_TYPE_SFX
+        return config.AUDIO_TYPE_SFX
 
     def get_languages(self) -> list[str]:
         """获取支持的语言列表"""
