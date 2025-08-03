@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/26 0:34
-# @Update  : 2025/8/3 15:21
+# @Update  : 2025/8/3 15:41
 # @Detail  : 项目命令行入口
 
 
@@ -17,13 +17,7 @@ from pathlib import Path
 from loguru import logger
 
 from . import BinUpdater, DataReader, DataUpdater, __version__, setup_app
-from .unpack import (
-    unpack_audio_all,
-    unpack_champion,
-    unpack_champions,
-    unpack_map_audio,
-    unpack_maps,
-)
+from .unpack import unpack_audio_all, unpack_champions, unpack_maps
 from .utils.config import config
 
 
