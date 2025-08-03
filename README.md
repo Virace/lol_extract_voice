@@ -1,21 +1,18 @@
-# lol_audio_unpack 
+# lol_audio_unpack
 ![](https://img.shields.io/badge/python-%3E%3D3.10-blue)
 
 一个极简、高效的英雄联盟音频提取工具。
 
 ---
 
-### **基于 v3-lite 分支**
-`v3-lite` 是一个追求**速度**和**纯粹性**的轻量级分支。它的核心目标是以最快的方式解包英雄相关的音频文件，不进行任何多余的分析和处理。
+### **主要功能**
 
--   **专注核心功能**: 仅包含英雄音频解包。
--   **原始数据**: 输出的音频文件名将保留其在游戏数据中的原始ID (`.wem`格式)，不会进行重命名或分类。
--   **不包含**:
-    -   地图、UI等非英雄音频的解包。
-    -   音频事件分析（如技能触发、台词分类等）。
-    -   内置的音频转码功能。
+-   **全面支持**: 能够提取**英雄**和**地图**的所有音频类型（`VO`语音, `SFX`音效, `MUSIC`音乐）。
+-   **不包含**: 游戏大厅内的英雄选择/禁用语音。
+-   **数据纯粹**: 输出的音频文件为原始的 `.wem` 格式，文件名保留其在游戏数据中的ID，不进行重命名或分类。
+-   **事件信息**: 数据更新时会包含音频事件信息，但目前解包功能**不支持**按事件对音频进行分类。
 
-对于需要完整事件分析和自动分类的用户，请关注主分支的开发。
+对于需要按事件分类或进行自动转码的用户，请关注后续版本或使用其他配套工具。
 
 ---
 
@@ -30,7 +27,7 @@
 
 
 ### 介绍
-提取联盟客户端中的英雄音频文件，专注于提供原始、未处理的音频数据。
+提取联盟客户端中的**英雄**和**地图**音频文件，专注于提供原始、未处理的音频数据。
 
 ### 使用方法
 1.  **克隆仓库**:
@@ -42,10 +39,8 @@
 2.  **安装依赖**:
     *   **方式一: 使用 `uv` (推荐)**
         ```bash
-        # 安装uv (如果尚未安装)
-        pip install uv
-        # 使用uv安装依赖和项目
-        uv pip install .
+        # uv 会自动创建虚拟环境
+        uv sync
         ```
     *   **方式二: 使用 `pip`**
         ```bash
@@ -60,45 +55,70 @@
 
     *   **方式一: 使用 `uv` (推荐)**
         ```bash
-        # 1. 更新数据 (首次运行或游戏更新后执行一次即可)
-        uv run unpack --update-data
+        # --- 数据更新 ---
+        # 首次运行或游戏更新后，需要更新数据
 
-        # 2. 解包音频
-        # 解包所有英雄 (使用默认4线程)
-        uv run unpack --all
+        # 更新所有数据 (英雄和地图)
+        uv run unpack --update
 
-        # 或，解包所有英雄 (使用8个线程)
-        uv run unpack --all --max-workers 8
+        # 或，只更新所有英雄的数据
+        uv run unpack --update-champions
 
-        # 或，解包指定ID的英雄 (例如，解包英雄ID为555的派克)
-        uv run unpack --hero-id 555
+        # 或，只更新指定ID的英雄 (例如：1,103,555)
+        uv run unpack --update-champions 1,103,555
+        
+        # 或，只更新所有地图的数据
+        uv run unpack --update-maps
 
-        # 3. 精确更新数据 (v3新功能)
-        # 只更新指定英雄的数据
-        uv run unpack --update-data --champions 1,103,555
+        # 或，只更新指定ID的地图 (例如：11,12)
+        uv run unpack --update-maps 11,12
 
-        # 只更新指定地图的数据
-        uv run unpack --update-data --maps 11,12
+        # 快速更新模式 (跳过事件数据处理，大幅提升速度)
+        uv run unpack --update --skip-events
 
-        # 同时更新指定英雄和地图
-        uv run unpack --update-data --champions 1,103 --maps 11
+        # --- 音频解包 ---
+        # 解包所有音频 (英雄和地图)，使用默认4线程
+        uv run unpack --extract
+
+        # 或，使用8个线程解包所有音频
+        uv run unpack --extract --max-workers 8
+
+        # 或，只解包所有英雄的音频
+        uv run unpack --extract-champions
+
+        # 或，只解包指定ID的英雄
+        uv run unpack --extract-champions 555,222
+        
+        # 或，只解包所有地图的音频
+        uv run unpack --extract-maps
+        
+        # 或，只解包指定ID的地图
+        uv run unpack --extract-maps 11,12
+
+        # update和extract可以一起使用
+        uv run unpack --update --extract --skip-events
         ```
 
     *   **方式二: 使用 `python -m` (传统方式)**
         ```bash
-        # 1. 更新数据
-        python -m lol_audio_unpack --update-data
+        # --- 数据更新 ---
+        python -m lol_audio_unpack --update
+        python -m lol_audio_unpack --update-champions 1,103,555
+        python -m lol_audio_unpack --update-maps 11,12
+        python -m lol_audio_unpack --update --skip-events
 
-        # 2. 解包音频
-        python -m lol_audio_unpack --all
-        python -m lol_audio_unpack --all --max-workers 8
-        python -m lol_audio_unpack --hero-id 555
-
-        # 3. 精确更新数据
-        python -m lol_audio_unpack --update-data --champions 1,103,555
-        python -m lol_audio_unpack --update-data --maps 11,12
-        python -m lol_audio_unpack --update-data --champions 1,103 --maps 11
+        # --- 音频解包 ---
+        python -m lol_audio_unpack --extract
+        python -m lol_audio_unpack --extract-champions 555
+        python -m lol_audio_unpack --extract-maps 11
         ```
+    
+    ##### 注意：在单独更新地图数据时候，如果使用了下列命令，则去重失效
+    ```
+    # 地图去重依赖于地图ID为0的Common数据，所以如果想正确处理地图数据，建议无论你单独处理哪个地图数据都带上 "0"
+    lol_audio_unpack --update-maps 11,12
+    ```
+    
 
 #### 配置文件
 项目将从根目录下的 `.lol.env` 文件加载配置。如果存在 `.lol.env.dev` 文件，则会优先加载后者（开发模式）。
@@ -115,9 +135,9 @@ LOL_GAME_REGION='zh_CN'
 # 数据输出目录
 LOL_OUTPUT_PATH=''
 
-# 包含的音频类型 (VO: 语音, SFX: 特效, MUSIC: 音乐), 使用英文逗号分割
-# 注意：当前解包逻辑主要针对 VO 类型，其他类型可能无法正确解包
-LOL_INCLUDE_TYPE='VO'
+# 排除的音频类型 (VO: 语音, SFX: 特效, MUSIC: 音乐), 使用英文逗号
+分割, 留空则全部解包
+LOL_EXCLUDE_TYPE='SFX,MUSIC'
 ```
 
 ### 设计哲学
@@ -174,6 +194,7 @@ LOL_INCLUDE_TYPE='VO'
 - [@CommunityDragon](https://github.com/CommunityDragon/CDTB), **CDTB**
 - [@vgmstream](https://github.com/vgmstream/vgmstream), **vgmstream**
 - 以及**JetBrains**提供开发环境支持
+
   <a href="https://www.jetbrains.com/?from=kratos-pe" target="_blank"><img src="https://cdn.jsdelivr.net/gh/virace/kratos-pe@main/jetbrains.svg"></a>
 
 ### 许可证
