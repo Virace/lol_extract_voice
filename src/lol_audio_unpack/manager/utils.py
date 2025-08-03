@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:38
-# @Update  : 2025/8/2 21:53
+# @Update  : 2025/8/3 0:01
 # @Detail  : Manager模块的通用函数
 
 
@@ -206,45 +206,3 @@ def needs_update(base_path: Path, current_version: str, force_update: bool) -> b
         return False
 
     return True
-
-
-class ProgressTracker:
-    """
-    进度跟踪器，用于记录和显示处理进度
-    """
-
-    def __init__(self, total: int, description: str, log_interval: int = 10):
-        """
-        初始化进度跟踪器
-
-        :param total: 总项目数
-        :param description: 进度描述
-        :param log_interval: 日志记录间隔
-        """
-        self.total = total
-        self.current = 0
-        self.description = description
-        self.log_interval = log_interval
-        self.start_time = datetime.now()
-        logger.info(f"开始{description}，总计 {total} 项")
-
-    def update(self, increment: int = 1) -> None:
-        """
-        更新进度
-
-        :param increment: 增量，默认为1
-        """
-        self.current += increment
-        if self.current % self.log_interval == 0 or self.current == self.total:
-            elapsed = (datetime.now() - self.start_time).total_seconds()
-            percentage = (self.current / self.total) * 100
-            logger.info(
-                f"{self.description}进度: {self.current}/{self.total} ({percentage:.1f}%)，已用时 {elapsed:.1f}秒"
-            )
-
-    def finish(self) -> None:
-        """
-        完成进度跟踪，显示最终结果
-        """
-        elapsed = (datetime.now() - self.start_time).total_seconds()
-        logger.success(f"{self.description}完成，共 {self.current}/{self.total} 项，用时 {elapsed:.1f}秒")
