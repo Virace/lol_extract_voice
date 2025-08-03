@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/23 12:27
-# @Update  : 2025/8/2 11:00
+# @Update  : 2025/8/3 15:20
 # @Detail  : 解包音频
 
 
@@ -23,6 +23,8 @@ from loguru import logger
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.utils.common import sanitize_filename
 from lol_audio_unpack.utils.config import config
+from lol_audio_unpack.utils.logging import performance_monitor
+from lol_audio_unpack.utils.stats import FileProcessResult, ProcessingStatsContext
 
 # todo: ID6, 厄加特, 6009, 西部魔影 厄加特, ASSETS/Sounds/Wwise2016/SFX/Characters/Urgot/Skins/Skin09/Urgot_Skin09_VO_audio.bnk, 该文件在根WAD
 # todo: ID62, 孙悟空，62007, 战斗学院 孙悟空, ASSETS/Sounds/Wwise2016/SFX/Characters/MonkeyKing/Skins/Skin07/MonkeyKing_Skin07_VO_audio.bnk, 该文件在根WAD
@@ -82,7 +84,7 @@ class AudioEntityData:
         return full_path if full_path.exists() else None
 
     @classmethod
-    def from_champion(cls, champion_id: int, reader) -> "AudioEntityData":
+    def from_champion(cls, champion_id: int, reader: DataReader) -> "AudioEntityData":
         """从英雄数据创建AudioEntityData实例
 
         :param champion_id: 英雄ID
@@ -149,7 +151,7 @@ class AudioEntityData:
         )
 
     @classmethod
-    def from_map(cls, map_id: int, reader) -> "AudioEntityData":
+    def from_map(cls, map_id: int, reader: DataReader) -> "AudioEntityData":
         """从地图数据创建AudioEntityData实例
 
         :param map_id: 地图ID
@@ -199,6 +201,8 @@ class AudioEntityData:
         )
 
 
+@logger.catch
+@performance_monitor(level="DEBUG")
 def unpack_audio_entity(entity_data: AudioEntityData, reader: DataReader) -> None:
     """通用音频解包函数，支持英雄和地图数据
 
@@ -207,248 +211,268 @@ def unpack_audio_entity(entity_data: AudioEntityData, reader: DataReader) -> Non
     :raises ValueError: 当实体数据无效时
     """
     language = config.GAME_REGION  # 决定解包哪种语言的音频
-    logger.info(f"开始解包{entity_data.entity_type}ID {entity_data.entity_id} 的音频文件，语言: {language}")
 
-    # 从配置中读取要排除的音频类型，去除空白并转大写统一格式
-    excluded_types = {t.strip().upper() for t in config.EXCLUDE_TYPE if t.strip()}
-    logger.info(
-        f"将要解包的音频类型 (已排除: {excluded_types if excluded_types else '无'}): "
-        f"{[t for t in [reader.AUDIO_TYPE_VO, reader.AUDIO_TYPE_SFX, reader.AUDIO_TYPE_MUSIC] if t not in excluded_types]}"
-    )
+    # 使用统计上下文管理器，自动处理统计的开始和结束
+    stats_context = ProcessingStatsContext(entity_data, language, config.INCLUDE_TYPE, config.EXCLUDE_TYPE)
+    with stats_context as stats:
+        logger.info(f"解包 {entity_data.entity_name} (ID:{entity_data.entity_id})")
 
-    logger.info(
-        f"{entity_data.entity_type}信息: ID={entity_data.entity_id}, 别名={entity_data.entity_alias}, 名称={entity_data.entity_name}"
-    )
+        # --- 阶段 1: 收集所有需要解包的音频文件路径 ---
+        logger.debug("阶段 1: 收集所有需要解包的音频文件路径...")
 
-    # --- 阶段 1: 收集所有需要解包的音频文件路径 ---
-    logger.info("阶段 1: 收集所有需要解包的音频文件路径...")
+        # VO（语音）文件通常存储在特定语言的WAD文件中
+        vo_paths_to_extract = set()
+        vo_path_to_sub_info_map = {}
+        # SFX（音效）和Music（音乐）文件通常存储在根WAD文件中
+        other_paths_to_extract = set()
+        other_path_to_sub_info_map = {}
 
-    # VO（语音）文件通常存储在特定语言的WAD文件中
-    vo_paths_to_extract = set()
-    vo_path_to_sub_info_map = {}
-    # SFX（音效）和Music（音乐）文件通常存储在根WAD文件中
-    other_paths_to_extract = set()
-    other_path_to_sub_info_map = {}
+        # 统计子实体信息
+        stats.total_sub_entities = len(entity_data.sub_entities)
 
-    # 直接遍历实体的所有子实体（皮肤或地图）
-    for sub_id, sub_data in entity_data.sub_entities.items():
-        sub_info = entity_data.get_sub_entity_info(sub_id)
-        if not sub_info:
-            logger.warning(f"子实体ID {sub_id} 信息不完整，跳过处理")
-            continue
-
-        sub_name = sub_info["name"]
-        sub_id_int = sub_info["id"]
-
-        # 遍历该子实体的所有音频类别（如VO、SFX等）
-        for category, banks_list in sub_data["categories"].items():
-            # 通过类别名称判断音频类型（VO/SFX/MUSIC）
-            audio_type = reader.get_audio_type(category)
-
-            if audio_type in excluded_types:
+        # 直接遍历实体的所有子实体（皮肤或地图）
+        for sub_id, sub_data in entity_data.sub_entities.items():
+            sub_info = entity_data.get_sub_entity_info(sub_id)
+            if not sub_info:
+                logger.warning(f"子实体ID {sub_id} 信息不完整，跳过处理")
+                stats.record_sub_entity_skipped(sub_id, "信息不完整")
                 continue
 
-            # 创建包含子实体信息和音频类型的字典，用于后续文件组织
-            sub_info_with_type = {"id": sub_id_int, "name": sub_name, "type": audio_type}
+            stats.processed_sub_entities += 1
+            sub_name = sub_info["name"]
+            sub_id_int = sub_info["id"]
 
-            # 根据音频类型分别处理，VO文件和其他类型文件存储在不同WAD中
-            if audio_type == reader.AUDIO_TYPE_VO:
-                for bank in banks_list:  # banks_list是合集列表
-                    for path in bank:  # 每个合集包含多个文件路径
-                        vo_paths_to_extract.add(path)
-                        vo_path_to_sub_info_map[path] = sub_info_with_type
-            else:  # SFX 和 MUSIC
-                for bank in banks_list:  # banks_list是合集列表
-                    for path in bank:  # 每个合集包含多个文件路径
-                        other_paths_to_extract.add(path)
-                        other_path_to_sub_info_map[path] = sub_info_with_type
+            # 遍历该子实体的所有音频类别（如VO、SFX等）
+            for category, banks_list in sub_data["categories"].items():
+                # 通过类别名称判断音频类型（VO/SFX/MUSIC）
+                audio_type = reader.get_audio_type(category)
 
-    # 检查是否收集到了任何需要处理的音频文件
-    if not vo_paths_to_extract and not other_paths_to_extract:
-        logger.warning(
-            f"{entity_data.entity_type} '{entity_data.entity_name}' 未找到任何需要解包的音频文件 (检查排除类型配置)。"
-        )
-        return
-
-    # --- 阶段 2: 根据不同WAD文件，批量解包 ---
-    logger.info("阶段 2: 开始批量解包WAD文件...")
-    path_to_raw_data_map = {}
-
-    # 2.1 从特定语言的WAD文件中解包VO（语音）文件
-    lang_wad_path = entity_data.get_wad_path("VO")
-    if lang_wad_path and vo_paths_to_extract:
-        vo_path_list = list(vo_paths_to_extract)  # 无需排序（WAD.extract保证顺序）
-        try:
-            logger.info(f"正在从 {lang_wad_path.name} 解包 {len(vo_path_list)} 个VO文件...")
-            file_raws = WAD(lang_wad_path).extract(vo_path_list, raw=True)
-            path_to_raw_data_map.update(zip(vo_path_list, file_raws, strict=False))
-        except Exception as e:
-            logger.error(f"解包语言WAD文件 '{lang_wad_path.name}' 时出错: {e}")
-            logger.debug(traceback.format_exc())
-    elif vo_paths_to_extract:
-        logger.warning("语言WAD文件不存在，跳过VO解包。")
-
-    # 2.2 从根WAD文件中解包SFX（音效）和Music（音乐）文件
-    root_wad_path = entity_data.get_wad_path("SFX")
-    if root_wad_path and other_paths_to_extract:
-        other_path_list = list(other_paths_to_extract)  # 无需排序（WAD.extract保证顺序）
-        try:
-            logger.info(f"正在从 {root_wad_path.name} 解包 {len(other_path_list)} 个SFX/Music文件...")
-            file_raws = WAD(root_wad_path).extract(other_path_list, raw=True)
-            path_to_raw_data_map.update(zip(other_path_list, file_raws, strict=False))
-        except Exception as e:
-            logger.error(f"解包根WAD文件 '{root_wad_path.name}' 时出错: {e}")
-            logger.debug(traceback.format_exc())
-    elif other_paths_to_extract:
-        logger.warning("根WAD文件不存在，跳过SFX/Music解包。")
-
-    # --- 阶段 3: 组装最终数据 ---
-    logger.info("阶段 3: 组装并处理最终数据...")
-    path_to_sub_info_map = {**vo_path_to_sub_info_map, **other_path_to_sub_info_map}
-    unpacked_audio_data = {}
-    raw_data_to_path_map = {}  # 创建反向映射：原始数据到文件路径
-
-    for path, raw_data in path_to_raw_data_map.items():
-        raw_data_to_path_map[id(raw_data)] = path
-        sub_info = path_to_sub_info_map.get(path)
-        if not sub_info:
-            continue
-
-        sub_id = sub_info["id"]
-        if sub_id not in unpacked_audio_data:
-            unpacked_audio_data[sub_id] = {"name": sub_info["name"], "files": []}
-
-        # 创建文件信息字典，包含文件扩展名、原始数据和音频类型
-        file_info = {
-            "suffix": Path(path).suffix,  # 文件扩展名（如.bnk, .wpk）
-            "raw": raw_data,  # 文件的原始二进制数据
-            "type": sub_info["type"],  # 音频类型（VO/SFX/MUSIC）
-            "source_path": path,  # 源路径信息
-        }
-        unpacked_audio_data[sub_id]["files"].append(file_info)
-
-    logger.success(f"所有子实体的音频文件解包完成，共 {len(unpacked_audio_data)} 个子实体。开始处理解包后的文件...")
-
-    # --- 阶段 4: 保存解包后的文件 ---
-    for sub_id, sub_data in unpacked_audio_data.items():
-        sub_name = sub_data["name"]
-        files = sub_data["files"]
-        sub_id_str = str(sub_id)
-
-        # 按音频类型对文件进行分组，方便后续按类型创建不同目录
-        files_by_type = {}
-        for file_info in files:
-            audio_type = file_info["type"]
-            if audio_type not in files_by_type:
-                files_by_type[audio_type] = []
-            files_by_type[audio_type].append(file_info)
-
-        # 遍历每种音频类型的文件组
-        for audio_type, files_in_type in files_by_type.items():
-            output_path = generate_output_path(entity_data, sub_id_str, audio_type)
-            output_path.mkdir(parents=True, exist_ok=True)
-            wad_file_used = entity_data.get_wad_path(audio_type)
-            wad_file_name = wad_file_used.name if wad_file_used else "无WAD文件"
-
-            logger.info(
-                f"正在处理子实体 '{sub_name}' (ID: {sub_id}, 类型: {audio_type}) | "
-                f"实体: {entity_data.entity_type} '{entity_data.entity_name}' (ID: {entity_data.entity_id}) | "
-                f"WAD: {wad_file_name} | 工作目录: {output_path}"
-            )
-
-            # 初始化统计计数器
-            success_count, container_skipped_count, subfile_skipped_count, error_count = 0, 0, 0, 0
-            empty_containers = []  # 收集空容器的路径信息用于调试
-            failed_files = []  # 收集处理失败的文件信息
-            for file_info in files_in_type:
-                file_size = len(file_info["raw"]) if file_info["raw"] else 0
-
-                logger.debug(f"  - 类型: {file_info['suffix']}, 大小: {file_size} 字节")
-
-                if file_size == 0:
-                    container_skipped_count += 1
-                    # 记录空容器的来源信息
-                    source_path = file_info.get("source_path", "未知路径")
-                    empty_containers.append(source_path)
+                if audio_type in config.EXCLUDE_TYPE:
                     continue
 
-                if file_info["suffix"] == ".bnk":
-                    try:
-                        bnk = BNK(file_info["raw"])
-                        for file in bnk.extract_files():
-                            if not file.data:
-                                logger.warning(f"BNK, 文件 {file.id} 没有数据，跳过保存")
-                                subfile_skipped_count += 1
-                                continue
+                # 创建包含子实体信息和音频类型的字典，用于后续文件组织
+                sub_info_with_type = {"id": sub_id_int, "name": sub_name, "type": audio_type}
 
-                            file.save_file(output_path / f"{file.id}.wem")
-                            logger.trace(f"BNK, 已解包 {file.id} 文件")
-                            success_count += 1
-                    except Exception as e:
-                        source_path = file_info.get("source_path", "未知路径")
-                        logger.warning(f"处理BNK文件失败: {e} | 文件路径: {source_path}")
-                        failed_files.append({"path": source_path, "error": str(e), "type": "BNK"})
-                        error_count += 1
-                elif file_info["suffix"] == ".wpk":
-                    try:
-                        wpk = WPK(file_info["raw"])
-                        for file in wpk.extract_files():
-                            file.save_file(output_path / f"{file.filename}")
-                            logger.trace(f"WPK, 已解包 {file.filename} 文件")
-                            success_count += 1
-                    except Exception as e:
-                        source_path = file_info.get("source_path", "未知路径")
-                        logger.warning(f"处理WPK文件失败: {e} | 文件路径: {source_path}")
-                        failed_files.append({"path": source_path, "error": str(e), "type": "WPK"})
-                        error_count += 1
-                else:
-                    # 如果遇到未知的文件类型，记录警告和文件路径
-                    source_path = file_info.get("source_path", "未知路径")
-                    logger.warning(f"未知的文件类型: {file_info['suffix']} | 文件路径: {source_path}")
-                    failed_files.append(
-                        {"path": source_path, "error": f"未知文件类型: {file_info['suffix']}", "type": "UNKNOWN"}
-                    )
-                    error_count += 1
+                # 根据音频类型分别处理，VO文件和其他类型文件存储在不同WAD中
+                if audio_type == config.AUDIO_TYPE_VO:
+                    for bank in banks_list:  # banks_list是合集列表
+                        for path in bank:  # 每个合集包含多个文件路径
+                            vo_paths_to_extract.add(path)
+                            vo_path_to_sub_info_map[path] = sub_info_with_type
+                else:  # SFX 和 MUSIC
+                    for bank in banks_list:  # banks_list是合集列表
+                        for path in bank:  # 每个合集包含多个文件路径
+                            other_paths_to_extract.add(path)
+                            other_path_to_sub_info_map[path] = sub_info_with_type
 
-            # 构建处理结果的汇总消息
-            summary_message = (
-                f"子实体 '{sub_name}' (ID: {sub_id}, 类型: {audio_type}) 处理完成 | "
-                f"实体: {entity_data.entity_type} '{entity_data.entity_name}' (ID: {entity_data.entity_id}) | "
-                f"WAD: {wad_file_name} | 结果: 成功 {success_count} 个"
+        # 记录阶段1的统计信息
+        stats.vo_paths_count = len(vo_paths_to_extract)
+        stats.sfx_music_paths_count = len(other_paths_to_extract)
+
+        # 检查是否收集到了任何需要处理的音频文件
+        if not vo_paths_to_extract and not other_paths_to_extract:
+            logger.warning(
+                f"{entity_data.entity_type} '{entity_data.entity_name}' 未找到任何需要解包的音频文件 (检查排除类型配置)。"
             )
+            return
 
-            # 收集需要报告的详细信息
-            details = []
+        # --- 阶段 2: 根据不同WAD文件，批量解包 ---
+        logger.debug("阶段 2: 开始批量解包WAD文件...")
+        path_to_raw_data_map = {}
 
-            if subfile_skipped_count > 0:
-                details.append(f"跳过空子文件 {subfile_skipped_count} 个")
+        # 2.1 从特定语言的WAD文件中解包VO（语音）文件
+        lang_wad_path = entity_data.get_wad_path("VO")
+        if lang_wad_path and vo_paths_to_extract:
+            vo_path_list = list(vo_paths_to_extract)  # 无需排序（WAD.extract保证顺序）
+            try:
+                logger.debug(f"正在从 {lang_wad_path.name} 解包 {len(vo_path_list)} 个VO文件...")
+                file_raws = WAD(lang_wad_path).extract(vo_path_list, raw=True)
+                path_to_raw_data_map.update(zip(vo_path_list, file_raws, strict=False))
+                # 记录VO WAD解包成功统计
+                stats.set_wad_info("VO", lang_wad_path, len(vo_path_list), len(file_raws))
+            except Exception as e:
+                logger.error(f"解包语言WAD文件 '{lang_wad_path.name}' 时出错: {e}")
+                logger.debug(traceback.format_exc())
+                # 记录VO WAD解包失败统计
+                stats.set_wad_info("VO", lang_wad_path, len(vo_path_list), 0, str(e))
+        elif vo_paths_to_extract:
+            logger.warning("语言WAD文件不存在，跳过VO解包。")
+            # 记录WAD不存在的情况
+            stats.set_wad_info("VO", None, len(vo_paths_to_extract), 0, "WAD文件不存在")
 
-            if container_skipped_count > 0:
-                details.append(f"跳过空容器 {container_skipped_count} 个")
-                if empty_containers:
-                    logger.debug(f"空容器路径: {empty_containers}")
+        # 2.2 从根WAD文件中解包SFX（音效）和Music（音乐）文件
+        root_wad_path = entity_data.get_wad_path("SFX")
+        if root_wad_path and other_paths_to_extract:
+            other_path_list = list(other_paths_to_extract)  # 无需排序（WAD.extract保证顺序）
+            try:
+                logger.debug(f"正在从 {root_wad_path.name} 解包 {len(other_path_list)} 个SFX/Music文件...")
+                file_raws = WAD(root_wad_path).extract(other_path_list, raw=True)
+                path_to_raw_data_map.update(zip(other_path_list, file_raws, strict=False))
+                # 记录SFX/Music WAD解包成功统计
+                stats.set_wad_info("ROOT", root_wad_path, len(other_path_list), len(file_raws))
+            except Exception as e:
+                logger.error(f"解包根WAD文件 '{root_wad_path.name}' 时出错: {e}")
+                logger.debug(traceback.format_exc())
+                # 记录SFX/Music WAD解包失败统计
+                stats.set_wad_info("ROOT", root_wad_path, len(other_path_list), 0, str(e))
+        elif other_paths_to_extract:
+            logger.warning("根WAD文件不存在，跳过SFX/Music解包。")
+            # 记录WAD不存在的情况
+            stats.set_wad_info("ROOT", None, len(other_paths_to_extract), 0, "WAD文件不存在")
 
-            if error_count > 0:
-                details.append(f"处理失败 {error_count} 个")
-                if failed_files:
-                    logger.debug("失败文件详情:")
-                    for failed_file in failed_files:
-                        logger.debug(
-                            f"  - 类型: {failed_file['type']}, 错误: {failed_file['error']}, 路径: {failed_file['path']}"
+        # --- 阶段 3: 组装最终数据 ---
+        logger.debug("阶段 3: 组装并处理最终数据...")
+        path_to_sub_info_map = {**vo_path_to_sub_info_map, **other_path_to_sub_info_map}
+        unpacked_audio_data = {}
+        raw_data_to_path_map = {}  # 创建反向映射：原始数据到文件路径
+
+        for path, raw_data in path_to_raw_data_map.items():
+            raw_data_to_path_map[id(raw_data)] = path
+            sub_info = path_to_sub_info_map.get(path)
+            if not sub_info:
+                continue
+
+            sub_id = sub_info["id"]
+            if sub_id not in unpacked_audio_data:
+                unpacked_audio_data[sub_id] = {"name": sub_info["name"], "files": []}
+
+            # 创建文件信息字典，包含文件扩展名、原始数据和音频类型
+            file_info = {
+                "suffix": Path(path).suffix,  # 文件扩展名（如.bnk, .wpk）
+                "raw": raw_data,  # 文件的原始二进制数据
+                "type": sub_info["type"],  # 音频类型（VO/SFX/MUSIC）
+                "source_path": path,  # 源路径信息
+            }
+            unpacked_audio_data[sub_id]["files"].append(file_info)
+
+        # 记录阶段3的统计信息
+        total_assembled_files = sum(len(sub_data["files"]) for sub_data in unpacked_audio_data.values())
+        stats.record_assembly_stats(len(unpacked_audio_data), total_assembled_files)
+
+        logger.debug(f"音频文件解包完成，共 {len(unpacked_audio_data)} 个子实体")
+
+        # --- 阶段 4: 保存解包后的文件 ---
+        for sub_id, sub_data in unpacked_audio_data.items():
+            sub_name = sub_data["name"]
+            files = sub_data["files"]
+            sub_id_str = str(sub_id)
+
+            # 按音频类型对文件进行分组，方便后续按类型创建不同目录
+            files_by_type = {}
+            for file_info in files:
+                audio_type = file_info["type"]
+                if audio_type not in files_by_type:
+                    files_by_type[audio_type] = []
+                files_by_type[audio_type].append(file_info)
+
+            # 遍历每种音频类型的文件组
+            for audio_type, files_in_type in files_by_type.items():
+                output_path = generate_output_path(entity_data, sub_id_str, audio_type)
+                output_path.mkdir(parents=True, exist_ok=True)
+
+                logger.debug(f"处理 {sub_name} ({audio_type}) - {len(files_in_type)} 个文件")
+
+                for file_info in files_in_type:
+                    file_size = len(file_info["raw"]) if file_info["raw"] else 0
+                    source_path = file_info.get("source_path", "未知路径")
+
+                    logger.trace(f"  - 类型: {file_info['suffix']}, 大小: {file_size} 字节")
+
+                    if file_size == 0:
+                        # 记录空容器统计
+                        stats.record_file_result(
+                            sub_id, sub_name, audio_type, FileProcessResult.EMPTY_CONTAINER, source_path=source_path
+                        )
+                        continue
+
+                    if file_info["suffix"] == ".bnk":
+                        try:
+                            bnk = BNK(file_info["raw"])
+                            for file in bnk.extract_files():
+                                if not file.data:
+                                    logger.warning(f"BNK, 文件 {file.id} 没有数据，跳过保存")
+                                    # 记录空子文件统计
+                                    stats.record_file_result(
+                                        sub_id, sub_name, audio_type, FileProcessResult.EMPTY_SUBFILE
+                                    )
+                                    continue
+
+                                file.save_file(output_path / f"{file.id}.wem")
+                                # 记录成功统计
+                                stats.record_file_result(sub_id, sub_name, audio_type, FileProcessResult.SUCCESS)
+                        except Exception as e:
+                            logger.warning(f"处理BNK文件失败: {e} | 文件路径: {source_path}")
+                            # 记录解析错误统计
+                            error_info = {"path": source_path, "error": str(e), "type": "BNK"}
+                            stats.record_file_result(
+                                sub_id, sub_name, audio_type, FileProcessResult.PARSE_ERROR, error_info=error_info
+                            )
+                    elif file_info["suffix"] == ".wpk":
+                        try:
+                            wpk = WPK(file_info["raw"])
+                            for file in wpk.extract_files():
+                                file.save_file(output_path / f"{file.filename}")
+                                # 记录成功统计
+                                stats.record_file_result(sub_id, sub_name, audio_type, FileProcessResult.SUCCESS)
+                        except Exception as e:
+                            logger.warning(f"处理WPK文件失败: {e} | 文件路径: {source_path}")
+                            # 记录解析错误统计
+                            error_info = {"path": source_path, "error": str(e), "type": "WPK"}
+                            stats.record_file_result(
+                                sub_id, sub_name, audio_type, FileProcessResult.PARSE_ERROR, error_info=error_info
+                            )
+                    else:
+                        # 如果遇到未知的文件类型，记录警告和文件路径
+                        logger.warning(f"未知的文件类型: {file_info['suffix']} | 文件路径: {source_path}")
+                        # 记录未知类型统计
+                        error_info = {
+                            "path": source_path,
+                            "error": f"未知文件类型: {file_info['suffix']}",
+                            "type": "UNKNOWN",
+                        }
+                        stats.record_file_result(
+                            sub_id, sub_name, audio_type, FileProcessResult.UNKNOWN_TYPE, error_info=error_info
                         )
 
-            # 如果有详细信息，将其添加到汇总消息中
-            if details:
-                summary_message += f" ({', '.join(details)})"
-            summary_message += "."
+    # === 统计结果处理 ===
+    # with语句块结束后，统计已经完成，现在处理结果
 
-            # 根据是否有错误或跳过的容器来决定日志级别
-            if error_count > 0 or container_skipped_count > 0:
-                # 如果有错误或跳过的容器，使用警告级别
-                logger.warning(summary_message)
-            else:
-                # 如果处理完全成功，使用成功级别
-                logger.success(summary_message)
+    # 输出简洁的汇总日志
+    summary = stats.get_simple_summary()
+
+    if stats.overall_result.value == "success":
+        logger.success(summary)
+    elif stats.overall_result.value == "warning":
+        logger.warning(summary)
+    else:
+        logger.error(summary)
+
+    # 如果有问题，输出失败文件的详细信息到调试日志
+    if stats.overall_result.value != "success":
+        for sub_stats in stats.sub_entity_stats.values():
+            if sub_stats.failed_file_details:
+                logger.debug(f"{sub_stats.name} 失败文件详情:")
+                for failed_file in sub_stats.failed_file_details:
+                    logger.debug(
+                        f"  - 类型: {failed_file.get('type', 'UNKNOWN')}, "
+                        f"错误: {failed_file.get('error', 'Unknown error')}, "
+                        f"路径: {failed_file.get('path', 'Unknown path')}"
+                    )
+
+            if sub_stats.empty_container_paths:
+                logger.debug(f"{sub_stats.name} 空容器路径: {sub_stats.empty_container_paths}")
+
+    # 保存简洁的YAML报告
+    try:
+        report_filename = f"{entity_data.entity_type}_{entity_data.entity_name}_{entity_data.entity_id}_report.yaml"
+        # 清理文件名中的非法字符
+        safe_filename = sanitize_filename(report_filename)
+        report_path = config.REPORT_PATH / safe_filename
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+
+        stats.save_concise_report_to_yaml(report_path)
+    except Exception as e:
+        logger.debug(f"保存报告文件失败: {e}")
 
 
 def _generate_relative_path(entity_data: AudioEntityData, sub_id: str) -> str:
@@ -658,7 +682,7 @@ def execute_unpack_tasks(tasks: list[tuple[str, int, str]], reader: DataReader, 
                 logger.debug(traceback.format_exc())
 
     end_time = time.time()
-    logger.success(f"全部 {' 和 '.join(summary_parts)} 解包完成，总耗时: {end_time - start_time:.2f} 秒。")
+    logger.success(f"解包完成: {' 和 '.join(summary_parts)}，耗时 {end_time - start_time:.2f}s")
 
     # 在所有操作完成后，将收集到的未知分类写入文件
     reader.write_unknown_categories_to_file()
@@ -683,13 +707,13 @@ def unpack_audio_all(
     if include_champions:
         champion_tasks = generate_champion_tasks(reader, None)
         tasks.extend(champion_tasks)
-        logger.info(f"已添加 {len(champion_tasks)} 个英雄解包任务")
+        logger.debug(f"已添加 {len(champion_tasks)} 个英雄解包任务")
 
     # 生成地图任务
     if include_maps:
         map_tasks = generate_map_tasks(reader, None)
         tasks.extend(map_tasks)
-        logger.info(f"已添加 {len(map_tasks)} 个地图解包任务")
+        logger.debug(f"已添加 {len(map_tasks)} 个地图解包任务")
 
     if not tasks:
         logger.warning("没有找到任何需要解包的实体")

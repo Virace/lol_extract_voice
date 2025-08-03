@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/26 0:34
-# @Update  : 2025/8/1 6:05
+# @Update  : 2025/8/3 15:21
 # @Detail  : 项目命令行入口
 
 
@@ -250,6 +250,13 @@ def execute_extract_operations(args: argparse.Namespace) -> None:
 
     logger.info("加载数据读取器...")
     reader = DataReader()
+
+    # 输出全局音频配置信息
+    logger.info(
+        f"音频类型配置 - 包含: {config.INCLUDE_TYPE}{f', 排除: {list(config.EXCLUDE_TYPE)}' if config.EXCLUDE_TYPE else ''}"
+    )
+    logger.info(f"输出路径: {config.OUTPUT_PATH}")
+    logger.info(f"语言: {config.GAME_REGION}")
 
     if args.extract:
         logger.info("开始解包所有音频（英雄和地图）...")
