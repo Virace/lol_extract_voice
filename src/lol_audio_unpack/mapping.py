@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/8/4 8:00
-# @Update  : 2025/8/4 14:21
+# @Update  : 2025/8/5 8:04
 # @Detail  : 音频文件映射
 
 
@@ -29,13 +29,17 @@ from lol_audio_unpack.utils.logging import performance_monitor
 @logger.catch
 @performance_monitor(level="DEBUG")
 def build_audio_event_mapping(
-    entity_data: AudioEntityData, reader: DataReader, wwiser_manager: WwiserManager | None = None
+    entity_data: AudioEntityData,
+    reader: DataReader,
+    wwiser_manager: WwiserManager | None = None,
+    integrate_data: bool = False,
 ) -> dict[str, Any]:
     """构建音频事件映射，使用AudioEntityData统一接口
 
     :param entity_data: 包含事件数据的音频实体数据
     :param reader: 数据读取器实例
     :param wwiser_manager: Wwiser管理器实例，None时会创建新实例
+    :param integrate_data: 是否生成整合数据（包含完整实体信息、banks和mapping数据）
     :returns: 包含映射结果的字典，格式类似events数据但包含文件ID映射
     :raises ValueError: 当实体数据无效或缺少事件数据时
     """
@@ -62,11 +66,7 @@ def build_audio_event_mapping(
     mapping_save_dir.mkdir(parents=True, exist_ok=True)
 
     # 准备结果数据结构，参考 bin_updater 的 _create_base_data 实现
-    base_data = create_metadata_object(reader.version, [])  # 映射文件不需要语言信息
-
-    # 移除 languages 字段（映射文件不需要）
-    if "metadata" in base_data and "languages" in base_data["metadata"]:
-        del base_data["metadata"]["languages"]
+    base_data = create_metadata_object(reader.version, reader.get_languages())  # 映射文件不需要语言信息
 
     # 添加实体特定信息
     if entity_data.entity_type == "champion":
@@ -191,62 +191,216 @@ def build_audio_event_mapping(
         else:
             logger.debug(f"子实体 {sub_id} 无有效映射数据，跳过保存")
 
-    # 保存映射结果到文件
-    if mapping_result[mapping_data_key]:
-        mapping_file_base = mapping_save_dir / entity_data.entity_id
-        write_data(mapping_result, mapping_file_base)
-        logger.success(f"映射结果已保存: {mapping_file_base}")
-    else:
-        logger.warning(f"{entity_data.entity_name} 没有找到任何有效映射数据")
+    # 如果需要整合数据，则进行数据整合处理
+    if integrate_data:
+        integrated_result = integrate_entity_data(entity_data, reader, mapping_result)
 
-    logger.success(f"完成 {entity_data.entity_name} 的事件映射构建")
-    return mapping_result
+        # 保存整合数据到文件
+        if integrated_result and integrated_result.get("data", {}).get(
+            "skins" if entity_data.entity_type == "champion" else "map"
+        ):
+            integration_save_dir = (
+                version_hash_dir / "integrated" / ("champions" if entity_data.entity_type == "champion" else "maps")
+            )
+            integration_save_dir.mkdir(parents=True, exist_ok=True)
+            integration_file_base = integration_save_dir / entity_data.entity_id
+            write_data(integrated_result, integration_file_base)
+            logger.success(f"整合数据已保存: {integration_file_base}")
+
+        logger.success(f"完成 {entity_data.entity_name} 的整合数据构建")
+        return integrated_result
+    else:
+        # 移除 languages 字段（映射文件不需要）
+        if "metadata" in mapping_result and "languages" in mapping_result["metadata"]:
+            del mapping_result["metadata"]["languages"]
+        # 保存映射结果到文件
+        if mapping_result[mapping_data_key]:
+            mapping_file_base = mapping_save_dir / entity_data.entity_id
+            write_data(mapping_result, mapping_file_base)
+            logger.success(f"映射结果已保存: {mapping_file_base}")
+        else:
+            logger.warning(f"{entity_data.entity_name} 没有找到任何有效映射数据")
+
+        logger.success(f"完成 {entity_data.entity_name} 的事件映射构建")
+        return mapping_result
+
+
+def integrate_entity_data(
+    entity_data: AudioEntityData, reader: DataReader, mapping_result: dict[str, Any]
+) -> dict[str, Any]:
+    """整合实体数据，将banks、events和mapping数据合并到完整的实体数据结构中
+
+    :param entity_data: 音频实体数据
+    :param reader: 数据读取器实例
+    :param mapping_result: 映射结果数据
+    :returns: 整合后的完整实体数据
+    """
+    logger.info(f"开始整合 {entity_data.entity_name} 的数据")
+
+    # 获取实体的完整数据
+    if entity_data.entity_type == "champion":
+        entity_info = reader.get_champion(int(entity_data.entity_id))
+        banks_data = reader.get_champion_banks(int(entity_data.entity_id))
+        data_key = "skins"
+    else:  # map
+        entity_info = reader.get_map(int(entity_data.entity_id))
+        banks_data = reader.get_map_banks(int(entity_data.entity_id))
+        data_key = "map"
+
+    if not entity_info or not banks_data:
+        logger.warning(f"无法获取 {entity_data.entity_name} 的完整数据信息")
+        return {}
+
+    # 创建基础整合数据结构，只有metadata和data两个根键
+    integrated_data = {"metadata": mapping_result.get("metadata", {}), "data": {}}
+
+    # 添加wad信息
+    wad_info = {"root": entity_data.wad_root}
+    if entity_data.wad_language:
+        wad_info["language"] = entity_data.wad_language
+
+    # 添加实体特定信息到data字段下
+    if entity_data.entity_type == "champion":
+        integrated_data["data"].update(
+            {
+                "championId": entity_data.entity_id,
+                "alias": entity_data.entity_alias,
+                "id": entity_info["id"],
+                "names": entity_info.get("names", {}),
+                "titles": entity_info.get("titles", {}),
+                "descriptions": entity_info.get("descriptions", {}),
+                "wad": wad_info,
+                "skins": [],
+            }
+        )
+        skins_list = entity_info.get("skins", [])
+    else:  # map
+        integrated_data["data"].update(
+            {
+                "mapId": entity_data.entity_id,
+                "name": entity_data.entity_alias,
+                "id": entity_info["id"],
+                "names": entity_info.get("names", {}),
+                "descriptions": entity_info.get("descriptions", {}),
+                "wad": wad_info,
+                "map": {},
+            }
+        )
+        # 地图数据结构不同，直接处理单个地图
+        skins_list = [{"id": int(entity_data.entity_id)}]
+
+    # 获取mapping结果中的数据
+    mapping_data = mapping_result.get(data_key, {})
+
+    # 处理每个皮肤/地图
+    processed_skins = []
+    for skin_info in skins_list:
+        skin_id = str(skin_info["id"])
+
+        # 检查该皮肤是否在mapping结果中（只保留有事件数据的皮肤）
+        if skin_id not in mapping_data:
+            logger.debug(f"皮肤/地图 {skin_id} 没有事件数据，跳过")
+            continue
+
+        # 构建皮肤的整合数据，按照指定顺序：id -> isBase -> skinNames -> binPath -> events
+        skin_integrated = {"id": skin_info["id"]}
+
+        # 添加皮肤特定信息
+        if entity_data.entity_type == "champion":
+            skin_integrated.update(
+                {
+                    "isBase": skin_info.get("isBase", False),
+                    "skinNames": skin_info.get("skinNames", {}),
+                    "binPath": skin_info.get("binPath", ""),
+                }
+            )
+
+        # 最后添加events字段
+        skin_integrated["events"] = {}
+
+        # 获取banks数据和mapping数据
+        skin_banks = (
+            banks_data.get("skins", {}).get(skin_id, {})
+            if entity_data.entity_type == "champion"
+            else banks_data.get("banks", {})
+        )
+        skin_mapping = mapping_data.get(skin_id, {}).get("events", {})
+
+        # 处理每个音频类别
+        for category in skin_mapping.keys():
+            banks_paths = skin_banks.get(category, [])
+            mapping_events = skin_mapping.get(category, {})
+
+            if banks_paths and mapping_events:
+                skin_integrated["events"][category] = {"banks": banks_paths, "mapping": mapping_events}
+
+        # 只添加有事件数据的皮肤
+        if skin_integrated["events"]:
+            processed_skins.append(skin_integrated)
+            logger.debug(f"皮肤/地图 {skin_id} 整合完成，包含 {len(skin_integrated['events'])} 个音频类别")
+
+    # 保存处理后的皮肤数据到data字段下
+    if entity_data.entity_type == "champion":
+        integrated_data["data"]["skins"] = processed_skins
+    elif processed_skins:
+        # 地图只有一个，直接保存到map字段
+        integrated_data["data"]["map"] = processed_skins[0]
+
+    logger.success(f"整合完成，{entity_data.entity_name} 包含 {len(processed_skins)} 个有效皮肤/地图数据")
+    return integrated_data
 
 
 def build_champion_mapping(
-    champion_id: int, reader: DataReader, wwiser_manager: WwiserManager | None = None
+    champion_id: int, reader: DataReader, wwiser_manager: WwiserManager | None = None, integrate_data: bool = False
 ) -> dict[str, Any]:
     """构建英雄事件映射的便捷函数
 
     :param champion_id: 英雄ID
     :param reader: 数据读取器实例
     :param wwiser_manager: Wwiser管理器实例，None时会创建新实例
+    :param integrate_data: 是否生成整合数据
     :returns: 英雄事件映射结果
     """
     try:
         # 创建包含事件数据的AudioEntityData实例
         entity_data = AudioEntityData.from_champion(champion_id, reader, include_events=True)
         # 构建映射
-        return build_audio_event_mapping(entity_data, reader, wwiser_manager)
+        return build_audio_event_mapping(entity_data, reader, wwiser_manager, integrate_data)
     except ValueError as e:
         logger.error(str(e))
         return {}
 
 
-def build_map_mapping(map_id: int, reader: DataReader, wwiser_manager: WwiserManager | None = None) -> dict[str, Any]:
+def build_map_mapping(
+    map_id: int, reader: DataReader, wwiser_manager: WwiserManager | None = None, integrate_data: bool = False
+) -> dict[str, Any]:
     """构建地图事件映射的便捷函数
 
     :param map_id: 地图ID
     :param reader: 数据读取器实例
     :param wwiser_manager: Wwiser管理器实例，None时会创建新实例
+    :param integrate_data: 是否生成整合数据
     :returns: 地图事件映射结果
     """
     try:
         # 创建包含事件数据的AudioEntityData实例
         entity_data = AudioEntityData.from_map(map_id, reader, include_events=True)
         # 构建映射
-        return build_audio_event_mapping(entity_data, reader, wwiser_manager)
+        return build_audio_event_mapping(entity_data, reader, wwiser_manager, integrate_data)
     except ValueError as e:
         logger.error(str(e))
         return {}
 
 
-def execute_mapping_tasks(tasks: list[tuple[str, int, str]], reader: DataReader, max_workers: int = 4) -> None:
+def execute_mapping_tasks(
+    tasks: list[tuple[str, int, str]], reader: DataReader, max_workers: int = 4, integrate_data: bool = False
+) -> None:
     """执行映射任务集
 
     :param tasks: 任务元组列表 [("entity_type", id, description), ...]
     :param reader: 数据读取器
     :param max_workers: 最大工作线程数
+    :param integrate_data: 是否生成整合数据
     """
     if not tasks:
         logger.warning("没有任何任务需要执行")
@@ -276,9 +430,9 @@ def execute_mapping_tasks(tasks: list[tuple[str, int, str]], reader: DataReader,
     def build_entity_mapping(entity_type: str, entity_id: int) -> None:
         """构建单个实体映射的辅助函数"""
         if entity_type == "champion":
-            build_champion_mapping(entity_id, reader, wwiser_manager)
+            build_champion_mapping(entity_id, reader, wwiser_manager, integrate_data)
         elif entity_type == "map":
-            build_map_mapping(entity_id, reader, wwiser_manager)
+            build_map_mapping(entity_id, reader, wwiser_manager, integrate_data)
         else:
             raise ValueError(f"未知的实体类型: {entity_type}")
 
@@ -318,7 +472,11 @@ def execute_mapping_tasks(tasks: list[tuple[str, int, str]], reader: DataReader,
 
 
 def build_mapping_all(
-    reader: DataReader, max_workers: int = 4, include_champions: bool = True, include_maps: bool = True
+    reader: DataReader,
+    max_workers: int = 4,
+    include_champions: bool = True,
+    include_maps: bool = True,
+    integrate_data: bool = False,
 ) -> None:
     """使用线程池并发构建所有实体的事件映射
 
@@ -326,6 +484,7 @@ def build_mapping_all(
     :param max_workers: 使用的最大线程数 (1: 单线程, >1: 多线程)
     :param include_champions: 是否包含英雄映射
     :param include_maps: 是否包含地图映射
+    :param integrate_data: 是否生成整合数据
     """
     tasks = []
 
@@ -346,31 +505,37 @@ def build_mapping_all(
         return
 
     # 执行任务
-    execute_mapping_tasks(tasks, reader, max_workers)
+    execute_mapping_tasks(tasks, reader, max_workers, integrate_data)
 
 
-def build_champions_mapping(reader: DataReader, champion_ids: list[int], max_workers: int = 4) -> None:
+def build_champions_mapping(
+    reader: DataReader, champion_ids: list[int], max_workers: int = 4, integrate_data: bool = False
+) -> None:
     """便捷函数：构建指定英雄的事件映射
 
     :param reader: 数据读取器
     :param champion_ids: 英雄ID列表
     :param max_workers: 最大工作线程数
+    :param integrate_data: 是否生成整合数据
     :raises ValueError: 当指定的ID不存在时
     """
     tasks = generate_champion_tasks(reader, champion_ids)
-    execute_mapping_tasks(tasks, reader, max_workers)
+    execute_mapping_tasks(tasks, reader, max_workers, integrate_data)
 
 
-def build_maps_mapping(reader: DataReader, map_ids: list[int], max_workers: int = 4) -> None:
+def build_maps_mapping(
+    reader: DataReader, map_ids: list[int], max_workers: int = 4, integrate_data: bool = False
+) -> None:
     """便捷函数：构建指定地图的事件映射
 
     :param reader: 数据读取器
     :param map_ids: 地图ID列表
     :param max_workers: 最大工作线程数
+    :param integrate_data: 是否生成整合数据
     :raises ValueError: 当指定的ID不存在时
     """
     tasks = generate_map_tasks(reader, map_ids)
-    execute_mapping_tasks(tasks, reader, max_workers)
+    execute_mapping_tasks(tasks, reader, max_workers, integrate_data)
 
 
 def main():
