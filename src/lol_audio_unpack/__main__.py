@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/26 0:34
-# @Update  : 2025/8/3 15:41
+# @Update  : 2025/8/5 7:57
 # @Detail  : 项目命令行入口
 
 
@@ -17,6 +17,7 @@ from pathlib import Path
 from loguru import logger
 
 from . import BinUpdater, DataReader, DataUpdater, __version__, setup_app
+from .mapping import build_champions_mapping, build_mapping_all, build_maps_mapping
 from .unpack import unpack_audio_all, unpack_champions, unpack_maps
 from .utils.config import config
 
@@ -27,7 +28,7 @@ def create_parser() -> argparse.ArgumentParser:
     :returns: 配置好的 ArgumentParser 实例
     """
     parser = argparse.ArgumentParser(
-        description="一个极简、高效的英雄联盟音频提取工具 (v3-lite)\n支持英雄和地图音频的更新与解包",
+        description="一个极简、高效的英雄联盟音频提取工具 (v3)\n支持英雄和地图音频的更新、解包与事件映射",
         formatter_class=argparse.RawTextHelpFormatter,
     )
 
@@ -84,6 +85,33 @@ def create_parser() -> argparse.ArgumentParser:
         help="解包地图音频。无参数时解包所有地图，有参数时解包指定ID（逗号分隔）。例如: --extract-maps 11,12",
     )
 
+    # 事件映射参数组
+    mapping_group = parser.add_argument_group("事件映射", "构建音频事件哈希映射")
+    mapping_group.add_argument(
+        "--mapping",
+        action="store_true",
+        help="构建所有实体的事件映射（英雄和地图）",
+    )
+    mapping_group.add_argument(
+        "--mapping-champions",
+        nargs="?",
+        const="all",
+        metavar="IDs",
+        help="构建英雄事件映射。无参数时构建所有英雄，有参数时构建指定ID（逗号分隔）。例如: --mapping-champions 103,222,1",
+    )
+    mapping_group.add_argument(
+        "--mapping-maps",
+        nargs="?",
+        const="all",
+        metavar="IDs",
+        help="构建地图事件映射。无参数时构建所有地图，有参数时构建指定ID（逗号分隔）。例如: --mapping-maps 11,12",
+    )
+    mapping_group.add_argument(
+        "--integrate-data",
+        action="store_true",
+        help="生成整合数据文件（包含完整实体信息、banks和mapping数据），需要与映射参数一起使用",
+    )
+
     # 通用配置参数
     parser.add_argument(
         "--max-workers",
@@ -135,17 +163,36 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
     # 检查是否提供了任何操作参数
     update_actions = [args.update, args.update_champions, args.update_maps]
     extract_actions = [args.extract, args.extract_champions, args.extract_maps]
+    mapping_actions = [args.mapping, args.mapping_champions, args.mapping_maps]
 
-    if not any(update_actions + extract_actions):
+    if not any(update_actions + extract_actions + mapping_actions):
         logger.error("错误：必须提供至少一个操作参数。")
         logger.info("更新数据: --update, --update-champions, --update-maps")
         logger.info("解包音频: --extract, --extract-champions, --extract-maps")
+        logger.info("事件映射: --mapping, --mapping-champions, --mapping-maps")
         parser.print_help()
         sys.exit(1)
 
-    # 如果同时指定了更新和解包操作，则先执行更新再执行解包
-    if any(update_actions) and any(extract_actions):
-        logger.info("检测到同时指定了更新和解包操作，将按顺序执行：先更新数据，再解包音频。")
+    # 如果同时指定了多个操作，则按顺序执行：更新 -> 解包 -> 映射
+    active_operations = []
+    if any(update_actions):
+        active_operations.append("更新数据")
+    if any(extract_actions):
+        active_operations.append("解包音频")
+    if any(mapping_actions):
+        active_operations.append("构建事件映射")
+
+    if len(active_operations) > 1:
+        logger.info(f"检测到同时指定了多个操作，将按顺序执行：{' -> '.join(active_operations)}。")
+
+    # 验证整合数据参数
+    if getattr(args, "integrate_data", False):
+        if not any(mapping_actions):
+            logger.error(
+                "错误：--integrate-data 参数只能与映射参数一起使用（--mapping, --mapping-champions, --mapping-maps）"
+            )
+            sys.exit(1)
+        logger.info("检测到 --integrate-data 参数，将生成整合数据文件")
 
 
 def initialize_app(args: argparse.Namespace) -> None:
@@ -287,6 +334,84 @@ def execute_extract_operations(args: argparse.Namespace) -> None:
     logger.success("音频解包完成！")
 
 
+def execute_mapping_operations(args: argparse.Namespace) -> None:
+    """执行事件映射操作
+
+    :param args: 解析后的命令行参数
+    """
+    mapping_actions = [args.mapping, args.mapping_champions, args.mapping_maps]
+    if not any(mapping_actions):
+        return
+
+    # 检查 WWISER_PATH 是否存在
+    if not config.WWISER_PATH or not Path(config.WWISER_PATH).exists():
+        current_work_dir = Path.cwd()
+        logger.error("错误：未找到有效的 Wwiser 工具路径 (WWISER_PATH)。")
+        logger.error(f"请在当前工作目录的 .lol.env 文件中配置 WWISER_PATH: {current_work_dir / '.lol.env'}")
+        logger.error("WWISER_PATH 应指向 wwiser.pyz 或 wwiser.exe 文件的完整路径。")
+        logger.error("您可以从 https://github.com/bnnm/wwiser/releases 下载 Wwiser 工具。")
+        sys.exit(1)
+
+    logger.info("加载数据读取器...")
+    reader = DataReader()
+
+    # 输出映射配置信息
+    logger.info(f"缓存路径: {config.CACHE_PATH}")
+    logger.info(f"哈希路径: {config.HASH_PATH}")
+    logger.info(f"Wwiser 路径: {config.WWISER_PATH}")
+    logger.info(f"语言: {config.GAME_REGION}")
+
+    # 检查是否启用整合数据
+    integrate_data = getattr(args, "integrate_data", False)
+    if integrate_data:
+        logger.info("启用整合数据功能，将生成包含完整实体信息的整合文件")
+
+    if args.mapping:
+        logger.info("开始构建所有实体的事件映射（英雄和地图）...")
+        build_mapping_all(reader=reader, max_workers=args.max_workers, integrate_data=integrate_data)
+    elif args.mapping_champions:
+        champion_ids = parse_ids(args.mapping_champions)
+        if champion_ids:
+            logger.info(f"开始构建指定英雄的事件映射：{champion_ids}")
+            try:
+                champion_ids_int = [int(cid) for cid in champion_ids]
+                build_champions_mapping(
+                    reader=reader,
+                    champion_ids=champion_ids_int,
+                    max_workers=args.max_workers,
+                    integrate_data=integrate_data,
+                )
+            except ValueError as e:
+                logger.error(f"构建英雄映射失败: {e}")
+            except Exception as e:
+                logger.error(f"构建英雄映射时出错: {e}")
+        else:
+            logger.info("开始构建所有英雄的事件映射...")
+            build_mapping_all(
+                reader=reader, max_workers=args.max_workers, include_maps=False, integrate_data=integrate_data
+            )
+    elif args.mapping_maps:
+        map_ids = parse_ids(args.mapping_maps)
+        if map_ids:
+            logger.info(f"开始构建指定地图的事件映射：{map_ids}")
+            try:
+                map_ids_int = [int(mid) for mid in map_ids]
+                build_maps_mapping(
+                    reader=reader, map_ids=map_ids_int, max_workers=args.max_workers, integrate_data=integrate_data
+                )
+            except ValueError as e:
+                logger.error(f"构建地图映射失败: {e}")
+            except Exception as e:
+                logger.error(f"构建地图映射时出错: {e}")
+        else:
+            logger.info("开始构建所有地图的事件映射...")
+            build_mapping_all(
+                reader=reader, max_workers=args.max_workers, include_champions=False, integrate_data=integrate_data
+            )
+
+    logger.success("事件映射构建完成！")
+
+
 def main():
     """主程序入口，协调处理命令行参数和执行相应操作"""
     try:
@@ -303,6 +428,7 @@ def main():
         # 4. 执行操作
         execute_update_operations(args)
         execute_extract_operations(args)
+        execute_mapping_operations(args)
 
     except KeyboardInterrupt:
         logger.warning("用户中断操作")

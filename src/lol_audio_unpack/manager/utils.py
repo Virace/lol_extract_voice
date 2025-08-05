@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:38
-# @Update  : 2025/8/3 0:01
+# @Update  : 2025/8/5 7:04
 # @Detail  : Manager模块的通用函数
 
 
@@ -167,6 +167,8 @@ def create_metadata_object(game_version: str, languages: list[str]) -> dict:
 
     metadata = {
         "gameVersion": game_version,
+        "scriptName": "lol-audio-unpack",
+        "scriptWebsite": "https://github.com/Virace/lol-audio-unpack",
         "scriptVersion": script_version,
         "schemaVersion": "1.0",
         "createdAt": datetime.now().isoformat(),

@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:00
-# @Update  : 2025/8/3 15:18
+# @Update  : 2025/8/4 14:18
 # @Detail  : config.py
 
 
@@ -62,15 +62,16 @@ class Config(metaclass=Singleton):
 # True: audios/类型/Champions/英雄/皮肤/...""",
             "short": "b",
         },
-        "INCLUDE_NAME": {"type": "list", "help": "名称过滤条件，例如 map11, Aatrox", "short": "n"},
-        "INCLUDE_CATEGORY": {"type": "list", "help": "分类过滤条件，例如 maps, characters", "short": "c"},
-        "VGMSTREAM_PATH": {"type": "path", "help": "VGMSTREAM 路径", "short": "v"},
-        "AUDIO_FORMATE": {
-            "type": "str",
-            "default": "wem",
-            "help": "输出音频格式，VGMSTREAM支持的转码格式，常见的wav、mp3、ogg等均支持",
-            "short": "f",
-        },
+        "WWISER_PATH": {"type": "path", "help": "Wwiser 路径", "short": "w"},
+        # "INCLUDE_NAME": {"type": "list", "help": "名称过滤条件，例如 map11, Aatrox", "short": "n"},
+        # "INCLUDE_CATEGORY": {"type": "list", "help": "分类过滤条件，例如 maps, characters", "short": "c"},
+        # "VGMSTREAM_PATH": {"type": "path", "help": "VGMSTREAM 路径", "short": "v"},
+        # "AUDIO_FORMATE": {
+        #     "type": "str",
+        #     "default": "wem",
+        #     "help": "输出音频格式，VGMSTREAM支持的转码格式，常见的wav、mp3、ogg等均支持",
+        #     "short": "f",
+        # },
     }
 
     AUDIO_TYPE_VO = "VO"
@@ -341,6 +342,11 @@ class Config(metaclass=Singleton):
         log_path = out_path / "logs"
         self.set("LOG_PATH", log_path, source="derived")
         paths_to_create.append(log_path)
+
+        # 缓存目录, 存放一些缓存文件
+        cache_path = out_path / "cache"
+        self.set("CACHE_PATH", cache_path, source="derived")
+        paths_to_create.append(cache_path)
 
         # 哈希目录, 存放所有与 k,v 相关数据
         hash_path = out_path / "hashes"

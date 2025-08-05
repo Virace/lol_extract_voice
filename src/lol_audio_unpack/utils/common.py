@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/5/6 1:19
-# @Update  : 2025/8/2 18:15
+# @Update  : 2025/8/4 8:58
 # @Detail  : 通用函数
 
 
@@ -22,7 +22,6 @@ from os import PathLike
 from pathlib import Path, PosixPath, WindowsPath
 
 import msgpack
-import requests
 from loguru import logger
 from ruamel.yaml import YAML
 
@@ -357,23 +356,6 @@ def list2dict(data, key):
     :return:
     """
     return {item[key]: item for item in data}
-
-
-def download_file(url: str, path: str | PathLike | Path) -> Path:
-    """
-    下载文件
-    :param url: 下载链接
-    :param path: 保存路径
-    :return:
-    """
-    path = Path(path)
-    r = requests.get(url, stream=True)
-    with open(path, "wb") as f:
-        for chunk in r.iter_content(chunk_size=1024):
-            if chunk:
-                f.write(chunk)
-                f.flush()
-    return path
 
 
 def replace(data: str, repl: dict[str, str]) -> str:
