@@ -5,11 +5,11 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2024/9/3 10:14
-# @Update  : 2025/8/2 16:05
+# @Update  : 2025/8/5 8:06
 # @Detail  : lol_audio_unpack
 
 
-__version__ = "3.0.0-lite"
+__version__ = "3.5.0.dev1+hash"
 
 import sys
 from pathlib import Path
