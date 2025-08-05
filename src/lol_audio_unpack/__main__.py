@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/26 0:34
-# @Update  : 2025/8/4 14:24
+# @Update  : 2025/8/5 7:57
 # @Detail  : 项目命令行入口
 
 
@@ -106,6 +106,11 @@ def create_parser() -> argparse.ArgumentParser:
         metavar="IDs",
         help="构建地图事件映射。无参数时构建所有地图，有参数时构建指定ID（逗号分隔）。例如: --mapping-maps 11,12",
     )
+    mapping_group.add_argument(
+        "--integrate-data",
+        action="store_true",
+        help="生成整合数据文件（包含完整实体信息、banks和mapping数据），需要与映射参数一起使用",
+    )
 
     # 通用配置参数
     parser.add_argument(
@@ -179,6 +184,15 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
 
     if len(active_operations) > 1:
         logger.info(f"检测到同时指定了多个操作，将按顺序执行：{' -> '.join(active_operations)}。")
+
+    # 验证整合数据参数
+    if getattr(args, "integrate_data", False):
+        if not any(mapping_actions):
+            logger.error(
+                "错误：--integrate-data 参数只能与映射参数一起使用（--mapping, --mapping-champions, --mapping-maps）"
+            )
+            sys.exit(1)
+        logger.info("检测到 --integrate-data 参数，将生成整合数据文件")
 
 
 def initialize_app(args: argparse.Namespace) -> None:
@@ -347,37 +361,53 @@ def execute_mapping_operations(args: argparse.Namespace) -> None:
     logger.info(f"Wwiser 路径: {config.WWISER_PATH}")
     logger.info(f"语言: {config.GAME_REGION}")
 
+    # 检查是否启用整合数据
+    integrate_data = getattr(args, "integrate_data", False)
+    if integrate_data:
+        logger.info("启用整合数据功能，将生成包含完整实体信息的整合文件")
+
     if args.mapping:
         logger.info("开始构建所有实体的事件映射（英雄和地图）...")
-        build_mapping_all(reader=reader, max_workers=args.max_workers)
+        build_mapping_all(reader=reader, max_workers=args.max_workers, integrate_data=integrate_data)
     elif args.mapping_champions:
         champion_ids = parse_ids(args.mapping_champions)
         if champion_ids:
             logger.info(f"开始构建指定英雄的事件映射：{champion_ids}")
             try:
                 champion_ids_int = [int(cid) for cid in champion_ids]
-                build_champions_mapping(reader=reader, champion_ids=champion_ids_int, max_workers=args.max_workers)
+                build_champions_mapping(
+                    reader=reader,
+                    champion_ids=champion_ids_int,
+                    max_workers=args.max_workers,
+                    integrate_data=integrate_data,
+                )
             except ValueError as e:
                 logger.error(f"构建英雄映射失败: {e}")
             except Exception as e:
                 logger.error(f"构建英雄映射时出错: {e}")
         else:
             logger.info("开始构建所有英雄的事件映射...")
-            build_mapping_all(reader=reader, max_workers=args.max_workers, include_maps=False)
+            build_mapping_all(
+                reader=reader, max_workers=args.max_workers, include_maps=False, integrate_data=integrate_data
+            )
     elif args.mapping_maps:
         map_ids = parse_ids(args.mapping_maps)
         if map_ids:
             logger.info(f"开始构建指定地图的事件映射：{map_ids}")
             try:
                 map_ids_int = [int(mid) for mid in map_ids]
-                build_maps_mapping(reader=reader, map_ids=map_ids_int, max_workers=args.max_workers)
+                build_maps_mapping(
+                    reader=reader, map_ids=map_ids_int, max_workers=args.max_workers, integrate_data=integrate_data
+                )
             except ValueError as e:
                 logger.error(f"构建地图映射失败: {e}")
             except Exception as e:
                 logger.error(f"构建地图映射时出错: {e}")
         else:
             logger.info("开始构建所有地图的事件映射...")
-            build_mapping_all(reader=reader, max_workers=args.max_workers, include_champions=False)
+            build_mapping_all(
+                reader=reader, max_workers=args.max_workers, include_champions=False, integrate_data=integrate_data
+            )
 
     logger.success("事件映射构建完成！")
 
