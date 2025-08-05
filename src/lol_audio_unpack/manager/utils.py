@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/30 7:38
-# @Update  : 2025/8/5 7:04
+# @Update  : 2025/8/6 5:56
 # @Detail  : Manager模块的通用函数
 
 
@@ -33,6 +33,36 @@ from lol_audio_unpack.utils.common import (
 from lol_audio_unpack.utils.config import config
 
 
+def find_data_file(path: Path) -> Path | None:
+    """
+    查找数据文件的实际路径。
+    如果路径包含后缀，则直接检查该文件。
+    如果路径不含后缀，则按优先级顺序查找第一个存在的文件。
+
+    开发模式下，优先使用人类可读的格式。
+
+    :param path: 文件路径（可带或不带后缀）
+    :return: 实际存在的文件路径，如果都不存在则返回None
+    """
+    files_to_check = []
+
+    # 1. 确定要检查的文件列表
+    if path.suffix:
+        # 如果指定了后缀，只检查这一个文件
+        files_to_check.append(path)
+    else:
+        # 如果未指定后缀，按优先级生成待检查文件列表
+        formats_priority = [".yml", ".json", ".msgpack"] if config.is_dev_mode() else [".msgpack", ".yml", ".json"]
+        files_to_check = [path.with_suffix(s) for s in formats_priority]
+
+    # 2. 返回第一个存在的文件
+    for file_to_try in files_to_check:
+        if file_to_try.exists():
+            return file_to_try
+
+    return None
+
+
 def read_data(path: Path) -> dict:
     """
     智能读取数据文件。
@@ -45,67 +75,64 @@ def read_data(path: Path) -> dict:
     :return: 读取的数据字典
     """
     start_time = time.time()
-    result = {}
-    files_to_check = []
 
-    # 1. 确定要检查的文件列表
-    if path.suffix:
-        # 如果指定了后缀，只检查这一个文件
-        files_to_check.append(path)
-    else:
-        # 如果未指定后缀，按优先级生成待检查文件列表
-        formats_priority = [".yml", ".json", ".msgpack"] if config.is_dev_mode() else [".msgpack", ".yml", ".json"]
-        files_to_check = [path.with_suffix(s) for s in formats_priority]
+    # 1. 查找实际存在的文件
+    actual_file = find_data_file(path)
 
     file_search_time = time.time()
     search_duration_ms = (file_search_time - start_time) * 1000
-    logger.trace(f"文件查找耗时: {format_duration(search_duration_ms)}, 候选文件: {[f.name for f in files_to_check]}")
+    logger.trace(f"文件查找耗时: {format_duration(search_duration_ms)}")
 
-    # 2. 遍历并加载第一个存在的文件
-    for file_to_try in files_to_check:
-        if not file_to_try.exists():
-            continue
-
-        suffix = file_to_try.suffix
-        loader = None
-        if suffix == ".json":
-            loader = load_json
-        elif suffix == ".msgpack":
-            loader = load_msgpack
-        elif suffix in [".yaml", ".yml"]:
-            loader = load_yaml
-
-        if loader:
-            file_size_mb = file_to_try.stat().st_size / (1024 * 1024)
-            logger.trace(f"找到数据文件: {file_to_try} (大小: {file_size_mb:.2f}MB, 格式: {suffix})")
-
-            try:
-                read_start_time = time.time()
-                result = loader(file_to_try)
-                read_end_time = time.time()
-
-                read_duration_ms = (read_end_time - read_start_time) * 1000
-                logger.trace(
-                    f"文件读取完成: {file_to_try.name} | 耗时: {format_duration(read_duration_ms)} | 读取速度: {file_size_mb / (read_duration_ms / 1000):.2f}MB/s"
-                )
-                break  # 成功加载后立即退出循环
-            except Exception as e:
-                logger.error(f"读取文件时出错: {file_to_try}, 错误: {e}")
-                # 如果一个文件损坏，可以继续尝试下一个
-                continue
+    # 2. 如果未找到文件，记录警告并返回空字典
+    if not actual_file:
+        if not path.suffix:
+            logger.warning(f"在 {path.parent} 未找到任何格式的数据文件 (base: {path.name})")
         else:
-            logger.error(f"不支持的文件格式: {suffix} (来自: {file_to_try})")
+            logger.warning(f"指定的数据文件不存在: {path}，将返回空字典")
 
-    # 3. 如果循环结束后仍未加载任何文件，记录警告
-    if not result and not path.suffix:
-        logger.warning(f"在 {path.parent} 未找到任何格式的数据文件 (base: {path.name})")
-    elif not result and path.suffix and not path.exists():
-        logger.warning(f"指定的数据文件不存在: {path}，将返回空字典")
+        total_time_ms = (time.time() - start_time) * 1000
+        logger.debug(f"read_data 总耗时: {format_duration(total_time_ms)}")
+        return {}
 
-    total_time_ms = (time.time() - start_time) * 1000
-    logger.debug(f"read_data 总耗时: {format_duration(total_time_ms)}")
+    # 3. 读取找到的文件
+    suffix = actual_file.suffix
+    loader = None
+    if suffix == ".json":
+        loader = load_json
+    elif suffix == ".msgpack":
+        loader = load_msgpack
+    elif suffix in [".yaml", ".yml"]:
+        loader = load_yaml
 
-    return result
+    if not loader:
+        logger.error(f"不支持的文件格式: {suffix} (来自: {actual_file})")
+        total_time_ms = (time.time() - start_time) * 1000
+        logger.debug(f"read_data 总耗时: {format_duration(total_time_ms)}")
+        return {}
+
+    # 4. 执行文件读取
+    file_size_mb = actual_file.stat().st_size / (1024 * 1024)
+    logger.trace(f"找到数据文件: {actual_file} (大小: {file_size_mb:.2f}MB, 格式: {suffix})")
+
+    try:
+        read_start_time = time.time()
+        result = loader(actual_file)
+        read_end_time = time.time()
+
+        read_duration_ms = (read_end_time - read_start_time) * 1000
+        logger.trace(
+            f"文件读取完成: {actual_file.name} | 耗时: {format_duration(read_duration_ms)} | 读取速度: {file_size_mb / (read_duration_ms / 1000):.2f}MB/s"
+        )
+
+        total_time_ms = (time.time() - start_time) * 1000
+        logger.debug(f"read_data 总耗时: {format_duration(total_time_ms)}")
+        return result
+
+    except Exception as e:
+        logger.error(f"读取文件时出错: {actual_file}, 错误: {e}")
+        total_time_ms = (time.time() - start_time) * 1000
+        logger.debug(f"read_data 总耗时: {format_duration(total_time_ms)}")
+        return {}
 
 
 def write_data(data: dict, base_path: Path) -> None:
@@ -193,11 +220,17 @@ def needs_update(base_path: Path, current_version: str, force_update: bool) -> b
     if force_update:
         return True
 
-    data = read_data(base_path)
-    if not data:
+    # 1. 首先检查文件是否存在，避免不必要的警告日志
+    actual_file = find_data_file(base_path)
+    if not actual_file:
         return True  # 文件不存在，需要更新
 
-    # 从 metadata 对象中获取版本信息
+    # 2. 文件存在，读取内容检查版本
+    data = read_data(base_path)
+    if not data:
+        return True  # 读取失败，需要更新
+
+    # 3. 从 metadata 对象中获取版本信息
     data_version = data.get("metadata", {}).get("gameVersion")
 
     if not data_version:
