@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:00
-# @Update  : 2025/8/4 14:18
+# @Update  : 2025/8/7 6:23
 # @Detail  : config.py
 
 
@@ -58,8 +58,8 @@ class Config(metaclass=Singleton):
             "type": "bool",
             "default": False,
             "help": """是否按音频类型对输出目录进行分组.
-# False (默认): audios/Champions/英雄/皮肤/类型/...
-# True: audios/类型/Champions/英雄/皮肤/...""",
+        # False (默认): audios/champions/英雄/皮肤/类型/...
+        # True: audios/类型/champions/英雄/皮肤/...""",
             "short": "b",
         },
         "WWISER_PATH": {"type": "path", "help": "Wwiser 路径", "short": "w"},
