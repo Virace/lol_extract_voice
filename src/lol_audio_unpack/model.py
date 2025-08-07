@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/8/4 13:03
-# @Update  : 2025/8/4 13:14
+# @Update  : 2025/8/7 11:00
 # @Detail  : 共用数据模型和工具函数
 
 
@@ -25,6 +25,7 @@ class AudioEntityData:
     :param entity_id: 实体ID（英雄ID或地图ID）
     :param entity_name: 实体名称（英雄名或地图名）
     :param entity_alias: 实体别名（英雄alias或地图mapStringId）
+    :param entity_title: 实体标题（英雄称号或地图描述）
     :param entity_type: 实体类型（"champion" 或 "map"）
     :param sub_entities: 子实体数据（皮肤数据或地图本身）
     :param wad_root: 根WAD文件路径（用于SFX/Music）
@@ -35,6 +36,7 @@ class AudioEntityData:
     entity_id: str
     entity_name: str
     entity_alias: str
+    entity_title: str
     entity_type: str  # "champion" | "map"
     sub_entities: dict[str, dict[str, Any]]
     wad_root: str
@@ -132,15 +134,20 @@ class AudioEntityData:
             champion_events = reader.get_champion_events(champion_id)
             events_data = champion_events.get("skins", {}) if champion_events else {}
 
-        # 安全化英雄名称
+        # 安全化英雄名称和标题
         champion_name_raw = champion.get("names", {}).get(language, champion.get("names", {}).get("default", ""))
         safe_champion_name = sanitize_filename(champion_name_raw)
         safe_champion_alias = sanitize_filename(champion.get("alias", "").lower())
+
+        # 获取英雄标题（称号）
+        champion_title_raw = champion.get("titles", {}).get(language, champion.get("titles", {}).get("default", ""))
+        safe_champion_title = sanitize_filename(champion_title_raw) if champion_title_raw else None
 
         return cls(
             entity_id=str(champion_id),
             entity_name=safe_champion_name,
             entity_alias=safe_champion_alias,
+            entity_title=safe_champion_title,
             entity_type="champion",
             sub_entities=sub_entities,
             wad_root=wad_root,
@@ -200,6 +207,7 @@ class AudioEntityData:
             entity_id=str(map_id),
             entity_name=safe_map_name,
             entity_alias=safe_map_alias,
+            entity_title=None,  # 地图暂时不使用 title
             entity_type="map",
             sub_entities=sub_entities,
             wad_root=wad_root,

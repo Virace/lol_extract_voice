@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/23 12:27
-# @Update  : 2025/8/7 6:55
+# @Update  : 2025/8/7 11:28
 # @Detail  : 解包音频
 
 
@@ -23,9 +23,12 @@ from lol_audio_unpack.model import AudioEntityData, generate_champion_tasks, gen
 from lol_audio_unpack.utils.common import sanitize_filename
 from lol_audio_unpack.utils.config import config
 from lol_audio_unpack.utils.logging import performance_monitor
+from lol_audio_unpack.utils.path_constants import (
+    format_entity_folder_name,
+    format_sub_entity_folder_name,
+    get_output_dir_name,
+)
 from lol_audio_unpack.utils.stats import FileProcessResult, ProcessingStatsContext
-
-from .utils.path_constants import get_output_dir_name
 
 # todo: ID6, 厄加特, 6009, 西部魔影 厄加特, ASSETS/Sounds/Wwise2016/SFX/Characters/Urgot/Skins/Skin09/Urgot_Skin09_VO_audio.bnk, 该文件在根WAD
 # todo: ID62, 孙悟空，62007, 战斗学院 孙悟空, ASSETS/Sounds/Wwise2016/SFX/Characters/MonkeyKing/Skins/Skin07/MonkeyKing_Skin07_VO_audio.bnk, 该文件在根WAD
@@ -322,12 +325,18 @@ def _generate_relative_path(entity_data: AudioEntityData, sub_id: str) -> str:
     # 使用统一的小写目录名
     entity_dir = get_output_dir_name(entity_data.entity_type)
 
+    # 使用统一的文件夹命名格式
+    entity_folder_name = format_entity_folder_name(
+        entity_data.entity_id, entity_data.entity_alias, entity_data.entity_name, entity_data.entity_title
+    )
+
     if entity_data.entity_type == "champion":
-        # champions\10·kayle·正义天使\10000·基础皮肤
-        return f"{entity_dir}\\{entity_data.entity_id}·{entity_data.entity_alias}·{entity_data.entity_name}\\{sub_id}·{sub_name}"
+        # champions\1·annie·黑暗之女·安妮\1000·基础皮肤
+        sub_folder_name = format_sub_entity_folder_name(sub_id, sub_name)
+        return f"{entity_dir}\\{entity_folder_name}\\{sub_folder_name}"
     else:  # map
         # maps\11·sr·召唤师峡谷
-        return f"{entity_dir}\\{entity_data.entity_id}·{entity_data.entity_alias}·{entity_data.entity_name}"
+        return f"{entity_dir}\\{entity_folder_name}"
 
 
 def generate_output_path(
@@ -336,8 +345,8 @@ def generate_output_path(
     """生成完整的输出路径
 
     根据 config.GROUP_BY_TYPE 配置决定目录结构：
-    - True: audios/VO/champions/10·kayle·正义天使/10000·基础皮肤
-    - False: audios/champions/10·kayle·正义天使/10000·基础皮肤/VO
+    - True: audios/VO/champions/1·annie·黑暗之女·安妮/1000·基础皮肤
+    - False: audios/champions/1·annie·黑暗之女·安妮/1000·基础皮肤/VO
 
     :param entity_data: 实体数据
     :param sub_id: 子实体ID（皮肤ID或地图ID）

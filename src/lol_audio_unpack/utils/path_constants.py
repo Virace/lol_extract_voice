@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/1/15 12:00
-# @Update  : 2025/8/7 6:48
+# @Update  : 2025/8/7 11:19
 # @Detail  : 路径常量统一管理
 
 
@@ -33,6 +33,9 @@ DIR_MAPS: Literal["maps"] = "maps"
 # === 游戏原始目录名称（保持游戏原始格式） ===
 GAME_DIR_CHAMPIONS: Literal["Champions"] = "Champions"
 GAME_DIR_MAPS: Literal["Maps"] = "Maps"
+
+# === 命名分隔符常量 ===
+ENTITY_NAME_SEPARATOR: Literal["·"] = "·"
 
 
 def get_output_dir_name(entity_type: str) -> str:
@@ -63,3 +66,35 @@ def get_game_dir_name(entity_type: str) -> str:
         return GAME_DIR_MAPS
     else:
         raise ValueError(f"未知的实体类型: {entity_type}")
+
+
+def format_entity_folder_name(
+    entity_id: str, entity_alias: str, entity_name: str, entity_title: str | None = None
+) -> str:
+    """格式化实体文件夹名称
+
+    生成格式：[ID]·[alias]·[name]·[title]（如果提供 title）
+    或：[ID]·[alias]·[name]（如果不提供 title）
+
+    :param entity_id: 实体ID
+    :param entity_alias: 实体别名
+    :param entity_name: 实体名称
+    :param entity_title: 实体标题（可选）
+    :returns: 格式化的文件夹名称
+    """
+    parts = [entity_id, entity_alias, entity_name]
+    if entity_title:
+        parts.append(entity_title)
+    return ENTITY_NAME_SEPARATOR.join(parts)
+
+
+def format_sub_entity_folder_name(sub_id: str, sub_name: str) -> str:
+    """格式化子实体文件夹名称（如皮肤）
+
+    生成格式：[sub_id]·[sub_name]
+
+    :param sub_id: 子实体ID
+    :param sub_name: 子实体名称
+    :returns: 格式化的文件夹名称
+    """
+    return ENTITY_NAME_SEPARATOR.join([sub_id, sub_name])
