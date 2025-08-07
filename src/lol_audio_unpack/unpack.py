@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/23 12:27
-# @Update  : 2025/8/4 13:14
+# @Update  : 2025/8/7 6:55
 # @Detail  : 解包音频
 
 
@@ -24,6 +24,8 @@ from lol_audio_unpack.utils.common import sanitize_filename
 from lol_audio_unpack.utils.config import config
 from lol_audio_unpack.utils.logging import performance_monitor
 from lol_audio_unpack.utils.stats import FileProcessResult, ProcessingStatsContext
+
+from .utils.path_constants import get_output_dir_name
 
 # todo: ID6, 厄加特, 6009, 西部魔影 厄加特, ASSETS/Sounds/Wwise2016/SFX/Characters/Urgot/Skins/Skin09/Urgot_Skin09_VO_audio.bnk, 该文件在根WAD
 # todo: ID62, 孙悟空，62007, 战斗学院 孙悟空, ASSETS/Sounds/Wwise2016/SFX/Characters/MonkeyKing/Skins/Skin07/MonkeyKing_Skin07_VO_audio.bnk, 该文件在根WAD
@@ -44,7 +46,9 @@ def unpack_audio_entity(entity_data: AudioEntityData, reader: DataReader) -> Non
         audio_path.mkdir(parents=True, exist_ok=True)
 
     # 使用统计上下文管理器，自动处理统计的开始和结束
-    stats_context = ProcessingStatsContext(entity_data, language, config.INCLUDE_TYPE, config.EXCLUDE_TYPE)
+    stats_context = ProcessingStatsContext(
+        entity_data, reader.version, language, config.INCLUDE_TYPE, config.EXCLUDE_TYPE
+    )
     with stats_context as stats:
         logger.info(f"解包 {entity_data.entity_name} (ID:{entity_data.entity_id})")
 
@@ -297,7 +301,9 @@ def unpack_audio_entity(entity_data: AudioEntityData, reader: DataReader) -> Non
     try:
         report_filename = f"_{entity_data.entity_id}_metadata.yaml"
 
-        report_path = config.REPORT_PATH / reader.version / entity_data.entity_type.capitalize() / report_filename
+        report_path = (
+            config.REPORT_PATH / reader.version / get_output_dir_name(entity_data.entity_type) / report_filename
+        )
         report_path.parent.mkdir(parents=True, exist_ok=True)
 
         stats.save_concise_report_to_yaml(report_path)
@@ -313,13 +319,15 @@ def _generate_relative_path(entity_data: AudioEntityData, sub_id: str) -> str:
     :returns: 相对路径字符串
     """
     sub_name = entity_data.sub_entities[sub_id]["name"]
+    # 使用统一的小写目录名
+    entity_dir = get_output_dir_name(entity_data.entity_type)
 
     if entity_data.entity_type == "champion":
-        # Champions\10·kayle·正义天使\10000·基础皮肤
-        return f"Champions\\{entity_data.entity_id}·{entity_data.entity_alias}·{entity_data.entity_name}\\{sub_id}·{sub_name}"
+        # champions\10·kayle·正义天使\10000·基础皮肤
+        return f"{entity_dir}\\{entity_data.entity_id}·{entity_data.entity_alias}·{entity_data.entity_name}\\{sub_id}·{sub_name}"
     else:  # map
-        # Maps\11·sr·召唤师峡谷
-        return f"Maps\\{entity_data.entity_id}·{entity_data.entity_alias}·{entity_data.entity_name}"
+        # maps\11·sr·召唤师峡谷
+        return f"{entity_dir}\\{entity_data.entity_id}·{entity_data.entity_alias}·{entity_data.entity_name}"
 
 
 def generate_output_path(
@@ -328,8 +336,8 @@ def generate_output_path(
     """生成完整的输出路径
 
     根据 config.GROUP_BY_TYPE 配置决定目录结构：
-    - True: audios/VO/Champions/10·kayle·正义天使/10000·基础皮肤
-    - False: audios/Champions/10·kayle·正义天使/10000·基础皮肤/VO
+    - True: audios/VO/champions/10·kayle·正义天使/10000·基础皮肤
+    - False: audios/champions/10·kayle·正义天使/10000·基础皮肤/VO
 
     :param entity_data: 实体数据
     :param sub_id: 子实体ID（皮肤ID或地图ID）

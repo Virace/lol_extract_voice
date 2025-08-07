@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/8/3 13:41
-# @Update  : 2025/8/3 15:24
+# @Update  : 2025/8/7 6:55
 # @Detail  : 音频解包统计系统
 
 
@@ -15,6 +15,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from ..manager.utils import create_metadata_object
 from .common import dump_yaml, format_duration
 
 
@@ -106,7 +107,9 @@ class EntityUnpackStats:
     entity_id: int
     entity_name: str
     entity_type: str  # "英雄" 或 "地图"
+    game_version: str  # 游戏版本号
     language: str
+    languages: list[str] = field(default_factory=list)  # 语言列表（用于元数据生成）
     included_types: list[str] = field(default_factory=list)
     excluded_types: set[str] = field(default_factory=set)
 
@@ -454,6 +457,8 @@ class EntityUnpackStats:
 
         :returns: 简洁清晰的报告字典
         """
+        metadata = create_metadata_object(self.game_version, self.languages)
+
         duration_ms = self.get_processing_duration()
 
         # 简洁的报告结构
@@ -536,7 +541,8 @@ class EntityUnpackStats:
 
             report["sub_entities"][sub_stats.name] = sub_entity_data
 
-        return report
+        metadata["report"] = report
+        return metadata
 
     def save_concise_report_to_yaml(self, file_path: Path) -> None:
         """保存简洁报告到YAML文件
@@ -554,17 +560,22 @@ class ProcessingStatsContext:
     不包含任何日志逻辑，只负责数据收集。
 
     :param entity_data: 实体数据
+    :param game_version: 游戏版本号
     :param language: 语言
     :param included_types: 包含的音频类型
     :param excluded_types: 排除的音频类型
     """
 
-    def __init__(self, entity_data, language: str, included_types: list[str], excluded_types: set[str]):
+    def __init__(
+        self, entity_data, game_version: str, language: str, included_types: list[str], excluded_types: set[str]
+    ):
         self.stats = EntityUnpackStats(
             entity_id=entity_data.entity_id,
             entity_name=entity_data.entity_name,
             entity_type=entity_data.entity_type,
+            game_version=game_version,
             language=language,
+            languages=[language],  # 目前只支持单语言，转换为列表格式
             included_types=included_types,
             excluded_types=excluded_types,
         )
