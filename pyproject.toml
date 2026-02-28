@@ -94,6 +94,9 @@ docstring-code-format = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "local_game: 依赖本地英雄联盟实体资源的完整功能测试",
+]
 
 [[tool.uv.index]]
 name = "testpypi"
