@@ -1,6 +1,6 @@
 [project]
 name = "lol-audio-unpack"
-version = "3.2.0"
+version = "3.2.1.dev0"
 description = "英雄联盟游戏音频文件解包工具"
 authors = [
     { name = "Virace", email = "Virace@aliyun.com" }
@@ -23,8 +23,13 @@ build-backend = "hatchling.build"
 
 [tool.uv]
 managed = true
-dev-dependencies = [
+default-groups = ["dev"]
+
+[dependency-groups]
+dev = [
     "memory-profiler>=0.61.0",
+    "pytest>=9.0.0",
+    "ruff>=0.13.0",
 ]
 
 [tool.hatch.metadata]
@@ -50,7 +55,6 @@ select = [
 ignore = [ "F401" ]
 
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
-per-file-ignores = {}
 
 # 排除目录部分保持不变
 exclude = [
@@ -87,6 +91,9 @@ max-complexity = 10
 
 [tool.ruff.format]
 docstring-code-format = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [[tool.uv.index]]
 name = "testpypi"

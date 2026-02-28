@@ -21,7 +21,7 @@ from league_tools.formats import BIN, StringHash, WAD
 from loguru import logger
 
 from lol_audio_unpack.Data.Manifest import GameData
-from lol_audio_unpack.Utils.common import (
+from lol_audio_unpack.utils.common import (
     EnhancedPath,
     capitalize_first_letter,
     de_duplication,
@@ -30,7 +30,7 @@ from lol_audio_unpack.Utils.common import (
     makedirs,
     tree,
 )
-from lol_audio_unpack.Utils.type_hints import StrPath
+from lol_audio_unpack.utils.type_hints import StrPath
 
 
 class HashManager:

@@ -18,7 +18,7 @@ from typing import Any
 from dotenv import load_dotenv
 from loguru import logger
 
-from lol_audio_unpack.Utils.type_hints import StrPath
+from lol_audio_unpack.utils.type_hints import StrPath
 
 ROOT_PATH = Path(__file__).resolve().parent.parent
 

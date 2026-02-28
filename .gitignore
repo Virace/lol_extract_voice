@@ -84,12 +84,15 @@ celerybeat-schedule
 # Environments
 .env
 .venv
+.venv-wsl/
+.uv-cache/
 env/
 venv/
 ENV/
 env.bak/
 venv.bak/
 .lol.env
+.lol.env.dev
 
 # Spyder project settings
 .spyderproject
@@ -117,6 +120,10 @@ test.py
 hashes.*.txt
 Temp
 .cursor/
+.ai_memory/
+packer/
+VERSIONING_GUIDE.md
+E:/
 
 
 !/params.json

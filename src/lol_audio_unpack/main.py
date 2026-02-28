@@ -19,10 +19,10 @@ from loguru import logger
 
 from lol_audio_unpack.Data.Manifest import compare_version
 from lol_audio_unpack.Hashes import HashManager
-from lol_audio_unpack.Utils.common import format_region, makedirs, capitalize_first_letter, check_time
-from lol_audio_unpack.Utils.config import config_instance
-from lol_audio_unpack.Utils.logs import log_result, task_done_callback
-from lol_audio_unpack.Utils.type_hints import StrPath
+from lol_audio_unpack.utils.common import format_region, makedirs, capitalize_first_letter, check_time
+from lol_audio_unpack.utils.config import config_instance
+from lol_audio_unpack.utils.logs import log_result, task_done_callback
+from lol_audio_unpack.utils.type_hints import StrPath
 
 HASH_MANAGER = HashManager(
     game_path=config_instance.GAME_PATH,

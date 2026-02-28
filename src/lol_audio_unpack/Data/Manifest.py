@@ -22,8 +22,8 @@ import requests
 from league_tools.formats import WAD
 from loguru import logger
 
-from lol_audio_unpack.Utils.common import Singleton, format_region
-from lol_audio_unpack.Utils.type_hints import StrPath
+from lol_audio_unpack.utils.common import Singleton, format_region
+from lol_audio_unpack.utils.type_hints import StrPath
 
 
 class GameDataUpdater:

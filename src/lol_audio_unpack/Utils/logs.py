@@ -14,7 +14,7 @@ from typing import Optional
 
 from loguru import logger
 
-from lol_audio_unpack.Utils.type_hints import StrPath
+from lol_audio_unpack.utils.type_hints import StrPath
 
 
 def log_result(fs, func_name, region: Optional[str] = "", log_path: StrPath = ""):
