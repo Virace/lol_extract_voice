@@ -9,6 +9,5 @@
 
 from pathlib import Path
 
-DICT_PATH = Path(__file__).parent / 'Dict'
-EXTRAS_PATH = DICT_PATH / 'Extras'
-
+DICT_PATH = Path(__file__).parent / "dict"
+EXTRAS_PATH = DICT_PATH / "extras"

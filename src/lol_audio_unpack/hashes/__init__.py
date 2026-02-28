@@ -10,4 +10,4 @@
 
 __all__ = ["HashManager"]
 
-from lol_audio_unpack.Hashes.manager import HashManager
+from lol_audio_unpack.hashes.manager import HashManager

@@ -20,7 +20,7 @@ import league_tools
 from league_tools.formats import BIN, StringHash, WAD
 from loguru import logger
 
-from lol_audio_unpack.Data.Manifest import GameData
+from lol_audio_unpack.data.manifest import GameData
 from lol_audio_unpack.utils.common import (
     EnhancedPath,
     capitalize_first_letter,

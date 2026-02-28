@@ -17,8 +17,8 @@ from league_tools import get_audio_files
 from league_tools.formats import WAD
 from loguru import logger
 
-from lol_audio_unpack.Data.Manifest import compare_version
-from lol_audio_unpack.Hashes import HashManager
+from lol_audio_unpack.data.manifest import compare_version
+from lol_audio_unpack.hashes import HashManager
 from lol_audio_unpack.utils.common import format_region, makedirs, capitalize_first_letter, check_time
 from lol_audio_unpack.utils.config import config_instance
 from lol_audio_unpack.utils.logs import log_result, task_done_callback

@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from lol_audio_unpack.Data.Manifest import GameDataReader, compare_version, is_valid_version
+from lol_audio_unpack.data.manifest import GameDataReader, compare_version, is_valid_version
 from lol_audio_unpack.utils.common import Singleton
 
 

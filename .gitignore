@@ -123,7 +123,7 @@ Temp
 .ai_memory/
 packer/
 VERSIONING_GUIDE.md
-E:/
+.test.py    
 
 
 !/params.json
