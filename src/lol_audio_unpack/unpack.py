@@ -5,210 +5,83 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/23 12:27
-# @Update  : 2025/8/3 15:39
+# @Update  : 2025/8/7 11:28
 # @Detail  : 解包音频
 
 
 import os
+import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from league_tools.formats import BNK, WAD, WPK
 from loguru import logger
 
 from lol_audio_unpack.manager import DataReader
+from lol_audio_unpack.model import AudioEntityData, generate_champion_tasks, generate_map_tasks
 from lol_audio_unpack.utils.common import sanitize_filename
 from lol_audio_unpack.utils.config import config
 from lol_audio_unpack.utils.logging import performance_monitor
+from lol_audio_unpack.utils.path_constants import (
+    format_entity_folder_name,
+    format_sub_entity_folder_name,
+    get_output_dir_name,
+)
 from lol_audio_unpack.utils.stats import FileProcessResult, ProcessingStatsContext
 
 # todo: ID6, 厄加特, 6009, 西部魔影 厄加特, ASSETS/Sounds/Wwise2016/SFX/Characters/Urgot/Skins/Skin09/Urgot_Skin09_VO_audio.bnk, 该文件在根WAD
 # todo: ID62, 孙悟空，62007, 战斗学院 孙悟空, ASSETS/Sounds/Wwise2016/SFX/Characters/MonkeyKing/Skins/Skin07/MonkeyKing_Skin07_VO_audio.bnk, 该文件在根WAD
 
 
-@dataclass
-class AudioEntityData:
-    """音频实体统一数据结构
+def _get_wad_instance(
+    wad_path: Path,
+    wad_cache: dict[Path, WAD] | None,
+    cache_lock: threading.Lock | None,
+) -> WAD:
+    """获取 WAD 实例并复用缓存。
 
-    :param entity_id: 实体ID（英雄ID或地图ID）
-    :param entity_name: 实体名称（英雄名或地图名）
-    :param entity_alias: 实体别名（英雄alias或地图mapStringId）
-    :param entity_type: 实体类型（"champion" 或 "map"）
-    :param sub_entities: 子实体数据（皮肤数据或地图本身）
-    :param wad_root: 根WAD文件路径（用于SFX/Music）
-    :param wad_language: 语言WAD文件路径（用于VO），None表示无语言WAD
+    Args:
+        wad_path: WAD 文件绝对路径。
+        wad_cache: 本轮解包共享缓存；为 ``None`` 时不缓存。
+        cache_lock: 多线程场景下的缓存锁。
+
+    Returns:
+        对应路径的 ``WAD`` 实例。
     """
+    if wad_cache is None:
+        return WAD(wad_path)
 
-    entity_id: str
-    entity_name: str
-    entity_alias: str
-    entity_type: str  # "champion" | "map"
-    sub_entities: dict[str, dict[str, Any]]
-    wad_root: str
-    wad_language: str | None = None
+    if cache_lock is None:
+        if wad_path not in wad_cache:
+            wad_cache[wad_path] = WAD(wad_path)
+        return wad_cache[wad_path]
 
-    def get_sub_entity_info(self, sub_id: str) -> dict[str, Any] | None:
-        """获取子实体的信息（皮肤或地图信息）
-
-        :param sub_id: 子实体ID（皮肤ID或地图ID）
-        :returns: 包含id和name的字典，不存在时返回None
-        """
-        sub_entity = self.sub_entities.get(sub_id)
-        if not sub_entity:
-            return None
-
-        return {"id": int(sub_id), "name": sub_entity["name"]}
-
-    def get_wad_path(self, audio_type: str) -> Path | None:
-        """根据音频类型获取对应的WAD文件完整路径
-
-        :param audio_type: 音频类型（"VO"需要语言WAD，其他使用根WAD）
-        :returns: 存在的WAD文件完整路径，不存在时返回None
-        """
-        # 获取相对路径
-        if audio_type == "VO":
-            relative_path = self.wad_language
-        else:
-            relative_path = self.wad_root
-
-        # 如果没有相对路径，直接返回None
-        if not relative_path:
-            return None
-
-        # 构建完整路径并检查存在性
-        full_path = config.GAME_PATH / relative_path
-        return full_path if full_path.exists() else None
-
-    @classmethod
-    def from_champion(cls, champion_id: int, reader: DataReader) -> "AudioEntityData":
-        """从英雄数据创建AudioEntityData实例
-
-        :param champion_id: 英雄ID
-        :param reader: 数据读取器实例
-        :returns: AudioEntityData实例
-        :raises ValueError: 当英雄数据不存在或无音频数据时
-        """
-        # 获取英雄基础信息
-        champion = reader.get_champion(champion_id)
-        if not champion:
-            raise ValueError(f"数据中不存在英雄ID {champion_id}")
-
-        # 获取英雄音频合集数据
-        champion_banks = reader.get_champion_banks(champion_id)
-        if not champion_banks:
-            raise ValueError(f"英雄ID {champion_id} 没有音频数据")
-
-        # 获取WAD文件信息
-        wad_info = champion.get("wad", {})
-        wad_root = wad_info.get("root")
-        if not wad_root:
-            raise ValueError(f"英雄ID {champion_id} 缺少根WAD文件信息")
-
-        # 获取语言设置
-        language = config.GAME_REGION
-        wad_language = wad_info.get(language)  # 可能为None，某些英雄可能没有语言WAD
-
-        # 创建皮肤ID到皮肤信息的映射
-        skin_info_map = {}
-        for skin in champion.get("skins", []):
-            skin_id = skin.get("id")
-            skin_id_str = str(skin_id)
-            skin_name_raw = skin.get("skinNames", {}).get(language, skin.get("skinNames", {}).get("default", ""))
-            is_base_skin = skin.get("isBase", False)
-            skin_name = "基础皮肤" if is_base_skin else skin_name_raw
-            # 安全化皮肤名称，确保文件系统兼容性
-            safe_skin_name = sanitize_filename(skin_name)
-            skin_info_map[skin_id_str] = {"id": skin_id, "name": safe_skin_name}
-
-        # 构建子实体数据
-        sub_entities = {}
-        available_skins = champion_banks.get("skins", {})
-
-        for skin_id_str, banks in available_skins.items():
-            skin_info = skin_info_map.get(skin_id_str)
-            if not skin_info:
-                continue
-
-            sub_entities[skin_id_str] = {"name": skin_info["name"], "categories": banks}
-
-        # 安全化英雄名称
-        champion_name_raw = champion.get("names", {}).get(language, champion.get("names", {}).get("default", ""))
-        safe_champion_name = sanitize_filename(champion_name_raw)
-        safe_champion_alias = sanitize_filename(champion.get("alias", "").lower())
-
-        return cls(
-            entity_id=str(champion_id),
-            entity_name=safe_champion_name,
-            entity_alias=safe_champion_alias,
-            entity_type="champion",
-            sub_entities=sub_entities,
-            wad_root=wad_root,
-            wad_language=wad_language,
-        )
-
-    @classmethod
-    def from_map(cls, map_id: int, reader: DataReader) -> "AudioEntityData":
-        """从地图数据创建AudioEntityData实例
-
-        :param map_id: 地图ID
-        :param reader: 数据读取器实例
-        :returns: AudioEntityData实例
-        :raises ValueError: 当地图数据不存在或无音频数据时
-        """
-        # 获取地图基础信息
-        map_info = reader.get_map(map_id)
-        if not map_info:
-            raise ValueError(f"数据中不存在地图ID {map_id}")
-
-        # 获取地图音频合集数据
-        map_banks = reader.get_map_banks(map_id)
-        if not map_banks:
-            raise ValueError(f"地图ID {map_id} 没有音频数据")
-
-        # 获取WAD文件信息
-        wad_info = map_info.get("wad", {})
-        wad_root = wad_info.get("root")
-        if not wad_root:
-            raise ValueError(f"地图ID {map_id} 缺少根WAD文件信息")
-
-        # 获取语言设置
-        language = config.GAME_REGION
-        wad_language = wad_info.get(language)  # 可能为None，某些地图可能没有语言WAD
-
-        # 获取地图名称（支持本地化）
-        map_name_raw = map_info.get("names", {}).get(language, map_info.get("names", {}).get("default", ""))
-        safe_map_name = sanitize_filename(map_name_raw)
-
-        # 获取地图别名
-        map_alias_raw = "common" if map_id == 0 else map_info.get("mapStringId", "").lower()
-        safe_map_alias = sanitize_filename(map_alias_raw)
-
-        # 地图作为自己的唯一"子实体"
-        sub_entities = {str(map_id): {"name": safe_map_name, "categories": map_banks.get("banks", {})}}
-
-        return cls(
-            entity_id=str(map_id),
-            entity_name=safe_map_name,
-            entity_alias=safe_map_alias,
-            entity_type="map",
-            sub_entities=sub_entities,
-            wad_root=wad_root,
-            wad_language=wad_language,
-        )
+    with cache_lock:
+        if wad_path not in wad_cache:
+            wad_cache[wad_path] = WAD(wad_path)
+        return wad_cache[wad_path]
 
 
 @logger.catch
 @performance_monitor(level="DEBUG")
-def unpack_audio_entity(entity_data: AudioEntityData, reader: DataReader) -> None:
-    """通用音频解包函数，支持英雄和地图数据
+def unpack_audio_entity(
+    entity_data: AudioEntityData,
+    reader: DataReader,
+    wad_cache: dict[Path, WAD] | None = None,
+    cache_lock: threading.Lock | None = None,
+) -> None:
+    """解包单个实体音频（英雄或地图）。
 
-    :param entity_data: 音频实体数据（英雄或地图）
-    :param reader: 一个已经初始化并加载了数据的DataReader实例
-    :raises ValueError: 当实体数据无效时
+    Args:
+        entity_data: 音频实体数据。
+        reader: 已初始化的数据读取器。
+        wad_cache: 本轮解包共享 WAD 缓存。
+        cache_lock: 多线程场景下的缓存锁。
+
+    Raises:
+        ValueError: 实体数据无效时抛出。
     """
     language = config.GAME_REGION  # 决定解包哪种语言的音频
     audio_path = config.AUDIO_PATH / reader.version
@@ -216,7 +89,9 @@ def unpack_audio_entity(entity_data: AudioEntityData, reader: DataReader) -> Non
         audio_path.mkdir(parents=True, exist_ok=True)
 
     # 使用统计上下文管理器，自动处理统计的开始和结束
-    stats_context = ProcessingStatsContext(entity_data, language, config.INCLUDE_TYPE, config.EXCLUDE_TYPE)
+    stats_context = ProcessingStatsContext(
+        entity_data, reader.version, language, config.INCLUDE_TYPE, config.EXCLUDE_TYPE
+    )
     with stats_context as stats:
         logger.info(f"解包 {entity_data.entity_name} (ID:{entity_data.entity_id})")
 
@@ -289,7 +164,8 @@ def unpack_audio_entity(entity_data: AudioEntityData, reader: DataReader) -> Non
             vo_path_list = list(vo_paths_to_extract)  # 无需排序（WAD.extract保证顺序）
             try:
                 logger.debug(f"正在从 {lang_wad_path.name} 解包 {len(vo_path_list)} 个VO文件...")
-                file_raws = WAD(lang_wad_path).extract(vo_path_list, raw=True)
+                wad_obj = _get_wad_instance(lang_wad_path, wad_cache=wad_cache, cache_lock=cache_lock)
+                file_raws = wad_obj.extract(vo_path_list, raw=True)
                 path_to_raw_data_map.update(zip(vo_path_list, file_raws, strict=False))
                 # 记录VO WAD解包成功统计
                 stats.set_wad_info("VO", lang_wad_path, len(vo_path_list), len(file_raws))
@@ -309,7 +185,8 @@ def unpack_audio_entity(entity_data: AudioEntityData, reader: DataReader) -> Non
             other_path_list = list(other_paths_to_extract)  # 无需排序（WAD.extract保证顺序）
             try:
                 logger.debug(f"正在从 {root_wad_path.name} 解包 {len(other_path_list)} 个SFX/Music文件...")
-                file_raws = WAD(root_wad_path).extract(other_path_list, raw=True)
+                wad_obj = _get_wad_instance(root_wad_path, wad_cache=wad_cache, cache_lock=cache_lock)
+                file_raws = wad_obj.extract(other_path_list, raw=True)
                 path_to_raw_data_map.update(zip(other_path_list, file_raws, strict=False))
                 # 记录SFX/Music WAD解包成功统计
                 stats.set_wad_info("ROOT", root_wad_path, len(other_path_list), len(file_raws))
@@ -469,7 +346,9 @@ def unpack_audio_entity(entity_data: AudioEntityData, reader: DataReader) -> Non
     try:
         report_filename = f"_{entity_data.entity_id}_metadata.yaml"
 
-        report_path = config.REPORT_PATH / reader.version / entity_data.entity_type.capitalize() / report_filename
+        report_path = (
+            config.REPORT_PATH / reader.version / get_output_dir_name(entity_data.entity_type) / report_filename
+        )
         report_path.parent.mkdir(parents=True, exist_ok=True)
 
         stats.save_concise_report_to_yaml(report_path)
@@ -477,21 +356,29 @@ def unpack_audio_entity(entity_data: AudioEntityData, reader: DataReader) -> Non
         logger.debug(f"保存报告文件失败: {e}")
 
 
-def _generate_relative_path(entity_data: AudioEntityData, sub_id: str) -> str:
+def _generate_relative_path(entity_data: AudioEntityData, sub_id: str) -> Path:
     """生成相对路径（不包含音频类型）
 
     :param entity_data: 实体数据
     :param sub_id: 子实体ID（皮肤ID或地图ID）
-    :returns: 相对路径字符串
+    :returns: 相对路径
     """
     sub_name = entity_data.sub_entities[sub_id]["name"]
+    # 使用统一的小写目录名
+    entity_dir = get_output_dir_name(entity_data.entity_type)
+
+    # 使用统一的文件夹命名格式
+    entity_folder_name = format_entity_folder_name(
+        entity_data.entity_id, entity_data.entity_alias, entity_data.entity_name, entity_data.entity_title
+    )
 
     if entity_data.entity_type == "champion":
-        # Champions\10·kayle·正义天使\10000·基础皮肤
-        return f"Champions\\{entity_data.entity_id}·{entity_data.entity_alias}·{entity_data.entity_name}\\{sub_id}·{sub_name}"
+        # champions/1·annie·黑暗之女·安妮/1000·基础皮肤
+        sub_folder_name = format_sub_entity_folder_name(sub_id, sub_name)
+        return Path(entity_dir) / entity_folder_name / sub_folder_name
     else:  # map
-        # Maps\11·sr·召唤师峡谷
-        return f"Maps\\{entity_data.entity_id}·{entity_data.entity_alias}·{entity_data.entity_name}"
+        # maps/11·sr·召唤师峡谷
+        return Path(entity_dir) / entity_folder_name
 
 
 def generate_output_path(
@@ -500,8 +387,8 @@ def generate_output_path(
     """生成完整的输出路径
 
     根据 config.GROUP_BY_TYPE 配置决定目录结构：
-    - True: audios/VO/Champions/10·kayle·正义天使/10000·基础皮肤
-    - False: audios/Champions/10·kayle·正义天使/10000·基础皮肤/VO
+    - True: audios/VO/champions/1·annie·黑暗之女·安妮/1000·基础皮肤
+    - False: audios/champions/1·annie·黑暗之女·安妮/1000·基础皮肤/VO
 
     :param entity_data: 实体数据
     :param sub_id: 子实体ID（皮肤ID或地图ID）
@@ -522,104 +409,63 @@ def generate_output_path(
         return base_path / relative_path / audio_type
 
 
-def unpack_champion(champion_id: int, reader: DataReader) -> None:
-    """根据英雄ID和已加载的数据读取器解包其音频文件
+def unpack_champion(
+    champion_id: int,
+    reader: DataReader,
+    wad_cache: dict[Path, WAD] | None = None,
+    cache_lock: threading.Lock | None = None,
+) -> None:
+    """按英雄 ID 解包音频。
 
-    :param champion_id: 英雄ID
-    :param reader: 一个已经初始化并加载了数据的DataReader实例
-    :raises ValueError: 当英雄数据不存在或无音频数据时
+    Args:
+        champion_id: 英雄 ID。
+        reader: 已初始化的数据读取器。
+        wad_cache: 本轮解包共享 WAD 缓存。
+        cache_lock: 多线程场景下的缓存锁。
     """
     try:
         # 创建AudioEntityData实例
         entity_data = AudioEntityData.from_champion(champion_id, reader)
         # 调用通用解包函数
-        unpack_audio_entity(entity_data, reader)
+        unpack_audio_entity(entity_data, reader, wad_cache=wad_cache, cache_lock=cache_lock)
     except ValueError as e:
         # 保持与原始函数相同的错误处理方式
         logger.error(str(e))
         return
 
 
-def unpack_map_audio(map_id: int, reader: DataReader) -> None:
-    """根据地图ID和已加载的数据读取器解包其音频文件
+def unpack_map_audio(
+    map_id: int,
+    reader: DataReader,
+    wad_cache: dict[Path, WAD] | None = None,
+    cache_lock: threading.Lock | None = None,
+) -> None:
+    """按地图 ID 解包音频。
 
-    :param map_id: 地图ID
-    :param reader: 一个已经初始化并加载了数据的DataReader实例
-    :raises ValueError: 当地图数据不存在或无音频数据时
+    Args:
+        map_id: 地图 ID。
+        reader: 已初始化的数据读取器。
+        wad_cache: 本轮解包共享 WAD 缓存。
+        cache_lock: 多线程场景下的缓存锁。
     """
     try:
         # 创建AudioEntityData实例
         entity_data = AudioEntityData.from_map(map_id, reader)
         # 调用通用解包函数
-        unpack_audio_entity(entity_data, reader)
+        unpack_audio_entity(entity_data, reader, wad_cache=wad_cache, cache_lock=cache_lock)
     except ValueError as e:
         # 保持一致的错误处理方式
         logger.error(str(e))
         return
 
 
-def generate_champion_tasks(reader: DataReader, champion_ids: list[int] | None = None) -> list[tuple[str, int, str]]:
-    """生成英雄解包任务集
-
-    :param reader: 数据读取器
-    :param champion_ids: 指定的英雄ID列表，None表示所有英雄
-    :returns: 任务元组列表 [("champion", id, description), ...]
-    :raises ValueError: 当指定的ID不存在时
-    """
-    champions = reader.get_champions()
-    available_ids = {champ.get("id") for champ in champions if champ.get("id") is not None}
-
-    if champion_ids is None:
-        # 处理所有英雄
-        return [
-            ("champion", champ.get("id"), f"英雄ID {champ.get('id')}")
-            for champ in champions
-            if champ.get("id") is not None
-        ]
-    else:
-        # 验证指定的ID
-        invalid_ids = [cid for cid in champion_ids if cid not in available_ids]
-        if invalid_ids:
-            raise ValueError(f"无效的英雄ID: {invalid_ids}")
-
-        # 生成指定ID的任务
-        return [("champion", cid, f"英雄ID {cid}") for cid in champion_ids]
-
-
-def generate_map_tasks(reader: DataReader, map_ids: list[int] | None = None) -> list[tuple[str, int, str]]:
-    """生成地图解包任务集
-
-    :param reader: 数据读取器
-    :param map_ids: 指定的地图ID列表，None表示所有地图
-    :returns: 任务元组列表 [("map", id, description), ...]
-    :raises ValueError: 当指定的ID不存在时
-    """
-    maps = reader.get_maps()
-    available_ids = {map_data.get("id") for map_data in maps if map_data.get("id") is not None}
-
-    if map_ids is None:
-        # 处理所有地图
-        return [
-            ("map", map_data.get("id"), f"地图ID {map_data.get('id')}")
-            for map_data in maps
-            if map_data.get("id") is not None
-        ]
-    else:
-        # 验证指定的ID
-        invalid_ids = [mid for mid in map_ids if mid not in available_ids]
-        if invalid_ids:
-            raise ValueError(f"无效的地图ID: {invalid_ids}")
-
-        # 生成指定ID的任务
-        return [("map", mid, f"地图ID {mid}") for mid in map_ids]
-
-
 def execute_unpack_tasks(tasks: list[tuple[str, int, str]], reader: DataReader, max_workers: int = 4) -> None:
-    """执行解包任务集
+    """执行批量解包任务。
 
-    :param tasks: 任务元组列表 [("entity_type", id, description), ...]
-    :param reader: 数据读取器
-    :param max_workers: 最大工作线程数
+    Args:
+        tasks: 任务元组列表 ``[(entity_type, id, description), ...]``。
+        reader: 数据读取器实例。
+        max_workers: 最大并发线程数。
     """
     if not tasks:
         logger.warning("没有任何任务需要执行")
@@ -643,12 +489,15 @@ def execute_unpack_tasks(tasks: list[tuple[str, int, str]], reader: DataReader, 
         f"模式: {'多线程' if max_workers > 1 else '单线程'} (workers: {max_workers})"
     )
 
+    wad_cache: dict[Path, WAD] = {}
+    cache_lock = threading.Lock() if max_workers > 1 else None
+
     def unpack_entity(entity_type: str, entity_id: int) -> None:
         """解包单个实体的辅助函数"""
         if entity_type == "champion":
-            unpack_champion(entity_id, reader)
+            unpack_champion(entity_id, reader, wad_cache=wad_cache, cache_lock=cache_lock)
         elif entity_type == "map":
-            unpack_map_audio(entity_id, reader)
+            unpack_map_audio(entity_id, reader, wad_cache=wad_cache, cache_lock=cache_lock)
         else:
             raise ValueError(f"未知的实体类型: {entity_type}")
 

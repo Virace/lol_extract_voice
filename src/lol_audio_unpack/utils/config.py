@@ -5,7 +5,7 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2022/8/26 14:00
-# @Update  : 2025/8/3 15:18
+# @Update  : 2025/8/7 6:23
 # @Detail  : config.py
 
 
@@ -40,6 +40,10 @@ from lol_audio_unpack.utils.type_hints import StrPath
 WORK_DIR = Path(os.getcwd())
 
 
+class ConfigValidationError(ValueError):
+    """配置校验失败异常。"""
+
+
 class Config(metaclass=Singleton):
     """配置管理类，使用Singleton元类确保线程安全的单例模式"""
 
@@ -58,19 +62,20 @@ class Config(metaclass=Singleton):
             "type": "bool",
             "default": False,
             "help": """是否按音频类型对输出目录进行分组.
-# False (默认): audios/Champions/英雄/皮肤/类型/...
-# True: audios/类型/Champions/英雄/皮肤/...""",
+        # False (默认): audios/champions/英雄/皮肤/类型/...
+        # True: audios/类型/champions/英雄/皮肤/...""",
             "short": "b",
         },
-        "INCLUDE_NAME": {"type": "list", "help": "名称过滤条件，例如 map11, Aatrox", "short": "n"},
-        "INCLUDE_CATEGORY": {"type": "list", "help": "分类过滤条件，例如 maps, characters", "short": "c"},
-        "VGMSTREAM_PATH": {"type": "path", "help": "VGMSTREAM 路径", "short": "v"},
-        "AUDIO_FORMATE": {
-            "type": "str",
-            "default": "wem",
-            "help": "输出音频格式，VGMSTREAM支持的转码格式，常见的wav、mp3、ogg等均支持",
-            "short": "f",
-        },
+        "WWISER_PATH": {"type": "path", "help": "Wwiser 路径", "short": "w"},
+        # "INCLUDE_NAME": {"type": "list", "help": "名称过滤条件，例如 map11, Aatrox", "short": "n"},
+        # "INCLUDE_CATEGORY": {"type": "list", "help": "分类过滤条件，例如 maps, characters", "short": "c"},
+        # "VGMSTREAM_PATH": {"type": "path", "help": "VGMSTREAM 路径", "short": "v"},
+        # "AUDIO_FORMATE": {
+        #     "type": "str",
+        #     "default": "wem",
+        #     "help": "输出音频格式，VGMSTREAM支持的转码格式，常见的wav、mp3、ogg等均支持",
+        #     "short": "f",
+        # },
     }
 
     AUDIO_TYPE_VO = "VO"
@@ -84,6 +89,7 @@ class Config(metaclass=Singleton):
         env_prefix: str = "LOL_",
         force_reload: bool = False,
         dev_mode: bool = False,
+        cli_overrides: dict[str, Any] | None = None,
     ):
         """
         初始化配置管理
@@ -92,6 +98,7 @@ class Config(metaclass=Singleton):
         :param env_prefix: 环境变量前缀
         :param force_reload: 是否强制重新加载配置，即使是单例的重复初始化
         :param dev_mode: 是否使用开发环境配置
+        :param cli_overrides: 命令行显式覆盖项（优先级最高）
         :return: None
         """
         # 检查是否已经初始化（单例模式下，__init__可能会被多次调用）
@@ -123,7 +130,7 @@ class Config(metaclass=Singleton):
         self._load_env_file(env_path, dev_mode)
 
         # 加载所有配置
-        self._load_configs()
+        self._load_configs(cli_overrides=cli_overrides)
 
         # 生成派生路径
         self._generate_paths()
@@ -146,13 +153,20 @@ class Config(metaclass=Singleton):
 
         return ", ".join(info) + ")"
 
-    def reload(self, env_path: StrPath | None = None, env_prefix: str | None = None, dev_mode: bool | None = None):
+    def reload(
+        self,
+        env_path: StrPath | None = None,
+        env_prefix: str | None = None,
+        dev_mode: bool | None = None,
+        cli_overrides: dict[str, Any] | None = None,
+    ):
         """
         重新加载配置（从环境变量或默认值）
 
         :param env_path: 环境变量文件路径（.env文件）
         :param env_prefix: 环境变量前缀
         :param dev_mode: 是否使用开发环境配置
+        :param cli_overrides: 命令行显式覆盖项（优先级最高）
         :return: None
         """
         logger.debug(f"重新加载配置: env_path={env_path}, env_prefix={env_prefix}, dev_mode={dev_mode}")
@@ -183,7 +197,7 @@ class Config(metaclass=Singleton):
         self._load_env_file(env_path, self.dev_mode)
 
         # 重新加载所有配置
-        self._load_configs()
+        self._load_configs(cli_overrides=cli_overrides)
 
         # 生成派生路径
         self._generate_paths()
@@ -214,27 +228,29 @@ class Config(metaclass=Singleton):
 
         try:
             if target_file.exists():
-                load_dotenv(dotenv_path=target_file, override=True)
+                # 不覆盖系统环境变量，确保优先级: 系统环境变量 > .env
+                load_dotenv(dotenv_path=target_file, override=False)
                 logger.debug(f"已加载环境变量文件: {target_file}" + (" (开发环境)" if dev_mode else ""))
                 return
 
             # 如果请求开发环境但文件不存在，则提示并回退到常规环境文件
             if dev_mode and not dev_env_file.exists() and env_file.exists():
                 logger.warning(f"开发环境文件 {dev_env_file} 不存在，使用常规环境文件 {env_file}")
-                load_dotenv(dotenv_path=env_file, override=True)
+                load_dotenv(dotenv_path=env_file, override=False)
                 logger.debug(f"已加载环境变量文件: {env_file}")
             elif env_file.exists():
-                load_dotenv(dotenv_path=env_file, override=True)
+                load_dotenv(dotenv_path=env_file, override=False)
                 logger.debug(f"已加载环境变量文件: {env_file}")
             else:
                 logger.warning(f"环境变量文件不存在: {target_file}")
         except Exception as e:
             logger.error(f"加载环境变量文件失败: {str(e)}")
 
-    def _load_configs(self):
+    def _load_configs(self, cli_overrides: dict[str, Any] | None = None):
         """
         从各种来源加载配置
 
+        :param cli_overrides: 命令行显式覆盖项（优先级最高）
         :return: None
         """
         logger.debug("开始加载配置")
@@ -244,6 +260,9 @@ class Config(metaclass=Singleton):
         for env_name, env_value in os.environ.items():
             if env_name.startswith(self.env_prefix):
                 param_name = env_name[prefix_len:]
+                if param_name not in self.params:
+                    logger.warning(f"忽略未知配置项: {env_name}")
+                    continue
                 logger.debug(f"从环境变量加载配置: {param_name}={env_value}")
                 self._set_value(param_name, env_value, "env")
 
@@ -255,6 +274,15 @@ class Config(metaclass=Singleton):
                 self._set_value(param_name, default_value, "default")
             elif param_name not in self.settings:
                 logger.debug(f"配置项无环境变量且无默认值: {param_name}")
+
+        # 应用CLI显式参数（最高优先级）
+        if cli_overrides:
+            for param_name, value in cli_overrides.items():
+                if param_name not in self.params:
+                    logger.warning(f"忽略未知CLI配置项: {param_name}")
+                    continue
+                logger.debug(f"应用CLI覆盖配置: {param_name}={value}")
+                self._set_value(param_name, value, "cli")
 
         logger.debug(f"配置加载完成，共 {len(self.settings)} 项")
 
@@ -342,6 +370,11 @@ class Config(metaclass=Singleton):
         self.set("LOG_PATH", log_path, source="derived")
         paths_to_create.append(log_path)
 
+        # 缓存目录, 存放一些缓存文件
+        cache_path = out_path / "cache"
+        self.set("CACHE_PATH", cache_path, source="derived")
+        paths_to_create.append(cache_path)
+
         # 哈希目录, 存放所有与 k,v 相关数据
         hash_path = out_path / "hashes"
         self.set("HASH_PATH", hash_path, source="derived")
@@ -424,9 +457,9 @@ class Config(metaclass=Singleton):
                 missing.append(name)
 
         if missing:
-            logger.error(f"缺少必要的配置项: {', '.join(missing)}")
-            # 对于严重的配置缺失，可以考虑抛出异常
-            # raise ValueError(f"缺少必要的配置项: {', '.join(missing)}")
+            missing_desc = ", ".join(missing)
+            logger.error(f"缺少必要的配置项: {missing_desc}")
+            raise ConfigValidationError(f"缺少必要的配置项: {missing_desc}")
 
     def get(self, key: str, default: Any = None) -> Any:
         """
@@ -511,19 +544,22 @@ class ConfigProxy:
         self._default_env_path = None
         self._default_env_prefix = "LOL_"
         self._default_dev_mode = False
+        self._default_cli_overrides = None
 
-    def set_default_params(self, env_path=None, env_prefix="LOL_", dev_mode=False):
+    def set_default_params(self, env_path=None, env_prefix="LOL_", dev_mode=False, cli_overrides=None):
         """
         设置默认初始化参数，但不立即初始化Config
 
         :param env_path: 环境变量文件路径
         :param env_prefix: 环境变量前缀
         :param dev_mode: 是否使用开发环境配置
+        :param cli_overrides: 命令行显式覆盖项（优先级最高）
         :return: self (用于链式调用)
         """
         self._default_env_path = env_path
         self._default_env_prefix = env_prefix
         self._default_dev_mode = dev_mode
+        self._default_cli_overrides = cli_overrides
         logger.debug(f"ConfigProxy: 设置默认参数 env_path={env_path}, env_prefix={env_prefix}, dev_mode={dev_mode}")
         return self
 
@@ -541,13 +577,16 @@ class ConfigProxy:
                 f"dev_mode={self._default_dev_mode}"
             )
             self._real_config = Config(
-                env_path=self._default_env_path, env_prefix=self._default_env_prefix, dev_mode=self._default_dev_mode
+                env_path=self._default_env_path,
+                env_prefix=self._default_env_prefix,
+                dev_mode=self._default_dev_mode,
+                cli_overrides=self._default_cli_overrides,
             )
 
         # 转发属性访问到实际的Config实例
         return getattr(self._real_config, name)
 
-    def initialize(self, env_path=None, env_prefix=None, force_reload=False, dev_mode=None):
+    def initialize(self, env_path=None, env_prefix=None, force_reload=False, dev_mode=None, cli_overrides=None):
         """
         显式初始化配置
 
@@ -555,6 +594,7 @@ class ConfigProxy:
         :param env_prefix: 环境变量前缀
         :param force_reload: 是否强制重新加载配置
         :param dev_mode: 是否使用开发环境配置
+        :param cli_overrides: 命令行显式覆盖项（优先级最高）
         :return: 配置实例
         """
         # 如果未指定参数，则使用预设参数
@@ -564,15 +604,24 @@ class ConfigProxy:
             env_prefix = self._default_env_prefix
         if dev_mode is None:
             dev_mode = self._default_dev_mode
+        if cli_overrides is None:
+            cli_overrides = self._default_cli_overrides
 
         logger.debug(f"ConfigProxy: 显式初始化 env_path={env_path}, env_prefix={env_prefix}, dev_mode={dev_mode}")
 
         if self._real_config is None:
             # 首次初始化
-            self._real_config = Config(env_path=env_path, env_prefix=env_prefix, dev_mode=dev_mode)
+            self._real_config = Config(
+                env_path=env_path, env_prefix=env_prefix, dev_mode=dev_mode, cli_overrides=cli_overrides
+            )
         elif force_reload:
             # 强制重新加载
-            self._real_config.reload(env_path=env_path, env_prefix=env_prefix, dev_mode=dev_mode)
+            self._real_config.reload(
+                env_path=env_path,
+                env_prefix=env_prefix,
+                dev_mode=dev_mode,
+                cli_overrides=cli_overrides,
+            )
 
         return self._real_config
 
@@ -589,4 +638,4 @@ class ConfigProxy:
 config = ConfigProxy()
 
 # 在模块级别导出
-__all__ = ["Config", "config", "ConfigProxy"]
+__all__ = ["Config", "ConfigValidationError", "config", "ConfigProxy"]

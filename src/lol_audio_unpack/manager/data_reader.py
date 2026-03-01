@@ -64,6 +64,7 @@ class DataReader(metaclass=Singleton):
         self._champion_banks_cache: dict[int, dict] = {}
         self._champion_events_cache: dict[int, dict] = {}
         self._map_banks_cache: dict[int, dict] = {}
+        self._map_events_cache: dict[int, dict] = {}
 
         # 防御性开发：记录未知的音频分类
         self.unknown_categories: set[str] = set()
@@ -235,16 +236,25 @@ class DataReader(metaclass=Singleton):
     @logger.catch
     @performance_monitor(level="DEBUG")
     def get_map_events(self, map_id: int) -> dict | None:
-        """
-        读取指定地图的events数据
+        """读取并缓存指定地图的 events 数据。
 
-        :param map_id: 地图ID
-        :returns: 地图events数据字典，失败时返回None
-        :rtype: dict | None
+        Args:
+            map_id: 地图 ID。
+
+        Returns:
+            地图事件映射字典；读取失败时返回 ``None``。
         """
+        if map_id in self._map_events_cache:
+            return self._map_events_cache[map_id]
+
         events_file_base = self.map_events_dir / str(map_id)
         map_events_data = read_data(events_file_base)
-        return map_events_data.get("map") if map_events_data else None
+        result = map_events_data.get("map") if map_events_data else None
+
+        if result:
+            self._map_events_cache[map_id] = result
+
+        return result
 
     def get_champion(self, champion_id: int) -> dict:
         """根据ID获取英雄信息"""

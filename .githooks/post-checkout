@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 参数:
+# $1 上一个HEAD
+# $2 新的HEAD
+# $3 是否分支切换(1=branch checkout, 0=file checkout)
+IS_BRANCH_CHECKOUT="${3:-0}"
+if [[ "${IS_BRANCH_CHECKOUT}" != "1" ]]; then
+  exit 0
+fi
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+cd "${ROOT_DIR}"
+
+if command -v python3 >/dev/null 2>&1; then
+  python3 scripts/check_main_local_sources.py --mode warn || true
+elif command -v python >/dev/null 2>&1; then
+  python scripts/check_main_local_sources.py --mode warn || true
+fi
