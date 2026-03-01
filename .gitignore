@@ -123,6 +123,7 @@ src/lol_audio_unpack/packer.py
 *.env.dev
 packer/
 .ai_memory/
+benchmarks/
 
 
 !/params.json
