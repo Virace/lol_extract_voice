@@ -1,6 +1,6 @@
 [project]
 name = "lol-audio-unpack"
-version = "3.5.0.dev2+test"
+version = "3.5.0"
 description = "英雄联盟游戏音频文件解包工具"
 authors = [
     { name = "Virace", email = "Virace@aliyun.com" }
