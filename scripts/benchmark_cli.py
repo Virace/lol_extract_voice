@@ -251,6 +251,12 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Wwiser 路径（默认读取 LOL_WWISER_PATH）",
     )
+    parser.add_argument(
+        "--prepare-update",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="local_game 模式是否先执行 unpack --update --skip-events（默认开启）",
+    )
     parser.add_argument("--timeout", type=int, default=3600, help="单条命令超时秒数")
     return parser.parse_args()
 
@@ -267,13 +273,16 @@ def resolve_workers(raw_workers: str) -> int:
 
 
 def run_command(
-    cmd: list[str], cwd: Path, timeout: int, extra_env: dict[str, str] | None = None, expected_fail: bool = False
+    cmd: list[str],
+    cwd: Path,
+    timeout: int,
+    expected_fail: bool = False,
+    fail_markers: list[str] | None = None,
 ) -> dict[str, Any]:
     """执行单条命令并返回结构化结果。"""
     start = time.perf_counter()
     env = os.environ.copy()
-    if extra_env:
-        env.update(extra_env)
+    markers = fail_markers or []
 
     try:
         proc = subprocess.run(
@@ -287,14 +296,23 @@ def run_command(
         )
         elapsed = time.perf_counter() - start
         success = (proc.returncode == 0) if not expected_fail else (proc.returncode != 0)
+        matched_markers: list[str] = []
+        if success and markers:
+            output_text = f"{proc.stdout}\n{proc.stderr}"
+            matched_markers = [marker for marker in markers if marker in output_text]
+            if matched_markers:
+                success = False
         status = "ok" if success else "fail"
-        return {
+        result = {
             "status": status,
             "returncode": proc.returncode,
             "elapsed_sec": round(elapsed, 3),
             "stdout_tail": proc.stdout[-800:],
             "stderr_tail": proc.stderr[-800:],
         }
+        if matched_markers:
+            result["fail_markers"] = matched_markers
+        return result
     except subprocess.TimeoutExpired:
         elapsed = time.perf_counter() - start
         return {
@@ -388,6 +406,20 @@ def build_unpack_extract_cmd(
     ]
 
 
+def execute_benchmark_cmd(
+    ctx: BenchmarkContext,
+    cmd: list[str],
+    fail_markers: list[str] | None = None,
+) -> dict[str, Any]:
+    """执行基准命令并应用失败标记。"""
+    return run_command(
+        cmd=cmd,
+        cwd=ctx.repo_root,
+        timeout=ctx.timeout,
+        fail_markers=fail_markers,
+    )
+
+
 def build_unpack_mapping_cmd(  # noqa: PLR0913
     ctx: BenchmarkContext,
     target: str,
@@ -414,6 +446,30 @@ def build_unpack_mapping_cmd(  # noqa: PLR0913
     ]
 
 
+def build_unpack_update_cmd(
+    ctx: BenchmarkContext,
+    game_path: Path,
+    output_path: Path,
+    skip_events: bool,
+) -> list[str]:
+    """构建更新 manifest 数据命令。"""
+    cmd = [
+        ctx.uv_entry,
+        "run",
+        "unpack",
+        "--update",
+        "--max-workers",
+        str(ctx.workers),
+        "--game-path",
+        str(game_path),
+        "--output-path",
+        str(output_path),
+    ]
+    if skip_events:
+        cmd.append("--skip-events")
+    return cmd
+
+
 def add_result(results: list[dict[str, Any]], stage: str, name: str, command: list[str], extra: dict[str, Any]) -> None:
     """追加单条结果记录。"""
     row = {
@@ -437,17 +493,19 @@ def run_mock_suite(ctx: BenchmarkContext, results: list[dict[str, Any]]) -> None
         add_result(results, stage="mock", name=name, command=cmd, extra=info)
 
 
-def run_local_game_suite(  # noqa: PLR0911
+def run_local_game_suite(  # noqa: PLR0911,PLR0913
     ctx: BenchmarkContext,
     game_path: Path | None,
     output_path: Path | None,
     wwiser_path: Path | None,
+    prepare_update: bool,
     results: list[dict[str, Any]],
 ) -> None:
     """执行 local_game 小样本基准。"""
     resolved_game_path = game_path or Path(os.environ.get("LOL_GAME_PATH", ""))
     resolved_output_path = output_path or Path(os.environ.get("LOL_OUTPUT_PATH", ""))
     resolved_wwiser_path = wwiser_path or Path(os.environ.get("LOL_WWISER_PATH", ""))
+    mapping_enabled = bool(str(resolved_wwiser_path) and resolved_wwiser_path.exists())
 
     if not str(resolved_game_path) or not resolved_game_path.exists():
         add_result(
@@ -467,6 +525,24 @@ def run_local_game_suite(  # noqa: PLR0911
             extra={"status": "skip", "reason": "未提供 OUTPUT_PATH（参数或 LOL_OUTPUT_PATH）"},
         )
         return
+
+    if prepare_update:
+        # 需要执行 mapping 时必须保留 events 数据，否则会出现“缺少事件数据”。
+        skip_events = not mapping_enabled
+        prepare_cmd = build_unpack_update_cmd(
+            ctx=ctx,
+            game_path=resolved_game_path,
+            output_path=resolved_output_path,
+            skip_events=skip_events,
+        )
+        info = execute_benchmark_cmd(
+            ctx=ctx,
+            cmd=prepare_cmd,
+            fail_markers=["更新数据时发生错误", "执行过程中发生错误"],
+        )
+        add_result(results, stage="local_game", name="prepare_update", command=prepare_cmd, extra=info)
+        if info.get("status") != "ok":
+            return
 
     try:
         version = get_game_version(resolved_game_path)
@@ -531,7 +607,11 @@ def run_local_game_suite(  # noqa: PLR0911
         game_path=resolved_game_path,
         output_path=resolved_output_path,
     )
-    info = run_command(cmd=extract_champion_cmd, cwd=ctx.repo_root, timeout=ctx.timeout)
+    info = execute_benchmark_cmd(
+        ctx=ctx,
+        cmd=extract_champion_cmd,
+        fail_markers=["解包时发生错误", "执行过程中发生错误"],
+    )
     add_result(
         results,
         stage="local_game",
@@ -548,7 +628,11 @@ def run_local_game_suite(  # noqa: PLR0911
             game_path=resolved_game_path,
             output_path=resolved_output_path,
         )
-        info = run_command(cmd=extract_map_cmd, cwd=ctx.repo_root, timeout=ctx.timeout)
+        info = execute_benchmark_cmd(
+            ctx=ctx,
+            cmd=extract_map_cmd,
+            fail_markers=["解包时发生错误", "执行过程中发生错误"],
+        )
         add_result(
             results,
             stage="local_game",
@@ -557,7 +641,7 @@ def run_local_game_suite(  # noqa: PLR0911
             extra={**info, "sample_ids": sampled_map_ids},
         )
 
-    if not str(resolved_wwiser_path) or not resolved_wwiser_path.exists():
+    if not mapping_enabled:
         add_result(
             results,
             stage="local_game",
@@ -575,7 +659,11 @@ def run_local_game_suite(  # noqa: PLR0911
         output_path=resolved_output_path,
         wwiser_path=resolved_wwiser_path,
     )
-    info = run_command(cmd=mapping_cmd, cwd=ctx.repo_root, timeout=ctx.timeout)
+    info = execute_benchmark_cmd(
+        ctx=ctx,
+        cmd=mapping_cmd,
+        fail_markers=["缺少事件数据，请使用 include_events=True 创建实体数据", "映射时发生错误", "执行过程中发生错误"],
+    )
     add_result(
         results,
         stage="local_game",
@@ -608,6 +696,7 @@ def main() -> int:
             game_path=args.game_path,
             output_path=args.output_path,
             wwiser_path=args.wwiser_path,
+            prepare_update=args.prepare_update,
             results=results,
         )
 
