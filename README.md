@@ -48,7 +48,7 @@
         ```
 
 3.  **编写配置文件**:
-    在项目根目录创建 `.lol.env` 或 `.lol.env.dev` 文件。详见[配置文件](#配置文件)。
+    在项目根目录创建 `.lol.env` 文件。详见[配置（最简）](#配置最简)。
 
 4.  **运行脚本**:
     所有命令都需要在项目根目录执行。
@@ -120,10 +120,27 @@
     ```
     
 
-#### 配置文件
-项目将从根目录下的 `.lol.env` 文件加载配置。如果存在 `.lol.env.dev` 文件，则会优先加载后者（开发模式）。
+#### 配置（最简）
+新手只需要做一件事：在项目根目录创建 `.lol.env`。
 
-所有配置项也可以通过环境变量提供（例如 `export LOL_GAME_PATH=/path/to/game`），这在CI/CD环境中非常有用。
+如果你使用 `--dev`，程序会优先读取 `.lol.env.dev`；不存在时回退到 `.lol.env`。
+
+配置优先级（从高到低）：
+1. 命令行显式参数（如 `--game-path`、`--output-path`）
+2. 系统环境变量（`LOL_*`）
+3. `.lol.env` / `.lol.env.dev`
+4. 内置默认值
+
+高级用户（CI、容器、远程环境）可直接用环境变量或 CLI 覆盖：
+
+```bash
+export LOL_GAME_PATH=/path/to/game
+export LOL_OUTPUT_PATH=/path/to/output
+uv run unpack --update
+
+# 单次临时覆盖（优先级最高）
+uv run unpack --update --game-path /tmp/game --output-path /tmp/out
+```
 
 ```dotenv
 # 游戏客户端根目录 (例如: D:\Games\League of Legends)
@@ -135,8 +152,8 @@ LOL_GAME_REGION='zh_CN'
 # 数据输出目录
 LOL_OUTPUT_PATH=''
 
-# 排除的音频类型 (VO: 语音, SFX: 特效, MUSIC: 音乐), 使用英文逗号
-分割, 留空则全部解包
+# 排除的音频类型 (VO: 语音, SFX: 特效, MUSIC: 音乐)
+# 使用英文逗号分割, 留空则全部解包
 LOL_EXCLUDE_TYPE='SFX,MUSIC'
 ```
 

@@ -19,7 +19,7 @@ from loguru import logger
 from . import BinUpdater, DataReader, DataUpdater, __version__, setup_app
 from .mapping import build_champions_mapping, build_mapping_all, build_maps_mapping
 from .unpack import unpack_audio_all, unpack_champions, unpack_maps
-from .utils.config import config
+from .utils.config import ConfigValidationError, config
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -150,6 +150,51 @@ def create_parser() -> argparse.ArgumentParser:
         help="启用 'league_tools' 模块的日志输出，用于深度调试。",
     )
 
+    # 配置覆盖参数（优先级最高）
+    config_group = parser.add_argument_group("配置覆盖", "命令行显式配置（优先级高于系统环境变量和 .env）")
+    config_group.add_argument(
+        "-g",
+        "--game-path",
+        type=str,
+        metavar="PATH",
+        help="显式指定 GAME_PATH（游戏客户端根目录）。",
+    )
+    config_group.add_argument(
+        "-o",
+        "--output-path",
+        type=str,
+        metavar="PATH",
+        help="显式指定 OUTPUT_PATH（输出目录）。",
+    )
+    config_group.add_argument(
+        "-r",
+        "--game-region",
+        type=str,
+        metavar="REGION",
+        help="显式指定 GAME_REGION（例如 zh_CN、en_US）。",
+    )
+    config_group.add_argument(
+        "-t",
+        "--exclude-type",
+        type=str,
+        metavar="TYPES",
+        help="显式指定 EXCLUDE_TYPE（逗号分隔，如 SFX,MUSIC）。",
+    )
+    config_group.add_argument(
+        "-w",
+        "--wwiser-path",
+        type=str,
+        metavar="PATH",
+        help="显式指定 WWISER_PATH（wwiser.pyz 或 wwiser.exe）。",
+    )
+    config_group.add_argument(
+        "-b",
+        "--group-by-type",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="显式指定 GROUP_BY_TYPE（使用 --group-by-type 或 --no-group-by-type）。",
+    )
+
     return parser
 
 
@@ -205,7 +250,17 @@ def initialize_app(args: argparse.Namespace) -> None:
     if not args.enable_league_tools_log:
         logger.disable("league_tools")
 
-    setup_app(dev_mode=args.dev, log_level=args.log_level.upper())
+    cli_overrides = build_cli_overrides(args)
+
+    try:
+        setup_app(dev_mode=args.dev, log_level=args.log_level.upper(), cli_overrides=cli_overrides)
+    except ConfigValidationError as e:
+        current_work_dir = Path.cwd()
+        logger.error(f"配置初始化失败: {e}")
+        logger.error(f"请在当前工作目录创建并配置 .lol.env 文件: {current_work_dir / '.lol.env'}")
+        logger.error("您可以参考项目中的 .lol.env.example 文件进行配置。")
+        sys.exit(1)
+
     logger.info("命令行工具启动...")
 
     # 检查必要的配置是否存在
@@ -215,6 +270,19 @@ def initialize_app(args: argparse.Namespace) -> None:
         logger.error(f"请在当前工作目录创建一个 .lol.env 文件: {current_work_dir / '.lol.env'}")
         logger.error("您可以参考项目中的 .lol.env.example 文件进行配置。")
         sys.exit(1)
+
+
+def build_cli_overrides(args: argparse.Namespace) -> dict[str, object]:
+    """从命令行参数构建显式配置覆盖项（仅包含显式传入值）"""
+    mapping = {
+        "GAME_PATH": args.game_path,
+        "OUTPUT_PATH": args.output_path,
+        "GAME_REGION": args.game_region,
+        "EXCLUDE_TYPE": args.exclude_type,
+        "WWISER_PATH": args.wwiser_path,
+        "GROUP_BY_TYPE": args.group_by_type,
+    }
+    return {key: value for key, value in mapping.items() if value is not None}
 
 
 def parse_ids(id_string: str | None) -> list[str] | None:

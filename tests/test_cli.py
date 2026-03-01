@@ -2,7 +2,6 @@ import pytest
 
 import lol_audio_unpack.__main__ as cli
 
-
 pytestmark = pytest.mark.unit
 
 
@@ -99,3 +98,92 @@ def test_execute_update_operations_targeted_champions(monkeypatch):
     assert calls["checked"] is True
     assert calls["bin_updater_init"] == (True, False)
     assert calls["bin_updater_update"] == ("skin", ["103", "222", "1"], None)
+
+
+def test_build_cli_overrides_only_keeps_explicit_values():
+    parser = cli.create_parser()
+    args = parser.parse_args(
+        [
+            "--update",
+            "--game-path",
+            "/tmp/game",
+            "--output-path",
+            "/tmp/output",
+            "--exclude-type",
+            "MUSIC",
+            "--no-group-by-type",
+        ]
+    )
+
+    overrides = cli.build_cli_overrides(args)
+
+    assert overrides == {
+        "GAME_PATH": "/tmp/game",
+        "OUTPUT_PATH": "/tmp/output",
+        "EXCLUDE_TYPE": "MUSIC",
+        "GROUP_BY_TYPE": False,
+    }
+
+
+def test_initialize_app_passes_cli_overrides_to_setup_app(monkeypatch, tmp_path):
+    parser = cli.create_parser()
+    game_path = tmp_path / "game"
+    game_path.mkdir(parents=True, exist_ok=True)
+
+    args = parser.parse_args(
+        [
+            "--update",
+            "--game-path",
+            str(game_path),
+            "--output-path",
+            str(tmp_path / "output"),
+            "--game-region",
+            "en_US",
+            "--exclude-type",
+            "VO",
+            "--wwiser-path",
+            str(tmp_path / "wwiser.pyz"),
+            "--group-by-type",
+        ]
+    )
+
+    captured = {}
+
+    class FakeConfig:
+        GAME_PATH = game_path
+
+    def fake_setup_app(*, dev_mode=False, log_level="INFO", **kwargs):
+        captured["dev_mode"] = dev_mode
+        captured["log_level"] = log_level
+        captured["kwargs"] = kwargs
+
+    monkeypatch.setattr(cli, "setup_app", fake_setup_app)
+    monkeypatch.setattr(cli, "config", FakeConfig())
+
+    cli.initialize_app(args)
+
+    assert captured["dev_mode"] is False
+    assert captured["log_level"] == "INFO"
+    assert captured["kwargs"]["cli_overrides"] == {
+        "GAME_PATH": str(game_path),
+        "OUTPUT_PATH": str(tmp_path / "output"),
+        "GAME_REGION": "en_US",
+        "EXCLUDE_TYPE": "VO",
+        "WWISER_PATH": str(tmp_path / "wwiser.pyz"),
+        "GROUP_BY_TYPE": True,
+    }
+
+
+def test_initialize_app_exits_when_config_validation_fails(monkeypatch):
+    parser = cli.create_parser()
+    args = parser.parse_args(["--update"])
+
+    def fake_setup_app(*, dev_mode=False, log_level="INFO", **kwargs):
+        raise cli.ConfigValidationError("缺少必要的配置项: GAME_PATH, OUTPUT_PATH")
+
+    monkeypatch.setattr(cli, "setup_app", fake_setup_app)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.initialize_app(args)
+
+    assert exc.value.code == 1

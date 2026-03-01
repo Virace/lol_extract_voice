@@ -5,8 +5,16 @@ import pytest
 
 from lol_audio_unpack.manager import utils as mutils
 
-
 pytestmark = pytest.mark.unit
+
+
+def _mock_dev_mode(monkeypatch, *, is_dev_mode: bool) -> None:
+    class _ConfigStub:
+        @staticmethod
+        def is_dev_mode():
+            return is_dev_mode
+
+    monkeypatch.setattr(mutils, "config", _ConfigStub())
 
 
 def test_find_data_file_priority_in_dev_mode(tmp_path, monkeypatch):
@@ -15,7 +23,7 @@ def test_find_data_file_priority_in_dev_mode(tmp_path, monkeypatch):
     (base.with_suffix(".yml")).write_text("k: v\n", encoding="utf-8")
     (base.with_suffix(".msgpack")).write_bytes(b"dummy")
 
-    monkeypatch.setattr(mutils.config, "is_dev_mode", lambda: True)
+    _mock_dev_mode(monkeypatch, is_dev_mode=True)
     assert mutils.find_data_file(base).suffix == ".yml"
 
 
@@ -25,7 +33,7 @@ def test_find_data_file_priority_in_prod_mode(tmp_path, monkeypatch):
     (base.with_suffix(".yml")).write_text("k: v\n", encoding="utf-8")
     (base.with_suffix(".msgpack")).write_bytes(b"dummy")
 
-    monkeypatch.setattr(mutils.config, "is_dev_mode", lambda: False)
+    _mock_dev_mode(monkeypatch, is_dev_mode=False)
     assert mutils.find_data_file(base).suffix == ".msgpack"
 
 
@@ -34,7 +42,7 @@ def test_write_and_read_data_roundtrip_msgpack(tmp_path, monkeypatch):
     base.parent.mkdir(parents=True, exist_ok=True)
     data = {"metadata": {"gameVersion": "16.3"}, "items": [1, 2, 3]}
 
-    monkeypatch.setattr(mutils.config, "is_dev_mode", lambda: False)
+    _mock_dev_mode(monkeypatch, is_dev_mode=False)
     mutils.write_data(data, base)
 
     assert base.with_suffix(".msgpack").exists()
@@ -46,7 +54,7 @@ def test_write_and_read_data_roundtrip_yaml(tmp_path, monkeypatch):
     base.parent.mkdir(parents=True, exist_ok=True)
     data = {"metadata": {"gameVersion": "16.3"}, "items": [1, 2, 3]}
 
-    monkeypatch.setattr(mutils.config, "is_dev_mode", lambda: True)
+    _mock_dev_mode(monkeypatch, is_dev_mode=True)
     mutils.write_data(data, base)
 
     assert base.with_suffix(".yml").exists()
@@ -87,7 +95,7 @@ def test_needs_update_behavior(tmp_path, monkeypatch):
     base = tmp_path / "manifest" / "data"
     base.parent.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr(mutils.config, "is_dev_mode", lambda: False)
+    _mock_dev_mode(monkeypatch, is_dev_mode=False)
 
     # 文件不存在时需要更新
     assert mutils.needs_update(base, "16.3", force_update=False) is True
