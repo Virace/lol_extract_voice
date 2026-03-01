@@ -18,6 +18,7 @@
 
 - [介绍](#介绍)
 - [使用方法](#使用方法)
+- [基准测试](#基准测试)
 - [设计哲学](#设计哲学)
 - [性能参考](#性能参考)
 - [后续处理：音频转码](#后续处理音频转码)
@@ -156,6 +157,83 @@ LOL_OUTPUT_PATH=''
 # 使用英文逗号分割, 留空则全部解包
 LOL_EXCLUDE_TYPE='SFX,MUSIC'
 ```
+
+### 基准测试
+项目内置基准脚本：`scripts/benchmark_cli.py`，用于评估 CLI 外部调用的真实耗时与稳定性。
+
+在 WSL 环境下，建议统一通过 `./scripts/_uv.sh` 运行，避免环境偏差：
+
+```bash
+./scripts/_uv.sh run python scripts/benchmark_cli.py --help
+```
+
+#### 基准模式
+- `--mode mock`：只跑轻量命令（`--version`、`--help`、无动作参数校验），不依赖本地游戏目录。
+- `--mode local_game`：使用本地客户端与输出目录做真实小样本测试。
+- `--mode both`：先跑 mock，再跑 local_game。
+
+#### 常用参数
+- `--sample-size N`：`local_game` 抽样数量（默认 10）。
+- `--max-workers auto|N`：并发数，`auto` 使用 CPU 核心数。
+- `--output PATH`：结果 JSON 输出路径。
+- `--timeout SEC`：单条命令超时时间。
+- `--prepare-update/--no-prepare-update`：
+  - 默认 `--prepare-update`：`local_game` 前置执行 `unpack --update`，保证所需 `manifest/<version>/data.*` 可用。
+  - 若已准备好数据，可使用 `--no-prepare-update` 跳过更新。
+- `--game-path` / `--output-path` / `--wwiser-path`：显式覆盖运行路径，优先级高于环境变量。
+
+#### 示例 1：仅做 mock 自检
+```bash
+./scripts/_uv.sh run python scripts/benchmark_cli.py \
+  --mode mock \
+  --output /tmp/bench_mock.json
+```
+
+#### 示例 2：local_game 全流程（更新 + 解包 + 映射）
+```bash
+./scripts/_uv.sh run python scripts/benchmark_cli.py \
+  --mode local_game \
+  --sample-size 10 \
+  --max-workers auto \
+  --game-path "/mnt/d/Games/Tencent/WeGameApps/英雄联盟" \
+  --output-path "/mnt/e/Temp/Scratch/lol" \
+  --wwiser-path "/path/to/wwiser.pyz" \
+  --output /tmp/bench_local.json
+```
+
+#### 示例 3：仅解包音频（不做映射）
+方式一（推荐）：直接使用 `unpack` 组合命令。
+```bash
+./scripts/_uv.sh run unpack \
+  --update --skip-events \
+  --extract-champions 122,804,62 \
+  --max-workers auto \
+  --game-path "/mnt/d/Games/Tencent/WeGameApps/英雄联盟" \
+  --output-path "/mnt/e/Temp/Scratch/lol"
+```
+
+方式二（使用 benchmark_cli）：不给有效 `WWISER_PATH`，映射阶段会 `skip`，仅统计解包阶段。
+```bash
+./scripts/_uv.sh run python scripts/benchmark_cli.py \
+  --mode local_game \
+  --sample-size 3 \
+  --no-prepare-update \
+  --wwiser-path "/__not_exists__" \
+  --game-path "/mnt/d/Games/Tencent/WeGameApps/英雄联盟" \
+  --output-path "/mnt/e/Temp/Scratch/lol" \
+  --output /tmp/bench_extract_only.json
+```
+
+#### 输出说明
+结果为 JSON，核心结构：
+- `meta`：生成时间、模式、样本规模、并发数。
+- `results[]`：每个阶段的执行结果（`status`、`elapsed_sec`、`command`、`stdout_tail`、`stderr_tail`）。
+
+`status` 含义：
+- `ok`：阶段执行成功。
+- `skip`：前置条件不满足（如缺少路径、缺少 `manifest data`、无有效 `WWISER_PATH`）。
+- `fail`：返回码异常或命中关键错误标记。
+- `timeout`：阶段超时。
 
 ### 设计哲学
 -   **速度优先**: 通过简化的处理流程和优化的文件I/O，最大化解包效率。

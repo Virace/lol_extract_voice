@@ -9,7 +9,10 @@ from lol_audio_unpack.manager.utils import get_game_version
 
 pytestmark = pytest.mark.local_game
 
-DEFAULT_LOCAL_GAME_PATH = Path("/mnt/d/Games/Tencent/WeGameApps/英雄联盟/")
+DEFAULT_LOCAL_GAME_PATHS = [
+    Path("/mnt/d/Games/Tencent/WeGameApps/英雄联盟"),
+    Path("D:/Games/Tencent/WeGameApps/英雄联盟"),
+]
 LOCAL_GAME_SKIP_PREFIX = "[需人工校对][local_game外部资源]"
 
 
@@ -22,7 +25,10 @@ def _skip_local_game(stage: str, reason: str, checklist: str) -> None:
 
 def _resolve_local_game_path() -> Path:
     env_path = os.environ.get("LOL_LOCAL_GAME_PATH", "").strip()
-    target = Path(env_path) if env_path else DEFAULT_LOCAL_GAME_PATH
+    if env_path:
+        target = Path(env_path)
+    else:
+        target = next((path for path in DEFAULT_LOCAL_GAME_PATHS if path.exists()), DEFAULT_LOCAL_GAME_PATHS[0])
 
     if not target.exists():
         _skip_local_game(

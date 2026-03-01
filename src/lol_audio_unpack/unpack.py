@@ -356,12 +356,12 @@ def unpack_audio_entity(
         logger.debug(f"保存报告文件失败: {e}")
 
 
-def _generate_relative_path(entity_data: AudioEntityData, sub_id: str) -> str:
+def _generate_relative_path(entity_data: AudioEntityData, sub_id: str) -> Path:
     """生成相对路径（不包含音频类型）
 
     :param entity_data: 实体数据
     :param sub_id: 子实体ID（皮肤ID或地图ID）
-    :returns: 相对路径字符串
+    :returns: 相对路径
     """
     sub_name = entity_data.sub_entities[sub_id]["name"]
     # 使用统一的小写目录名
@@ -373,12 +373,12 @@ def _generate_relative_path(entity_data: AudioEntityData, sub_id: str) -> str:
     )
 
     if entity_data.entity_type == "champion":
-        # champions\1·annie·黑暗之女·安妮\1000·基础皮肤
+        # champions/1·annie·黑暗之女·安妮/1000·基础皮肤
         sub_folder_name = format_sub_entity_folder_name(sub_id, sub_name)
-        return f"{entity_dir}\\{entity_folder_name}\\{sub_folder_name}"
+        return Path(entity_dir) / entity_folder_name / sub_folder_name
     else:  # map
-        # maps\11·sr·召唤师峡谷
-        return f"{entity_dir}\\{entity_folder_name}"
+        # maps/11·sr·召唤师峡谷
+        return Path(entity_dir) / entity_folder_name
 
 
 def generate_output_path(
