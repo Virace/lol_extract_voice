@@ -95,6 +95,14 @@ max-complexity = 10
 [tool.ruff.format]
 docstring-code-format = true
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "unit: 纯单元测试，不依赖本地游戏实体资源",
+    "integration: 集成测试，可能依赖临时文件与多模块协作",
+    "local_game: 依赖本地英雄联盟实体资源的只读验证测试",
+]
+
 [[tool.uv.index]]
 name = "testpypi"
 url = "https://test.pypi.org/simple/"
