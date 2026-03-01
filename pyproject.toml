@@ -1,12 +1,12 @@
 [project]
 name = "lol-audio-unpack"
-version = "3.5.0.dev1+hash"
+version = "3.5.0.dev2"
 description = "英雄联盟游戏音频文件解包工具"
 authors = [
     { name = "Virace", email = "Virace@aliyun.com" }
 ]
 dependencies = [
-    "python-dotenv>=1.0.1",
+    "python-dotenv>=1.1.1",
     "msgpack>=1.1.1",
     "ruamel-yaml>=0.18.14",
     "alive-progress>=3.3.0",
@@ -25,8 +25,13 @@ build-backend = "hatchling.build"
 
 [tool.uv]
 managed = true
-dev-dependencies = [
+default-groups = ["dev"]
+
+[dependency-groups]
+dev = [
     "memory-profiler>=0.61.0",
+    "pytest>=9.0.0",
+    "ruff>=0.13.0",
 ]
 
 [tool.hatch.metadata]

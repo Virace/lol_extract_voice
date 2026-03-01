@@ -111,6 +111,7 @@ venv.bak/
 asr*.py
 temp.py
 test.py
+.test.py
 *.bak
 *.bak.*
 *.json
@@ -119,6 +120,8 @@ Temp
 .cursor/
 src/lol_audio_unpack/packer.py
 *.env.dev
+packer/
+.ai_memory/
 
 
 !/params.json
