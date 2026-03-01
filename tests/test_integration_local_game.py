@@ -7,10 +7,17 @@ from league_tools.formats import WAD
 
 from lol_audio_unpack.manager.utils import get_game_version
 
-
 pytestmark = pytest.mark.local_game
 
 DEFAULT_LOCAL_GAME_PATH = Path("/mnt/d/Games/Tencent/WeGameApps/英雄联盟/")
+LOCAL_GAME_SKIP_PREFIX = "[需人工校对][local_game外部资源]"
+
+
+def _skip_local_game(stage: str, reason: str, checklist: str) -> None:
+    pytest.skip(
+        f"{LOCAL_GAME_SKIP_PREFIX}[阶段:{stage}] {reason}；"
+        f"人工校对建议: {checklist}"
+    )
 
 
 def _resolve_local_game_path() -> Path:
@@ -18,7 +25,11 @@ def _resolve_local_game_path() -> Path:
     target = Path(env_path) if env_path else DEFAULT_LOCAL_GAME_PATH
 
     if not target.exists():
-        pytest.skip(f"本地游戏目录不存在，跳过 local_game 测试: {target}")
+        _skip_local_game(
+            stage="环境准备",
+            reason=f"本地游戏目录不存在: {target}",
+            checklist="确认 LOL_LOCAL_GAME_PATH 或默认目录是否指向有效的英雄联盟客户端",
+        )
 
     return target
 
