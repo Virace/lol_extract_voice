@@ -115,6 +115,7 @@ test.py
 *.bak
 *.bak.*
 *.json
+!.version-suffix-rules.json
 hashes.*.txt
 Temp
 .cursor/
