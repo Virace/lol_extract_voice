@@ -9,9 +9,12 @@
 # @Detail  : 音频文件映射
 
 
+import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from league_tools import WAD, AudioEventMapper, WwiserHIRC
@@ -26,6 +29,137 @@ from lol_audio_unpack.utils.config import config
 from lol_audio_unpack.utils.logging import performance_monitor
 
 
+@dataclass
+class MappingRuntimeCache:
+    """映射流程中的运行时缓存。"""
+
+    wad_cache: dict[Path, WAD] = field(default_factory=dict)
+    extract_cache: set[tuple[Path, str]] = field(default_factory=set)
+    hirc_cache: dict[Path, WwiserHIRC] = field(default_factory=dict)
+    cache_lock: threading.Lock | None = None
+
+
+def _get_wad_instance(
+    wad_path: Path,
+    runtime_cache: MappingRuntimeCache | None,
+) -> WAD:
+    """获取 WAD 实例并复用运行时缓存。
+
+    Args:
+        wad_path: WAD 文件绝对路径。
+        runtime_cache: 映射过程共享缓存；为 ``None`` 时不使用缓存。
+
+    Returns:
+        对应路径的 ``WAD`` 实例。
+    """
+    if runtime_cache is None:
+        return WAD(wad_path)
+
+    wad_cache = runtime_cache.wad_cache
+    cache_lock = runtime_cache.cache_lock
+
+    if cache_lock is None:
+        if wad_path not in wad_cache:
+            wad_cache[wad_path] = WAD(wad_path)
+        return wad_cache[wad_path]
+
+    with cache_lock:
+        if wad_path not in wad_cache:
+            wad_cache[wad_path] = WAD(wad_path)
+        return wad_cache[wad_path]
+
+
+def _is_bnk_extracted(
+    key: tuple[Path, str],
+    runtime_cache: MappingRuntimeCache | None,
+) -> bool:
+    """检查 bnk 文件是否已在本轮执行中提取过。
+
+    Args:
+        key: 提取去重键，格式为 ``(wad_path, bnk_rel_path)``。
+        runtime_cache: 映射过程共享缓存。
+
+    Returns:
+        ``True`` 表示已提取过，``False`` 表示未提取。
+    """
+    if runtime_cache is None:
+        return False
+    extract_cache = runtime_cache.extract_cache
+    cache_lock = runtime_cache.cache_lock
+
+    if cache_lock is None:
+        return key in extract_cache
+    with cache_lock:
+        return key in extract_cache
+
+
+def _mark_bnk_extracted(
+    key: tuple[Path, str],
+    runtime_cache: MappingRuntimeCache | None,
+) -> None:
+    """标记 bnk 文件已提取。
+
+    Args:
+        key: 提取去重键，格式为 ``(wad_path, bnk_rel_path)``。
+        runtime_cache: 映射过程共享缓存。
+    """
+    if runtime_cache is None:
+        return
+    extract_cache = runtime_cache.extract_cache
+    cache_lock = runtime_cache.cache_lock
+
+    if cache_lock is None:
+        extract_cache.add(key)
+        return
+    with cache_lock:
+        extract_cache.add(key)
+
+
+def _get_cached_hirc(
+    bnk_path: Path,
+    hirc_cache_dir: Path,
+    wwiser_manager: WwiserManager,
+    runtime_cache: MappingRuntimeCache | None,
+) -> WwiserHIRC:
+    """获取 HIRC 对象并复用缓存。
+
+    Args:
+        bnk_path: bnk 文件路径。
+        hirc_cache_dir: hirc 缓存目录。
+        wwiser_manager: wwiser 管理器。
+        runtime_cache: 映射过程共享缓存。
+
+    Returns:
+        解析后的 ``WwiserHIRC`` 对象。
+    """
+    if runtime_cache is None:
+        return WwiserHIRC.from_bnk(bnk_path, cache_dir=hirc_cache_dir, wwiser_manager=wwiser_manager)
+
+    hirc_cache = runtime_cache.hirc_cache
+    cache_lock = runtime_cache.cache_lock
+
+    if cache_lock is None:
+        cached = hirc_cache.get(bnk_path)
+        if cached is not None:
+            return cached
+        parsed = WwiserHIRC.from_bnk(bnk_path, cache_dir=hirc_cache_dir, wwiser_manager=wwiser_manager)
+        hirc_cache[bnk_path] = parsed
+        return parsed
+
+    with cache_lock:
+        cached = hirc_cache.get(bnk_path)
+    if cached is not None:
+        return cached
+
+    parsed = WwiserHIRC.from_bnk(bnk_path, cache_dir=hirc_cache_dir, wwiser_manager=wwiser_manager)
+    with cache_lock:
+        existing = hirc_cache.get(bnk_path)
+        if existing is not None:
+            return existing
+        hirc_cache[bnk_path] = parsed
+        return parsed
+
+
 @logger.catch
 @performance_monitor(level="DEBUG")
 def build_audio_event_mapping(
@@ -33,15 +167,22 @@ def build_audio_event_mapping(
     reader: DataReader,
     wwiser_manager: WwiserManager | None = None,
     integrate_data: bool = False,
+    runtime_cache: MappingRuntimeCache | None = None,
 ) -> dict[str, Any]:
-    """构建音频事件映射，使用AudioEntityData统一接口
+    """构建单个实体的事件映射。
 
-    :param entity_data: 包含事件数据的音频实体数据
-    :param reader: 数据读取器实例
-    :param wwiser_manager: Wwiser管理器实例，None时会创建新实例
-    :param integrate_data: 是否生成整合数据（包含完整实体信息、banks和mapping数据）
-    :returns: 包含映射结果的字典，格式类似events数据但包含文件ID映射
-    :raises ValueError: 当实体数据无效或缺少事件数据时
+    Args:
+        entity_data: 包含 events 的实体数据。
+        reader: 数据读取器实例。
+        wwiser_manager: 可复用的 wwiser 管理器；为 ``None`` 时内部创建。
+        integrate_data: 是否输出整合数据（实体信息 + banks + mapping）。
+        runtime_cache: 映射流程共享缓存，用于复用 WAD/HIRC 解析结果。
+
+    Returns:
+        映射结果或整合结果字典。
+
+    Raises:
+        ValueError: 实体没有可用 events 数据时抛出。
     """
     if not entity_data.events:
         raise ValueError(f"{entity_data.entity_name} 缺少事件数据，请使用 include_events=True 创建实体数据")
@@ -137,10 +278,15 @@ def build_audio_event_mapping(
                     continue
 
                 try:
+                    wad_obj = _get_wad_instance(wad_path, runtime_cache=runtime_cache)
                     # 提取 events.bnk 文件到版本化缓存目录
-                    WAD(wad_path).extract(bnk_paths, out_dir=version_cache_dir)
+                    bnk_rel_path = bnk_paths[0]
+                    extract_key = (wad_path, bnk_rel_path)
+                    if not _is_bnk_extracted(extract_key, runtime_cache=runtime_cache):
+                        wad_obj.extract(bnk_paths, out_dir=version_cache_dir)
+                        _mark_bnk_extracted(extract_key, runtime_cache=runtime_cache)
 
-                    bnk_path = version_cache_dir / bnk_paths[0]
+                    bnk_path = version_cache_dir / bnk_rel_path
                     if not bnk_path.exists():
                         logger.warning(f"提取的BNK文件不存在: {bnk_path}")
                         continue
@@ -150,7 +296,12 @@ def build_audio_event_mapping(
                     hirc_cache_dir.mkdir(parents=True, exist_ok=True)
 
                     # 使用 WwiserHIRC 解析
-                    hirc = WwiserHIRC.from_bnk(bnk_path, cache_dir=hirc_cache_dir, wwiser_manager=wm)
+                    hirc = _get_cached_hirc(
+                        bnk_path=bnk_path,
+                        hirc_cache_dir=hirc_cache_dir,
+                        wwiser_manager=wm,
+                        runtime_cache=runtime_cache,
+                    )
 
                     # 创建映射并构建AudioMapping对象
                     current_mapper = AudioEventMapper(event_list, hirc)
@@ -351,42 +502,70 @@ def integrate_entity_data(
 
 
 def build_champion_mapping(
-    champion_id: int, reader: DataReader, wwiser_manager: WwiserManager | None = None, integrate_data: bool = False
+    champion_id: int,
+    reader: DataReader,
+    wwiser_manager: WwiserManager | None = None,
+    integrate_data: bool = False,
+    runtime_cache: MappingRuntimeCache | None = None,
 ) -> dict[str, Any]:
-    """构建英雄事件映射的便捷函数
+    """构建单个英雄的事件映射。
 
-    :param champion_id: 英雄ID
-    :param reader: 数据读取器实例
-    :param wwiser_manager: Wwiser管理器实例，None时会创建新实例
-    :param integrate_data: 是否生成整合数据
-    :returns: 英雄事件映射结果
+    Args:
+        champion_id: 英雄 ID。
+        reader: 数据读取器实例。
+        wwiser_manager: 可复用的 wwiser 管理器；为 ``None`` 时内部创建。
+        integrate_data: 是否输出整合数据。
+        runtime_cache: 映射流程共享缓存。
+
+    Returns:
+        英雄映射结果；失败时返回空字典。
     """
     try:
         # 创建包含事件数据的AudioEntityData实例
         entity_data = AudioEntityData.from_champion(champion_id, reader, include_events=True)
         # 构建映射
-        return build_audio_event_mapping(entity_data, reader, wwiser_manager, integrate_data)
+        return build_audio_event_mapping(
+            entity_data,
+            reader,
+            wwiser_manager,
+            integrate_data,
+            runtime_cache=runtime_cache,
+        )
     except ValueError as e:
         logger.error(str(e))
         return {}
 
 
 def build_map_mapping(
-    map_id: int, reader: DataReader, wwiser_manager: WwiserManager | None = None, integrate_data: bool = False
+    map_id: int,
+    reader: DataReader,
+    wwiser_manager: WwiserManager | None = None,
+    integrate_data: bool = False,
+    runtime_cache: MappingRuntimeCache | None = None,
 ) -> dict[str, Any]:
-    """构建地图事件映射的便捷函数
+    """构建单个地图的事件映射。
 
-    :param map_id: 地图ID
-    :param reader: 数据读取器实例
-    :param wwiser_manager: Wwiser管理器实例，None时会创建新实例
-    :param integrate_data: 是否生成整合数据
-    :returns: 地图事件映射结果
+    Args:
+        map_id: 地图 ID。
+        reader: 数据读取器实例。
+        wwiser_manager: 可复用的 wwiser 管理器；为 ``None`` 时内部创建。
+        integrate_data: 是否输出整合数据。
+        runtime_cache: 映射流程共享缓存。
+
+    Returns:
+        地图映射结果；失败时返回空字典。
     """
     try:
         # 创建包含事件数据的AudioEntityData实例
         entity_data = AudioEntityData.from_map(map_id, reader, include_events=True)
         # 构建映射
-        return build_audio_event_mapping(entity_data, reader, wwiser_manager, integrate_data)
+        return build_audio_event_mapping(
+            entity_data,
+            reader,
+            wwiser_manager,
+            integrate_data,
+            runtime_cache=runtime_cache,
+        )
     except ValueError as e:
         logger.error(str(e))
         return {}
@@ -426,13 +605,26 @@ def execute_mapping_tasks(
 
     # 初始化共享的Wwiser管理器（避免重复创建）
     wwiser_manager = WwiserManager(config.WWISER_PATH)
+    runtime_cache = MappingRuntimeCache(cache_lock=threading.Lock() if max_workers > 1 else None)
 
     def build_entity_mapping(entity_type: str, entity_id: int) -> None:
         """构建单个实体映射的辅助函数"""
         if entity_type == "champion":
-            build_champion_mapping(entity_id, reader, wwiser_manager, integrate_data)
+            build_champion_mapping(
+                entity_id,
+                reader,
+                wwiser_manager,
+                integrate_data,
+                runtime_cache=runtime_cache,
+            )
         elif entity_type == "map":
-            build_map_mapping(entity_id, reader, wwiser_manager, integrate_data)
+            build_map_mapping(
+                entity_id,
+                reader,
+                wwiser_manager,
+                integrate_data,
+                runtime_cache=runtime_cache,
+            )
         else:
             raise ValueError(f"未知的实体类型: {entity_type}")
 

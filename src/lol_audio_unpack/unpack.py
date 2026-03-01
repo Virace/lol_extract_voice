@@ -10,6 +10,7 @@
 
 
 import os
+import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -34,14 +35,53 @@ from lol_audio_unpack.utils.stats import FileProcessResult, ProcessingStatsConte
 # todo: ID62, 孙悟空，62007, 战斗学院 孙悟空, ASSETS/Sounds/Wwise2016/SFX/Characters/MonkeyKing/Skins/Skin07/MonkeyKing_Skin07_VO_audio.bnk, 该文件在根WAD
 
 
+def _get_wad_instance(
+    wad_path: Path,
+    wad_cache: dict[Path, WAD] | None,
+    cache_lock: threading.Lock | None,
+) -> WAD:
+    """获取 WAD 实例并复用缓存。
+
+    Args:
+        wad_path: WAD 文件绝对路径。
+        wad_cache: 本轮解包共享缓存；为 ``None`` 时不缓存。
+        cache_lock: 多线程场景下的缓存锁。
+
+    Returns:
+        对应路径的 ``WAD`` 实例。
+    """
+    if wad_cache is None:
+        return WAD(wad_path)
+
+    if cache_lock is None:
+        if wad_path not in wad_cache:
+            wad_cache[wad_path] = WAD(wad_path)
+        return wad_cache[wad_path]
+
+    with cache_lock:
+        if wad_path not in wad_cache:
+            wad_cache[wad_path] = WAD(wad_path)
+        return wad_cache[wad_path]
+
+
 @logger.catch
 @performance_monitor(level="DEBUG")
-def unpack_audio_entity(entity_data: AudioEntityData, reader: DataReader) -> None:
-    """通用音频解包函数，支持英雄和地图数据
+def unpack_audio_entity(
+    entity_data: AudioEntityData,
+    reader: DataReader,
+    wad_cache: dict[Path, WAD] | None = None,
+    cache_lock: threading.Lock | None = None,
+) -> None:
+    """解包单个实体音频（英雄或地图）。
 
-    :param entity_data: 音频实体数据（英雄或地图）
-    :param reader: 一个已经初始化并加载了数据的DataReader实例
-    :raises ValueError: 当实体数据无效时
+    Args:
+        entity_data: 音频实体数据。
+        reader: 已初始化的数据读取器。
+        wad_cache: 本轮解包共享 WAD 缓存。
+        cache_lock: 多线程场景下的缓存锁。
+
+    Raises:
+        ValueError: 实体数据无效时抛出。
     """
     language = config.GAME_REGION  # 决定解包哪种语言的音频
     audio_path = config.AUDIO_PATH / reader.version
@@ -124,7 +164,8 @@ def unpack_audio_entity(entity_data: AudioEntityData, reader: DataReader) -> Non
             vo_path_list = list(vo_paths_to_extract)  # 无需排序（WAD.extract保证顺序）
             try:
                 logger.debug(f"正在从 {lang_wad_path.name} 解包 {len(vo_path_list)} 个VO文件...")
-                file_raws = WAD(lang_wad_path).extract(vo_path_list, raw=True)
+                wad_obj = _get_wad_instance(lang_wad_path, wad_cache=wad_cache, cache_lock=cache_lock)
+                file_raws = wad_obj.extract(vo_path_list, raw=True)
                 path_to_raw_data_map.update(zip(vo_path_list, file_raws, strict=False))
                 # 记录VO WAD解包成功统计
                 stats.set_wad_info("VO", lang_wad_path, len(vo_path_list), len(file_raws))
@@ -144,7 +185,8 @@ def unpack_audio_entity(entity_data: AudioEntityData, reader: DataReader) -> Non
             other_path_list = list(other_paths_to_extract)  # 无需排序（WAD.extract保证顺序）
             try:
                 logger.debug(f"正在从 {root_wad_path.name} 解包 {len(other_path_list)} 个SFX/Music文件...")
-                file_raws = WAD(root_wad_path).extract(other_path_list, raw=True)
+                wad_obj = _get_wad_instance(root_wad_path, wad_cache=wad_cache, cache_lock=cache_lock)
+                file_raws = wad_obj.extract(other_path_list, raw=True)
                 path_to_raw_data_map.update(zip(other_path_list, file_raws, strict=False))
                 # 记录SFX/Music WAD解包成功统计
                 stats.set_wad_info("ROOT", root_wad_path, len(other_path_list), len(file_raws))
@@ -367,36 +409,50 @@ def generate_output_path(
         return base_path / relative_path / audio_type
 
 
-def unpack_champion(champion_id: int, reader: DataReader) -> None:
-    """根据英雄ID和已加载的数据读取器解包其音频文件
+def unpack_champion(
+    champion_id: int,
+    reader: DataReader,
+    wad_cache: dict[Path, WAD] | None = None,
+    cache_lock: threading.Lock | None = None,
+) -> None:
+    """按英雄 ID 解包音频。
 
-    :param champion_id: 英雄ID
-    :param reader: 一个已经初始化并加载了数据的DataReader实例
-    :raises ValueError: 当英雄数据不存在或无音频数据时
+    Args:
+        champion_id: 英雄 ID。
+        reader: 已初始化的数据读取器。
+        wad_cache: 本轮解包共享 WAD 缓存。
+        cache_lock: 多线程场景下的缓存锁。
     """
     try:
         # 创建AudioEntityData实例
         entity_data = AudioEntityData.from_champion(champion_id, reader)
         # 调用通用解包函数
-        unpack_audio_entity(entity_data, reader)
+        unpack_audio_entity(entity_data, reader, wad_cache=wad_cache, cache_lock=cache_lock)
     except ValueError as e:
         # 保持与原始函数相同的错误处理方式
         logger.error(str(e))
         return
 
 
-def unpack_map_audio(map_id: int, reader: DataReader) -> None:
-    """根据地图ID和已加载的数据读取器解包其音频文件
+def unpack_map_audio(
+    map_id: int,
+    reader: DataReader,
+    wad_cache: dict[Path, WAD] | None = None,
+    cache_lock: threading.Lock | None = None,
+) -> None:
+    """按地图 ID 解包音频。
 
-    :param map_id: 地图ID
-    :param reader: 一个已经初始化并加载了数据的DataReader实例
-    :raises ValueError: 当地图数据不存在或无音频数据时
+    Args:
+        map_id: 地图 ID。
+        reader: 已初始化的数据读取器。
+        wad_cache: 本轮解包共享 WAD 缓存。
+        cache_lock: 多线程场景下的缓存锁。
     """
     try:
         # 创建AudioEntityData实例
         entity_data = AudioEntityData.from_map(map_id, reader)
         # 调用通用解包函数
-        unpack_audio_entity(entity_data, reader)
+        unpack_audio_entity(entity_data, reader, wad_cache=wad_cache, cache_lock=cache_lock)
     except ValueError as e:
         # 保持一致的错误处理方式
         logger.error(str(e))
@@ -404,11 +460,12 @@ def unpack_map_audio(map_id: int, reader: DataReader) -> None:
 
 
 def execute_unpack_tasks(tasks: list[tuple[str, int, str]], reader: DataReader, max_workers: int = 4) -> None:
-    """执行解包任务集
+    """执行批量解包任务。
 
-    :param tasks: 任务元组列表 [("entity_type", id, description), ...]
-    :param reader: 数据读取器
-    :param max_workers: 最大工作线程数
+    Args:
+        tasks: 任务元组列表 ``[(entity_type, id, description), ...]``。
+        reader: 数据读取器实例。
+        max_workers: 最大并发线程数。
     """
     if not tasks:
         logger.warning("没有任何任务需要执行")
@@ -432,12 +489,15 @@ def execute_unpack_tasks(tasks: list[tuple[str, int, str]], reader: DataReader, 
         f"模式: {'多线程' if max_workers > 1 else '单线程'} (workers: {max_workers})"
     )
 
+    wad_cache: dict[Path, WAD] = {}
+    cache_lock = threading.Lock() if max_workers > 1 else None
+
     def unpack_entity(entity_type: str, entity_id: int) -> None:
         """解包单个实体的辅助函数"""
         if entity_type == "champion":
-            unpack_champion(entity_id, reader)
+            unpack_champion(entity_id, reader, wad_cache=wad_cache, cache_lock=cache_lock)
         elif entity_type == "map":
-            unpack_map_audio(entity_id, reader)
+            unpack_map_audio(entity_id, reader, wad_cache=wad_cache, cache_lock=cache_lock)
         else:
             raise ValueError(f"未知的实体类型: {entity_type}")
 
