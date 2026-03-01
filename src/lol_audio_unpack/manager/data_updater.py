@@ -359,12 +359,16 @@ class DataUpdater:
         _region = "default" if region.lower() == "en_us" else region
         _head = format_region(_region)
 
-        if _head == "default":
-            wad_files = list(self.game_path.glob("LeagueClient/Plugins/rcp-be-lol-game-data/default-assets*.wad"))
-        else:
-            wad_files = [self.game_path / "LeagueClient" / "Plugins" / f"rcp-be-lol-game-data/{_head}-assets.wad"]
+        # 新客户端中 assets.wad 可能被拆分为多个分卷（如 default-assets.wad / default-assets2.wad）。
+        # 各区域统一使用通配模式，避免仅匹配单文件导致漏解包。
+        wad_pattern = (
+            "LeagueClient/Plugins/rcp-be-lol-game-data/default-assets*.wad"
+            if _head == "default"
+            else f"LeagueClient/Plugins/rcp-be-lol-game-data/{_head}-assets*.wad"
+        )
+        wad_files = sorted(self.game_path.glob(wad_pattern))
 
-        if not wad_files or not all(f.exists() for f in wad_files):
+        if not wad_files:
             logger.error(f"未找到 {_region} 区域的WAD文件")
             return
 
