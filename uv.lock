@@ -83,7 +83,7 @@ wheels = [
 
 [[package]]
 name = "lol-audio-unpack"
-version = "3.5.0"
+version = "3.5.1.dev0+test"
 source = { editable = "." }
 dependencies = [
     { name = "alive-progress" },

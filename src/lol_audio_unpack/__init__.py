@@ -9,7 +9,7 @@
 # @Detail  : lol_audio_unpack
 
 
-__version__ = "3.5.0"
+__version__ = "3.5.1.dev0+test"
 
 import sys
 from pathlib import Path
