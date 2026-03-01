@@ -54,7 +54,7 @@ wheels = [
 [[package]]
 name = "league-tools"
 version = "1.1.1"
-source = { editable = "../league-tools" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "loguru" },
     { name = "lxml" },
@@ -63,21 +63,9 @@ dependencies = [
     { name = "xxhash" },
     { name = "zstd" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "loguru", specifier = ">=0.7.2" },
-    { name = "lxml", specifier = ">=6.0.2" },
-    { name = "quick-xmltodict", specifier = ">=0.1.3" },
-    { name = "urllib3", specifier = ">=2.6.3" },
-    { name = "xxhash", specifier = ">=3.6.0" },
-    { name = "zstd", specifier = ">=1.5.7.3" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "psutil", specifier = ">=7.2.2" },
-    { name = "pytest", specifier = ">=8.4.2" },
+sdist = { url = "https://files.pythonhosted.org/packages/0a/89/4848e7f314cbe3cb9705abe6d9a87d59e09dc0b90d55f9885e41ab2ab9a1/league_tools-1.1.1.tar.gz", hash = "sha256:22c474124102d2450a36cdc61348fff51f0e76c5cd5be1602f92329f53c80306", size = 128291, upload-time = "2026-03-01T16:02:57.128Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/88/0113560e1d534278b7fbb55a1e23817de267320b0974113d94a485fc521d/league_tools-1.1.1-py3-none-any.whl", hash = "sha256:b26250efa9b49e96982cfd9fb9ec9cb5d7f49d5c643a2e73bcd7610384f93061", size = 92408, upload-time = "2026-03-01T16:02:55.511Z" },
 ]
 
 [[package]]
@@ -115,7 +103,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alive-progress", specifier = ">=3.3.0" },
-    { name = "league-tools", editable = "../league-tools" },
+    { name = "league-tools" },
     { name = "msgpack", specifier = ">=1.1.1" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
     { name = "ruamel-yaml", specifier = ">=0.18.14" },
