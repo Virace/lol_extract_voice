@@ -15,7 +15,7 @@ def _build_updater(tmp_path: Path) -> m_bin_updater.BinUpdater:
     return updater
 
 
-def test_extract_bin_raws_prefers_wad_when_wad_exists(tmp_path, monkeypatch):
+def test_extract_bin_raws_prefers_local_when_flag_enabled_even_if_wad_exists(tmp_path, monkeypatch):
     updater = _build_updater(tmp_path)
     updater.use_local_bin_flag_file.write_text("", encoding="utf-8")
 
@@ -33,6 +33,9 @@ def test_extract_bin_raws_prefers_wad_when_wad_exists(tmp_path, monkeypatch):
 
     wad_path = tmp_path / "Annie.wad.client"
     wad_path.write_bytes(b"")
+    local_file = updater.local_bin_input_dir / "data/characters/Annie/skins/skin0001.bin"
+    local_file.parent.mkdir(parents=True, exist_ok=True)
+    local_file.write_bytes(b"from-local")
 
     result = updater._extract_bin_raws(
         wad_path=wad_path,
@@ -41,8 +44,55 @@ def test_extract_bin_raws_prefers_wad_when_wad_exists(tmp_path, monkeypatch):
         local_required_dir=Path("data/characters/Annie"),
     )
 
-    assert calls == [(wad_path, ["data/characters/Annie/skins/skin0001.bin"], True)]
-    assert result == [b"from-wad"]
+    assert calls == []
+    assert result == [b"from-local"]
+
+
+def test_extract_bin_raws_uses_wad_to_fill_missing_local_bins(tmp_path, monkeypatch):
+    updater = _build_updater(tmp_path)
+    updater.use_local_bin_flag_file.write_text("", encoding="utf-8")
+
+    calls = []
+
+    class FakeWAD:
+        def __init__(self, path):
+            self.path = Path(path)
+
+        def extract(self, bin_paths, raw):
+            calls.append((self.path, list(bin_paths), raw))
+            return [f"wad-{idx}".encode() for idx, _ in enumerate(bin_paths)]
+
+    monkeypatch.setattr(m_bin_updater, "WAD", FakeWAD)
+
+    wad_path = tmp_path / "Annie.wad.client"
+    wad_path.write_bytes(b"")
+
+    local_file = updater.local_bin_input_dir / "data/characters/Annie/skins/skin0001.bin"
+    local_file.parent.mkdir(parents=True, exist_ok=True)
+    local_file.write_bytes(b"from-local")
+
+    result = updater._extract_bin_raws(
+        wad_path=wad_path,
+        bin_paths=[
+            "data/characters/Annie/skins/skin0001.bin",
+            "data/characters/Annie/skins/skin0002.bin",
+            "data/characters/Annie/skins/skin0003.bin",
+        ],
+        entity_label="英雄 1 (annie)",
+        local_required_dir=Path("data/characters/Annie"),
+    )
+
+    assert calls == [
+        (
+            wad_path,
+            [
+                "data/characters/Annie/skins/skin0002.bin",
+                "data/characters/Annie/skins/skin0003.bin",
+            ],
+            True,
+        )
+    ]
+    assert result == [b"from-local", b"wad-0", b"wad-1"]
 
 
 def test_extract_bin_raws_reads_local_files_when_flag_enabled(tmp_path):

@@ -137,9 +137,9 @@ class BinUpdater:
         按优先级提取 BIN 二进制数据。
 
         优先级:
-        1) WAD 文件存在时，强制走 WAD 提取。
-        2) WAD 不存在时，若存在 `.use_local_bin` 标志，则走本地目录读取。
-        3) 其余情况返回空结果。
+        1) `.use_local_bin` 启用时，优先读取本地 `bin_input`。
+        2) 若本地存在缺失且 WAD 可用，仅对缺失项走 WAD 补齐。
+        3) 若本地模式未启用，则按历史逻辑使用 WAD 或返回空结果。
 
         :param wad_path: 待提取的 WAD 路径；为空表示无可用 WAD 信息。
         :param bin_paths: 目标 BIN 路径列表。
@@ -152,48 +152,69 @@ class BinUpdater:
         if not bin_paths:
             return []
 
-        if wad_path and wad_path.exists():
-            logger.trace(f"{entity_label} 使用 WAD 读取 BIN: {wad_path}")
-            return WAD(wad_path).extract(bin_paths, raw=True)
+        local_mode_enabled = self._is_local_bin_mode_enabled()
+        local_bin_raws: list[bytes | None] | None = None
+        missing_indexes: list[int] = []
 
-        if not self._is_local_bin_mode_enabled():
+        if local_mode_enabled:
+            if not self.local_bin_input_dir.exists():
+                raise FileNotFoundError(f"{entity_label} 启用了本地BIN模式，但目录不存在: {self.local_bin_input_dir}")
+
+            if local_required_dir is not None:
+                required_path = self.local_bin_input_dir / local_required_dir
+                if not required_path.exists():
+                    raise FileNotFoundError(f"{entity_label} 本地BIN实体目录不存在: {required_path}")
+
+            local_bin_raws = []
+            for idx, bin_path in enumerate(bin_paths):
+                local_bin_file = self._build_local_bin_path(bin_path)
+                if not local_bin_file.is_file():
+                    local_bin_raws.append(None)
+                    missing_indexes.append(idx)
+                    continue
+
+                file_data = local_bin_file.read_bytes()
+                if not file_data:
+                    local_bin_raws.append(None)
+                    missing_indexes.append(idx)
+                    continue
+                local_bin_raws.append(file_data)
+
+            if missing_indexes:
+                logger.debug(
+                    f"{entity_label} 本地BIN存在缺失或空文件，已按缺失处理: {len(missing_indexes)}/{len(bin_paths)}"
+                )
+            logger.trace(f"{entity_label} 使用本地BIN目录读取: {self.local_bin_input_dir}")
+
+            if not missing_indexes:
+                return local_bin_raws
+
+        if wad_path and wad_path.exists():
+            if local_bin_raws is None:
+                logger.trace(f"{entity_label} 使用 WAD 读取 BIN: {wad_path}")
+                return WAD(wad_path).extract(bin_paths, raw=True)
+
+            missing_paths = [bin_paths[idx] for idx in missing_indexes]
+            logger.trace(
+                f"{entity_label} 本地BIN缺失 {len(missing_paths)} 个文件，使用 WAD 补齐: {wad_path}"
+            )
+            missing_raws = WAD(wad_path).extract(missing_paths, raw=True)
+            for idx, bin_raw in zip(missing_indexes, missing_raws, strict=False):
+                local_bin_raws[idx] = bin_raw
+            return local_bin_raws
+
+        if not local_mode_enabled:
             if wad_path:
                 logger.warning(f"{entity_label} 的WAD文件不存在，且未启用本地BIN模式: {wad_path}")
             else:
                 logger.warning(f"{entity_label} 缺少WAD路径信息，且未启用本地BIN模式")
             return []
 
-        if not self.local_bin_input_dir.exists():
-            raise FileNotFoundError(f"{entity_label} 启用了本地BIN模式，但目录不存在: {self.local_bin_input_dir}")
-
-        if local_required_dir is not None:
-            required_path = self.local_bin_input_dir / local_required_dir
-            if not required_path.exists():
-                raise FileNotFoundError(f"{entity_label} 本地BIN实体目录不存在: {required_path}")
-
-        bin_raws: list[bytes | None] = []
-        missing_count = 0
-        for bin_path in bin_paths:
-            local_bin_file = self._build_local_bin_path(bin_path)
-            if not local_bin_file.is_file():
-                bin_raws.append(None)
-                missing_count += 1
-                continue
-
-            file_data = local_bin_file.read_bytes()
-            if not file_data:
-                bin_raws.append(None)
-                missing_count += 1
-                continue
-            bin_raws.append(file_data)
-
-        if missing_count > 0:
-            logger.debug(
-                f"{entity_label} 本地BIN存在缺失或空文件，已按缺失处理: {missing_count}/{len(bin_paths)}"
-            )
-
-        logger.trace(f"{entity_label} 使用本地BIN目录读取: {self.local_bin_input_dir}")
-        return bin_raws
+        if wad_path:
+            logger.warning(f"{entity_label} 的WAD文件不存在，本地模式仅返回可用BIN: {wad_path}")
+        else:
+            logger.warning(f"{entity_label} 缺少WAD路径信息，本地模式仅返回可用BIN")
+        return local_bin_raws if local_bin_raws is not None else []
 
     def _filter_data_by_ids(self, data: dict, champion_ids: list[str] | None, map_ids: list[str] | None) -> dict:
         """

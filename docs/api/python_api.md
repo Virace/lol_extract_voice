@@ -72,8 +72,9 @@ class BinUpdater:
 
 本地 BIN 回退机制：
 
-- 当 WAD 缺失且 `manifest/<version>/.use_local_bin` 存在时，可回退读取 `manifest/<version>/bin_input`。
-- 回退读取具备路径越界防护与缺失容忍。
+- 当 `manifest/<version>/.use_local_bin` 存在时，会优先读取 `manifest/<version>/bin_input` 中的手动 BIN。
+- 若本地存在缺失项且 WAD 可用，仅对缺失项走 WAD 补齐。
+- 读取过程具备路径越界防护与缺失容忍。
 
 ### 2.3 `DataReader`
 
