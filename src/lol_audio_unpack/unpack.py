@@ -8,6 +8,7 @@
 # @Update  : 2025/8/7 11:28
 # @Detail  : 解包音频
 
+from __future__ import annotations
 
 import os
 import threading

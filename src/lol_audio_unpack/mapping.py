@@ -8,6 +8,7 @@
 # @Update  : 2025/8/5 8:04
 # @Detail  : 音频文件映射
 
+from __future__ import annotations
 
 import threading
 import time
