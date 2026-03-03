@@ -75,6 +75,20 @@ class BinUpdater:
 - 当 WAD 缺失且 `manifest/<version>/.use_local_bin` 存在时，可回退读取 `manifest/<version>/bin_input`。
 - 回退读取具备路径越界防护与缺失容忍。
 
+隐藏开关使用方式（文档约定）：
+
+1. 在版本目录创建标志文件：`manifest/<version>/.use_local_bin`。
+2. 按 `binPath` 原始相对路径放置手动 BIN，例如：
+   - `manifest/<version>/bin_input/data/characters/Annie/skins/skin0001.bin`
+   - `manifest/<version>/bin_input/data/maps/shipping/map11/map11.bin`
+3. 执行常规更新命令（无需新增 CLI 参数），`BinUpdater` 会在 WAD 不可用时自动尝试本地 BIN。
+
+补充说明：
+
+- 设计目标是提供“隐藏式”手动注入能力，便于在特定场景下减少 WAD 提取/解析路径依赖。
+- 现阶段优先级仍为 WAD 优先，本地 BIN 作为回退路径。
+- 本地读取包含路径越界防护；缺失或空文件按缺失处理，不会破坏整体流程。
+
 ### 2.3 `DataReader`
 
 ```python
