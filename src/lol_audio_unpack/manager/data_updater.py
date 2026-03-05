@@ -33,6 +33,11 @@ from lol_audio_unpack.utils.type_hints import StrPath
 if TYPE_CHECKING:
     from lol_audio_unpack.app_context import AppContext
 
+CHAMPIONS_REL_PATH = Path("Game") / "DATA" / "FINAL" / "Champions"
+MAPS_SHIPPING_REL_PATH = Path("Game") / "DATA" / "FINAL" / "Maps" / "Shipping"
+LCU_PLUGIN_REL_PATH = Path("LeagueClient") / "Plugins" / "rcp-be-lol-game-data"
+RCP_GLOBAL_PREFIX = "plugins/rcp-be-lol-game-data/global"
+
 
 class DataUpdater:
     """
@@ -99,6 +104,57 @@ class DataUpdater:
     def _get_game_maps_path(self) -> Path:
         """获取地图资源根目录。"""
         return Path(self.ctx.paths.game_maps_path)
+
+    def _get_game_champions_path(self) -> Path:
+        """获取英雄资源根目录。"""
+        return Path(self.ctx.paths.game_champion_path)
+
+    def _resolve_relative_game_path(self, target_path: Path, fallback: Path) -> str:
+        """将绝对路径转换为相对游戏根目录路径。"""
+        try:
+            return target_path.relative_to(self.game_path).as_posix()
+        except ValueError:
+            logger.warning(
+                f"路径不在游戏目录内，回退到默认相对路径: target={target_path}, fallback={fallback}"
+            )
+            return fallback.as_posix()
+
+    def _build_champion_wad_info(self, alias: str) -> dict[str, str]:
+        """构建英雄 WAD 路径信息。"""
+        champions_rel_base = self._resolve_relative_game_path(
+            self._get_game_champions_path(),
+            CHAMPIONS_REL_PATH,
+        )
+        wad_path_base = f"{champions_rel_base}/{alias}"
+        return {
+            "root": f"{wad_path_base}.wad.client",
+            **{
+                lang: f"{wad_path_base}.{lang}.wad.client"
+                for lang in self.process_languages
+                if lang != "default"
+            },
+        }
+
+    def _build_map_wad_info(self, wad_prefix: str) -> dict[str, str]:
+        """构建地图 WAD 路径信息。"""
+        maps_rel_base = self._resolve_relative_game_path(
+            self._get_game_maps_path(),
+            MAPS_SHIPPING_REL_PATH,
+        )
+        wad_path_base = f"{maps_rel_base}/{wad_prefix}"
+        return {
+            "root": f"{wad_path_base}.wad.client",
+            **{
+                lang: f"{wad_path_base}.{lang}.wad.client"
+                for lang in self.process_languages
+                if lang != "default"
+            },
+        }
+
+    @staticmethod
+    def _build_rcp_v1_path(region: str, entry: str) -> str:
+        """构建 rcp-be-lol-game-data 的 v1 资源路径。"""
+        return f"{RCP_GLOBAL_PREFIX}/{region}/v1/{entry}"
 
     @staticmethod
     def _normalize_text(text: str) -> str:
@@ -313,14 +369,7 @@ class DataUpdater:
                 "titles": titles,
                 "descriptions": {k: v for k, v in descriptions.items() if v},
                 "skins": processed_skins,
-                "wad": {
-                    "root": f"Game/DATA/FINAL/Champions/{alias}.wad.client",
-                    **{
-                        lang: f"Game/DATA/FINAL/Champions/{alias}.{lang}.wad.client"
-                        for lang in self.process_languages
-                        if lang != "default"
-                    },
-                },
+                "wad": self._build_champion_wad_info(alias),
             }
 
         final_result = create_metadata_object(
@@ -362,26 +411,14 @@ class DataUpdater:
                 map_data = {"id": map_id, "mapStringId": map_string_id, "names": names}
 
                 wad_prefix = f"Map{map_id}" if map_id != 0 else "Common"
-                try:
-                    relative_wad_path_base = self._get_game_maps_path().relative_to(self.game_path).as_posix()
-                    wad_path_base = f"{relative_wad_path_base}/{wad_prefix}"
-                    map_data["binPath"] = f"data/maps/shipping/{wad_prefix.lower()}/{wad_prefix.lower()}.bin"
-                    wad_info = {
-                        "root": f"{wad_path_base}.wad.client",
-                        **{
-                            lang: f"{wad_path_base}.{lang}.wad.client"
-                            for lang in self.process_languages
-                            if lang != "default"
-                        },
-                    }
-                    if (self.game_path / wad_info["root"]).exists():
-                        map_data["wad"] = wad_info
-                    else:
-                        logger.warning(
-                            f"地图 {wad_prefix} 的WAD文件不存在，已跳过: {self.game_path / wad_info['root']}"
-                        )
-                except ValueError:
-                    logger.error("GAME_MAPS_PATH 配置似乎不正确，无法生成相对路径。")
+                map_data["binPath"] = f"data/maps/shipping/{wad_prefix.lower()}/{wad_prefix.lower()}.bin"
+                wad_info = self._build_map_wad_info(wad_prefix)
+                if (self.game_path / wad_info["root"]).exists():
+                    map_data["wad"] = wad_info
+                else:
+                    logger.warning(
+                        f"地图 {wad_prefix} 的WAD文件不存在，已跳过: {self.game_path / wad_info['root']}"
+                    )
 
                 final_maps[str(map_id)] = map_data
             final_result["maps"] = final_maps
@@ -411,10 +448,11 @@ class DataUpdater:
 
         # 新客户端中 assets.wad 可能被拆分为多个分卷（如 default-assets.wad / default-assets2.wad）。
         # 各区域统一使用通配模式，避免仅匹配单文件导致漏解包。
+        lcu_rel_base = LCU_PLUGIN_REL_PATH.as_posix()
         wad_pattern = (
-            "LeagueClient/Plugins/rcp-be-lol-game-data/default-assets*.wad"
+            f"{lcu_rel_base}/default-assets*.wad"
             if _head == "default"
-            else f"LeagueClient/Plugins/rcp-be-lol-game-data/{_head}-assets*.wad"
+            else f"{lcu_rel_base}/{_head}-assets*.wad"
         )
         wad_files = sorted(self.game_path.glob(wad_pattern))
 
@@ -424,13 +462,13 @@ class DataUpdater:
 
         logger.debug(f"找到 {len(wad_files)} 个WAD文件需要处理")
         hash_table = [
-            f"plugins/rcp-be-lol-game-data/global/{_region}/v1/champion-summary.json",
-            f"plugins/rcp-be-lol-game-data/global/{_region}/v1/maps.json",
+            self._build_rcp_v1_path(_region, "champion-summary.json"),
+            self._build_rcp_v1_path(_region, "maps.json"),
         ]
 
         def output_file_name(path: str) -> Path:
             # 修正正则表达式以匹配更通用的路径
-            reg = re.compile(rf"plugins/rcp-be-lol-game-data/global/{_region}/v\d+/", re.IGNORECASE)
+            reg = re.compile(rf"{RCP_GLOBAL_PREFIX}/{_region}/v\d+/", re.IGNORECASE)
             new = reg.sub("", path)
             return out_path / new
 
@@ -446,7 +484,7 @@ class DataUpdater:
             try:
                 champions = load_json(summary_file)
                 champion_hashes = [
-                    f"plugins/rcp-be-lol-game-data/global/{_region}/v1/champions/{item['id']}.json"
+                    self._build_rcp_v1_path(_region, f"champions/{item['id']}.json")
                     for item in champions
                     if item["id"] != -1
                 ]
@@ -473,10 +511,10 @@ class DataUpdater:
                             continue
                         for region_name in region_candidates:
                             bp_vo_hashes.append(
-                                f"plugins/rcp-be-lol-game-data/global/{region_name}/v1/champion-ban-vo/{champion_id}.ogg"
+                                self._build_rcp_v1_path(region_name, f"champion-ban-vo/{champion_id}.ogg")
                             )
                             bp_vo_hashes.append(
-                                f"plugins/rcp-be-lol-game-data/global/{region_name}/v1/champion-choose-vo/{champion_id}.ogg"
+                                self._build_rcp_v1_path(region_name, f"champion-choose-vo/{champion_id}.ogg")
                             )
 
                     if bp_vo_hashes:
