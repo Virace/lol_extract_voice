@@ -12,20 +12,21 @@
 
 ## 稳定性分级
 
-- `稳定公开`：`lol_audio_unpack` 包根导出符号、`unpack` CLI、`DataUpdater/BinUpdater/DataReader` 的公开方法。
-- `半稳定`：`model.py`、`unpack.py`、`mapping.py` 的模块级函数（适合二次开发调用，但未来可能调整）。
+- `稳定公开`：`setup_app`、`AppContext`、`OperationOptions`、`LolAudioUnpackApp`、`unpack` CLI。
+- `半稳定`：`DataUpdater/BinUpdater/DataReader` 构造与公开方法（推荐通过 Facade 间接调用）。
+- `兼容待弃用`：未传 `ctx` 时直接依赖全局 `config` 的调用路径（目标移除版本：`4.0.0`）。
 - `内部实现`：以下划线开头的方法/函数（如 `_extract_bin_raws`、`_get_cached_hirc`），默认不保证兼容。
 
 ## 快速示例
 
 ```python
-from lol_audio_unpack import DataUpdater, DataReader, setup_app
-from lol_audio_unpack.unpack import unpack_champions
+from lol_audio_unpack import LolAudioUnpackApp, OperationOptions, setup_app
 
-setup_app(dev_mode=False, log_level="INFO")
-DataUpdater(force_update=False).check_and_update()
-reader = DataReader()
-unpack_champions(reader=reader, champion_ids=[1, 103], max_workers=4)
+ctx = setup_app(dev_mode=False, log_level="INFO")
+app = LolAudioUnpackApp(ctx)
+
+app.update(OperationOptions(force_update=False), target="all")
+app.extract(OperationOptions(max_workers=4, champion_ids=(1, 103)), include_maps=False)
 ```
 
 ```bash

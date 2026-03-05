@@ -5,159 +5,123 @@
 `lol_audio_unpack.__all__` 当前导出：
 
 - `setup_app`
-- `BinUpdater`
-- `config`
+- `AppConfig`
+- `AppPaths`
+- `AppContext`
+- `OperationOptions`
+- `LolAudioUnpackApp`
 - `DataUpdater`
+- `BinUpdater`
 - `DataReader`
+- `config`（兼容待弃用）
 
-### 1.1 `setup_app`
+## 2. 推荐入口（Facade）
+
+### 2.1 `setup_app`
 
 ```python
-def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs) -> None
+def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs) -> AppContext
 ```
 
-用途：统一初始化日志与配置系统，推荐作为所有 Python 调用入口。
+用途：初始化日志与配置，并返回可注入的 `AppContext`。
 
-参数说明：
-
-- `dev_mode`：是否启用开发模式（影响 `.lol.env.dev` 与数据写入格式）。
-- `log_level`：日志级别，传入如 `"INFO"`、`"DEBUG"`。
-- `**kwargs`：透传给 `config.initialize(...)`，常见为 `cli_overrides`。
-
-副作用：
-
-- 重新配置 loguru handler。
-- 初始化并校验配置（缺失必填项会抛出 `ConfigValidationError`）。
-- 创建输出相关目录。
-
-## 2. 管理器 API
-
-### 2.1 `DataUpdater`
+### 2.2 `LolAudioUnpackApp`
 
 ```python
-class DataUpdater:
-    def __init__(self, languages: list[str] | None = None, force_update: bool = False) -> None
-    def check_and_update(self) -> Path
-```
-
-用途：从客户端 WAD 提取并聚合基础数据（英雄、地图、多语言）。
-
-关键行为：
-
-- 自动解析当前游戏版本（`content-metadata.json`）。
-- 根据 `needs_update(...)` 判断是否需要重建。
-- 输出 `manifest/<version>/data.*`。
-- 非开发模式会自动清理临时目录。
-
-### 2.2 `BinUpdater`
-
-```python
-class BinUpdater:
-    def __init__(self, force_update: bool = False, process_events: bool = True)
-    def update(
+class LolAudioUnpackApp:
+    def __init__(self, ctx: AppContext)
+    def update(self, opts: OperationOptions, *, target: str = "all") -> None
+    def extract(
         self,
-        target: str = "all",
-        champion_ids: list[str] | None = None,
-        map_ids: list[str] | None = None,
+        opts: OperationOptions,
+        *,
+        include_champions: bool = True,
+        include_maps: bool = True,
+    ) -> None
+    def mapping(
+        self,
+        opts: OperationOptions,
+        *,
+        include_champions: bool = True,
+        include_maps: bool = True,
     ) -> None
 ```
 
-用途：基于 BIN 数据生成 `banks` / `events`。
+用途：统一编排更新、解包、映射流程，供 CLI 与模块调用共用。
 
-`update` 参数语义：
-
-- `target`：`"all" | "skin" | "map"`，仅在未传具体 ID 时生效。
-- `champion_ids`：指定仅处理的英雄 ID（字符串列表）。
-- `map_ids`：指定仅处理的地图 ID（字符串列表）。
-
-本地 BIN 回退机制：
-
-- 当 WAD 缺失且 `manifest/<version>/.use_local_bin` 存在时，可回退读取 `manifest/<version>/bin_input`。
-- 回退读取具备路径越界防护与缺失容忍。
-
-隐藏开关使用方式（文档约定）：
-
-1. 在版本目录创建标志文件：`manifest/<version>/.use_local_bin`。
-2. 按 `binPath` 原始相对路径放置手动 BIN，例如：
-   - `manifest/<version>/bin_input/data/characters/Annie/skins/skin0001.bin`
-   - `manifest/<version>/bin_input/data/maps/shipping/map11/map11.bin`
-3. 执行常规更新命令（无需新增 CLI 参数），`BinUpdater` 会在 WAD 不可用时自动尝试本地 BIN。
-
-补充说明：
-
-- 设计目标是提供“隐藏式”手动注入能力，便于在特定场景下减少 WAD 提取/解析路径依赖。
-- 现阶段优先级仍为 WAD 优先，本地 BIN 作为回退路径。
-- 本地读取包含路径越界防护；缺失或空文件按缺失处理，不会破坏整体流程。
-
-### 2.3 `DataReader`
+### 2.3 `OperationOptions`
 
 ```python
+@dataclass(frozen=True)
+class OperationOptions:
+    max_workers: int = 4
+    force_update: bool = False
+    process_events: bool = True
+    integrate_data: bool = False
+    champion_ids: tuple[int, ...] | None = None
+    map_ids: tuple[int, ...] | None = None
+```
+
+用途：承载一次操作的可变参数，替代散装参数穿透。
+
+## 3. 兼容 API（仍可用）
+
+### 3.1 管理器类
+
+```python
+class DataUpdater:
+    def __init__(
+        self,
+        languages: list[str] | None = None,
+        force_update: bool = False,
+        ctx: AppContext | None = None,
+    ) -> None
+
+class BinUpdater:
+    def __init__(
+        self,
+        force_update: bool = False,
+        process_events: bool = True,
+        ctx: AppContext | None = None,
+    ) -> None
+
 class DataReader(metaclass=Singleton):
-    def get_audio_type(self, category: str) -> str
-    def get_languages(self) -> list[str]
-    def get_champion_banks(self, champion_id: int) -> dict | None
-    def get_champion_events(self, champion_id: int) -> dict | None
-    def get_map_banks(self, map_id: int) -> dict | None
-    def get_map_events(self, map_id: int) -> dict | None
-    def get_champion(self, champion_id: int) -> dict
-    def get_champions(self) -> list[dict]
-    def get_map(self, map_id: int) -> dict
-    def get_maps(self) -> list[dict]
-    def write_unknown_categories_to_file(self) -> None
+    def __init__(self, ctx: AppContext | None = None)
 ```
 
-用途：读取 `manifest/<version>` 下的数据，并提供缓存。
+说明：
 
-关键行为：
+- 传入 `ctx` 时走显式注入模式（推荐）。
+- 不传 `ctx` 时走全局 `config` 回退（兼容模式）。
 
-- 初始化时验证数据版本与游戏版本兼容性（大版本不一致会抛错）。
-- `get_audio_type` 会把未知分类记录到 `unknown_categories`，最终可写入 `unknown-category.txt`。
+### 3.2 `model/unpack/mapping` 模块函数
 
-## 3. 数据模型 API（`model.py`）
+这些模块函数已支持 `ctx` 可选注入；未传 `ctx` 时仍可回退到全局 `config`。
 
-### 3.1 `AudioEntityData`
+## 4. 弃用策略
+
+以下能力已标注为“兼容待弃用”并发出 `DeprecationWarning`（一次性告警）：
+
+- Manager 构造不传 `ctx`。
+- `model/unpack/mapping` 链路不传 `ctx` 导致读取全局 `config`。
+
+目标移除版本：`4.0.0`。
+
+建议迁移：
+
+1. 使用 `ctx = setup_app(...)` 获取上下文。
+2. 使用 `app = LolAudioUnpackApp(ctx)`。
+3. 使用 `OperationOptions(...)` 调用 `app.update/extract/mapping`。
+
+## 5. 快速示例
 
 ```python
-@dataclass
-class AudioEntityData:
-    entity_id: str
-    entity_name: str
-    entity_alias: str
-    entity_title: str
-    entity_type: str
-    sub_entities: dict[str, dict[str, Any]]
-    wad_root: str
-    wad_language: str | None = None
-    events: dict[str, dict[str, Any]] | None = None
+from lol_audio_unpack import LolAudioUnpackApp, OperationOptions, setup_app
+
+ctx = setup_app(dev_mode=False, log_level="INFO")
+app = LolAudioUnpackApp(ctx)
+
+app.update(OperationOptions(force_update=False), target="all")
+app.extract(OperationOptions(max_workers=4, champion_ids=(1, 103)), include_maps=False)
+app.mapping(OperationOptions(max_workers=4, integrate_data=True), include_maps=False)
 ```
-
-核心方法：
-
-```python
-def get_sub_entity_info(self, sub_id: str) -> dict[str, Any] | None
-
-def get_wad_path(self, audio_type: str) -> Path | None
-
-@classmethod
-def from_champion(cls, champion_id: int, reader: DataReader, include_events: bool = False) -> AudioEntityData
-
-@classmethod
-def from_map(cls, map_id: int, reader: DataReader, include_events: bool = False) -> AudioEntityData
-```
-
-### 3.2 任务生成器
-
-```python
-def generate_champion_tasks(
-    reader: DataReader,
-    champion_ids: list[int] | None = None,
-) -> list[tuple[str, int, str]]
-
-
-def generate_map_tasks(
-    reader: DataReader,
-    map_ids: list[int] | None = None,
-) -> list[tuple[str, int, str]]
-```
-
-用途：统一生成 `(entity_type, id, description)` 任务元组；传入非法 ID 时会抛 `ValueError`。

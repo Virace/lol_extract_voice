@@ -8,15 +8,21 @@
 # @Update  : 2025/8/3 15:22
 # @Detail  : 数据读取器
 
+from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from lol_audio_unpack.manager.utils import get_game_version, read_data
 from lol_audio_unpack.utils.common import Singleton
 from lol_audio_unpack.utils.config import config
+from lol_audio_unpack.utils.deprecation import warn_legacy_global_mode
 from lol_audio_unpack.utils.logging import performance_monitor
+
+if TYPE_CHECKING:
+    from lol_audio_unpack.app_context import AppContext
 
 
 class DataReader(metaclass=Singleton):
@@ -28,17 +34,27 @@ class DataReader(metaclass=Singleton):
 
     @logger.catch
     @performance_monitor(level="DEBUG")
-    def __init__(self):
+    def __init__(self, ctx: AppContext | None = None):
         """
         初始化数据读取器
 
         从合并后的数据文件和分散的banks/events文件中读取游戏数据
+
+        Args:
+            ctx: 可选运行时上下文；传入时优先使用显式配置。
         """
         if hasattr(self, "initialized"):
             return
 
-        self.game_path: Path = config.GAME_PATH
-        self.manifest_path: Path = config.MANIFEST_PATH
+        self.ctx = ctx
+        if self.ctx is not None:
+            self.game_path = Path(self.ctx.config.game_path)
+            self.manifest_path = Path(self.ctx.paths.manifest_path)
+        else:
+            warn_legacy_global_mode("manager.data_reader")
+            self.game_path = Path(config.GAME_PATH)
+            self.manifest_path = Path(config.MANIFEST_PATH)
+
         if not self.game_path or not self.manifest_path:
             raise ValueError("GAME_PATH 和 MANIFEST_PATH 必须在配置中设置")
 

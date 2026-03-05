@@ -8,10 +8,11 @@
 # @Update  : 2025/8/3 8:57
 # @Detail  : BIN文件更新器
 
+from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from alive_progress import alive_it
 from league_tools.formats import BIN, WAD
@@ -25,7 +26,11 @@ from lol_audio_unpack.manager.utils import (
     write_data,
 )
 from lol_audio_unpack.utils.config import config
+from lol_audio_unpack.utils.deprecation import warn_legacy_global_mode
 from lol_audio_unpack.utils.logging import performance_monitor
+
+if TYPE_CHECKING:
+    from lol_audio_unpack.app_context import AppContext
 
 # 类型别名定义
 ChampionData = dict[str, Any]
@@ -38,15 +43,28 @@ class BinUpdater:
     支持可选的事件处理：设置 process_events=False 可显著提升处理速度，但不会生成事件数据
     """
 
-    def __init__(self, force_update: bool = False, process_events: bool = True):
+    def __init__(
+        self,
+        force_update: bool = False,
+        process_events: bool = True,
+        ctx: AppContext | None = None,
+    ):
         """
         初始化BIN音频更新器
 
         :param force_update: 是否强制更新，忽略版本检查
         :param process_events: 是否处理事件数据（默认True，设置为False可大幅提升处理速度）
+        :param ctx: 可选运行时上下文；传入时优先使用显式配置。
         """
-        self.game_path: Path = config.GAME_PATH
-        self.manifest_path: Path = config.MANIFEST_PATH
+        self.ctx = ctx
+        if self.ctx is not None:
+            self.game_path = Path(self.ctx.config.game_path)
+            self.manifest_path = Path(self.ctx.paths.manifest_path)
+        else:
+            warn_legacy_global_mode("manager.bin_updater")
+            self.game_path = Path(config.GAME_PATH)
+            self.manifest_path = Path(config.MANIFEST_PATH)
+
         if not self.game_path or not self.manifest_path:
             raise ValueError("GAME_PATH 和 MANIFEST_PATH 必须在配置中设置")
 
@@ -62,6 +80,13 @@ class BinUpdater:
         self.champion_events_dir: Path = self.version_manifest_path / "events" / "champions"
         self.map_events_dir: Path = self.version_manifest_path / "events" / "maps"
         self.languages: list[str] = []  # 在update()中初始化
+
+    def _is_dev_mode(self) -> bool:
+        """返回当前运行是否为开发模式。"""
+        ctx = getattr(self, "ctx", None)
+        if ctx is not None:
+            return bool(ctx.config.dev_mode)
+        return bool(config.is_dev_mode())
 
     @logger.catch
     @performance_monitor(level="INFO")
@@ -291,7 +316,7 @@ class BinUpdater:
                                 common_banks_set.add(tuple(sorted(path)))
             except Exception:
                 logger.opt(exception=True).error("预处理公共地图(ID 0)的数据时出错")
-                if config.is_dev_mode():
+                if self._is_dev_mode():
                     raise
 
         map_bar = alive_it(maps.items(), title="地图音频与事件数据处理")
@@ -413,7 +438,7 @@ class BinUpdater:
 
             except Exception:
                 logger.opt(exception=True).error(f"解析皮肤BIN失败: {path}")
-                if config.is_dev_mode():
+                if self._is_dev_mode():
                     raise
 
         # 优化映射关系
@@ -525,7 +550,7 @@ class BinUpdater:
             logger.opt(exception=True).error(f"提取或解析地图 {map_id} 的本地BIN文件时出错")
         except Exception:
             logger.opt(exception=True).error(f"提取或解析地图 {map_id} 的BIN文件时出错")
-            if config.is_dev_mode():
+            if self._is_dev_mode():
                 raise
         return None
 

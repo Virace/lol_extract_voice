@@ -5,9 +5,10 @@
 # @Site    : x-item.com
 # @Software: Pycharm
 # @Create  : 2025/7/26 0:34
-# @Update  : 2025/8/5 7:57
+# @Update  : 2026/3/5 21:48
 # @Detail  : 项目命令行入口
 
+from __future__ import annotations
 
 import argparse
 import sys
@@ -16,10 +17,10 @@ from pathlib import Path
 
 from loguru import logger
 
-from . import BinUpdater, DataReader, DataUpdater, __version__, setup_app
-from .mapping import build_champions_mapping, build_mapping_all, build_maps_mapping
-from .unpack import unpack_audio_all, unpack_champions, unpack_maps
-from .utils.config import ConfigValidationError, config
+from . import __version__, setup_app
+from .app_context import AppContext, OperationOptions
+from .facade import LolAudioUnpackApp
+from .utils.config import ConfigValidationError
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -211,7 +212,6 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
     :param parser: ArgumentParser 实例，用于打印帮助信息
     :raises SystemExit: 当参数无效时退出程序
     """
-    # 检查是否提供了任何操作参数
     update_actions = [args.update, args.update_champions, args.update_maps]
     extract_actions = [args.extract, args.extract_champions, args.extract_maps]
     mapping_actions = [args.mapping, args.mapping_champions, args.mapping_maps]
@@ -224,7 +224,6 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         parser.print_help()
         sys.exit(1)
 
-    # 如果同时指定了多个操作，则按顺序执行：更新 -> 解包 -> 映射
     active_operations = []
     if any(update_actions):
         active_operations.append("更新数据")
@@ -236,7 +235,6 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
     if len(active_operations) > 1:
         logger.info(f"检测到同时指定了多个操作，将按顺序执行：{' -> '.join(active_operations)}。")
 
-    # 验证整合数据参数
     if getattr(args, "integrate_data", False):
         if not any(mapping_actions):
             logger.error(
@@ -244,38 +242,6 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
             )
             sys.exit(1)
         logger.info("检测到 --integrate-data 参数，将生成整合数据文件")
-
-
-def initialize_app(args: argparse.Namespace) -> None:
-    """初始化应用程序（日志、配置等）
-
-    :param args: 解析后的命令行参数
-    :raises SystemExit: 当配置无效时退出程序
-    """
-    # 默认禁用第三方库的日志，除非用户显式开启
-    if not args.enable_league_tools_log:
-        logger.disable("league_tools")
-
-    cli_overrides = build_cli_overrides(args)
-
-    try:
-        setup_app(dev_mode=args.dev, log_level=args.log_level.upper(), cli_overrides=cli_overrides)
-    except ConfigValidationError as e:
-        current_work_dir = Path.cwd()
-        logger.error(f"配置初始化失败: {e}")
-        logger.error(f"请在当前工作目录创建并配置 .lol.env 文件: {current_work_dir / '.lol.env'}")
-        logger.error("您可以参考项目中的 .lol.env.example 文件进行配置。")
-        sys.exit(1)
-
-    logger.info("命令行工具启动...")
-
-    # 检查必要的配置是否存在
-    if not config.GAME_PATH or not Path(config.GAME_PATH).exists():
-        current_work_dir = Path.cwd()
-        logger.error("错误：未找到有效的游戏目录 (GAME_PATH)。")
-        logger.error(f"请在当前工作目录创建一个 .lol.env 文件: {current_work_dir / '.lol.env'}")
-        logger.error("您可以参考项目中的 .lol.env.example 文件进行配置。")
-        sys.exit(1)
 
 
 def build_cli_overrides(args: argparse.Namespace) -> dict[str, object]:
@@ -292,6 +258,34 @@ def build_cli_overrides(args: argparse.Namespace) -> dict[str, object]:
     return {key: value for key, value in mapping.items() if value is not None}
 
 
+def initialize_app(args: argparse.Namespace) -> AppContext:
+    """初始化应用程序（日志、配置等）并返回运行上下文。"""
+    if not args.enable_league_tools_log:
+        logger.disable("league_tools")
+
+    cli_overrides = build_cli_overrides(args)
+
+    try:
+        app_context = setup_app(dev_mode=args.dev, log_level=args.log_level.upper(), cli_overrides=cli_overrides)
+    except ConfigValidationError as e:
+        current_work_dir = Path.cwd()
+        logger.error(f"配置初始化失败: {e}")
+        logger.error(f"请在当前工作目录创建并配置 .lol.env 文件: {current_work_dir / '.lol.env'}")
+        logger.error("您可以参考项目中的 .lol.env.example 文件进行配置。")
+        sys.exit(1)
+
+    logger.info("命令行工具启动...")
+
+    if not app_context.config.game_path or not Path(app_context.config.game_path).exists():
+        current_work_dir = Path.cwd()
+        logger.error("错误：未找到有效的游戏目录 (GAME_PATH)。")
+        logger.error(f"请在当前工作目录创建一个 .lol.env 文件: {current_work_dir / '.lol.env'}")
+        logger.error("您可以参考项目中的 .lol.env.example 文件进行配置。")
+        sys.exit(1)
+
+    return app_context
+
+
 def parse_ids(id_string: str | None) -> list[str] | None:
     """解析逗号分隔的ID字符串为列表
 
@@ -303,219 +297,178 @@ def parse_ids(id_string: str | None) -> list[str] | None:
     return None
 
 
-def execute_update_operations(args: argparse.Namespace) -> None:
-    """执行数据更新操作
+def parse_int_ids(id_string: str | None) -> tuple[int, ...] | None:
+    """解析并转换 ID 列表为整数元组。"""
+    raw_ids = parse_ids(id_string)
+    if raw_ids is None:
+        return None
+    return tuple(int(item) for item in raw_ids)
 
-    :param args: 解析后的命令行参数
-    """
+
+def build_operation_options(
+    args: argparse.Namespace,
+    champion_ids: tuple[int, ...] | None = None,
+    map_ids: tuple[int, ...] | None = None,
+) -> OperationOptions:
+    """从命令行参数构建操作选项对象。"""
+    return OperationOptions(
+        max_workers=args.max_workers,
+        force_update=args.force,
+        process_events=not args.skip_events,
+        integrate_data=getattr(args, "integrate_data", False),
+        champion_ids=champion_ids,
+        map_ids=map_ids,
+    )
+
+
+def execute_update_operations(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
+    """执行数据更新操作。"""
     update_actions = [args.update, args.update_champions, args.update_maps]
     if not any(update_actions):
         return
 
-    force = args.force
-    process_events = not args.skip_events  # 默认处理事件，除非明确跳过
-
     if args.skip_events:
         logger.info("已启用快速模式：跳过事件数据处理")
-    if force:
+    if args.force:
         logger.warning("已启用强制更新模式，将忽略现有文件的版本检查。")
-
-    # 确定更新目标和ID列表
-    champion_ids = None
-    map_ids = None
-    target = "all"  # 默认
 
     if args.update:
         logger.info("开始更新所有数据（英雄和地图）...")
-        target = "all"
+        app.update(build_operation_options(args), target="all")
     elif args.update_champions:
-        champion_ids = parse_ids(args.update_champions)
+        champion_ids = parse_int_ids(args.update_champions)
         if champion_ids:
-            logger.info(f"开始更新指定英雄数据：{champion_ids}")
-            target = "skin"
+            logger.info(f"开始更新指定英雄数据：{list(champion_ids)}")
         else:
             logger.info("开始更新所有英雄数据...")
-            target = "skin"
+        app.update(build_operation_options(args, champion_ids=champion_ids), target="skin")
     elif args.update_maps:
-        map_ids = parse_ids(args.update_maps)
+        map_ids = parse_int_ids(args.update_maps)
         if map_ids:
-            logger.info(f"开始更新指定地图数据：{map_ids}")
-            target = "map"
+            logger.info(f"开始更新指定地图数据：{list(map_ids)}")
         else:
             logger.info("开始更新所有地图数据...")
-            target = "map"
-
-    # DataUpdater总是需要先运行，以确保有最新的data.json
-    DataUpdater(force_update=force).check_and_update()
-
-    # 使用BinUpdater更新数据
-    updater = BinUpdater(force_update=force, process_events=process_events)
-    updater.update(target=target, champion_ids=champion_ids, map_ids=map_ids)
+        app.update(build_operation_options(args, map_ids=map_ids), target="map")
 
     logger.success("数据更新完成！")
 
 
-def execute_extract_operations(args: argparse.Namespace) -> None:
-    """执行音频解包操作
-
-    :param args: 解析后的命令行参数
-    """
+def execute_extract_operations(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
+    """执行音频解包操作。"""
     extract_actions = [args.extract, args.extract_champions, args.extract_maps]
     if not any(extract_actions):
         return
 
-    logger.info("加载数据读取器...")
-    reader = DataReader()
-
-    # 输出全局音频配置信息
-    logger.info(
-        f"音频类型配置 - 包含: {config.INCLUDE_TYPE}{f', 排除: {list(config.EXCLUDE_TYPE)}' if config.EXCLUDE_TYPE else ''}"
-    )
-    logger.info(f"输出路径: {config.OUTPUT_PATH}")
-    logger.info(f"语言: {config.GAME_REGION}")
-
     if args.extract:
         logger.info("开始解包所有音频（英雄和地图）...")
-        unpack_audio_all(reader=reader, max_workers=args.max_workers)
+        app.extract(build_operation_options(args))
     elif args.extract_champions:
-        champion_ids = parse_ids(args.extract_champions)
+        try:
+            champion_ids = parse_int_ids(args.extract_champions)
+        except ValueError as e:
+            logger.error(f"解包英雄失败: {e}")
+            return
+
         if champion_ids:
-            logger.info(f"开始解包指定英雄音频：{champion_ids}")
-            try:
-                champion_ids_int = [int(cid) for cid in champion_ids]
-                unpack_champions(reader=reader, champion_ids=champion_ids_int, max_workers=args.max_workers)
-            except ValueError as e:
-                logger.error(f"解包英雄失败: {e}")
-            except Exception as e:
-                logger.error(f"解包英雄时出错: {e}")
+            logger.info(f"开始解包指定英雄音频：{list(champion_ids)}")
+            app.extract(
+                build_operation_options(args, champion_ids=champion_ids),
+                include_maps=False,
+            )
         else:
             logger.info("开始解包所有英雄音频...")
-            unpack_audio_all(reader=reader, max_workers=args.max_workers, include_maps=False)
+            app.extract(build_operation_options(args), include_maps=False)
     elif args.extract_maps:
-        map_ids = parse_ids(args.extract_maps)
+        try:
+            map_ids = parse_int_ids(args.extract_maps)
+        except ValueError as e:
+            logger.error(f"解包地图失败: {e}")
+            return
+
         if map_ids:
-            logger.info(f"开始解包指定地图音频：{map_ids}")
-            try:
-                map_ids_int = [int(mid) for mid in map_ids]
-                unpack_maps(reader=reader, map_ids=map_ids_int, max_workers=args.max_workers)
-            except ValueError as e:
-                logger.error(f"解包地图失败: {e}")
-            except Exception as e:
-                logger.error(f"解包地图时出错: {e}")
+            logger.info(f"开始解包指定地图音频：{list(map_ids)}")
+            app.extract(
+                build_operation_options(args, map_ids=map_ids),
+                include_champions=False,
+            )
         else:
             logger.info("开始解包所有地图音频...")
-            unpack_audio_all(reader=reader, max_workers=args.max_workers, include_champions=False)
+            app.extract(build_operation_options(args), include_champions=False)
 
     logger.success("音频解包完成！")
 
 
-def execute_mapping_operations(args: argparse.Namespace) -> None:
-    """执行事件映射操作
-
-    :param args: 解析后的命令行参数
-    """
+def execute_mapping_operations(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
+    """执行事件映射操作。"""
     mapping_actions = [args.mapping, args.mapping_champions, args.mapping_maps]
     if not any(mapping_actions):
         return
 
-    # 检查 WWISER_PATH 是否存在
-    if not config.WWISER_PATH or not Path(config.WWISER_PATH).exists():
+    if getattr(args, "integrate_data", False):
+        logger.info("启用整合数据功能，将生成包含完整实体信息的整合文件")
+
+    try:
+        if args.mapping:
+            logger.info("开始构建所有实体的事件映射（英雄和地图）...")
+            app.mapping(build_operation_options(args))
+        elif args.mapping_champions:
+            champion_ids = parse_int_ids(args.mapping_champions)
+            if champion_ids:
+                logger.info(f"开始构建指定英雄的事件映射：{list(champion_ids)}")
+                app.mapping(
+                    build_operation_options(args, champion_ids=champion_ids),
+                    include_maps=False,
+                )
+            else:
+                logger.info("开始构建所有英雄的事件映射...")
+                app.mapping(build_operation_options(args), include_maps=False)
+        elif args.mapping_maps:
+            map_ids = parse_int_ids(args.mapping_maps)
+            if map_ids:
+                logger.info(f"开始构建指定地图的事件映射：{list(map_ids)}")
+                app.mapping(
+                    build_operation_options(args, map_ids=map_ids),
+                    include_champions=False,
+                )
+            else:
+                logger.info("开始构建所有地图的事件映射...")
+                app.mapping(build_operation_options(args), include_champions=False)
+    except ValueError as e:
         current_work_dir = Path.cwd()
-        logger.error("错误：未找到有效的 Wwiser 工具路径 (WWISER_PATH)。")
+        logger.error(str(e))
         logger.error(f"请在当前工作目录的 .lol.env 文件中配置 WWISER_PATH: {current_work_dir / '.lol.env'}")
         logger.error("WWISER_PATH 应指向 wwiser.pyz 或 wwiser.exe 文件的完整路径。")
         logger.error("您可以从 https://github.com/bnnm/wwiser/releases 下载 Wwiser 工具。")
         sys.exit(1)
 
-    logger.info("加载数据读取器...")
-    reader = DataReader()
-
-    # 输出映射配置信息
-    logger.info(f"缓存路径: {config.CACHE_PATH}")
-    logger.info(f"哈希路径: {config.HASH_PATH}")
-    logger.info(f"Wwiser 路径: {config.WWISER_PATH}")
-    logger.info(f"语言: {config.GAME_REGION}")
-
-    # 检查是否启用整合数据
-    integrate_data = getattr(args, "integrate_data", False)
-    if integrate_data:
-        logger.info("启用整合数据功能，将生成包含完整实体信息的整合文件")
-
-    if args.mapping:
-        logger.info("开始构建所有实体的事件映射（英雄和地图）...")
-        build_mapping_all(reader=reader, max_workers=args.max_workers, integrate_data=integrate_data)
-    elif args.mapping_champions:
-        champion_ids = parse_ids(args.mapping_champions)
-        if champion_ids:
-            logger.info(f"开始构建指定英雄的事件映射：{champion_ids}")
-            try:
-                champion_ids_int = [int(cid) for cid in champion_ids]
-                build_champions_mapping(
-                    reader=reader,
-                    champion_ids=champion_ids_int,
-                    max_workers=args.max_workers,
-                    integrate_data=integrate_data,
-                )
-            except ValueError as e:
-                logger.error(f"构建英雄映射失败: {e}")
-            except Exception as e:
-                logger.error(f"构建英雄映射时出错: {e}")
-        else:
-            logger.info("开始构建所有英雄的事件映射...")
-            build_mapping_all(
-                reader=reader, max_workers=args.max_workers, include_maps=False, integrate_data=integrate_data
-            )
-    elif args.mapping_maps:
-        map_ids = parse_ids(args.mapping_maps)
-        if map_ids:
-            logger.info(f"开始构建指定地图的事件映射：{map_ids}")
-            try:
-                map_ids_int = [int(mid) for mid in map_ids]
-                build_maps_mapping(
-                    reader=reader, map_ids=map_ids_int, max_workers=args.max_workers, integrate_data=integrate_data
-                )
-            except ValueError as e:
-                logger.error(f"构建地图映射失败: {e}")
-            except Exception as e:
-                logger.error(f"构建地图映射时出错: {e}")
-        else:
-            logger.info("开始构建所有地图的事件映射...")
-            build_mapping_all(
-                reader=reader, max_workers=args.max_workers, include_champions=False, integrate_data=integrate_data
-            )
-
     logger.success("事件映射构建完成！")
 
 
-def main():
-    """主程序入口，协调处理命令行参数和执行相应操作"""
+def main() -> None:
+    """主程序入口，协调处理命令行参数和执行相应操作。"""
     try:
-        # 1. 创建和解析命令行参数
         parser = create_parser()
         args = parser.parse_args()
 
-        # 2. 验证参数
         validate_args(args, parser)
 
-        # 3. 初始化应用
-        initialize_app(args)
+        app_context = initialize_app(args)
+        app = LolAudioUnpackApp(app_context)
 
-        # 4. 执行操作
-        execute_update_operations(args)
-        execute_extract_operations(args)
-        execute_mapping_operations(args)
+        execute_update_operations(args, app)
+        execute_extract_operations(args, app)
+        execute_mapping_operations(args, app)
 
     except KeyboardInterrupt:
         logger.warning("用户中断操作")
         sys.exit(1)
     except Exception as e:
         logger.error(f"执行过程中发生错误: {e}")
-        # 如果args已定义且为开发模式，打印详细错误信息
         try:
             if "args" in locals() and args.dev:
                 logger.debug(traceback.format_exc())
         except (NameError, AttributeError):
-            pass  # 如果访问args失败，忽略详细错误信息
+            pass
         sys.exit(1)
 
 

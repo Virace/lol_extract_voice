@@ -11,11 +11,49 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.utils.common import sanitize_filename
 from lol_audio_unpack.utils.config import config
+from lol_audio_unpack.utils.deprecation import warn_legacy_global_mode
+
+if TYPE_CHECKING:
+    from lol_audio_unpack.app_context import AppConfig, AppContext
+
+
+def _resolve_app_config(
+    ctx: "AppContext | None" = None,
+    app_config: "AppConfig | None" = None,
+) -> "AppConfig | None":
+    """解析当前调用应使用的应用配置对象。"""
+    if ctx is not None:
+        return ctx.config
+    if app_config is None:
+        warn_legacy_global_mode("model")
+    return app_config
+
+
+def _resolve_game_path(
+    ctx: "AppContext | None" = None,
+    app_config: "AppConfig | None" = None,
+) -> Path:
+    """解析游戏根目录路径。"""
+    resolved = _resolve_app_config(ctx=ctx, app_config=app_config)
+    if resolved is not None:
+        return resolved.game_path
+    return Path(config.GAME_PATH)
+
+
+def _resolve_game_region(
+    ctx: "AppContext | None" = None,
+    app_config: "AppConfig | None" = None,
+) -> str:
+    """解析当前语言区域。"""
+    resolved = _resolve_app_config(ctx=ctx, app_config=app_config)
+    if resolved is not None and resolved.game_region:
+        return resolved.game_region
+    return str(config.GAME_REGION)
 
 
 @dataclass
@@ -55,10 +93,17 @@ class AudioEntityData:
 
         return {"id": int(sub_id), "name": sub_entity["name"]}
 
-    def get_wad_path(self, audio_type: str) -> Path | None:
+    def get_wad_path(
+        self,
+        audio_type: str,
+        ctx: "AppContext | None" = None,
+        app_config: "AppConfig | None" = None,
+    ) -> Path | None:
         """根据音频类型获取对应的WAD文件完整路径
 
         :param audio_type: 音频类型（"VO"需要语言WAD，其他使用根WAD）
+        :param ctx: 可选运行时上下文，传入时优先使用 ``ctx.config``。
+        :param app_config: 可选应用配置对象，作为 ``ctx`` 的后备。
         :returns: 存在的WAD文件完整路径，不存在时返回None
         """
         # 获取相对路径
@@ -72,16 +117,26 @@ class AudioEntityData:
             return None
 
         # 构建完整路径并检查存在性
-        full_path = config.GAME_PATH / relative_path
+        full_path = _resolve_game_path(ctx=ctx, app_config=app_config) / relative_path
         return full_path if full_path.exists() else None
 
     @classmethod
-    def from_champion(cls, champion_id: int, reader: DataReader, include_events: bool = False) -> "AudioEntityData":
+    def from_champion(
+        cls,
+        champion_id: int,
+        reader: DataReader,
+        include_events: bool = False,
+        *,
+        ctx: "AppContext | None" = None,
+        app_config: "AppConfig | None" = None,
+    ) -> "AudioEntityData":
         """从英雄数据创建AudioEntityData实例
 
         :param champion_id: 英雄ID
         :param reader: 数据读取器实例
         :param include_events: 是否包含事件数据（用于映射功能）
+        :param ctx: 可选运行时上下文，传入时优先使用 ``ctx.config``。
+        :param app_config: 可选应用配置对象，作为 ``ctx`` 的后备。
         :returns: AudioEntityData实例
         :raises ValueError: 当英雄数据不存在或无音频数据时
         """
@@ -102,7 +157,7 @@ class AudioEntityData:
             raise ValueError(f"英雄ID {champion_id} 缺少根WAD文件信息")
 
         # 获取语言设置
-        language = config.GAME_REGION
+        language = _resolve_game_region(ctx=ctx, app_config=app_config)
         wad_language = wad_info.get(language)  # 可能为None，某些英雄可能没有语言WAD
 
         # 创建皮肤ID到皮肤信息的映射
@@ -156,12 +211,22 @@ class AudioEntityData:
         )
 
     @classmethod
-    def from_map(cls, map_id: int, reader: DataReader, include_events: bool = False) -> "AudioEntityData":
+    def from_map(
+        cls,
+        map_id: int,
+        reader: DataReader,
+        include_events: bool = False,
+        *,
+        ctx: "AppContext | None" = None,
+        app_config: "AppConfig | None" = None,
+    ) -> "AudioEntityData":
         """从地图数据创建AudioEntityData实例
 
         :param map_id: 地图ID
         :param reader: 数据读取器实例
         :param include_events: 是否包含事件数据（用于映射功能）
+        :param ctx: 可选运行时上下文，传入时优先使用 ``ctx.config``。
+        :param app_config: 可选应用配置对象，作为 ``ctx`` 的后备。
         :returns: AudioEntityData实例
         :raises ValueError: 当地图数据不存在或无音频数据时
         """
@@ -182,7 +247,7 @@ class AudioEntityData:
             raise ValueError(f"地图ID {map_id} 缺少根WAD文件信息")
 
         # 获取语言设置
-        language = config.GAME_REGION
+        language = _resolve_game_region(ctx=ctx, app_config=app_config)
         wad_language = wad_info.get(language)  # 可能为None，某些地图可能没有语言WAD
 
         # 获取地图名称（支持本地化）

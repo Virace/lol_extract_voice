@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 import lol_audio_unpack.__main__ as cli
@@ -38,66 +40,43 @@ def test_validate_args_integrate_data_with_mapping_allowed():
     cli.validate_args(args, parser)
 
 
-def test_execute_update_operations_all(monkeypatch):
+def test_execute_update_operations_all():
     parser = cli.create_parser()
     args = parser.parse_args(["--update"])
 
     calls = {}
 
-    class FakeDataUpdater:
-        def __init__(self, force_update=False):
-            calls["data_updater_force"] = force_update
+    class FakeApp:
+        def update(self, opts, *, target="all"):
+            calls["target"] = target
+            calls["opts"] = opts
 
-        def check_and_update(self):
-            calls["checked"] = True
+    cli.execute_update_operations(args, FakeApp())
 
-    class FakeBinUpdater:
-        def __init__(self, force_update=False, process_events=True):
-            calls["bin_updater_init"] = (force_update, process_events)
-
-        def update(self, target="all", champion_ids=None, map_ids=None):
-            calls["bin_updater_update"] = (target, champion_ids, map_ids)
-
-    monkeypatch.setattr(cli, "DataUpdater", FakeDataUpdater)
-    monkeypatch.setattr(cli, "BinUpdater", FakeBinUpdater)
-
-    cli.execute_update_operations(args)
-
-    assert calls["data_updater_force"] is False
-    assert calls["checked"] is True
-    assert calls["bin_updater_init"] == (False, True)
-    assert calls["bin_updater_update"] == ("all", None, None)
+    assert calls["target"] == "all"
+    assert calls["opts"].force_update is False
+    assert calls["opts"].process_events is True
+    assert calls["opts"].champion_ids is None
+    assert calls["opts"].map_ids is None
 
 
-def test_execute_update_operations_targeted_champions(monkeypatch):
+def test_execute_update_operations_targeted_champions():
     parser = cli.create_parser()
     args = parser.parse_args(["--update-champions", "103,222, 1", "--force", "--skip-events"])
 
     calls = {}
 
-    class FakeDataUpdater:
-        def __init__(self, force_update=False):
-            calls["data_updater_force"] = force_update
+    class FakeApp:
+        def update(self, opts, *, target="all"):
+            calls["target"] = target
+            calls["opts"] = opts
 
-        def check_and_update(self):
-            calls["checked"] = True
+    cli.execute_update_operations(args, FakeApp())
 
-    class FakeBinUpdater:
-        def __init__(self, force_update=False, process_events=True):
-            calls["bin_updater_init"] = (force_update, process_events)
-
-        def update(self, target="all", champion_ids=None, map_ids=None):
-            calls["bin_updater_update"] = (target, champion_ids, map_ids)
-
-    monkeypatch.setattr(cli, "DataUpdater", FakeDataUpdater)
-    monkeypatch.setattr(cli, "BinUpdater", FakeBinUpdater)
-
-    cli.execute_update_operations(args)
-
-    assert calls["data_updater_force"] is True
-    assert calls["checked"] is True
-    assert calls["bin_updater_init"] == (True, False)
-    assert calls["bin_updater_update"] == ("skin", ["103", "222", "1"], None)
+    assert calls["target"] == "skin"
+    assert calls["opts"].force_update is True
+    assert calls["opts"].process_events is False
+    assert calls["opts"].champion_ids == (103, 222, 1)
 
 
 def test_build_cli_overrides_only_keeps_explicit_values():
@@ -157,22 +136,21 @@ def test_initialize_app_passes_cli_overrides_to_setup_app(monkeypatch, tmp_path)
     )
 
     captured = {}
-
-    class FakeConfig:
-        GAME_PATH = game_path
+    fake_context = SimpleNamespace(config=SimpleNamespace(game_path=game_path))
 
     def fake_setup_app(*, dev_mode=False, log_level="INFO", **kwargs):
         captured["dev_mode"] = dev_mode
         captured["log_level"] = log_level
         captured["kwargs"] = kwargs
+        return fake_context
 
     monkeypatch.setattr(cli, "setup_app", fake_setup_app)
-    monkeypatch.setattr(cli, "config", FakeConfig())
 
-    cli.initialize_app(args)
+    ctx = cli.initialize_app(args)
 
     assert captured["dev_mode"] is False
     assert captured["log_level"] == "INFO"
+    assert ctx == fake_context
     assert captured["kwargs"]["cli_overrides"] == {
         "GAME_PATH": str(game_path),
         "OUTPUT_PATH": str(tmp_path / "output"),
@@ -196,3 +174,9 @@ def test_initialize_app_exits_when_config_validation_fails(monkeypatch):
         cli.initialize_app(args)
 
     assert exc.value.code == 1
+
+
+def test_parse_int_ids():
+    assert cli.parse_int_ids(None) is None
+    assert cli.parse_int_ids("all") is None
+    assert cli.parse_int_ids("1,2, 3") == (1, 2, 3)

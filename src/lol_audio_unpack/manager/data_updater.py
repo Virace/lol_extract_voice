@@ -8,12 +8,13 @@
 # @Update  : 2025/8/2 19:08
 # @Detail  : 数据更新器
 
+from __future__ import annotations
 
 import re
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from league_tools.formats import WAD
 from loguru import logger
@@ -27,8 +28,12 @@ from lol_audio_unpack.manager.utils import (
 )
 from lol_audio_unpack.utils.common import format_region, load_json
 from lol_audio_unpack.utils.config import config
+from lol_audio_unpack.utils.deprecation import warn_legacy_global_mode
 from lol_audio_unpack.utils.logging import performance_monitor
 from lol_audio_unpack.utils.type_hints import StrPath
+
+if TYPE_CHECKING:
+    from lol_audio_unpack.app_context import AppContext
 
 
 class DataUpdater:
@@ -36,23 +41,39 @@ class DataUpdater:
     负责游戏数据的更新和多语言JSON合并
     """
 
-    def __init__(self, languages: list[str] | None = None, force_update: bool = False) -> None:
+    def __init__(
+        self,
+        languages: list[str] | None = None,
+        force_update: bool = False,
+        ctx: AppContext | None = None,
+    ) -> None:
         """
         初始化数据更新器
 
         :param languages: 需要处理的语言列表（不包括default，default会自动添加）。
                         如果为None，则使用config中的GAME_REGION。
         :param force_update: 是否强制更新
+        :param ctx: 可选运行时上下文；传入时优先使用显式配置。
         """
-        self.game_path: Path = config.GAME_PATH
-        self.manifest_path: Path = config.MANIFEST_PATH
-        self.temp_path: Path = config.TEMP_PATH
+        self.ctx = ctx
+        if self.ctx is not None:
+            self.game_path = Path(self.ctx.config.game_path)
+            self.manifest_path = Path(self.ctx.paths.manifest_path)
+            self.temp_path = Path(self.ctx.paths.temp_path)
+        else:
+            warn_legacy_global_mode("manager.data_updater")
+            self.game_path = Path(config.GAME_PATH)
+            self.manifest_path = Path(config.MANIFEST_PATH)
+            self.temp_path = Path(config.TEMP_PATH)
 
         if not self.game_path or not self.manifest_path:
             raise ValueError("GAME_PATH 和 MANIFEST_PATH 必须在配置中设置")
 
         if languages is None:
-            game_region = config.GAME_REGION or "zh_CN"
+            if self.ctx is not None:
+                game_region = self.ctx.config.game_region or "zh_CN"
+            else:
+                game_region = config.GAME_REGION or "zh_CN"
             self.languages: list[str] = [game_region]
         else:
             self.languages: list[str] = languages
@@ -78,13 +99,29 @@ class DataUpdater:
                 process_languages.append(lang)
         return process_languages
 
-    @staticmethod
-    def _is_bp_vo_enabled() -> bool:
+    def _is_bp_vo_enabled(self) -> bool:
         """安全读取大厅 BP 语音开关。"""
+        ctx = getattr(self, "ctx", None)
+        if ctx is not None:
+            return bool(ctx.config.with_bp_vo)
         try:
             return bool(config.get("WITH_BP_VO", False))
         except Exception:
             return False
+
+    def _is_dev_mode(self) -> bool:
+        """返回当前运行是否为开发模式。"""
+        ctx = getattr(self, "ctx", None)
+        if ctx is not None:
+            return bool(ctx.config.dev_mode)
+        return bool(config.is_dev_mode())
+
+    def _get_game_maps_path(self) -> Path:
+        """获取地图资源根目录。"""
+        ctx = getattr(self, "ctx", None)
+        if ctx is not None:
+            return Path(ctx.paths.game_maps_path)
+        return Path(config.GAME_MAPS_PATH)
 
     @staticmethod
     def _normalize_text(text: str) -> str:
@@ -109,11 +146,11 @@ class DataUpdater:
         try:
             self._process_data(run_temp_path)
             # 成功后，日志记录的是yml或msgpack的实际路径
-            fmt = "yml" if config.is_dev_mode() else "msgpack"
+            fmt = "yml" if self._is_dev_mode() else "msgpack"
             logger.success(f"数据更新完成: {self.data_file_base.with_suffix(f'.{fmt}')}")
             return self.data_file_base
         finally:
-            if not config.is_dev_mode():
+            if not self._is_dev_mode():
                 try:
                     shutil.rmtree(run_temp_path)
                     logger.debug(f"已清理临时目录: {run_temp_path}")
@@ -156,7 +193,7 @@ class DataUpdater:
 
         # 从临时目录复制最终生成的数据文件到目标目录
         temp_data_file_base = temp_path / self.version / "data"
-        fmt = "yml" if config.is_dev_mode() else "msgpack"
+        fmt = "yml" if self._is_dev_mode() else "msgpack"
         source_file = temp_data_file_base.with_suffix(f".{fmt}")
 
         if source_file.exists():
@@ -349,7 +386,7 @@ class DataUpdater:
 
                 wad_prefix = f"Map{map_id}" if map_id != 0 else "Common"
                 try:
-                    relative_wad_path_base = config.GAME_MAPS_PATH.relative_to(self.game_path).as_posix()
+                    relative_wad_path_base = self._get_game_maps_path().relative_to(self.game_path).as_posix()
                     wad_path_base = f"{relative_wad_path_base}/{wad_prefix}"
                     map_data["binPath"] = f"data/maps/shipping/{wad_prefix.lower()}/{wad_prefix.lower()}.bin"
                     wad_info = {
@@ -472,7 +509,7 @@ class DataUpdater:
                             WAD(wad_file).extract(bp_vo_hashes, output_file_name)
             except Exception:
                 logger.opt(exception=True).error(f"解包 {_region} 区域英雄信息时出错")
-                if config.is_dev_mode():
+                if self._is_dev_mode():
                     raise
         else:
             logger.warning("未找到英雄概要文件，跳过英雄详细信息提取")

@@ -12,10 +12,17 @@
 __version__ = "3.5.1.dev0+test"
 
 import sys
-from pathlib import Path
 
 from loguru import logger
 
+from .app_context import (
+    AppConfig,
+    AppContext,
+    AppPaths,
+    OperationOptions,
+    build_app_context_from_legacy,
+)
+from .facade import LolAudioUnpackApp
 from .manager import BinUpdater, DataReader, DataUpdater
 from .utils.config import config
 from .utils.logging import setup_logging
@@ -23,14 +30,16 @@ from .utils.logging import setup_logging
 logger.disable("lol_audio_unpack")
 
 
-def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs):
-    """
-    初始化整个应用程序环境，包括配置和日志。
-    这是所有外部调用的唯一推荐入口。
+def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs) -> AppContext:
+    """初始化应用并返回可注入上下文。
 
-    :param dev_mode: 是否开启开发模式
-    :param log_level: 日志级别 (e.g., "INFO", "DEBUG", "WARNING")
-    :param kwargs: 其他传递给 config.initialize 的参数
+    Args:
+        dev_mode: 是否开启开发模式。
+        log_level: 日志级别，例如 ``INFO``、``DEBUG``。
+        **kwargs: 透传给 ``config.initialize`` 的参数。
+
+    Returns:
+        由当前配置构建的 ``AppContext``。
     """
     # 阶段一：启用此包的日志功能
     logger.enable("lol_audio_unpack")
@@ -53,7 +62,20 @@ def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs):
         show_function_info=True,  # 模块项目总是显示函数信息，便于调试
     )
 
+    app_context = build_app_context_from_legacy(config)
     logger.info("Application setup complete.")
+    return app_context
 
 
-__all__ = ["setup_app", "BinUpdater", "config", "DataUpdater", "DataReader"]
+__all__ = [
+    "AppConfig",
+    "AppContext",
+    "AppPaths",
+    "LolAudioUnpackApp",
+    "OperationOptions",
+    "setup_app",
+    "BinUpdater",
+    "config",
+    "DataUpdater",
+    "DataReader",
+]

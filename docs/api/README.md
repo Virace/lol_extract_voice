@@ -21,10 +21,12 @@
 
 ### 2.2 Python 主链
 
-1. `setup_app(...)`
-2. `DataUpdater.check_and_update()`
-3. `reader = DataReader()`
-4. 调用 `unpack_*` 或 `build_*_mapping`
+1. `ctx = setup_app(...)`
+2. `app = LolAudioUnpackApp(ctx)`
+3. 通过 `OperationOptions` 传参
+4. 调用 `app.update(...)` / `app.extract(...)` / `app.mapping(...)`
+
+> 说明：旧的“未传 `ctx` 直接依赖全局 `config`”路径已进入弃用阶段（目标移除版本：`4.0.0`）。
 
 ## 3. 目录输出约定
 
