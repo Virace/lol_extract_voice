@@ -109,6 +109,10 @@ class DataUpdater:
         """获取英雄资源根目录。"""
         return Path(self.ctx.paths.game_champion_path)
 
+    def _get_game_lcu_path(self) -> Path:
+        """获取 LCU 数据根目录。"""
+        return Path(self.ctx.paths.game_lcu_path)
+
     def _resolve_relative_game_path(self, target_path: Path, fallback: Path) -> str:
         """将绝对路径转换为相对游戏根目录路径。"""
         try:
@@ -155,6 +159,80 @@ class DataUpdater:
     def _build_rcp_v1_path(region: str, entry: str) -> str:
         """构建 rcp-be-lol-game-data 的 v1 资源路径。"""
         return f"{RCP_GLOBAL_PREFIX}/{region}/v1/{entry}"
+
+    def _resolve_asset_bundle_names_from_description(self, region: str, head: str) -> list[str]:
+        """从 description.json 解析指定区域对应的 asset bundle 文件名列表。
+
+        Args:
+            region: 规范化后的区域（例如 ``default``、``zh_CN``）。
+            head: 经过 ``format_region`` 处理后的区域头（例如 ``default``、``zh_CN``）。
+
+        Returns:
+            bundle 文件名列表；解析失败时返回空列表。
+        """
+        description_file = self._get_game_lcu_path() / "description.json"
+        if not description_file.exists():
+            logger.warning(f"未找到 description.json，无法按清单解析资源: {description_file}")
+            return []
+
+        try:
+            description = load_json(description_file)
+        except Exception:
+            logger.opt(exception=True).warning(f"读取 description.json 失败: {description_file}")
+            return []
+
+        riot_meta = description.get("riotMeta")
+        if not isinstance(riot_meta, dict):
+            logger.warning("description.json 缺少 riotMeta 字段，无法解析资源清单")
+            return []
+
+        if head == "default":
+            bundle_names = riot_meta.get("globalAssetBundles", [])
+        else:
+            per_locale = riot_meta.get("perLocaleAssetBundles", {})
+            if not isinstance(per_locale, dict):
+                logger.warning("description.json 的 perLocaleAssetBundles 字段类型异常")
+                return []
+            bundle_names = (
+                per_locale.get(head)
+                or per_locale.get(region)
+                or per_locale.get(str(region).lower())
+                or per_locale.get(str(region).upper())
+                or []
+            )
+
+        if not isinstance(bundle_names, list):
+            logger.warning(
+                f"description.json 中 bundle 列表类型异常: region={region}, head={head}, type={type(bundle_names)}"
+            )
+            return []
+
+        return [str(name).strip() for name in bundle_names if str(name).strip()]
+
+    def _resolve_wad_files(self, region: str, head: str) -> list[Path]:
+        """解析待处理 WAD 文件列表（仅使用 description.json 清单）。"""
+        lcu_root = self._get_game_lcu_path()
+        bundle_names = self._resolve_asset_bundle_names_from_description(region, head)
+
+        if not bundle_names:
+            logger.error(f"description.json 未提供区域资源清单: region={region}, head={head}")
+            return []
+
+        resolved_files: list[Path] = []
+        missing_names: list[str] = []
+        for bundle_name in bundle_names:
+            wad_file = lcu_root / bundle_name
+            if wad_file.exists():
+                resolved_files.append(wad_file)
+            else:
+                missing_names.append(bundle_name)
+
+        if missing_names:
+            logger.warning(
+                f"description.json 中有 {len(missing_names)} 个资源文件不存在: {missing_names[:5]}"
+            )
+
+        return resolved_files
 
     @staticmethod
     def _normalize_text(text: str) -> str:
@@ -446,15 +524,7 @@ class DataUpdater:
         _region = "default" if region.lower() == "en_us" else region
         _head = format_region(_region)
 
-        # 新客户端中 assets.wad 可能被拆分为多个分卷（如 default-assets.wad / default-assets2.wad）。
-        # 各区域统一使用通配模式，避免仅匹配单文件导致漏解包。
-        lcu_rel_base = LCU_PLUGIN_REL_PATH.as_posix()
-        wad_pattern = (
-            f"{lcu_rel_base}/default-assets*.wad"
-            if _head == "default"
-            else f"{lcu_rel_base}/{_head}-assets*.wad"
-        )
-        wad_files = sorted(self.game_path.glob(wad_pattern))
+        wad_files = self._resolve_wad_files(_region, _head)
 
         if not wad_files:
             logger.error(f"未找到 {_region} 区域的WAD文件")

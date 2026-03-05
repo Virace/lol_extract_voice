@@ -20,6 +20,8 @@ def _build_updater(game_path: Path, version: str = "16.3"):
         ),
         paths=SimpleNamespace(
             game_maps_path=game_path / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping",
+            game_champion_path=game_path / "Game" / "DATA" / "FINAL" / "Champions",
+            game_lcu_path=game_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data",
         ),
     )
     updater.game_path = game_path
@@ -32,6 +34,17 @@ def test_extract_wad_data_collects_all_default_asset_volumes(tmp_path, monkeypat
     wad_root.mkdir(parents=True, exist_ok=True)
     (wad_root / "default-assets.wad").write_bytes(b"")
     (wad_root / "default-assets2.wad").write_bytes(b"")
+    (wad_root / "description.json").write_text(
+        json.dumps(
+            {
+                "riotMeta": {
+                    "globalAssetBundles": ["default-assets.wad", "default-assets2.wad"],
+                    "perLocaleAssetBundles": {"zh_CN": ["zh_CN-assets.wad"]},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
     calls = []
 
@@ -59,6 +72,17 @@ def test_extract_wad_data_collects_all_region_asset_volumes(tmp_path, monkeypatc
     wad_root.mkdir(parents=True, exist_ok=True)
     (wad_root / "zh_CN-assets.wad").write_bytes(b"")
     (wad_root / "zh_CN-assets2.wad").write_bytes(b"")
+    (wad_root / "description.json").write_text(
+        json.dumps(
+            {
+                "riotMeta": {
+                    "globalAssetBundles": ["default-assets.wad"],
+                    "perLocaleAssetBundles": {"zh_CN": ["zh_CN-assets.wad", "zh_CN-assets2.wad"]},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
     calls = []
 
@@ -81,10 +105,91 @@ def test_extract_wad_data_collects_all_region_asset_volumes(tmp_path, monkeypatc
         assert "plugins/rcp-be-lol-game-data/global/zh_CN/v1/maps.json" in hash_table
 
 
+def test_extract_wad_data_uses_description_global_bundle_list(tmp_path, monkeypatch):
+    wad_root = tmp_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data"
+    wad_root.mkdir(parents=True, exist_ok=True)
+    (wad_root / "base-assets-a.wad").write_bytes(b"")
+    (wad_root / "base-assets-b.wad").write_bytes(b"")
+    (wad_root / "description.json").write_text(
+        json.dumps(
+            {
+                "riotMeta": {
+                    "globalAssetBundles": ["base-assets-a.wad", "base-assets-b.wad"],
+                    "perLocaleAssetBundles": {"zh_CN": ["zh_CN-assets.wad"]},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    calls = []
+
+    class FakeWAD:
+        def __init__(self, path):
+            self.path = Path(path)
+
+        def extract(self, hash_table, out_dir):
+            calls.append((self.path.name, list(hash_table)))
+            return []
+
+    monkeypatch.setattr(m_data_updater, "WAD", FakeWAD)
+
+    updater = _build_updater(tmp_path)
+    updater._extract_wad_data(tmp_path / "out", "en_us")
+
+    assert [name for name, _ in calls] == ["base-assets-a.wad", "base-assets-b.wad"]
+
+
+def test_extract_wad_data_uses_description_locale_bundle_list(tmp_path, monkeypatch):
+    wad_root = tmp_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data"
+    wad_root.mkdir(parents=True, exist_ok=True)
+    (wad_root / "zh_CN-pack-a.wad").write_bytes(b"")
+    (wad_root / "zh_CN-pack-b.wad").write_bytes(b"")
+    (wad_root / "description.json").write_text(
+        json.dumps(
+            {
+                "riotMeta": {
+                    "globalAssetBundles": ["default-assets.wad"],
+                    "perLocaleAssetBundles": {"zh_CN": ["zh_CN-pack-a.wad", "zh_CN-pack-b.wad"]},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    calls = []
+
+    class FakeWAD:
+        def __init__(self, path):
+            self.path = Path(path)
+
+        def extract(self, hash_table, out_dir):
+            calls.append((self.path.name, list(hash_table)))
+            return []
+
+    monkeypatch.setattr(m_data_updater, "WAD", FakeWAD)
+
+    updater = _build_updater(tmp_path)
+    updater._extract_wad_data(tmp_path / "out", "zh_CN")
+
+    assert [name for name, _ in calls] == ["zh_CN-pack-a.wad", "zh_CN-pack-b.wad"]
+
+
 def test_extract_wad_data_tries_champion_details_after_summary(tmp_path, monkeypatch):
     wad_root = tmp_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data"
     wad_root.mkdir(parents=True, exist_ok=True)
     (wad_root / "default-assets.wad").write_bytes(b"")
+    (wad_root / "description.json").write_text(
+        json.dumps(
+            {
+                "riotMeta": {
+                    "globalAssetBundles": ["default-assets.wad"],
+                    "perLocaleAssetBundles": {},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
     calls = []
 
@@ -138,6 +243,17 @@ def test_extract_wad_data_includes_bp_vo_when_enabled(tmp_path, monkeypatch):
     wad_root = tmp_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data"
     wad_root.mkdir(parents=True, exist_ok=True)
     (wad_root / "zh_CN-assets.wad").write_bytes(b"")
+    (wad_root / "description.json").write_text(
+        json.dumps(
+            {
+                "riotMeta": {
+                    "globalAssetBundles": ["default-assets.wad"],
+                    "perLocaleAssetBundles": {"zh_CN": ["zh_CN-assets.wad"]},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
     calls = []
 
