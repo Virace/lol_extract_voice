@@ -42,6 +42,9 @@
         ```bash
         # uv 会自动创建虚拟环境
         uv sync
+
+        # 如遇缓存目录权限问题，可使用仓库本地缓存目录
+        UV_CACHE_DIR=.cache/uv uv sync
         ```
     *   **方式二: 使用 `pip`**
         ```bash
@@ -161,10 +164,10 @@ LOL_EXCLUDE_TYPE='SFX,MUSIC'
 ### 基准测试
 项目内置基准脚本：`scripts/benchmark_cli.py`，用于评估 CLI 外部调用的真实耗时与稳定性。
 
-在 WSL 环境下，建议统一通过 `./scripts/_uv.sh` 运行，避免环境偏差：
+建议直接使用 `uv` 运行基准脚本：
 
 ```bash
-./scripts/_uv.sh run python scripts/benchmark_cli.py --help
+uv run python scripts/benchmark_cli.py --help
 ```
 
 #### 基准模式
@@ -184,14 +187,14 @@ LOL_EXCLUDE_TYPE='SFX,MUSIC'
 
 #### 示例 1：仅做 mock 自检
 ```bash
-./scripts/_uv.sh run python scripts/benchmark_cli.py \
+uv run python scripts/benchmark_cli.py \
   --mode mock \
   --output /tmp/bench_mock.json
 ```
 
 #### 示例 2：local_game 全流程（更新 + 解包 + 映射）
 ```bash
-./scripts/_uv.sh run python scripts/benchmark_cli.py \
+uv run python scripts/benchmark_cli.py \
   --mode local_game \
   --sample-size 10 \
   --max-workers auto \
@@ -204,7 +207,7 @@ LOL_EXCLUDE_TYPE='SFX,MUSIC'
 #### 示例 3：仅解包音频（不做映射）
 方式一（推荐）：直接使用 `unpack` 组合命令。
 ```bash
-./scripts/_uv.sh run unpack \
+uv run unpack \
   --update --skip-events \
   --extract-champions 122,804,62 \
   --max-workers auto \
@@ -214,7 +217,7 @@ LOL_EXCLUDE_TYPE='SFX,MUSIC'
 
 方式二（使用 benchmark_cli）：不给有效 `WWISER_PATH`，映射阶段会 `skip`，仅统计解包阶段。
 ```bash
-./scripts/_uv.sh run python scripts/benchmark_cli.py \
+uv run python scripts/benchmark_cli.py \
   --mode local_game \
   --sample-size 3 \
   --no-prepare-update \

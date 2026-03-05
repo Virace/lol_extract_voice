@@ -230,8 +230,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--uv-entry",
-        default="./scripts/_uv.sh",
-        help="uv 统一入口脚本路径",
+        default="uv",
+        help="uv 可执行文件或入口命令，默认直接使用 uv",
     )
     parser.add_argument(
         "--game-path",
