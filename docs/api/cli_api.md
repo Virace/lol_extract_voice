@@ -40,6 +40,7 @@ python -m lol_audio_unpack [OPTIONS]
 - `--max-workers N`：并发线程数，默认 `4`。
 - `-l, --log-level`：日志级别，默认 `INFO`。
 - `--dev`：启用开发模式。
+- `--with-bp-vo` / `--no-with-bp-vo`：显式覆盖大厅 BP 语音开关。
 - `--enable-league-tools-log`：允许 `league_tools` 日志输出。
 
 ### 2.5 配置覆盖参数（优先级最高）

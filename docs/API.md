@@ -13,9 +13,10 @@
 ## 稳定性分级
 
 - `稳定公开`：`setup_app`、`AppContext`、`OperationOptions`、`LolAudioUnpackApp`、`unpack` CLI。
-- `半稳定`：`DataUpdater/BinUpdater/DataReader` 构造与公开方法（推荐通过 Facade 间接调用）。
-- `兼容待弃用`：未传 `ctx` 时直接依赖全局 `config` 的调用路径（目标移除版本：`4.0.0`）。
+- `半稳定`：`create_app_context`、`initialize_context_from_env`、`DataUpdater/BinUpdater/DataReader` 构造与公开方法（推荐通过 Facade 间接调用）。
 - `内部实现`：以下划线开头的方法/函数（如 `_extract_bin_raws`、`_get_cached_hirc`），默认不保证兼容。
+
+> 说明：主链路已彻底移除“未传 `ctx` 时回退全局 `config`”机制；所有核心调用均要求显式上下文。
 
 ## 快速示例
 

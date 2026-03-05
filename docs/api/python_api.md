@@ -8,12 +8,12 @@
 - `AppConfig`
 - `AppPaths`
 - `AppContext`
+- `AppContextValidationError`
 - `OperationOptions`
 - `LolAudioUnpackApp`
 - `DataUpdater`
 - `BinUpdater`
 - `DataReader`
-- `config`（兼容待弃用）
 
 ## 2. 推荐入口（Facade）
 
@@ -23,7 +23,7 @@
 def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs) -> AppContext
 ```
 
-用途：初始化日志与配置，并返回可注入的 `AppContext`。
+用途：初始化日志与上下文，并返回可注入的 `AppContext`。
 
 ### 2.2 `LolAudioUnpackApp`
 
@@ -64,56 +64,67 @@ class OperationOptions:
 
 用途：承载一次操作的可变参数，替代散装参数穿透。
 
-## 3. 兼容 API（仍可用）
+## 3. 上下文工厂（`app_context.py`）
 
-### 3.1 管理器类
+```python
+def create_app_context(
+    env_path: StrPath | None = None,
+    env_prefix: str = "LOL_",
+    force_reload: bool = False,
+    dev_mode: bool = False,
+    cli_overrides: dict[str, Any] | None = None,
+    runtime_cache: dict[str, Any] | None = None,
+) -> AppContext
+
+
+def initialize_context_from_env(
+    env_path: StrPath | None = None,
+    env_prefix: str = "LOL_",
+    force_reload: bool = False,
+    dev_mode: bool = False,
+    cli_overrides: dict[str, Any] | None = None,
+) -> AppContext
+```
+
+用途：构建 `AppConfig + AppPaths + AppContext` 组合对象。
+
+## 4. 管理器类（显式上下文）
 
 ```python
 class DataUpdater:
     def __init__(
         self,
+        ctx: AppContext,
         languages: list[str] | None = None,
         force_update: bool = False,
-        ctx: AppContext | None = None,
     ) -> None
+
 
 class BinUpdater:
     def __init__(
         self,
         force_update: bool = False,
         process_events: bool = True,
-        ctx: AppContext | None = None,
+        *,
+        ctx: AppContext,
     ) -> None
 
+
 class DataReader(metaclass=Singleton):
-    def __init__(self, ctx: AppContext | None = None)
+    def __init__(self, ctx: AppContext)
 ```
 
-说明：
+说明：`ctx` 已为必填，且不再支持全局 `config` 回退路径。
 
-- 传入 `ctx` 时走显式注入模式（推荐）。
-- 不传 `ctx` 时走全局 `config` 回退（兼容模式）。
+## 5. 模块级流水线函数
 
-### 3.2 `model/unpack/mapping` 模块函数
+`model` / `unpack` / `mapping` 相关核心函数均要求显式 `ctx: AppContext`，包括但不限于：
 
-这些模块函数已支持 `ctx` 可选注入；未传 `ctx` 时仍可回退到全局 `config`。
+- `AudioEntityData.from_champion(..., ctx=ctx)` / `AudioEntityData.from_map(..., ctx=ctx)`
+- `unpack_audio_all(..., ctx=ctx)` / `unpack_champions(..., ctx=ctx)` / `unpack_maps(..., ctx=ctx)`
+- `build_mapping_all(..., ctx=ctx)` / `build_champions_mapping(..., ctx=ctx)` / `build_maps_mapping(..., ctx=ctx)`
 
-## 4. 弃用策略
-
-以下能力已标注为“兼容待弃用”并发出 `DeprecationWarning`（一次性告警）：
-
-- Manager 构造不传 `ctx`。
-- `model/unpack/mapping` 链路不传 `ctx` 导致读取全局 `config`。
-
-目标移除版本：`4.0.0`。
-
-建议迁移：
-
-1. 使用 `ctx = setup_app(...)` 获取上下文。
-2. 使用 `app = LolAudioUnpackApp(ctx)`。
-3. 使用 `OperationOptions(...)` 调用 `app.update/extract/mapping`。
-
-## 5. 快速示例
+## 6. 快速示例
 
 ```python
 from lol_audio_unpack import LolAudioUnpackApp, OperationOptions, setup_app
@@ -122,6 +133,6 @@ ctx = setup_app(dev_mode=False, log_level="INFO")
 app = LolAudioUnpackApp(ctx)
 
 app.update(OperationOptions(force_update=False), target="all")
-app.extract(OperationOptions(max_workers=4, champion_ids=(1, 103)), include_maps=False)
-app.mapping(OperationOptions(max_workers=4, integrate_data=True), include_maps=False)
+app.extract(OperationOptions(max_workers=8, champion_ids=(1, 103)), include_maps=False)
+app.mapping(OperationOptions(max_workers=8, integrate_data=True), include_maps=False)
 ```

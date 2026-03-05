@@ -3,19 +3,20 @@
 ## 1. 模块视图
 
 - 入口层：`lol_audio_unpack/__init__.py`、`lol_audio_unpack/__main__.py`
+- 上下文与配置层：`app_context.py`
 - 数据准备层：`manager/data_updater.py`、`manager/bin_updater.py`
 - 数据读取层：`manager/data_reader.py`
 - 解包层：`unpack.py`
 - 映射层：`mapping.py`
 - 数据模型层：`model.py`
-- 配置与通用能力：`utils/config.py`、`manager/utils.py`、`utils/path_constants.py`
+- 通用能力：`manager/utils.py`、`utils/path_constants.py`
 
 ## 2. 典型调用链
 
 ### 2.1 CLI 主链
 
 1. 参数解析与校验（`create_parser` / `validate_args`）
-2. 初始化应用（`setup_app` + `config.initialize`）
+2. 初始化应用（`setup_app` -> `create_app_context`）
 3. 按顺序执行：更新 -> 解包 -> 映射
 4. 结果写入 `OUTPUT_PATH` 衍生目录（`manifest`、`audios`、`hashes`、`reports`）
 
@@ -26,7 +27,7 @@
 3. 通过 `OperationOptions` 传参
 4. 调用 `app.update(...)` / `app.extract(...)` / `app.mapping(...)`
 
-> 说明：旧的“未传 `ctx` 直接依赖全局 `config`”路径已进入弃用阶段（目标移除版本：`4.0.0`）。
+> 说明：全局 `config` 兼容路径已移除，主链路必须显式持有 `AppContext`。
 
 ## 3. 目录输出约定
 
@@ -39,9 +40,9 @@
 
 ## 4. 数据格式约定
 
-`write_data(data, base_path)` 会根据模式决定写入格式：
+`write_data(data, base_path, dev_mode=...)` 会根据模式决定写入格式：
 
 - 开发模式：优先写 `.yml`
 - 非开发模式：优先写 `.msgpack`
 
-`read_data(path)` 则会按优先级自动寻找可读文件。
+`read_data(path, dev_mode=...)` 会按优先级自动寻找可读文件。

@@ -10,6 +10,8 @@ def unpack_audio_entity(
     reader: DataReader,
     wad_cache: dict[Path, WAD] | None = None,
     cache_lock: threading.Lock | None = None,
+    *,
+    ctx: AppContext,
 ) -> None
 ```
 
@@ -19,21 +21,20 @@ def generate_output_path(
     sub_id: str,
     audio_type: str,
     base_path: Path | None = None,
+    *,
+    ctx: AppContext,
 ) -> Path
 ```
 
 ```python
-def unpack_champion(...)
-def unpack_map_audio(...)
-def execute_unpack_tasks(...)
-def unpack_audio_all(...)
-def unpack_champions(...)
-def unpack_maps(...)
+def unpack_audio_all(..., *, ctx: AppContext) -> None
+def unpack_champions(..., *, ctx: AppContext) -> None
+def unpack_maps(..., *, ctx: AppContext) -> None
 ```
 
 ### 1.2 输出路径规则
 
-`generate_output_path` 受 `config.GROUP_BY_TYPE` 影响：
+`generate_output_path` 受 `ctx.config.group_by_type` 影响：
 
 - `True`：`audios/<type>/<entity_path>`
 - `False`：`audios/<entity_path>/<type>`
@@ -46,6 +47,7 @@ def unpack_maps(...)
 2. 分别从语言 WAD / 根 WAD 批量提取原始数据。
 3. 解析 `BNK` / `WPK` 并输出 `.wem`。
 4. 记录统计信息并写出 `_metadata.yaml` 报告。
+5. 英雄解包在 `WITH_BP_VO` 启用时附带写入大厅选用/禁用语音。
 
 ## 2. 映射 API（`mapping.py`）
 
@@ -58,16 +60,15 @@ def build_audio_event_mapping(
     wwiser_manager: WwiserManager | None = None,
     integrate_data: bool = False,
     runtime_cache: MappingRuntimeCache | None = None,
+    *,
+    ctx: AppContext,
 ) -> dict[str, Any]
 ```
 
 ```python
-def build_champion_mapping(...)
-def build_map_mapping(...)
-def execute_mapping_tasks(...)
-def build_mapping_all(...)
-def build_champions_mapping(...)
-def build_maps_mapping(...)
+def build_mapping_all(..., *, ctx: AppContext) -> None
+def build_champions_mapping(..., *, ctx: AppContext) -> None
+def build_maps_mapping(..., *, ctx: AppContext) -> None
 ```
 
 ### 2.2 映射结果写入
@@ -82,10 +83,15 @@ def build_maps_mapping(...)
 - `wad_cache`：复用 WAD 对象
 - `extract_cache`：避免重复提取同一 bnk
 - `hirc_cache`：复用 HIRC 解析对象
+- `cache_lock`：并发访问保护
 
-并发时可配 `cache_lock` 保证线程安全。
+## 3. 上下文约束
 
-## 3. 半稳定与内部边界
+- `DataReader` 构造必须传入 `ctx: AppContext`。
+- `AudioEntityData.from_champion/from_map` 必须传入 `ctx`。
+- 解包与映射主函数均要求 `ctx`，不再支持全局配置回退。
+
+## 4. 半稳定与内部边界
 
 建议直接调用：
 
