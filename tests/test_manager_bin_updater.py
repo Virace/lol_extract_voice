@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +10,7 @@ pytestmark = pytest.mark.unit
 
 def _build_updater(tmp_path: Path) -> m_bin_updater.BinUpdater:
     updater = m_bin_updater.BinUpdater.__new__(m_bin_updater.BinUpdater)
+    updater.ctx = SimpleNamespace(config=SimpleNamespace(game_path=tmp_path, dev_mode=False), paths=SimpleNamespace())
     updater.use_local_bin_flag_file = tmp_path / ".use_local_bin"
     updater.local_bin_input_dir = tmp_path / "bin_input"
     updater.local_bin_input_dir.mkdir(parents=True, exist_ok=True)
@@ -141,6 +143,7 @@ def test_extract_bin_raws_allows_partial_missing_and_keeps_order(tmp_path):
 
 def test_process_champion_skins_skips_when_first_bin_missing(tmp_path, monkeypatch):
     updater = m_bin_updater.BinUpdater.__new__(m_bin_updater.BinUpdater)
+    updater.ctx = SimpleNamespace(config=SimpleNamespace(game_path=tmp_path, dev_mode=False), paths=SimpleNamespace())
     updater.force_update = False
     updater.process_events = False
     updater.version = "16.3"

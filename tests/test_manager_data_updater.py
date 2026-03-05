@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +11,17 @@ pytestmark = pytest.mark.integration
 
 def _build_updater(game_path: Path, version: str = "16.3"):
     updater = m_data_updater.DataUpdater.__new__(m_data_updater.DataUpdater)
+    updater.ctx = SimpleNamespace(
+        config=SimpleNamespace(
+            game_path=game_path,
+            game_region="zh_CN",
+            dev_mode=False,
+            with_bp_vo=False,
+        ),
+        paths=SimpleNamespace(
+            game_maps_path=game_path / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping",
+        ),
+    )
     updater.game_path = game_path
     updater.version = version
     return updater
@@ -146,17 +158,10 @@ def test_extract_wad_data_includes_bp_vo_when_enabled(tmp_path, monkeypatch):
                 )
             return []
 
-    class FakeConfig:
-        @staticmethod
-        def get(key, default=None):
-            if key == "WITH_BP_VO":
-                return True
-            return default
-
     monkeypatch.setattr(m_data_updater, "WAD", FakeWAD)
-    monkeypatch.setattr(m_data_updater, "config", FakeConfig())
 
     updater = _build_updater(tmp_path)
+    updater.ctx.config.with_bp_vo = True
     updater._extract_wad_data(tmp_path / "out", "zh_CN")
 
     all_requested_paths = [path for _, hash_table in calls for path in hash_table]

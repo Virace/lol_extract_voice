@@ -27,8 +27,6 @@ from lol_audio_unpack.manager.utils import (
     write_data,
 )
 from lol_audio_unpack.utils.common import format_region, load_json
-from lol_audio_unpack.utils.config import config
-from lol_audio_unpack.utils.deprecation import warn_legacy_global_mode
 from lol_audio_unpack.utils.logging import performance_monitor
 from lol_audio_unpack.utils.type_hints import StrPath
 
@@ -43,9 +41,9 @@ class DataUpdater:
 
     def __init__(
         self,
+        ctx: AppContext,
         languages: list[str] | None = None,
         force_update: bool = False,
-        ctx: AppContext | None = None,
     ) -> None:
         """
         初始化数据更新器
@@ -53,27 +51,18 @@ class DataUpdater:
         :param languages: 需要处理的语言列表（不包括default，default会自动添加）。
                         如果为None，则使用config中的GAME_REGION。
         :param force_update: 是否强制更新
-        :param ctx: 可选运行时上下文；传入时优先使用显式配置。
+        :param ctx: 运行时上下文。
         """
         self.ctx = ctx
-        if self.ctx is not None:
-            self.game_path = Path(self.ctx.config.game_path)
-            self.manifest_path = Path(self.ctx.paths.manifest_path)
-            self.temp_path = Path(self.ctx.paths.temp_path)
-        else:
-            warn_legacy_global_mode("manager.data_updater")
-            self.game_path = Path(config.GAME_PATH)
-            self.manifest_path = Path(config.MANIFEST_PATH)
-            self.temp_path = Path(config.TEMP_PATH)
+        self.game_path = Path(self.ctx.config.game_path)
+        self.manifest_path = Path(self.ctx.paths.manifest_path)
+        self.temp_path = Path(self.ctx.paths.temp_path)
 
         if not self.game_path or not self.manifest_path:
             raise ValueError("GAME_PATH 和 MANIFEST_PATH 必须在配置中设置")
 
         if languages is None:
-            if self.ctx is not None:
-                game_region = self.ctx.config.game_region or "zh_CN"
-            else:
-                game_region = config.GAME_REGION or "zh_CN"
+            game_region = self.ctx.config.game_region or "zh_CN"
             self.languages: list[str] = [game_region]
         else:
             self.languages: list[str] = languages
@@ -101,27 +90,15 @@ class DataUpdater:
 
     def _is_bp_vo_enabled(self) -> bool:
         """安全读取大厅 BP 语音开关。"""
-        ctx = getattr(self, "ctx", None)
-        if ctx is not None:
-            return bool(ctx.config.with_bp_vo)
-        try:
-            return bool(config.get("WITH_BP_VO", False))
-        except Exception:
-            return False
+        return bool(self.ctx.config.with_bp_vo)
 
     def _is_dev_mode(self) -> bool:
         """返回当前运行是否为开发模式。"""
-        ctx = getattr(self, "ctx", None)
-        if ctx is not None:
-            return bool(ctx.config.dev_mode)
-        return bool(config.is_dev_mode())
+        return bool(self.ctx.config.dev_mode)
 
     def _get_game_maps_path(self) -> Path:
         """获取地图资源根目录。"""
-        ctx = getattr(self, "ctx", None)
-        if ctx is not None:
-            return Path(ctx.paths.game_maps_path)
-        return Path(config.GAME_MAPS_PATH)
+        return Path(self.ctx.paths.game_maps_path)
 
     @staticmethod
     def _normalize_text(text: str) -> str:
@@ -134,7 +111,7 @@ class DataUpdater:
     @performance_monitor(level="INFO")
     def check_and_update(self) -> Path:
         """检查游戏版本并更新数据"""
-        if not needs_update(self.data_file_base, self.version, self.force_update) and self._check_languages():
+        if not needs_update(self.data_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()) and self._check_languages():
             logger.info(f"数据文件已是最新版本 {self.version} 且包含所有请求的语言，无需更新。")
             # 返回基础路径，让调用者决定使用哪个具体文件
             return self.data_file_base
@@ -162,7 +139,7 @@ class DataUpdater:
 
     def _check_languages(self) -> bool:
         """检查现有数据文件是否包含所有请求的语言"""
-        data = read_data(self.data_file_base)
+        data = read_data(self.data_file_base, dev_mode=self._is_dev_mode())
         if not data:
             return False
 
@@ -415,7 +392,7 @@ class DataUpdater:
             logger.warning("未找到default语言的地图数据，跳过处理。")
 
         # 根据环境写入最佳格式
-        write_data(final_result, base_path / "data")
+        write_data(final_result, base_path / "data", dev_mode=self._is_dev_mode())
 
         # 记录最终处理完成统计
         logger.success(

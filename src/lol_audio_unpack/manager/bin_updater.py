@@ -25,8 +25,6 @@ from lol_audio_unpack.manager.utils import (
     read_data,
     write_data,
 )
-from lol_audio_unpack.utils.config import config
-from lol_audio_unpack.utils.deprecation import warn_legacy_global_mode
 from lol_audio_unpack.utils.logging import performance_monitor
 
 if TYPE_CHECKING:
@@ -47,23 +45,19 @@ class BinUpdater:
         self,
         force_update: bool = False,
         process_events: bool = True,
-        ctx: AppContext | None = None,
+        *,
+        ctx: AppContext,
     ):
         """
         初始化BIN音频更新器
 
         :param force_update: 是否强制更新，忽略版本检查
         :param process_events: 是否处理事件数据（默认True，设置为False可大幅提升处理速度）
-        :param ctx: 可选运行时上下文；传入时优先使用显式配置。
+        :param ctx: 运行时上下文。
         """
         self.ctx = ctx
-        if self.ctx is not None:
-            self.game_path = Path(self.ctx.config.game_path)
-            self.manifest_path = Path(self.ctx.paths.manifest_path)
-        else:
-            warn_legacy_global_mode("manager.bin_updater")
-            self.game_path = Path(config.GAME_PATH)
-            self.manifest_path = Path(config.MANIFEST_PATH)
+        self.game_path = Path(self.ctx.config.game_path)
+        self.manifest_path = Path(self.ctx.paths.manifest_path)
 
         if not self.game_path or not self.manifest_path:
             raise ValueError("GAME_PATH 和 MANIFEST_PATH 必须在配置中设置")
@@ -83,10 +77,7 @@ class BinUpdater:
 
     def _is_dev_mode(self) -> bool:
         """返回当前运行是否为开发模式。"""
-        ctx = getattr(self, "ctx", None)
-        if ctx is not None:
-            return bool(ctx.config.dev_mode)
-        return bool(config.is_dev_mode())
+        return bool(self.ctx.config.dev_mode)
 
     @logger.catch
     @performance_monitor(level="INFO")
@@ -103,7 +94,7 @@ class BinUpdater:
         :param champion_ids: 指定要处理的英雄ID列表，为None时处理所有英雄
         :param map_ids: 指定要处理的地图ID列表，为None时处理所有地图
         """
-        data = read_data(self.data_file_base)
+        data = read_data(self.data_file_base, dev_mode=self._is_dev_mode())
         if not data:
             logger.error(f"数据文件不存在，请先运行DataUpdater: {self.data_file_base}")
             raise FileNotFoundError(f"数据文件不存在: {self.data_file_base}")
@@ -343,8 +334,8 @@ class BinUpdater:
         banks_file_base = self.champion_banks_dir / champion_id
         events_file_base = self.champion_events_dir / champion_id
 
-        if not needs_update(banks_file_base, self.version, self.force_update) and not needs_update(
-            events_file_base, self.version, self.force_update
+        if not needs_update(banks_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()) and not needs_update(
+            events_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()
         ):
             logger.trace(f"英雄 {champion_id} ({alias}) 的数据已是最新，跳过处理")
             return
@@ -445,13 +436,18 @@ class BinUpdater:
         self._optimize_champion_mappings(champion_banks_data)
 
         # 写入banks数据
-        if needs_update(banks_file_base, self.version, self.force_update):
-            write_data(champion_banks_data, banks_file_base)
+        if needs_update(banks_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()):
+            write_data(champion_banks_data, banks_file_base, dev_mode=self._is_dev_mode())
 
         # 写入events数据
-        if champion_skin_events and needs_update(events_file_base, self.version, self.force_update):
+        if champion_skin_events and needs_update(
+            events_file_base,
+            self.version,
+            self.force_update,
+            dev_mode=self._is_dev_mode(),
+        ):
             final_event_data = self._create_base_data(champion_id, "champion", alias=alias, skins=champion_skin_events)
-            write_data(final_event_data, events_file_base)
+            write_data(final_event_data, events_file_base, dev_mode=self._is_dev_mode())
 
     def _process_single_map(
         self, map_id: str, map_data: dict, common_events_set: set | None = None, common_banks_set: set | None = None
@@ -467,8 +463,8 @@ class BinUpdater:
         banks_file_base = self.map_banks_dir / map_id
         events_file_base = self.map_events_dir / map_id
 
-        if not needs_update(banks_file_base, self.version, self.force_update) and not needs_update(
-            events_file_base, self.version, self.force_update
+        if not needs_update(banks_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()) and not needs_update(
+            events_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()
         ):
             logger.trace(f"地图 {map_id} 的数据已是最新，跳过处理")
             return
@@ -496,7 +492,7 @@ class BinUpdater:
             map_banks[category] = [list(p) for p in unique_paths_tuples]
 
         # 写入Banks数据
-        if map_banks and needs_update(banks_file_base, self.version, self.force_update):
+        if map_banks and needs_update(banks_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()):
             map_banks_data = self._create_base_data(map_id, "map", name=self._get_map_name(map_data), banks=map_banks)
 
             # 对非公共地图进行去重处理
@@ -505,17 +501,22 @@ class BinUpdater:
 
             # 去重后检查是否还有数据需要写入
             if map_banks_data.get("banks"):
-                write_data(map_banks_data, banks_file_base)
+                write_data(map_banks_data, banks_file_base, dev_mode=self._is_dev_mode())
             else:
                 logger.trace(f"地图 {map_id} 去重后无独有Banks数据，跳过写入")
 
         # 处理Events数据，只有在启用事件处理时才提取
-        if self.process_events and needs_update(events_file_base, self.version, self.force_update):
+        if self.process_events and needs_update(
+            events_file_base,
+            self.version,
+            self.force_update,
+            dev_mode=self._is_dev_mode(),
+        ):
             if map_events := self._extract_map_events(bin_file, common_events_set if map_id != "0" else None):
                 final_event_data = self._create_base_data(
                     map_id, "map", name=self._get_map_name(map_data), map=map_events
                 )
-                write_data(final_event_data, events_file_base)
+                write_data(final_event_data, events_file_base, dev_mode=self._is_dev_mode())
 
     def _load_map_bin_file(self, map_id: str, map_data: dict) -> BIN | None:
         """

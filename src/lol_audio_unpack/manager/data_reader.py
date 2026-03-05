@@ -17,8 +17,6 @@ from loguru import logger
 
 from lol_audio_unpack.manager.utils import get_game_version, read_data
 from lol_audio_unpack.utils.common import Singleton
-from lol_audio_unpack.utils.config import config
-from lol_audio_unpack.utils.deprecation import warn_legacy_global_mode
 from lol_audio_unpack.utils.logging import performance_monitor
 
 if TYPE_CHECKING:
@@ -31,29 +29,27 @@ class DataReader(metaclass=Singleton):
     """
 
     CHECK_VERSION_DIFF = 2
+    AUDIO_TYPE_VO = "VO"
+    AUDIO_TYPE_SFX = "SFX"
+    AUDIO_TYPE_MUSIC = "MUSIC"
 
     @logger.catch
     @performance_monitor(level="DEBUG")
-    def __init__(self, ctx: AppContext | None = None):
+    def __init__(self, ctx: AppContext):
         """
         初始化数据读取器
 
         从合并后的数据文件和分散的banks/events文件中读取游戏数据
 
         Args:
-            ctx: 可选运行时上下文；传入时优先使用显式配置。
+            ctx: 运行时上下文。
         """
         if hasattr(self, "initialized"):
             return
 
         self.ctx = ctx
-        if self.ctx is not None:
-            self.game_path = Path(self.ctx.config.game_path)
-            self.manifest_path = Path(self.ctx.paths.manifest_path)
-        else:
-            warn_legacy_global_mode("manager.data_reader")
-            self.game_path = Path(config.GAME_PATH)
-            self.manifest_path = Path(config.MANIFEST_PATH)
+        self.game_path = Path(self.ctx.config.game_path)
+        self.manifest_path = Path(self.ctx.paths.manifest_path)
 
         if not self.game_path or not self.manifest_path:
             raise ValueError("GAME_PATH 和 MANIFEST_PATH 必须在配置中设置")
@@ -62,7 +58,7 @@ class DataReader(metaclass=Singleton):
         self.version_manifest_path: Path = self.manifest_path / self.version
 
         # 使用不带后缀的基础路径，让read_data自动寻找最佳格式
-        self.data = read_data(self.version_manifest_path / "data")
+        self.data = read_data(self.version_manifest_path / "data", dev_mode=self.ctx.config.dev_mode)
         if not self.data:
             raise FileNotFoundError("核心数据文件 (data.yml/json/msgpack) 不存在，请先运行更新程序。")
 
@@ -146,14 +142,14 @@ class DataReader(metaclass=Singleton):
         """从分类字符串中识别出音频的大类（VO, SFX, MUSIC）"""
         category_upper = category.upper()
         if "ANNOUNCER" in category_upper or "_VO" in category_upper:
-            return config.AUDIO_TYPE_VO
+            return self.AUDIO_TYPE_VO
         if category_upper.startswith("MUS_") or "MUSIC" in category_upper:
-            return config.AUDIO_TYPE_MUSIC
+            return self.AUDIO_TYPE_MUSIC
         if "_SFX" in category_upper or category_upper == "INIT" or "HUD" in category_upper:
-            return config.AUDIO_TYPE_SFX
+            return self.AUDIO_TYPE_SFX
 
         self.unknown_categories.add(category)
-        return config.AUDIO_TYPE_SFX
+        return self.AUDIO_TYPE_SFX
 
     def get_languages(self) -> list[str]:
         """获取支持的语言列表"""
@@ -176,7 +172,7 @@ class DataReader(metaclass=Singleton):
             return self._champion_banks_cache[champion_id]
 
         banks_file_base = self.champion_banks_dir / str(champion_id)
-        banks_data = read_data(banks_file_base)
+        banks_data = read_data(banks_file_base, dev_mode=self.ctx.config.dev_mode)
 
         if banks_data:
             self._champion_banks_cache[champion_id] = banks_data
@@ -221,7 +217,7 @@ class DataReader(metaclass=Singleton):
             return self._champion_events_cache[champion_id]
 
         events_file_base = self.champion_events_dir / str(champion_id)
-        events_data = read_data(events_file_base)
+        events_data = read_data(events_file_base, dev_mode=self.ctx.config.dev_mode)
 
         if events_data:
             self._champion_events_cache[champion_id] = events_data
@@ -242,7 +238,7 @@ class DataReader(metaclass=Singleton):
             return self._map_banks_cache[map_id]
 
         banks_file_base = self.map_banks_dir / str(map_id)
-        banks_data = read_data(banks_file_base)
+        banks_data = read_data(banks_file_base, dev_mode=self.ctx.config.dev_mode)
 
         if banks_data:
             self._map_banks_cache[map_id] = banks_data
@@ -264,7 +260,7 @@ class DataReader(metaclass=Singleton):
             return self._map_events_cache[map_id]
 
         events_file_base = self.map_events_dir / str(map_id)
-        map_events_data = read_data(events_file_base)
+        map_events_data = read_data(events_file_base, dev_mode=self.ctx.config.dev_mode)
         result = map_events_data.get("map") if map_events_data else None
 
         if result:

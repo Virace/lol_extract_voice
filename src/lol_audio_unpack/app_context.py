@@ -1,70 +1,41 @@
-"""配置对象与上下文桥接工具。
+"""应用上下文对象与初始化工厂。"""
 
-该模块用于把当前全局 ``config``（CLI 兼容层）映射为显式对象模型，
-为后续 Manager/业务函数改造提供统一的 ``AppContext`` 入口。
-"""
+from __future__ import annotations
 
-from collections.abc import Iterable
+import os
+import shutil
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from dotenv import dotenv_values
 from loguru import logger
 
-from lol_audio_unpack.utils.config import config
 from lol_audio_unpack.utils.type_hints import StrPath
 
-
-def _to_path(value: Any, key_name: str) -> Path:
-    """将输入值转换为 ``Path``。
-
-    Args:
-        value: 待转换值。
-        key_name: 配置键名，用于异常提示。
-
-    Returns:
-        转换后的路径对象。
-
-    Raises:
-        ValueError: ``value`` 为空。
-    """
-    if value is None:
-        raise ValueError(f"配置项 {key_name} 不能为空。")
-    return Path(value)
-
-
-def _normalize_types(values: Iterable[Any] | None) -> tuple[str, ...]:
-    """标准化音频类型集合。
-
-    Args:
-        values: 原始可迭代值。
-
-    Returns:
-        仅包含非空大写字符串的不可变元组。
-    """
-    if not values:
-        return ()
-    return tuple(str(item).upper() for item in values if str(item).strip())
+KNOWN_AUDIO_TYPES: tuple[str, ...] = ("VO", "SFX", "MUSIC")
+SUPPORTED_KEYS: frozenset[str] = frozenset(
+    {
+        "GAME_PATH",
+        "OUTPUT_PATH",
+        "GAME_REGION",
+        "EXCLUDE_TYPE",
+        "GROUP_BY_TYPE",
+        "WITH_BP_VO",
+        "WWISER_PATH",
+    }
+)
+DEFAULT_VALUES: dict[str, Any] = {
+    "GAME_REGION": "zh_CN",
+    "EXCLUDE_TYPE": "SFX,MUSIC",
+    "GROUP_BY_TYPE": False,
+    "WITH_BP_VO": False,
+}
 
 
-def _sort_by_known_audio_order(legacy_config: Any, audio_types: tuple[str, ...]) -> tuple[str, ...]:
-    """按已知音频类型顺序排序，保证结果稳定。
-
-    Args:
-        legacy_config: 兼容层配置对象。
-        audio_types: 待排序音频类型。
-
-    Returns:
-        排序后的音频类型元组。
-    """
-    known_order = [
-        str(getattr(legacy_config, "AUDIO_TYPE_VO", "VO")).upper(),
-        str(getattr(legacy_config, "AUDIO_TYPE_SFX", "SFX")).upper(),
-        str(getattr(legacy_config, "AUDIO_TYPE_MUSIC", "MUSIC")).upper(),
-    ]
-    ordered = [audio_type for audio_type in known_order if audio_type in audio_types]
-    extra = sorted(audio_type for audio_type in audio_types if audio_type not in known_order)
-    return tuple(ordered + extra)
+class AppContextValidationError(ValueError):
+    """应用上下文构建失败异常。"""
 
 
 @dataclass(frozen=True)
@@ -121,86 +92,231 @@ class AppContext:
     runtime_cache: dict[str, Any] = field(default_factory=dict)
 
 
-def build_app_config_from_legacy(legacy_config: Any = config) -> AppConfig:
-    """从当前全局配置代理构建 ``AppConfig``。
+def _parse_bool(value: Any) -> bool:
+    """解析布尔配置值。"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on", "t"}
+    return bool(value)
 
-    Args:
-        legacy_config: 兼容层配置对象，默认使用全局 ``config`` 代理。
 
-    Returns:
-        可注入的 ``AppConfig`` 实例。
-    """
-    game_path = _to_path(legacy_config.get("GAME_PATH"), "GAME_PATH")
-    output_path = _to_path(legacy_config.get("OUTPUT_PATH"), "OUTPUT_PATH")
+def _normalize_types(values: Iterable[Any] | None) -> tuple[str, ...]:
+    """标准化音频类型集合。"""
+    if values is None:
+        return ()
+    return tuple(str(item).upper() for item in values if str(item).strip())
 
-    exclude_types = _normalize_types(legacy_config.get("EXCLUDE_TYPE", ()))
-    include_types = _normalize_types(legacy_config.get("INCLUDE_TYPE", ()))
-    if not include_types:
-        known_types = _normalize_types(getattr(legacy_config, "KNOWN_AUDIO_TYPES", ("VO", "SFX", "MUSIC")))
-        include_types = tuple(item for item in known_types if item not in exclude_types)
-    include_types = _sort_by_known_audio_order(legacy_config, include_types)
 
-    wwiser_path_raw = legacy_config.get("WWISER_PATH")
+def _parse_exclude_types(value: Any) -> tuple[str, ...]:
+    """解析 EXCLUDE_TYPE。"""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return _normalize_types(part.strip() for part in value.split(","))
+    if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
+        return _normalize_types(value)
+    return _normalize_types([value])
+
+
+def _to_path(value: Any, key_name: str) -> Path:
+    """将输入值转换为 ``Path``。"""
+    if value is None:
+        raise AppContextValidationError(f"缺少必要的配置项: {key_name}")
+    text = str(value).strip()
+    if not text:
+        raise AppContextValidationError(f"缺少必要的配置项: {key_name}")
+    return Path(text)
+
+
+def _resolve_env_dir(env_path: StrPath | None) -> Path:
+    """解析环境文件目录。"""
+    if env_path is None:
+        return Path.cwd()
+    return Path(env_path)
+
+
+def _select_env_file(env_dir: Path, dev_mode: bool) -> Path:
+    """选择实际加载的环境文件。"""
+    env_file = env_dir / ".lol.env"
+    env_dev_file = env_dir / ".lol.env.dev"
+    if dev_mode and env_dev_file.exists():
+        return env_dev_file
+    return env_file
+
+
+def _load_prefixed_env_from_file(env_file: Path, env_prefix: str) -> dict[str, str]:
+    """从环境文件读取前缀配置。"""
+    if not env_file.exists():
+        logger.warning(f"环境变量文件不存在: {env_file}")
+        return {}
+
+    loaded = dotenv_values(env_file)
+    settings: dict[str, str] = {}
+    prefix_len = len(env_prefix)
+    for env_name, env_value in loaded.items():
+        if env_value is None:
+            continue
+        if not env_name.startswith(env_prefix):
+            continue
+        key = env_name[prefix_len:]
+        if key not in SUPPORTED_KEYS:
+            logger.warning(f"忽略未知配置项: {env_name}")
+            continue
+        settings[key] = env_value
+    return settings
+
+
+def _load_prefixed_env_from_system(env_prefix: str) -> dict[str, str]:
+    """从系统环境变量读取前缀配置。"""
+    settings: dict[str, str] = {}
+    prefix_len = len(env_prefix)
+    for env_name, env_value in os.environ.items():
+        if not env_name.startswith(env_prefix):
+            continue
+        key = env_name[prefix_len:]
+        if key not in SUPPORTED_KEYS:
+            logger.warning(f"忽略未知配置项: {env_name}")
+            continue
+        settings[key] = env_value
+    return settings
+
+
+def _build_raw_settings(
+    *,
+    env_path: StrPath | None,
+    env_prefix: str,
+    dev_mode: bool,
+    cli_overrides: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """按优先级合并原始配置。"""
+    merged: dict[str, Any] = dict(DEFAULT_VALUES)
+
+    env_dir = _resolve_env_dir(env_path)
+    env_file = _select_env_file(env_dir, dev_mode=dev_mode)
+    merged.update(_load_prefixed_env_from_file(env_file, env_prefix=env_prefix))
+    merged.update(_load_prefixed_env_from_system(env_prefix=env_prefix))
+
+    if cli_overrides:
+        for key, value in cli_overrides.items():
+            if key not in SUPPORTED_KEYS:
+                logger.warning(f"忽略未知CLI配置项: {key}")
+                continue
+            merged[key] = value
+
+    return merged
+
+
+def _build_app_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConfig:
+    """从原始配置构建 ``AppConfig``。"""
+    game_path = _to_path(settings.get("GAME_PATH"), "GAME_PATH")
+    output_path = _to_path(settings.get("OUTPUT_PATH"), "OUTPUT_PATH")
+
+    game_region = str(settings.get("GAME_REGION", "zh_CN") or "zh_CN")
+    if game_region.lower() == "en_us":
+        game_region = "default"
+
+    exclude_types = _parse_exclude_types(settings.get("EXCLUDE_TYPE"))
+    include_types = tuple(audio_type for audio_type in KNOWN_AUDIO_TYPES if audio_type not in set(exclude_types))
+
+    wwiser_path_raw = settings.get("WWISER_PATH")
 
     return AppConfig(
         game_path=game_path,
         output_path=output_path,
-        game_region=str(legacy_config.get("GAME_REGION", "zh_CN") or "zh_CN"),
+        game_region=game_region,
         exclude_types=exclude_types,
         include_types=include_types,
-        group_by_type=bool(legacy_config.get("GROUP_BY_TYPE", False)),
-        with_bp_vo=bool(legacy_config.get("WITH_BP_VO", False)),
+        group_by_type=_parse_bool(settings.get("GROUP_BY_TYPE", False)),
+        with_bp_vo=_parse_bool(settings.get("WITH_BP_VO", False)),
         wwiser_path=Path(wwiser_path_raw) if wwiser_path_raw else None,
-        dev_mode=bool(legacy_config.is_dev_mode()),
+        dev_mode=dev_mode,
     )
 
 
-def build_app_paths_from_legacy(legacy_config: Any = config, app_config: AppConfig | None = None) -> AppPaths:
-    """从当前全局配置代理构建 ``AppPaths``。
+def _ensure_runtime_directories(output_path: Path) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
+    """创建输出相关目录并返回路径集合。"""
+    audio_path = output_path / "audios"
+    temp_path = output_path / "temps"
+    log_path = output_path / "logs"
+    cache_path = output_path / "cache"
+    hash_path = output_path / "hashes"
+    report_path = output_path / "reports"
+    manifest_path = output_path / "manifest"
 
-    Args:
-        legacy_config: 兼容层配置对象，默认使用全局 ``config`` 代理。
-        app_config: 已生成的 ``AppConfig``，传入可避免重复构建。
+    if temp_path.exists():
+        shutil.rmtree(temp_path)
 
-    Returns:
-        可注入的 ``AppPaths`` 实例。
-    """
-    cfg = app_config or build_app_config_from_legacy(legacy_config)
-    output_path = cfg.output_path
-    game_path = cfg.game_path
+    for dir_path in (audio_path, temp_path, log_path, cache_path, hash_path, report_path, manifest_path):
+        dir_path.mkdir(parents=True, exist_ok=True)
+
+    return audio_path, temp_path, log_path, cache_path, hash_path, report_path, manifest_path
+
+
+def _build_app_paths(app_config: AppConfig) -> AppPaths:
+    """根据 ``AppConfig`` 构建 ``AppPaths``。"""
+    output_path = app_config.output_path
+    game_path = app_config.game_path
+
+    (
+        audio_path,
+        temp_path,
+        log_path,
+        cache_path,
+        hash_path,
+        report_path,
+        manifest_path,
+    ) = _ensure_runtime_directories(output_path)
 
     return AppPaths(
-        audio_path=Path(legacy_config.get("AUDIO_PATH", output_path / "audios")),
-        temp_path=Path(legacy_config.get("TEMP_PATH", output_path / "temps")),
-        log_path=Path(legacy_config.get("LOG_PATH", output_path / "logs")),
-        cache_path=Path(legacy_config.get("CACHE_PATH", output_path / "cache")),
-        hash_path=Path(legacy_config.get("HASH_PATH", output_path / "hashes")),
-        report_path=Path(legacy_config.get("REPORT_PATH", output_path / "reports")),
-        manifest_path=Path(legacy_config.get("MANIFEST_PATH", output_path / "manifest")),
-        local_version_file=Path(legacy_config.get("LOCAL_VERSION_FILE", output_path / "game_version")),
-        game_champion_path=Path(legacy_config.get("GAME_CHAMPION_PATH", game_path / "Game/DATA/FINAL/Champions")),
-        game_maps_path=Path(legacy_config.get("GAME_MAPS_PATH", game_path / "Game/DATA/FINAL/Maps/Shipping")),
-        game_lcu_path=Path(
-            legacy_config.get("GAME_LCU_PATH", game_path / "LeagueClient/Plugins/rcp-be-lol-game-data")
-        ),
+        audio_path=audio_path,
+        temp_path=temp_path,
+        log_path=log_path,
+        cache_path=cache_path,
+        hash_path=hash_path,
+        report_path=report_path,
+        manifest_path=manifest_path,
+        local_version_file=output_path / "game_version",
+        game_champion_path=game_path / "Game" / "DATA" / "FINAL" / "Champions",
+        game_maps_path=game_path / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping",
+        game_lcu_path=game_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data",
     )
 
 
-def build_app_context_from_legacy(
-    legacy_config: Any = config,
+def create_app_context(  # noqa: PLR0913
+    env_path: StrPath | None = None,
+    env_prefix: str = "LOL_",
+    force_reload: bool = False,
+    dev_mode: bool = False,
+    cli_overrides: dict[str, Any] | None = None,
     runtime_cache: dict[str, Any] | None = None,
 ) -> AppContext:
-    """从全局兼容配置构建 ``AppContext``。
+    """构建 ``AppContext``。
 
     Args:
-        legacy_config: 兼容层配置对象，默认使用全局 ``config`` 代理。
-        runtime_cache: 可选运行时缓存字典。
+        env_path: 环境变量文件目录。
+        env_prefix: 环境变量前缀。
+        force_reload: 兼容参数，当前仅保留签名，不影响行为。
+        dev_mode: 是否启用开发模式。
+        cli_overrides: CLI 显式覆盖项。
+        runtime_cache: 可选运行时缓存。
 
     Returns:
-        ``AppContext`` 实例。
+        构建完成的 ``AppContext``。
+
+    Raises:
+        AppContextValidationError: 必填配置缺失时抛出。
     """
-    app_config = build_app_config_from_legacy(legacy_config)
-    app_paths = build_app_paths_from_legacy(legacy_config, app_config=app_config)
+    _ = force_reload
+
+    raw_settings = _build_raw_settings(
+        env_path=env_path,
+        env_prefix=env_prefix,
+        dev_mode=dev_mode,
+        cli_overrides=cli_overrides,
+    )
+    app_config = _build_app_config(settings=raw_settings, dev_mode=dev_mode)
+    app_paths = _build_app_paths(app_config)
     return AppContext(config=app_config, paths=app_paths, logger=logger, runtime_cache=runtime_cache or {})
 
 
@@ -211,35 +327,22 @@ def initialize_context_from_env(
     dev_mode: bool = False,
     cli_overrides: dict[str, Any] | None = None,
 ) -> AppContext:
-    """初始化全局配置并返回 ``AppContext``。
-
-    Args:
-        env_path: 环境变量文件目录路径。
-        env_prefix: 环境变量前缀。
-        force_reload: 是否强制重载。
-        dev_mode: 是否启用开发模式。
-        cli_overrides: 命令行覆盖配置。
-
-    Returns:
-        初始化后的 ``AppContext``。
-    """
-    config.initialize(
+    """兼容入口：从环境构建 ``AppContext``。"""
+    return create_app_context(
         env_path=env_path,
         env_prefix=env_prefix,
         force_reload=force_reload,
         dev_mode=dev_mode,
         cli_overrides=cli_overrides,
     )
-    return build_app_context_from_legacy(config)
 
 
 __all__ = [
     "AppConfig",
     "AppContext",
+    "AppContextValidationError",
     "AppPaths",
     "OperationOptions",
-    "build_app_config_from_legacy",
-    "build_app_context_from_legacy",
-    "build_app_paths_from_legacy",
+    "create_app_context",
     "initialize_context_from_env",
 ]

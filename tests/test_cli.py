@@ -166,7 +166,7 @@ def test_initialize_app_exits_when_config_validation_fails(monkeypatch):
     args = parser.parse_args(["--update"])
 
     def fake_setup_app(*, dev_mode=False, log_level="INFO", **kwargs):
-        raise cli.ConfigValidationError("缺少必要的配置项: GAME_PATH, OUTPUT_PATH")
+        raise cli.AppContextValidationError("缺少必要的配置项: GAME_PATH, OUTPUT_PATH")
 
     monkeypatch.setattr(cli, "setup_app", fake_setup_app)
 

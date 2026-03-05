@@ -18,9 +18,8 @@ from pathlib import Path
 from loguru import logger
 
 from . import __version__, setup_app
-from .app_context import AppContext, OperationOptions
+from .app_context import AppContext, AppContextValidationError, OperationOptions
 from .facade import LolAudioUnpackApp
-from .utils.config import ConfigValidationError
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -267,7 +266,7 @@ def initialize_app(args: argparse.Namespace) -> AppContext:
 
     try:
         app_context = setup_app(dev_mode=args.dev, log_level=args.log_level.upper(), cli_overrides=cli_overrides)
-    except ConfigValidationError as e:
+    except AppContextValidationError as e:
         current_work_dir = Path.cwd()
         logger.error(f"配置初始化失败: {e}")
         logger.error(f"请在当前工作目录创建并配置 .lol.env 文件: {current_work_dir / '.lol.env'}")

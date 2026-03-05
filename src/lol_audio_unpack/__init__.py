@@ -18,13 +18,13 @@ from loguru import logger
 from .app_context import (
     AppConfig,
     AppContext,
+    AppContextValidationError,
     AppPaths,
     OperationOptions,
-    build_app_context_from_legacy,
+    create_app_context,
 )
 from .facade import LolAudioUnpackApp
 from .manager import BinUpdater, DataReader, DataUpdater
-from .utils.config import config
 from .utils.logging import setup_logging
 
 logger.disable("lol_audio_unpack")
@@ -36,33 +36,25 @@ def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs) -> AppC
     Args:
         dev_mode: 是否开启开发模式。
         log_level: 日志级别，例如 ``INFO``、``DEBUG``。
-        **kwargs: 透传给 ``config.initialize`` 的参数。
+        **kwargs: 透传给 ``create_app_context`` 的参数。
 
     Returns:
-        由当前配置构建的 ``AppContext``。
+        初始化后的 ``AppContext``。
     """
-    # 阶段一：启用此包的日志功能
     logger.enable("lol_audio_unpack")
 
-    # 阶段二：初始化配置系统
-    logger.remove()  # 移除所有默认的 handler
+    logger.remove()
     logger.add(sys.stdout, level=log_level.upper(), enqueue=True, colorize=True)
 
-    # 阶段三：初始化配置系统
-    # 此时，所有 config 内部的日志都会遵循上面刚刚设置的级别
-    config.initialize(dev_mode=dev_mode, **kwargs)
+    app_context = create_app_context(dev_mode=dev_mode, **kwargs)
 
-    # 阶段四：设置完整的日志系统
-
-    log_path = config.get("LOG_PATH")
     setup_logging(
         dev_mode=dev_mode,
         log_level=log_level,
-        log_file_path=log_path,
-        show_function_info=True,  # 模块项目总是显示函数信息，便于调试
+        log_file_path=app_context.paths.log_path,
+        show_function_info=True,
     )
 
-    app_context = build_app_context_from_legacy(config)
     logger.info("Application setup complete.")
     return app_context
 
@@ -70,12 +62,12 @@ def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs) -> AppC
 __all__ = [
     "AppConfig",
     "AppContext",
+    "AppContextValidationError",
     "AppPaths",
     "LolAudioUnpackApp",
     "OperationOptions",
     "setup_app",
     "BinUpdater",
-    "config",
     "DataUpdater",
     "DataReader",
 ]

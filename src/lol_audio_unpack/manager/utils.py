@@ -30,10 +30,9 @@ from lol_audio_unpack.utils.common import (
     load_msgpack,
     load_yaml,
 )
-from lol_audio_unpack.utils.config import config
 
 
-def find_data_file(path: Path) -> Path | None:
+def find_data_file(path: Path, *, dev_mode: bool) -> Path | None:
     """
     查找数据文件的实际路径。
     如果路径包含后缀，则直接检查该文件。
@@ -42,6 +41,7 @@ def find_data_file(path: Path) -> Path | None:
     开发模式下，优先使用人类可读的格式。
 
     :param path: 文件路径（可带或不带后缀）
+    :param dev_mode: 是否启用开发模式。
     :return: 实际存在的文件路径，如果都不存在则返回None
     """
     files_to_check = []
@@ -52,7 +52,7 @@ def find_data_file(path: Path) -> Path | None:
         files_to_check.append(path)
     else:
         # 如果未指定后缀，按优先级生成待检查文件列表
-        formats_priority = [".yml", ".json", ".msgpack"] if config.is_dev_mode() else [".msgpack", ".yml", ".json"]
+        formats_priority = [".yml", ".json", ".msgpack"] if dev_mode else [".msgpack", ".yml", ".json"]
         files_to_check = [path.with_suffix(s) for s in formats_priority]
 
     # 2. 返回第一个存在的文件
@@ -63,7 +63,7 @@ def find_data_file(path: Path) -> Path | None:
     return None
 
 
-def read_data(path: Path) -> dict:
+def read_data(path: Path, *, dev_mode: bool = False) -> dict:
     """
     智能读取数据文件。
     如果路径包含后缀，则直接读取该文件。
@@ -72,12 +72,13 @@ def read_data(path: Path) -> dict:
     开发模式下，优先使用人类可读的格式。
 
     :param path: 文件路径（可带或不带后缀）
+    :param dev_mode: 是否启用开发模式。
     :return: 读取的数据字典
     """
     start_time = time.time()
 
     # 1. 查找实际存在的文件
-    actual_file = find_data_file(path)
+    actual_file = find_data_file(path, dev_mode=dev_mode)
 
     file_search_time = time.time()
     search_duration_ms = (file_search_time - start_time) * 1000
@@ -135,15 +136,16 @@ def read_data(path: Path) -> dict:
         return {}
 
 
-def write_data(data: dict, base_path: Path) -> None:
+def write_data(data: dict, base_path: Path, *, dev_mode: bool) -> None:
     """
     根据环境自动选择最佳格式写入数据文件。
     开发模式下写入YAML，生产模式下写入MessagePack。
 
     :param data: 要写入的数据
     :param base_path: 不带后缀的基础文件路径
+    :param dev_mode: 是否启用开发模式。
     """
-    fmt = "yml" if config.is_dev_mode() else "msgpack"
+    fmt = "yml" if dev_mode else "msgpack"
     path = base_path.with_suffix(f".{fmt}")
     try:
         if fmt == "yml":
@@ -208,25 +210,26 @@ def create_metadata_object(game_version: str, languages: list[str]) -> dict:
     return {"metadata": metadata}
 
 
-def needs_update(base_path: Path, current_version: str, force_update: bool) -> bool:
+def needs_update(base_path: Path, current_version: str, force_update: bool, *, dev_mode: bool) -> bool:
     """
     检查文件是否需要更新的通用函数
 
     :param base_path: 要检查的文件的基础路径（不带后缀）
     :param current_version: 当前游戏版本
     :param force_update: 是否强制更新
+    :param dev_mode: 是否启用开发模式。
     :return: 如果需要更新，则返回True
     """
     if force_update:
         return True
 
     # 1. 首先检查文件是否存在，避免不必要的警告日志
-    actual_file = find_data_file(base_path)
+    actual_file = find_data_file(base_path, dev_mode=dev_mode)
     if not actual_file:
         return True  # 文件不存在，需要更新
 
     # 2. 文件存在，读取内容检查版本
-    data = read_data(base_path)
+    data = read_data(base_path, dev_mode=dev_mode)
     if not data:
         return True  # 读取失败，需要更新
 

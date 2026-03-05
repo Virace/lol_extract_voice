@@ -6,11 +6,11 @@ from pathlib import Path
 import pytest
 from loguru import logger
 
+from lol_audio_unpack.app_context import AppContext, create_app_context
 from lol_audio_unpack.manager import BinUpdater, DataReader, DataUpdater
 from lol_audio_unpack.manager.utils import read_data
 from lol_audio_unpack.unpack import unpack_champions, unpack_maps
 from lol_audio_unpack.utils.common import Singleton
-from lol_audio_unpack.utils.config import config
 
 pytestmark = [pytest.mark.local_game, pytest.mark.integration]
 
@@ -126,8 +126,8 @@ def _reset_data_reader_singleton() -> None:
     Singleton._instances.pop(DataReader, None)
 
 
-def _run_data_updater_or_fail(local_game_path: Path) -> dict:
-    data_file_base = DataUpdater(languages=["zh_CN"], force_update=False).check_and_update()
+def _run_data_updater_or_fail(local_game_path: Path, ctx: AppContext) -> dict:
+    data_file_base = DataUpdater(ctx=ctx, languages=["zh_CN"], force_update=False).check_and_update()
     if not data_file_base:
         _fail_local_game(
             stage="2-DataUpdater",
@@ -143,7 +143,7 @@ def _run_data_updater_or_fail(local_game_path: Path) -> dict:
             checklist="检查 manifest 输出目录写入权限、格式后缀（msgpack/yml/json）与日志错误信息",
         )
 
-    merged = read_data(data_file_base)
+    merged = read_data(data_file_base, dev_mode=ctx.config.dev_mode)
     if not merged:
         _fail_local_game(
             stage="2-DataUpdater",
@@ -189,17 +189,18 @@ def _run_data_updater_or_fail(local_game_path: Path) -> dict:
 def _run_bin_updater_or_fail(
     champion_id: str,
     map_id: str,
+    ctx: AppContext,
     process_events: bool = False,
     force_update: bool = False,
 ) -> DataReader:
-    BinUpdater(force_update=force_update, process_events=process_events).update(
+    BinUpdater(force_update=force_update, process_events=process_events, ctx=ctx).update(
         champion_ids=[champion_id], map_ids=[map_id]
     )
 
     _reset_data_reader_singleton()
-    reader = DataReader()
+    reader = DataReader(ctx=ctx)
 
-    champion_banks_file = _find_existing_data_file(config.MANIFEST_PATH / reader.version / "banks" / "champions" / champion_id)
+    champion_banks_file = _find_existing_data_file(ctx.paths.manifest_path / reader.version / "banks" / "champions" / champion_id)
     if champion_banks_file is None:
         _fail_local_game(
             stage="3-BinUpdater",
@@ -215,7 +216,7 @@ def _run_bin_updater_or_fail(
             checklist="人工核对 BIN 是否包含 bank_path，确认 process_events 与筛选参数是否影响产出",
         )
 
-    map_banks_file = _find_existing_data_file(config.MANIFEST_PATH / reader.version / "banks" / "maps" / map_id)
+    map_banks_file = _find_existing_data_file(ctx.paths.manifest_path / reader.version / "banks" / "maps" / map_id)
     if map_banks_file is None:
         _fail_local_game(
             stage="3-BinUpdater",
@@ -234,8 +235,8 @@ def _run_bin_updater_or_fail(
     return reader
 
 
-def _assert_events_or_fail(reader: DataReader, champion_id: str, map_id: str) -> None:
-    champion_events_base = config.MANIFEST_PATH / reader.version / "events" / "champions" / champion_id
+def _assert_events_or_fail(reader: DataReader, champion_id: str, map_id: str, ctx: AppContext) -> None:
+    champion_events_base = ctx.paths.manifest_path / reader.version / "events" / "champions" / champion_id
     champion_events_file = _find_existing_data_file(champion_events_base)
     if champion_events_file is None:
         _fail_local_game(
@@ -243,7 +244,7 @@ def _assert_events_or_fail(reader: DataReader, champion_id: str, map_id: str) ->
             reason=f"未找到英雄 events 文件: {champion_id}",
             checklist="确认 BinUpdater 运行时 process_events=True，检查英雄 BIN 事件解析日志",
         )
-    champion_events = read_data(champion_events_base)
+    champion_events = read_data(champion_events_base, dev_mode=ctx.config.dev_mode)
     if not champion_events or not champion_events.get("skins"):
         _fail_local_game(
             stage="3-BinUpdater(events)",
@@ -251,7 +252,7 @@ def _assert_events_or_fail(reader: DataReader, champion_id: str, map_id: str) ->
             checklist="人工核对英雄 BIN 中 event 数据是否存在，并检查事件过滤逻辑",
         )
 
-    map_events_base = config.MANIFEST_PATH / reader.version / "events" / "maps" / map_id
+    map_events_base = ctx.paths.manifest_path / reader.version / "events" / "maps" / map_id
     map_events_file = _find_existing_data_file(map_events_base)
     if map_events_file is None:
         _fail_local_game(
@@ -259,7 +260,7 @@ def _assert_events_or_fail(reader: DataReader, champion_id: str, map_id: str) ->
             reason=f"未找到地图 events 文件: {map_id}",
             checklist="确认地图 BIN 中事件是否存在，检查 map 事件提取与去重流程",
         )
-    map_events = read_data(map_events_base)
+    map_events = read_data(map_events_base, dev_mode=ctx.config.dev_mode)
     if not map_events or not map_events.get("map"):
         _fail_local_game(
             stage="3-BinUpdater(events)",
@@ -268,20 +269,20 @@ def _assert_events_or_fail(reader: DataReader, champion_id: str, map_id: str) ->
         )
 
 
-def _clear_unpack_outputs(version: str) -> None:
-    output_root = config.AUDIO_PATH / version
-    report_root = config.REPORT_PATH / version
+def _clear_unpack_outputs(version: str, ctx: AppContext) -> None:
+    output_root = ctx.paths.audio_path / version
+    report_root = ctx.paths.report_path / version
     if output_root.exists():
         shutil.rmtree(output_root)
     if report_root.exists():
         shutil.rmtree(report_root)
 
 
-def _unpack_champion_or_fail(reader: DataReader, champion_id: str, max_workers: int = 1) -> set[str]:
-    output_root = config.AUDIO_PATH / reader.version
+def _unpack_champion_or_fail(reader: DataReader, champion_id: str, ctx: AppContext, max_workers: int = 1) -> set[str]:
+    output_root = ctx.paths.audio_path / reader.version
     before_files = {str(path) for path in output_root.rglob("*.wem")}
 
-    unpack_champions(reader, [int(champion_id)], max_workers=max_workers)
+    unpack_champions(reader, [int(champion_id)], max_workers=max_workers, ctx=ctx)
 
     after_files = {str(path) for path in output_root.rglob("*.wem")}
     new_files = after_files - before_files
@@ -292,7 +293,7 @@ def _unpack_champion_or_fail(reader: DataReader, champion_id: str, max_workers: 
             checklist="人工核对 banks 中的 bnk/wpk 路径是否可提取，并检查 unpack 日志中的异常",
         )
 
-    report_file = config.REPORT_PATH / reader.version / "champions" / f"_{champion_id}_metadata.yaml"
+    report_file = ctx.paths.report_path / reader.version / "champions" / f"_{champion_id}_metadata.yaml"
     if not report_file.is_file():
         _fail_local_game(
             stage="4-Unpack(champion)",
@@ -303,10 +304,16 @@ def _unpack_champion_or_fail(reader: DataReader, champion_id: str, max_workers: 
     return after_files
 
 
-def _unpack_map_or_fail(reader: DataReader, map_id: str, before_files: set[str], max_workers: int = 1) -> None:
-    unpack_maps(reader, [int(map_id)], max_workers=max_workers)
+def _unpack_map_or_fail(
+    reader: DataReader,
+    map_id: str,
+    before_files: set[str],
+    ctx: AppContext,
+    max_workers: int = 1,
+) -> None:
+    unpack_maps(reader, [int(map_id)], max_workers=max_workers, ctx=ctx)
 
-    output_root = config.AUDIO_PATH / reader.version
+    output_root = ctx.paths.audio_path / reader.version
     after_files = {str(path) for path in output_root.rglob("*.wem")}
     new_files = after_files - before_files
     if not new_files:
@@ -316,7 +323,7 @@ def _unpack_map_or_fail(reader: DataReader, map_id: str, before_files: set[str],
             checklist="人工核对地图 banks 指向的 bnk/wpk 是否可提取，检查 unpack 地图日志中的异常",
         )
 
-    report_file = config.REPORT_PATH / reader.version / "maps" / f"_{map_id}_metadata.yaml"
+    report_file = ctx.paths.report_path / reader.version / "maps" / f"_{map_id}_metadata.yaml"
     if not report_file.is_file():
         _fail_local_game(
             stage="5-Unpack(map)",
@@ -336,7 +343,7 @@ def pipeline_output_root(tmp_path_factory) -> Path:
 
 
 @pytest.fixture
-def configured_local_runtime(local_game_path: Path, pipeline_output_root: Path, monkeypatch) -> Path:
+def app_context(local_game_path: Path, pipeline_output_root: Path, monkeypatch) -> AppContext:
     monkeypatch.setenv("LOL_GAME_PATH", str(local_game_path))
     monkeypatch.setenv("LOL_OUTPUT_PATH", str(pipeline_output_root))
     monkeypatch.setenv("LOL_GAME_REGION", "zh_CN")
@@ -344,57 +351,65 @@ def configured_local_runtime(local_game_path: Path, pipeline_output_root: Path, 
     monkeypatch.setenv("LOL_LOCAL_GAME_TEST_LOG_LEVEL", os.environ.get("LOL_LOCAL_GAME_TEST_LOG_LEVEL", "DEBUG"))
     _configure_pipeline_logging()
 
-    # 显式指定 env_path，避免读取项目根目录下的 .lol.env 干扰测试
-    config.initialize(env_path=pipeline_output_root, force_reload=True, dev_mode=False)
-    return pipeline_output_root
+    return create_app_context(
+        env_path=pipeline_output_root,
+        force_reload=True,
+        dev_mode=False,
+    )
 
 
-def test_pipeline_stage_1_runtime_config_ready(configured_local_runtime: Path, local_game_path: Path) -> None:
-    assert Path(config.GAME_PATH) == local_game_path
-    assert Path(config.OUTPUT_PATH) == configured_local_runtime
-    assert config.MANIFEST_PATH.is_dir(), f"MANIFEST_PATH 未创建: {config.MANIFEST_PATH}"
-    assert config.AUDIO_PATH.is_dir(), f"AUDIO_PATH 未创建: {config.AUDIO_PATH}"
+def test_pipeline_stage_1_runtime_config_ready(app_context: AppContext, local_game_path: Path) -> None:
+    assert Path(app_context.config.game_path) == local_game_path
+    assert app_context.paths.manifest_path.is_dir(), f"MANIFEST_PATH 未创建: {app_context.paths.manifest_path}"
+    assert app_context.paths.audio_path.is_dir(), f"AUDIO_PATH 未创建: {app_context.paths.audio_path}"
 
 
-def test_pipeline_linear_workflow_with_stage_assertions(configured_local_runtime: Path, local_game_path: Path) -> None:
+def test_pipeline_linear_workflow_with_stage_assertions(app_context: AppContext, local_game_path: Path) -> None:
     # 阶段2：DataUpdater 产出 data
-    context = _run_data_updater_or_fail(local_game_path)
+    context = _run_data_updater_or_fail(local_game_path, app_context)
     assert context["data_file"].is_file(), f"data 文件不存在: {context['data_file']}"
 
     # 阶段3：BinUpdater 产出 banks -> DataReader 加载
-    reader = _run_bin_updater_or_fail(context["champion_id"], context["map_id"])
+    reader = _run_bin_updater_or_fail(context["champion_id"], context["map_id"], app_context)
     assert reader.version == context["game_version"], (
         f"DataReader 版本与 data 版本不一致: reader={reader.version}, data={context['game_version']}"
     )
 
-    _clear_unpack_outputs(reader.version)
+    _clear_unpack_outputs(reader.version, app_context)
 
     # 阶段4：先解包英雄
-    after_champion_files = _unpack_champion_or_fail(reader, context["champion_id"])
+    after_champion_files = _unpack_champion_or_fail(reader, context["champion_id"], app_context)
 
     # 阶段5：再解包地图（依赖同一 reader 与前置产物）
-    _unpack_map_or_fail(reader, context["map_id"], after_champion_files)
+    _unpack_map_or_fail(reader, context["map_id"], after_champion_files, app_context)
 
 
-def test_pipeline_with_events_enabled_outputs_events(configured_local_runtime: Path, local_game_path: Path) -> None:
-    context = _run_data_updater_or_fail(local_game_path)
+def test_pipeline_with_events_enabled_outputs_events(app_context: AppContext, local_game_path: Path) -> None:
+    context = _run_data_updater_or_fail(local_game_path, app_context)
     reader = _run_bin_updater_or_fail(
         context["champion_id"],
         context["map_id"],
+        app_context,
         process_events=True,
         force_update=True,
     )
-    _assert_events_or_fail(reader, context["champion_id"], context["map_id"])
+    _assert_events_or_fail(reader, context["champion_id"], context["map_id"], app_context)
 
 
-def test_pipeline_linear_workflow_multithread_unpack(configured_local_runtime: Path, local_game_path: Path) -> None:
-    context = _run_data_updater_or_fail(local_game_path)
-    reader = _run_bin_updater_or_fail(context["champion_id"], context["map_id"], process_events=False, force_update=True)
+def test_pipeline_linear_workflow_multithread_unpack(app_context: AppContext, local_game_path: Path) -> None:
+    context = _run_data_updater_or_fail(local_game_path, app_context)
+    reader = _run_bin_updater_or_fail(
+        context["champion_id"],
+        context["map_id"],
+        app_context,
+        process_events=False,
+        force_update=True,
+    )
     assert reader.version == context["game_version"], (
         f"DataReader 版本与 data 版本不一致: reader={reader.version}, data={context['game_version']}"
     )
 
-    _clear_unpack_outputs(reader.version)
+    _clear_unpack_outputs(reader.version, app_context)
 
-    after_champion_files = _unpack_champion_or_fail(reader, context["champion_id"], max_workers=2)
-    _unpack_map_or_fail(reader, context["map_id"], after_champion_files, max_workers=2)
+    after_champion_files = _unpack_champion_or_fail(reader, context["champion_id"], app_context, max_workers=2)
+    _unpack_map_or_fail(reader, context["map_id"], after_champion_files, app_context, max_workers=2)

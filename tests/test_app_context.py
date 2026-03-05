@@ -7,10 +7,9 @@ from lol_audio_unpack import setup_app
 from lol_audio_unpack.app_context import (
     AppContext,
     OperationOptions,
-    build_app_context_from_legacy,
+    create_app_context,
     initialize_context_from_env,
 )
-from lol_audio_unpack.utils.config import config
 
 pytestmark = pytest.mark.unit
 
@@ -53,7 +52,26 @@ def test_initialize_context_from_env_builds_typed_context(tmp_path: Path) -> Non
     assert app_context.paths.manifest_path == output_path / "manifest"
 
 
-def test_setup_app_returns_context_and_keeps_legacy_proxy_consistent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_create_app_context_applies_cli_overrides(tmp_path: Path) -> None:
+    env_dir = tmp_path / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+
+    game_path = tmp_path / "game"
+    output_path = tmp_path / "output"
+    _write_env_file(env_dir, game_path, output_path)
+
+    app_context = create_app_context(
+        env_path=env_dir,
+        cli_overrides={"EXCLUDE_TYPE": "VO", "GROUP_BY_TYPE": True},
+    )
+
+    assert isinstance(app_context, AppContext)
+    assert app_context.config.group_by_type is True
+    assert app_context.config.exclude_types == ("VO",)
+    assert set(app_context.config.include_types) == {"SFX", "MUSIC"}
+
+
+def test_setup_app_returns_context_with_cli_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     env_dir = tmp_path / "env"
     env_dir.mkdir(parents=True, exist_ok=True)
 
@@ -69,15 +87,12 @@ def test_setup_app_returns_context_and_keeps_legacy_proxy_consistent(monkeypatch
         cli_overrides={"EXCLUDE_TYPE": "VO", "GROUP_BY_TYPE": True},
     )
 
-    bridge_context = build_app_context_from_legacy(config)
-
     assert isinstance(app_context, AppContext)
     assert app_context.config.dev_mode is True
     assert app_context.config.group_by_type is True
     assert app_context.config.exclude_types == ("VO",)
     assert set(app_context.config.include_types) == {"SFX", "MUSIC"}
     assert app_context.paths.log_path == output_path / "logs"
-    assert bridge_context.config == app_context.config
 
 
 def test_operation_options_defaults() -> None:

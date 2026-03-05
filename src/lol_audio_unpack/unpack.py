@@ -25,8 +25,6 @@ from loguru import logger
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.model import AudioEntityData, generate_champion_tasks, generate_map_tasks
 from lol_audio_unpack.utils.common import sanitize_filename
-from lol_audio_unpack.utils.config import config
-from lol_audio_unpack.utils.deprecation import warn_legacy_global_mode
 from lol_audio_unpack.utils.logging import performance_monitor
 from lol_audio_unpack.utils.path_constants import (
     format_entity_folder_name,
@@ -41,77 +39,52 @@ if TYPE_CHECKING:
 # todo: ID6, 厄加特, 6009, 西部魔影 厄加特, ASSETS/Sounds/Wwise2016/SFX/Characters/Urgot/Skins/Skin09/Urgot_Skin09_VO_audio.bnk, 该文件在根WAD
 # todo: ID62, 孙悟空，62007, 战斗学院 孙悟空, ASSETS/Sounds/Wwise2016/SFX/Characters/MonkeyKing/Skins/Skin07/MonkeyKing_Skin07_VO_audio.bnk, 该文件在根WAD
 
+AUDIO_TYPE_VO = "VO"
 
-def _get_game_region(ctx: AppContext | None = None) -> str:
+
+def _get_game_region(ctx: AppContext) -> str:
     """获取当前运行语言区域。"""
-    if ctx is not None:
-        return ctx.config.game_region
-    warn_legacy_global_mode("unpack")
-    game_region = config.get("GAME_REGION", None)
-    if game_region is not None:
-        return str(game_region)
-    return str(config.GAME_REGION)
+    return str(ctx.config.game_region or "zh_CN")
 
 
-def _get_audio_base_path(ctx: AppContext | None = None) -> Path:
+def _get_audio_base_path(ctx: AppContext) -> Path:
     """获取音频输出根目录。"""
-    if ctx is not None:
-        return Path(ctx.paths.audio_path)
-    warn_legacy_global_mode("unpack")
-    return Path(config.AUDIO_PATH)
+    return Path(ctx.paths.audio_path)
 
 
-def _get_report_base_path(ctx: AppContext | None = None) -> Path:
+def _get_report_base_path(ctx: AppContext) -> Path:
     """获取报告输出根目录。"""
-    if ctx is not None:
-        return Path(ctx.paths.report_path)
-    warn_legacy_global_mode("unpack")
-    return Path(config.REPORT_PATH)
+    return Path(ctx.paths.report_path)
 
 
-def _get_manifest_base_path(ctx: AppContext | None = None) -> Path:
+def _get_manifest_base_path(ctx: AppContext) -> Path:
     """获取 manifest 根目录。"""
-    if ctx is not None:
-        return Path(ctx.paths.manifest_path)
-    warn_legacy_global_mode("unpack")
-    return Path(config.MANIFEST_PATH)
+    return Path(ctx.paths.manifest_path)
 
 
-def _get_include_types(ctx: AppContext | None = None) -> list[str]:
+def _get_include_types(ctx: AppContext) -> list[str]:
     """获取包含的音频类型列表。"""
-    if ctx is not None:
-        return list(ctx.config.include_types)
-    warn_legacy_global_mode("unpack")
-    return list(config.INCLUDE_TYPE)
+    return list(ctx.config.include_types)
 
 
-def _get_exclude_types(ctx: AppContext | None = None) -> list[str]:
+def _get_exclude_types(ctx: AppContext) -> list[str]:
     """获取排除的音频类型列表。"""
-    if ctx is not None:
-        return list(ctx.config.exclude_types)
-    warn_legacy_global_mode("unpack")
-    return list(config.EXCLUDE_TYPE)
+    return list(ctx.config.exclude_types)
 
 
-def _is_group_by_type(ctx: AppContext | None = None) -> bool:
+def _is_group_by_type(ctx: AppContext) -> bool:
     """是否按音频类型优先分组输出。"""
-    if ctx is not None:
-        return bool(ctx.config.group_by_type)
-    warn_legacy_global_mode("unpack")
-    return bool(config.GROUP_BY_TYPE)
+    return bool(ctx.config.group_by_type)
 
 
-def _is_bp_vo_enabled(ctx: AppContext | None = None) -> bool:
+def _is_bp_vo_enabled(ctx: AppContext) -> bool:
     """是否启用大厅 BP 语音附加。"""
-    if ctx is not None:
-        return bool(ctx.config.with_bp_vo)
-    warn_legacy_global_mode("unpack")
-    return bool(config.get("WITH_BP_VO", False))
+    return bool(ctx.config.with_bp_vo)
 
 
-def _get_vo_audio_type() -> str:
+def _get_vo_audio_type(_ctx: AppContext) -> str:
     """获取 VO 音频类型常量。"""
-    return str(config.AUDIO_TYPE_VO)
+    return AUDIO_TYPE_VO
 
 
 def _get_wad_instance(
@@ -150,7 +123,8 @@ def unpack_audio_entity(
     reader: DataReader,
     wad_cache: dict[Path, WAD] | None = None,
     cache_lock: threading.Lock | None = None,
-    ctx: AppContext | None = None,
+    *,
+    ctx: AppContext,
 ) -> None:
     """解包单个实体音频（英雄或地图）。
 
@@ -159,7 +133,7 @@ def unpack_audio_entity(
         reader: 已初始化的数据读取器。
         wad_cache: 本轮解包共享 WAD 缓存。
         cache_lock: 多线程场景下的缓存锁。
-        ctx: 可选运行时上下文；传入时优先使用显式配置。
+        ctx: 运行时上下文。
 
     Raises:
         ValueError: 实体数据无效时抛出。
@@ -214,7 +188,7 @@ def unpack_audio_entity(
                 sub_info_with_type = {"id": sub_id_int, "name": sub_name, "type": audio_type}
 
                 # 根据音频类型分别处理，VO文件和其他类型文件存储在不同WAD中
-                if audio_type == _get_vo_audio_type():
+                if audio_type == _get_vo_audio_type(ctx):
                     for bank in banks_list:  # banks_list是合集列表
                         for path in bank:  # 每个合集包含多个文件路径
                             vo_paths_to_extract.add(path)
@@ -468,19 +442,20 @@ def generate_output_path(
     sub_id: str,
     audio_type: str,
     base_path: Path | None = None,
-    ctx: AppContext | None = None,
+    *,
+    ctx: AppContext,
 ) -> Path:
     """生成完整的输出路径
 
-    根据 config.GROUP_BY_TYPE 配置决定目录结构：
+    根据 ``ctx.config.group_by_type`` 配置决定目录结构：
     - True: audios/VO/champions/1·annie·黑暗之女·安妮/1000·基础皮肤
     - False: audios/champions/1·annie·黑暗之女·安妮/1000·基础皮肤/VO
 
     :param entity_data: 实体数据
     :param sub_id: 子实体ID（皮肤ID或地图ID）
     :param audio_type: 音频类型（VO/SFX/MUSIC）
-    :param base_path: 基础路径，默认使用 ``ctx.paths.audio_path`` 或 ``config.AUDIO_PATH``
-    :param ctx: 可选运行时上下文；传入时优先使用显式配置。
+    :param base_path: 基础路径，默认使用 ``ctx.paths.audio_path``。
+    :param ctx: 运行时上下文。
     :returns: 完整的输出路径
     """
     if base_path is None:
@@ -500,7 +475,7 @@ def _find_bp_vo_source_file(
     reader: DataReader,
     champion_id: str,
     category: str,
-    ctx: AppContext | None = None,
+    ctx: AppContext,
 ) -> Path | None:
     """查找大厅 BP 语音源文件。"""
     manifest_root = _get_manifest_base_path(ctx) / reader.version / "lobby_vo"
@@ -539,7 +514,7 @@ def _link_or_copy_file(source: Path, target: Path) -> str:
 def _attach_bp_vo_to_champion(
     entity_data: AudioEntityData,
     reader: DataReader,
-    ctx: AppContext | None = None,
+    ctx: AppContext,
 ) -> None:
     """将大厅选用/禁用语音附加到英雄输出目录。"""
     if not _is_bp_vo_enabled(ctx):
@@ -553,7 +528,7 @@ def _attach_bp_vo_to_champion(
         target_dir = (
             audio_base
             / reader.version
-            / _get_vo_audio_type()
+            / _get_vo_audio_type(ctx)
             / get_output_dir_name(entity_data.entity_type)
             / entity_folder_name
             / "BP_VO"
@@ -590,7 +565,8 @@ def unpack_champion(
     reader: DataReader,
     wad_cache: dict[Path, WAD] | None = None,
     cache_lock: threading.Lock | None = None,
-    ctx: AppContext | None = None,
+    *,
+    ctx: AppContext,
 ) -> None:
     """按英雄 ID 解包音频。
 
@@ -599,7 +575,7 @@ def unpack_champion(
         reader: 已初始化的数据读取器。
         wad_cache: 本轮解包共享 WAD 缓存。
         cache_lock: 多线程场景下的缓存锁。
-        ctx: 可选运行时上下文；传入时优先使用显式配置。
+        ctx: 运行时上下文。
     """
     try:
         # 创建AudioEntityData实例
@@ -618,7 +594,8 @@ def unpack_map_audio(
     reader: DataReader,
     wad_cache: dict[Path, WAD] | None = None,
     cache_lock: threading.Lock | None = None,
-    ctx: AppContext | None = None,
+    *,
+    ctx: AppContext,
 ) -> None:
     """按地图 ID 解包音频。
 
@@ -627,7 +604,7 @@ def unpack_map_audio(
         reader: 已初始化的数据读取器。
         wad_cache: 本轮解包共享 WAD 缓存。
         cache_lock: 多线程场景下的缓存锁。
-        ctx: 可选运行时上下文；传入时优先使用显式配置。
+        ctx: 运行时上下文。
     """
     try:
         # 创建AudioEntityData实例
@@ -644,7 +621,8 @@ def execute_unpack_tasks(
     tasks: list[tuple[str, int, str]],
     reader: DataReader,
     max_workers: int = 4,
-    ctx: AppContext | None = None,
+    *,
+    ctx: AppContext,
 ) -> None:
     """执行批量解包任务。
 
@@ -652,7 +630,7 @@ def execute_unpack_tasks(
         tasks: 任务元组列表 ``[(entity_type, id, description), ...]``。
         reader: 数据读取器实例。
         max_workers: 最大并发线程数。
-        ctx: 可选运行时上下文；传入时优先使用显式配置。
+        ctx: 运行时上下文。
     """
     if not tasks:
         logger.warning("没有任何任务需要执行")
@@ -731,7 +709,8 @@ def unpack_audio_all(
     max_workers: int = 4,
     include_champions: bool = True,
     include_maps: bool = True,
-    ctx: AppContext | None = None,
+    *,
+    ctx: AppContext,
 ) -> None:
     """使用线程池并发解包所有音频文件
 
@@ -769,7 +748,8 @@ def unpack_champions(
     reader: DataReader,
     champion_ids: list[int],
     max_workers: int = 4,
-    ctx: AppContext | None = None,
+    *,
+    ctx: AppContext,
 ) -> None:
     """便捷函数：解包指定英雄
 
@@ -786,7 +766,8 @@ def unpack_maps(
     reader: DataReader,
     map_ids: list[int],
     max_workers: int = 4,
-    ctx: AppContext | None = None,
+    *,
+    ctx: AppContext,
 ) -> None:
     """便捷函数：解包指定地图
 
