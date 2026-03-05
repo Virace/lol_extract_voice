@@ -70,7 +70,8 @@ class LoggingConfiguration:
         # 如果指定了文件日志路径，添加文件日志处理器
         if log_file_path:
             log_path = Path(log_file_path)
-            log_path.parent.mkdir(parents=True, exist_ok=True)
+            # log_path 指向目录（例如 output/logs），懒创建模式下需显式创建该目录。
+            log_path.mkdir(parents=True, exist_ok=True)
 
             # 文件日志格式（更详细，包含完整路径信息）
             file_format = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} | {message}"

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -234,8 +233,12 @@ def _build_app_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConf
     )
 
 
-def _ensure_runtime_directories(output_path: Path) -> tuple[Path, Path, Path, Path, Path, Path, Path]:
-    """创建输出相关目录并返回路径集合。"""
+def _build_app_paths(app_config: AppConfig) -> AppPaths:
+    """根据 ``AppConfig`` 构建 ``AppPaths``。"""
+    output_path = app_config.output_path
+    game_path = app_config.game_path
+
+    # 仅派生路径，不在初始化阶段统一创建目录（按需懒创建）。
     audio_path = output_path / "audios"
     temp_path = output_path / "temps"
     log_path = output_path / "logs"
@@ -243,30 +246,6 @@ def _ensure_runtime_directories(output_path: Path) -> tuple[Path, Path, Path, Pa
     hash_path = output_path / "hashes"
     report_path = output_path / "reports"
     manifest_path = output_path / "manifest"
-
-    if temp_path.exists():
-        shutil.rmtree(temp_path)
-
-    for dir_path in (audio_path, temp_path, log_path, cache_path, hash_path, report_path, manifest_path):
-        dir_path.mkdir(parents=True, exist_ok=True)
-
-    return audio_path, temp_path, log_path, cache_path, hash_path, report_path, manifest_path
-
-
-def _build_app_paths(app_config: AppConfig) -> AppPaths:
-    """根据 ``AppConfig`` 构建 ``AppPaths``。"""
-    output_path = app_config.output_path
-    game_path = app_config.game_path
-
-    (
-        audio_path,
-        temp_path,
-        log_path,
-        cache_path,
-        hash_path,
-        report_path,
-        manifest_path,
-    ) = _ensure_runtime_directories(output_path)
 
     return AppPaths(
         audio_path=audio_path,

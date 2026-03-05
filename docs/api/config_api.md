@@ -92,7 +92,8 @@ def initialize_context_from_env(
 
 ## 5. 运行目录派生
 
-`create_app_context` 会自动创建并维护输出目录：
+`create_app_context` 仅负责派生路径，不会在初始化阶段统一创建目录。
+目录按流程懒创建（例如更新阶段创建 `manifest/temps`，解包阶段创建 `audios/reports`，映射阶段创建 `cache/hashes`）：
 
 - `audios`
 - `temps`（每次初始化会清空后重建）

@@ -360,8 +360,10 @@ def app_context(local_game_path: Path, pipeline_output_root: Path, monkeypatch) 
 
 def test_pipeline_stage_1_runtime_config_ready(app_context: AppContext, local_game_path: Path) -> None:
     assert Path(app_context.config.game_path) == local_game_path
-    assert app_context.paths.manifest_path.is_dir(), f"MANIFEST_PATH 未创建: {app_context.paths.manifest_path}"
-    assert app_context.paths.audio_path.is_dir(), f"AUDIO_PATH 未创建: {app_context.paths.audio_path}"
+    assert app_context.paths.manifest_path == app_context.config.output_path / "manifest"
+    assert app_context.paths.audio_path == app_context.config.output_path / "audios"
+    assert not app_context.paths.manifest_path.exists()
+    assert not app_context.paths.audio_path.exists()
 
 
 def test_pipeline_linear_workflow_with_stage_assertions(app_context: AppContext, local_game_path: Path) -> None:
