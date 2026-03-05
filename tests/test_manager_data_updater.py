@@ -5,7 +5,6 @@ import pytest
 
 from lol_audio_unpack.manager import data_updater as m_data_updater
 
-
 pytestmark = pytest.mark.integration
 
 
@@ -121,3 +120,45 @@ def test_extract_wad_data_returns_when_region_wad_missing(tmp_path, monkeypatch)
     updater._extract_wad_data(tmp_path / "out", "zh_CN")
 
     assert calls == []
+
+
+def test_extract_wad_data_includes_bp_vo_when_enabled(tmp_path, monkeypatch):
+    wad_root = tmp_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data"
+    wad_root.mkdir(parents=True, exist_ok=True)
+    (wad_root / "zh_CN-assets.wad").write_bytes(b"")
+
+    calls = []
+
+    class FakeWAD:
+        def __init__(self, path):
+            self.path = Path(path)
+
+        def extract(self, hash_table, out_dir):
+            calls.append((self.path.name, list(hash_table)))
+
+            if any(path.endswith("champion-summary.json") for path in hash_table):
+                summary_virtual_path = next(path for path in hash_table if path.endswith("champion-summary.json"))
+                summary_output = out_dir(summary_virtual_path)
+                summary_output.parent.mkdir(parents=True, exist_ok=True)
+                summary_output.write_text(
+                    json.dumps([{"id": 1, "alias": "Annie", "name": "安妮"}, {"id": -1, "alias": "None", "name": ""}]),
+                    encoding="utf-8",
+                )
+            return []
+
+    class FakeConfig:
+        @staticmethod
+        def get(key, default=None):
+            if key == "WITH_BP_VO":
+                return True
+            return default
+
+    monkeypatch.setattr(m_data_updater, "WAD", FakeWAD)
+    monkeypatch.setattr(m_data_updater, "config", FakeConfig())
+
+    updater = _build_updater(tmp_path)
+    updater._extract_wad_data(tmp_path / "out", "zh_CN")
+
+    all_requested_paths = [path for _, hash_table in calls for path in hash_table]
+    assert "plugins/rcp-be-lol-game-data/global/zh_CN/v1/champion-ban-vo/1.ogg" in all_requested_paths
+    assert "plugins/rcp-be-lol-game-data/global/zh_CN/v1/champion-choose-vo/1.ogg" in all_requested_paths

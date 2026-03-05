@@ -125,6 +125,15 @@ def test_build_cli_overrides_only_keeps_explicit_values():
     }
 
 
+def test_build_cli_overrides_includes_with_bp_vo_when_explicit():
+    parser = cli.create_parser()
+    args = parser.parse_args(["--update", "--with-bp-vo"])
+
+    overrides = cli.build_cli_overrides(args)
+
+    assert overrides == {"WITH_BP_VO": True}
+
+
 def test_initialize_app_passes_cli_overrides_to_setup_app(monkeypatch, tmp_path):
     parser = cli.create_parser()
     game_path = tmp_path / "game"

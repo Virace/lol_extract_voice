@@ -79,6 +79,14 @@ class DataUpdater:
         return process_languages
 
     @staticmethod
+    def _is_bp_vo_enabled() -> bool:
+        """安全读取大厅 BP 语音开关。"""
+        try:
+            return bool(config.get("WITH_BP_VO", False))
+        except Exception:
+            return False
+
+    @staticmethod
     def _normalize_text(text: str) -> str:
         """标准化文本"""
         if not isinstance(text, str):
@@ -143,6 +151,9 @@ class DataUpdater:
         logger.info("合并多语言数据...")
         self._merge_and_build_data(temp_path)
 
+        if self._is_bp_vo_enabled():
+            self._persist_bp_vo_files(temp_path)
+
         # 从临时目录复制最终生成的数据文件到目标目录
         temp_data_file_base = temp_path / self.version / "data"
         fmt = "yml" if config.is_dev_mode() else "msgpack"
@@ -154,6 +165,31 @@ class DataUpdater:
             logger.debug(f"已复制合并数据到: {self.data_file_base.with_suffix(f'.{fmt}')}")
         else:
             raise FileNotFoundError(f"未能创建合并数据文件: {source_file}")
+
+    @performance_monitor(level="DEBUG")
+    def _persist_bp_vo_files(self, temp_path: Path) -> None:
+        """将临时目录中的大厅 BP 语音持久化到 manifest 目录。"""
+        temp_version_path = temp_path / self.version
+        target_root = self.version_manifest_path / "lobby_vo"
+        copied_count = 0
+
+        for region in self.process_languages:
+            for category in ("champion-ban-vo", "champion-choose-vo"):
+                source_dir = temp_version_path / region / category
+                if not source_dir.exists():
+                    continue
+
+                target_dir = target_root / region / category
+                target_dir.mkdir(parents=True, exist_ok=True)
+
+                for source_file in source_dir.glob("*.ogg"):
+                    shutil.copy2(source_file, target_dir / source_file.name)
+                    copied_count += 1
+
+        if copied_count > 0:
+            logger.success(f"大厅 BP 语音持久化完成，共 {copied_count} 个文件: {target_root}")
+        else:
+            logger.warning("已启用 WITH_BP_VO，但未提取到任何大厅 BP 语音文件。")
 
     def _load_language_json(self, base_path: Path, filename_template: str) -> dict[str, Any]:
         """加载指定模板的、所有语言的JSON文件"""
@@ -409,6 +445,31 @@ class DataUpdater:
                     WAD(wad_file).extract(champion_hashes, output_file_name)
 
                 logger.success(f"英雄信息提取完成，共 {len(champion_hashes)} 个英雄")
+
+                if self._is_bp_vo_enabled():
+                    bp_vo_hashes: list[str] = []
+                    region_candidates = [_region]
+                    region_lower = _region.lower()
+                    if region_lower not in region_candidates:
+                        region_candidates.append(region_lower)
+
+                    for item in champions:
+                        champion_id = item.get("id")
+                        if champion_id in (-1, None):
+                            continue
+                        for region_name in region_candidates:
+                            bp_vo_hashes.append(
+                                f"plugins/rcp-be-lol-game-data/global/{region_name}/v1/champion-ban-vo/{champion_id}.ogg"
+                            )
+                            bp_vo_hashes.append(
+                                f"plugins/rcp-be-lol-game-data/global/{region_name}/v1/champion-choose-vo/{champion_id}.ogg"
+                            )
+
+                    if bp_vo_hashes:
+                        logger.debug(f"准备提取大厅 BP 语音，共 {len(bp_vo_hashes)} 个目标路径")
+                        for wad_file in wad_files:
+                            logger.trace(f"从 {wad_file.name} 提取大厅 BP 语音")
+                            WAD(wad_file).extract(bp_vo_hashes, output_file_name)
             except Exception:
                 logger.opt(exception=True).error(f"解包 {_region} 区域英雄信息时出错")
                 if config.is_dev_mode():

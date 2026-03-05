@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import threading
 import time
 import traceback
@@ -410,6 +411,85 @@ def generate_output_path(
         return base_path / relative_path / audio_type
 
 
+def _find_bp_vo_source_file(reader: DataReader, champion_id: str, category: str) -> Path | None:
+    """查找大厅 BP 语音源文件。"""
+    manifest_root = config.MANIFEST_PATH / reader.version / "lobby_vo"
+    region = str(config.get("GAME_REGION", "") or "")
+    region_candidates: list[str] = []
+
+    if region:
+        region_candidates.append(region)
+        region_lower = region.lower()
+        if region_lower not in region_candidates:
+            region_candidates.append(region_lower)
+    if "default" not in region_candidates:
+        region_candidates.append("default")
+
+    for region_name in region_candidates:
+        candidate = manifest_root / region_name / category / f"{champion_id}.ogg"
+        if candidate.exists():
+            return candidate
+
+    return None
+
+
+def _link_or_copy_file(source: Path, target: Path) -> str:
+    """优先创建硬链接，失败时回退为复制。"""
+    if target.exists():
+        target.unlink()
+
+    try:
+        os.link(source, target)
+        return "hardlink"
+    except OSError:
+        shutil.copy2(source, target)
+        return "copy"
+
+
+def _attach_bp_vo_to_champion(entity_data: AudioEntityData, reader: DataReader) -> None:
+    """将大厅选用/禁用语音附加到英雄输出目录。"""
+    if not config.get("WITH_BP_VO", False):
+        return
+
+    entity_folder_name = format_entity_folder_name(
+        entity_data.entity_id, entity_data.entity_alias, entity_data.entity_name, entity_data.entity_title
+    )
+    if config.GROUP_BY_TYPE:
+        target_dir = (
+            config.AUDIO_PATH
+            / reader.version
+            / config.AUDIO_TYPE_VO
+            / get_output_dir_name(entity_data.entity_type)
+            / entity_folder_name
+            / "BP_VO"
+        )
+    else:
+        target_dir = (
+            config.AUDIO_PATH
+            / reader.version
+            / get_output_dir_name(entity_data.entity_type)
+            / entity_folder_name
+            / "BP_VO"
+        )
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    file_mapping = {
+        "champion-ban-vo": "ban.ogg",
+        "champion-choose-vo": "choose.ogg",
+    }
+    for category, target_name in file_mapping.items():
+        source_file = _find_bp_vo_source_file(reader, entity_data.entity_id, category)
+        if source_file is None:
+            logger.warning(
+                f"未找到英雄 {entity_data.entity_id} 的大厅语音文件: {category}/{entity_data.entity_id}.ogg"
+            )
+            continue
+
+        target_file = target_dir / target_name
+        mode = _link_or_copy_file(source_file, target_file)
+        logger.debug(f"大厅语音已写入: {target_file} (mode={mode})")
+
+
 def unpack_champion(
     champion_id: int,
     reader: DataReader,
@@ -429,6 +509,7 @@ def unpack_champion(
         entity_data = AudioEntityData.from_champion(champion_id, reader)
         # 调用通用解包函数
         unpack_audio_entity(entity_data, reader, wad_cache=wad_cache, cache_lock=cache_lock)
+        _attach_bp_vo_to_champion(entity_data, reader)
     except ValueError as e:
         # 保持与原始函数相同的错误处理方式
         logger.error(str(e))

@@ -145,6 +145,12 @@ def create_parser() -> argparse.ArgumentParser:
         help="跳过事件数据处理，大幅提升处理速度。仅在更新模式下有效。",
     )
     parser.add_argument(
+        "--with-bp-vo",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="在更新/解包流程中附带大厅选用/禁用语音（champion-ban-vo/champion-choose-vo）。",
+    )
+    parser.add_argument(
         "--enable-league-tools-log",
         action="store_true",
         help="启用 'league_tools' 模块的日志输出，用于深度调试。",
@@ -279,6 +285,7 @@ def build_cli_overrides(args: argparse.Namespace) -> dict[str, object]:
         "OUTPUT_PATH": args.output_path,
         "GAME_REGION": args.game_region,
         "EXCLUDE_TYPE": args.exclude_type,
+        "WITH_BP_VO": args.with_bp_vo,
         "WWISER_PATH": args.wwiser_path,
         "GROUP_BY_TYPE": args.group_by_type,
     }

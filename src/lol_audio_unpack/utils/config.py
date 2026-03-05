@@ -66,6 +66,11 @@ class Config(metaclass=Singleton):
         # True: audios/类型/champions/英雄/皮肤/...""",
             "short": "b",
         },
+        "WITH_BP_VO": {
+            "type": "bool",
+            "default": False,
+            "help": "是否在更新/解包流程中附带大厅选用/禁用语音（champion-ban-vo/champion-choose-vo）",
+        },
         "WWISER_PATH": {"type": "path", "help": "Wwiser 路径", "short": "w"},
         # "INCLUDE_NAME": {"type": "list", "help": "名称过滤条件，例如 map11, Aatrox", "short": "n"},
         # "INCLUDE_CATEGORY": {"type": "list", "help": "分类过滤条件，例如 maps, characters", "short": "c"},
