@@ -10,9 +10,10 @@ from pathlib import Path
 
 from loguru import logger
 
-from lol_audio_unpack.app_context import AppContext, OperationOptions
+from lol_audio_unpack.app_context import AppContext, OperationOptions, SourceMode
 from lol_audio_unpack.manager import BinUpdater, DataReader, DataUpdater
 from lol_audio_unpack.mapping import build_champions_mapping, build_mapping_all, build_maps_mapping
+from lol_audio_unpack.remote_preparer import RemoteSnapshotPreparer
 from lol_audio_unpack.unpack import unpack_audio_all, unpack_champions, unpack_maps
 
 
@@ -50,9 +51,33 @@ class LolAudioUnpackApp:
         if not Path(wwiser_path).exists():
             raise ValueError(f"错误：Wwiser 工具路径不存在: {wwiser_path}")
 
+    def _prepare_remote_snapshot_for_update(self) -> RemoteSnapshotPreparer | None:
+        """在远端快照模式下准备更新流程所需的远端资源。"""
+        if self.ctx.config.source_mode is not SourceMode.REMOTE_SNAPSHOT:
+            return None
+
+        logger.info("检测到 remote_snapshot 模式，开始准备 LCU 最小运行环境...")
+        preparer = RemoteSnapshotPreparer(ctx=self.ctx)
+        preparer.prepare_lcu_game_data()
+        return preparer
+
+    def _build_remote_preparer(self) -> RemoteSnapshotPreparer | None:
+        """按需创建远端准备器。"""
+        if self.ctx.config.source_mode is not SourceMode.REMOTE_SNAPSHOT:
+            return None
+        return RemoteSnapshotPreparer(ctx=self.ctx)
+
     def update(self, opts: OperationOptions, *, target: str = "all") -> None:
         """执行更新流程。"""
+        remote_preparer = self._prepare_remote_snapshot_for_update()
         DataUpdater(force_update=opts.force_update, ctx=self.ctx).check_and_update()
+        if remote_preparer is not None:
+            remote_preparer.prepare_bin_inputs(
+                reader=self._create_reader(),
+                target=target,
+                champion_ids=opts.champion_ids,
+                map_ids=opts.map_ids,
+            )
         updater = BinUpdater(force_update=opts.force_update, process_events=opts.process_events, ctx=self.ctx)
         updater.update(
             target=target,
@@ -69,6 +94,15 @@ class LolAudioUnpackApp:
     ) -> None:
         """执行解包流程。"""
         reader = self._create_reader()
+        remote_preparer = self._build_remote_preparer()
+        if remote_preparer is not None:
+            remote_preparer.prepare_extract_wads(
+                reader=reader,
+                champion_ids=opts.champion_ids,
+                map_ids=opts.map_ids,
+                include_champions=include_champions,
+                include_maps=include_maps,
+            )
         logger.info(
             f"音频类型配置 - 包含: {list(self.ctx.config.include_types)}, "
             f"排除: {list(self.ctx.config.exclude_types)}"
@@ -101,6 +135,15 @@ class LolAudioUnpackApp:
         """执行映射流程。"""
         self._ensure_wwiser_path()
         reader = self._create_reader()
+        remote_preparer = self._build_remote_preparer()
+        if remote_preparer is not None:
+            remote_preparer.prepare_mapping_wads(
+                reader=reader,
+                champion_ids=opts.champion_ids,
+                map_ids=opts.map_ids,
+                include_champions=include_champions,
+                include_maps=include_maps,
+            )
 
         logger.info(f"缓存路径: {self.ctx.paths.cache_path}")
         logger.info(f"哈希路径: {self.ctx.paths.hash_path}")
