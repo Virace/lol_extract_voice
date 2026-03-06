@@ -19,6 +19,7 @@
 
 - [介绍](#介绍)
 - [使用方法](#使用方法)
+- [Remote 模式（无本地完整客户端）](#remote-模式无本地完整客户端)
 - [基准测试](#基准测试)
 - [设计哲学](#设计哲学)
 - [性能参考](#性能参考)
@@ -161,6 +162,112 @@ LOL_OUTPUT_PATH=''
 # 使用英文逗号分割, 留空则全部解包
 LOL_EXCLUDE_TYPE='SFX,MUSIC'
 ```
+
+### Remote 模式（无本地完整客户端）
+
+当你没有本地完整游戏目录，或者运行环境磁盘受限（例如 CI、容器、临时服务器）时，可以使用 **remote 模式**。
+
+remote 模式的核心思路是：
+- 使用上游 `RiotManifest` 提供的一对 **已对齐** 的 LCU / GAME manifest
+- 先最小化准备 `DataUpdater` 所需的 LCU 资源
+- 再按英雄 / 地图单位准备 BIN 和 WAD
+- `extract / mapping` 在 remote 模式下会按实体顺序执行，单实体完成后立即清理当前远端 WAD
+
+#### 什么时候适合用
+- 没有本地完整客户端，只想临时解包少量英雄 / 地图
+- 想在 CI 或远程机器上做一次性更新、解包或映射
+- 想把磁盘峰值控制在“单实体所需资源”级别，而不是整批资源总和
+
+#### 什么时候不适合用
+- 你已经有本地完整客户端，而且会频繁重复解包
+- 你要做大量地图 / 大量 `mapping` 长测
+- 你更关心总耗时，而不是磁盘峰值
+
+#### remote 模式当前状态
+- 英雄 `update / extract / mapping` 已完成真实远端验证
+- 地图 `update` 已完成真实远端验证
+- 地图 `mapping` 已确认可运行，但属于长耗时专项验收项
+- `mapping` 当前不只处理 `VO`，也会处理 `SFX/MUSIC` 等有事件数据的类别
+
+#### 最小配置
+
+当前 remote 模式主要通过环境变量驱动：
+
+```bash
+export LOL_SOURCE_MODE=remote_snapshot
+export LOL_REMOTE_VERSION=16.5
+export LOL_REMOTE_LCU_MANIFEST_URL="https://..."
+export LOL_REMOTE_GAME_MANIFEST_URL="https://..."
+export LOL_OUTPUT_PATH="/tmp/lol-remote"
+export LOL_GAME_REGION="zh_CN"
+```
+
+如果要运行 `mapping`，还需要：
+
+```bash
+export LOL_WWISER_PATH="/path/to/wwiser.pyz"
+```
+
+#### 常见示例
+
+```bash
+# 1. 远端更新指定英雄数据
+UV_CACHE_DIR=.cache/uv uv run unpack \
+  --update-champions 1,103,555
+```
+
+```bash
+# 2. 远端更新并解包指定英雄 VO
+UV_CACHE_DIR=.cache/uv uv run unpack \
+  --update-champions 1,103,555 \
+  --extract-champions 1,103,555
+```
+
+```bash
+# 3. 远端更新、解包并构建指定英雄映射
+UV_CACHE_DIR=.cache/uv uv run unpack \
+  --update-champions 1,103,555 \
+  --extract-champions 1,103,555 \
+  --mapping-champions 1,103,555 \
+  --wwiser-path "/path/to/wwiser.pyz"
+```
+
+```bash
+# 4. 关闭自动清理，保留远端准备产物用于排查
+UV_CACHE_DIR=.cache/uv uv run unpack \
+  --update-champions 1,103,555 \
+  --extract-champions 1,103,555 \
+  --mapping-champions 1,103,555 \
+  --wwiser-path "/path/to/wwiser.pyz" \
+  --no-cleanup-remote
+```
+
+#### 清理策略
+
+- 默认开启 `cleanup_remote`
+- 全局 `update` 完成后会清理：
+  - LCU assets.wad
+  - `manifest/<version>/bin_input`
+  - `.use_local_bin`
+- `extract / mapping` 在 remote 模式下按实体顺序执行
+  - 单实体完成后，会清理当前实体的 GAME WAD
+
+如果你要保留现场，请显式使用：
+
+```bash
+--no-cleanup-remote
+```
+
+#### 磁盘与性能说明
+
+- remote 模式主要优化的是 **磁盘峰值**，不是总耗时
+- 当前大文件会优先使用 **硬链接** 进入 `_prepared_game`，失败时回退复制
+- `mapping` 的耗时瓶颈主要在 `wwiser` 外部工具
+- 地图 `mapping` 通常会明显慢于英雄 `mapping`
+
+更详细的 remote 使用说明见：
+
+- [docs/REMOTE.md](./docs/REMOTE.md)
 
 ### 基准测试
 项目内置基准脚本：`scripts/benchmark_cli.py`，用于评估 CLI 外部调用的真实耗时与稳定性。

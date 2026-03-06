@@ -10,6 +10,8 @@
 - `AppContext`
 - `AppContextValidationError`
 - `OperationOptions`
+- `RemoteSnapshotConfig`
+- `SourceMode`
 - `LolAudioUnpackApp`
 - `DataUpdater`
 - `BinUpdater`
@@ -24,6 +26,10 @@ def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs) -> AppC
 ```
 
 用途：初始化日志与上下文，并返回可注入的 `AppContext`。
+
+补充说明：
+
+- 当前环境若 `loguru enqueue=True` 因权限问题失败，会自动回退为非 `enqueue` 模式。
 
 ### 2.2 `LolAudioUnpackApp`
 
@@ -45,9 +51,17 @@ class LolAudioUnpackApp:
         include_champions: bool = True,
         include_maps: bool = True,
     ) -> None
+    def cleanup_remote_artifacts(self) -> None
 ```
 
 用途：统一编排更新、解包、映射流程，供 CLI 与模块调用共用。
+
+补充说明：
+
+- 在 `remote_snapshot` 模式下：
+  - `update()` 会先准备 LCU 与 BIN 输入
+  - `extract()` / `mapping()` 会先准备当前操作所需的实体 WAD
+  - `cleanup_remote_artifacts()` 会在开启 `cleanup_remote` 时清理已登记的远端产物
 
 ### 2.3 `OperationOptions`
 
@@ -88,6 +102,14 @@ def initialize_context_from_env(
 
 用途：构建 `AppConfig + AppPaths + AppContext` 组合对象。
 
+当前 remote 模式常用的 `cli_overrides` 包括：
+
+- `SOURCE_MODE="remote_snapshot"`
+- `REMOTE_VERSION`
+- `REMOTE_LCU_MANIFEST_URL`
+- `REMOTE_GAME_MANIFEST_URL`
+- `CLEANUP_REMOTE`
+
 ## 4. 管理器类（显式上下文）
 
 ```python
@@ -116,7 +138,21 @@ class DataReader(metaclass=Singleton):
 
 说明：`ctx` 已为必填，且不再支持全局 `config` 回退路径。
 
-## 5. 模块级流水线函数
+## 5. remote 内部准备器（内部实现）
+
+`remote_preparer.py` 当前提供：
+
+- `RemoteSnapshotPreparer`
+- `LcuPrepareResult`
+- `BinInputPrepareResult`
+- `GameWadPrepareResult`
+
+说明：
+
+- 这些对象已经在主链路中使用，但仍归类为内部实现。
+- 当前不建议外部业务代码直接依赖其细节。
+
+## 6. 模块级流水线函数
 
 `model` / `unpack` / `mapping` 相关核心函数均要求显式 `ctx: AppContext`，包括但不限于：
 
@@ -124,7 +160,7 @@ class DataReader(metaclass=Singleton):
 - `unpack_audio_all(..., ctx=ctx)` / `unpack_champions(..., ctx=ctx)` / `unpack_maps(..., ctx=ctx)`
 - `build_mapping_all(..., ctx=ctx)` / `build_champions_mapping(..., ctx=ctx)` / `build_maps_mapping(..., ctx=ctx)`
 
-## 6. 快速示例
+## 7. 快速示例
 
 ```python
 from lol_audio_unpack import LolAudioUnpackApp, OperationOptions, setup_app
@@ -135,4 +171,19 @@ app = LolAudioUnpackApp(ctx)
 app.update(OperationOptions(force_update=False), target="all")
 app.extract(OperationOptions(max_workers=8, champion_ids=(1, 103)), include_maps=False)
 app.mapping(OperationOptions(max_workers=8, integrate_data=True), include_maps=False)
+```
+
+```python
+ctx = create_app_context(
+    cli_overrides={
+        "OUTPUT_PATH": "./out",
+        "GAME_REGION": "zh_CN",
+        "SOURCE_MODE": "remote_snapshot",
+        "REMOTE_VERSION": "16.5",
+        "REMOTE_LCU_MANIFEST_URL": "...",
+        "REMOTE_GAME_MANIFEST_URL": "...",
+    }
+)
+app = LolAudioUnpackApp(ctx)
+app.update(OperationOptions(champion_ids=(1, 103)), target="skin")
 ```

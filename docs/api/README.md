@@ -17,7 +17,12 @@
 
 1. 参数解析与校验（`create_parser` / `validate_args`）
 2. 初始化应用（`setup_app` -> `create_app_context`）
-3. 按顺序执行：更新 -> 解包 -> 映射
+3. `local_path` 下按顺序执行：更新 -> 解包 -> 映射
+4. `remote_snapshot` 下：
+   - `update` 仍全局执行一次
+   - 若存在 `extract` / `mapping`，则改走“单位驱动”：
+     - 按英雄 / 地图逐个执行
+     - 单位完成后立即清理当前远端 WAD
 4. 结果写入 `OUTPUT_PATH` 衍生目录（`manifest`、`audios`、`hashes`、`reports`）
 
 ### 2.2 Python 主链
@@ -28,15 +33,20 @@
 4. 调用 `app.update(...)` / `app.extract(...)` / `app.mapping(...)`
 
 > 说明：全局 `config` 兼容路径已移除，主链路必须显式持有 `AppContext`。
+>
+> 说明：remote 模式的真实 live 长测统一打上 `remote_live` marker，默认不在常规 `pytest` 中执行。
 
 ## 3. 目录输出约定
 
 - `manifest/<version>/data.*`：基础聚合数据（英雄/地图元信息）
 - `manifest/<version>/banks/**`：分类后的 bank 路径数据
 - `manifest/<version>/events/**`：事件数据
+- `manifest/<version>/bin_input/**`：remote 模式为 `BinUpdater` 准备的稀疏 BIN 输入
 - `audios/<version>/...`：解包出的 `.wem`
 - `hashes/<version>/...`：映射结果或整合结果
 - `reports/<version>/...`：单实体解包汇总报告
+- `cache/remote/**`：remote 模式下载缓存
+- `_prepared_game/**`：remote 模式最小运行环境
 
 ## 4. 数据格式约定
 

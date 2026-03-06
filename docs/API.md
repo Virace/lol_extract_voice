@@ -14,9 +14,11 @@
 
 - `稳定公开`：`setup_app`、`AppContext`、`OperationOptions`、`LolAudioUnpackApp`、`unpack` CLI。
 - `半稳定`：`create_app_context`、`initialize_context_from_env`、`DataUpdater/BinUpdater/DataReader` 构造与公开方法（推荐通过 Facade 间接调用）。
-- `内部实现`：以下划线开头的方法/函数（如 `_extract_bin_raws`、`_get_cached_hirc`），默认不保证兼容。
+- `内部实现`：`remote_preparer.py`、以下划线开头的方法/函数（如 `_extract_bin_raws`、`_get_cached_hirc`），默认不保证兼容。
 
 > 说明：主链路已彻底移除“未传 `ctx` 时回退全局 `config`”机制；所有核心调用均要求显式上下文。
+>
+> 说明：remote 模式当前已具备英雄 `update / extract / mapping` 的真实远端验证；地图链路中的 `mapping` 仍属于长耗时专项验收项。
 
 ## 快速示例
 
@@ -32,4 +34,13 @@ app.extract(OperationOptions(max_workers=4, champion_ids=(1, 103)), include_maps
 
 ```bash
 uv run unpack --update --extract --max-workers 8
+```
+
+```bash
+# remote_snapshot 目前主要通过环境变量驱动
+LOL_SOURCE_MODE=remote_snapshot \
+LOL_REMOTE_VERSION=16.5 \
+LOL_REMOTE_LCU_MANIFEST_URL=... \
+LOL_REMOTE_GAME_MANIFEST_URL=... \
+uv run unpack --update-champions 1,103,555 --extract-champions 1,103,555
 ```
