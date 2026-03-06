@@ -18,7 +18,7 @@ from pathlib import Path
 from loguru import logger
 
 from . import __version__, setup_app
-from .app_context import AppContext, AppContextValidationError, OperationOptions
+from .app_context import AppContext, AppContextValidationError, OperationOptions, SourceMode
 from .facade import LolAudioUnpackApp
 
 
@@ -275,7 +275,7 @@ def initialize_app(args: argparse.Namespace) -> AppContext:
 
     logger.info("命令行工具启动...")
 
-    if not app_context.config.game_path or not Path(app_context.config.game_path).exists():
+    if app_context.config.source_mode is SourceMode.LOCAL_PATH and not Path(app_context.config.game_path).exists():
         current_work_dir = Path.cwd()
         logger.error("错误：未找到有效的游戏目录 (GAME_PATH)。")
         logger.error(f"请在当前工作目录创建一个 .lol.env 文件: {current_work_dir / '.lol.env'}")

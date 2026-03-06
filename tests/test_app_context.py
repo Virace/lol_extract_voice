@@ -7,6 +7,7 @@ from lol_audio_unpack import setup_app
 from lol_audio_unpack.app_context import (
     AppContext,
     OperationOptions,
+    SourceMode,
     create_app_context,
     initialize_context_from_env,
 )
@@ -71,6 +72,33 @@ def test_create_app_context_applies_cli_overrides(tmp_path: Path) -> None:
     assert app_context.config.group_by_type is True
     assert app_context.config.exclude_types == ("VO",)
     assert set(app_context.config.include_types) == {"SFX", "MUSIC"}
+
+
+def test_create_app_context_builds_remote_snapshot_config(tmp_path: Path) -> None:
+    env_dir = tmp_path / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+    output_path = tmp_path / "output"
+    (env_dir / ".lol.env").write_text(
+        f'LOL_OUTPUT_PATH="{output_path}"\n',
+        encoding="utf-8",
+    )
+
+    app_context = create_app_context(
+        env_path=env_dir,
+        cli_overrides={
+            "SOURCE_MODE": "remote_snapshot",
+            "REMOTE_VERSION": "16.5.751.1533",
+            "REMOTE_LCU_MANIFEST_URL": "https://example.com/lcu.manifest",
+            "REMOTE_GAME_MANIFEST_URL": "https://example.com/game.manifest",
+        },
+    )
+
+    assert app_context.config.source_mode is SourceMode.REMOTE_SNAPSHOT
+    assert app_context.config.game_path == output_path / "_prepared_game"
+    assert app_context.config.remote_snapshot is not None
+    assert app_context.config.remote_snapshot.version == "16.5"
+    assert app_context.config.remote_snapshot.lcu_manifest_url == "https://example.com/lcu.manifest"
+    assert app_context.config.remote_snapshot.game_manifest_url == "https://example.com/game.manifest"
 
 
 def test_setup_app_returns_context_with_cli_overrides(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

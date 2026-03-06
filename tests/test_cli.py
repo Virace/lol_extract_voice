@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 import lol_audio_unpack.__main__ as cli
+from lol_audio_unpack.app_context import SourceMode
 
 pytestmark = pytest.mark.unit
 
@@ -136,7 +137,7 @@ def test_initialize_app_passes_cli_overrides_to_setup_app(monkeypatch, tmp_path)
     )
 
     captured = {}
-    fake_context = SimpleNamespace(config=SimpleNamespace(game_path=game_path))
+    fake_context = SimpleNamespace(config=SimpleNamespace(game_path=game_path, source_mode=SourceMode.LOCAL_PATH))
 
     def fake_setup_app(*, dev_mode=False, log_level="INFO", **kwargs):
         captured["dev_mode"] = dev_mode
@@ -159,6 +160,24 @@ def test_initialize_app_passes_cli_overrides_to_setup_app(monkeypatch, tmp_path)
         "WWISER_PATH": str(tmp_path / "wwiser.pyz"),
         "GROUP_BY_TYPE": True,
     }
+
+
+def test_initialize_app_allows_missing_remote_snapshot_game_path(monkeypatch, tmp_path):
+    parser = cli.create_parser()
+    args = parser.parse_args(["--update"])
+
+    fake_context = SimpleNamespace(
+        config=SimpleNamespace(
+            game_path=tmp_path / "remote-game",
+            source_mode=SourceMode.REMOTE_SNAPSHOT,
+        )
+    )
+
+    monkeypatch.setattr(cli, "setup_app", lambda **_kwargs: fake_context)
+
+    ctx = cli.initialize_app(args)
+
+    assert ctx == fake_context
 
 
 def test_initialize_app_exits_when_config_validation_fails(monkeypatch):

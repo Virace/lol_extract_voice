@@ -21,6 +21,8 @@ from .app_context import (
     AppContextValidationError,
     AppPaths,
     OperationOptions,
+    RemoteSnapshotConfig,
+    SourceMode,
     create_app_context,
 )
 from .facade import LolAudioUnpackApp
@@ -66,6 +68,8 @@ __all__ = [
     "AppPaths",
     "LolAudioUnpackApp",
     "OperationOptions",
+    "RemoteSnapshotConfig",
+    "SourceMode",
     "setup_app",
     "BinUpdater",
     "DataUpdater",

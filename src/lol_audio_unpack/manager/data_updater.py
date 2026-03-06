@@ -19,11 +19,12 @@ from typing import TYPE_CHECKING, Any
 from league_tools.formats import WAD
 from loguru import logger
 
+from lol_audio_unpack.app_context import SourceMode
 from lol_audio_unpack.manager.utils import (
     create_metadata_object,
-    get_game_version,
     needs_update,
     read_data,
+    resolve_context_version,
     write_data,
 )
 from lol_audio_unpack.utils.common import format_region, load_json
@@ -72,7 +73,7 @@ class DataUpdater:
         else:
             self.languages: list[str] = languages
 
-        self.version: str = get_game_version(self.game_path)
+        self.version: str = resolve_context_version(self.ctx)
         self.version_manifest_path: Path = self.manifest_path / self.version
         self.data_file_base: Path = self.version_manifest_path / "data"
         self.process_languages: list[str] = self._prepare_language_list(self.languages)
@@ -491,7 +492,11 @@ class DataUpdater:
                 wad_prefix = f"Map{map_id}" if map_id != 0 else "Common"
                 map_data["binPath"] = f"data/maps/shipping/{wad_prefix.lower()}/{wad_prefix.lower()}.bin"
                 wad_info = self._build_map_wad_info(wad_prefix)
-                if (self.game_path / wad_info["root"]).exists():
+                should_keep_wad_info = (
+                    self.ctx.config.source_mode is SourceMode.REMOTE_SNAPSHOT
+                    or (self.game_path / wad_info["root"]).exists()
+                )
+                if should_keep_wad_info:
                     map_data["wad"] = wad_info
                 else:
                     logger.warning(

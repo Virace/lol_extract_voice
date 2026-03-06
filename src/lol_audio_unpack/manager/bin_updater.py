@@ -20,9 +20,9 @@ from loguru import logger
 
 from lol_audio_unpack.manager.utils import (
     create_metadata_object,
-    get_game_version,
     needs_update,
     read_data,
+    resolve_context_version,
     write_data,
 )
 from lol_audio_unpack.utils.logging import performance_monitor
@@ -64,7 +64,7 @@ class BinUpdater:
 
         self.force_update = force_update
         self.process_events = process_events
-        self.version: str = get_game_version(self.game_path)
+        self.version: str = resolve_context_version(self.ctx)
         self.version_manifest_path: Path = self.manifest_path / self.version
         self.data_file_base: Path = self.version_manifest_path / "data"
         self.use_local_bin_flag_file: Path = self.version_manifest_path / ".use_local_bin"

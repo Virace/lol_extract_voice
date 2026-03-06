@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from lol_audio_unpack.app_context import SourceMode
 from lol_audio_unpack.manager import data_updater as m_data_updater
 
 pytestmark = pytest.mark.integration
@@ -16,6 +17,7 @@ def _build_updater(game_path: Path, version: str = "16.3"):
             game_path=game_path,
             game_region="zh_CN",
             dev_mode=False,
+            source_mode=SourceMode.LOCAL_PATH,
             with_bp_vo=False,
         ),
         paths=SimpleNamespace(
@@ -283,3 +285,35 @@ def test_extract_wad_data_includes_bp_vo_when_enabled(tmp_path, monkeypatch):
     all_requested_paths = [path for _, hash_table in calls for path in hash_table]
     assert "plugins/rcp-be-lol-game-data/global/zh_CN/v1/champion-ban-vo/1.ogg" in all_requested_paths
     assert "plugins/rcp-be-lol-game-data/global/zh_CN/v1/champion-choose-vo/1.ogg" in all_requested_paths
+
+
+def test_merge_and_build_data_keeps_remote_map_wad_info_without_local_files(tmp_path):
+    updater = _build_updater(tmp_path)
+    updater.ctx.config.source_mode = SourceMode.REMOTE_SNAPSHOT
+    updater.process_languages = ["default"]
+    updater._is_dev_mode = lambda: False
+
+    base_path = tmp_path / updater.version / "default"
+    base_path.mkdir(parents=True, exist_ok=True)
+    (base_path / "champion-summary.json").write_text("[]", encoding="utf-8")
+    (base_path / "maps.json").write_text(
+        json.dumps([{"id": 11, "mapStringId": "SR", "name": "召唤师峡谷"}]),
+        encoding="utf-8",
+    )
+
+    captured = {}
+
+    def fake_write_data(data: dict, _base: Path, *, dev_mode: bool) -> None:
+        captured["data"] = data
+        captured["dev_mode"] = dev_mode
+
+    original_write_data = m_data_updater.write_data
+    m_data_updater.write_data = fake_write_data
+    try:
+        updater._merge_and_build_data(tmp_path)
+    finally:
+        m_data_updater.write_data = original_write_data
+
+    result = captured["data"]
+    assert captured["dev_mode"] is False
+    assert result["maps"]["11"]["wad"]["root"] == "Game/DATA/FINAL/Maps/Shipping/Map11.wad.client"

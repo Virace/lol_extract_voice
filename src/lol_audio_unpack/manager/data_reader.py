@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from lol_audio_unpack.manager.utils import get_game_version, read_data
+from lol_audio_unpack.manager.utils import read_data, resolve_context_version
 from lol_audio_unpack.utils.common import Singleton
 from lol_audio_unpack.utils.logging import performance_monitor
 
@@ -54,7 +54,7 @@ class DataReader(metaclass=Singleton):
         if not self.game_path or not self.manifest_path:
             raise ValueError("GAME_PATH 和 MANIFEST_PATH 必须在配置中设置")
 
-        self.version: str = get_game_version(self.game_path)
+        self.version: str = resolve_context_version(self.ctx)
         self.version_manifest_path: Path = self.manifest_path / self.version
 
         # 使用不带后缀的基础路径，让read_data自动寻找最佳格式

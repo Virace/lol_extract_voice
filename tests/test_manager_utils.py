@@ -1,8 +1,10 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from lol_audio_unpack.app_context import RemoteSnapshotConfig, SourceMode
 from lol_audio_unpack.manager import utils as mutils
 
 pytestmark = pytest.mark.unit
@@ -65,6 +67,40 @@ def test_get_game_version_invalid_version(tmp_path):
 
     with pytest.raises(ValueError):
         mutils.get_game_version(game_path)
+
+
+def test_get_lcu_version_success(tmp_path):
+    game_path = tmp_path / "game"
+    exe_path = game_path / "LeagueClient" / "LeagueClient.exe"
+    exe_path.parent.mkdir(parents=True, exist_ok=True)
+    exe_payload = (
+        b"prefix"
+        + "ProductVersion".encode("utf-16le")
+        + b"\x00\x00"
+        + "16.5.751.1533".encode("utf-16le")
+        + b"\x00\x00suffix"
+    )
+    exe_path.write_bytes(exe_payload)
+
+    assert mutils.get_lcu_version(game_path) == "16.5"
+
+
+def test_resolve_context_version_uses_remote_snapshot_version():
+    ctx = SimpleNamespace(
+        config=SimpleNamespace(
+            source_mode=SourceMode.REMOTE_SNAPSHOT,
+            remote_snapshot=RemoteSnapshotConfig(
+                version="16.5",
+                lcu_manifest_url="https://example.com/lcu.manifest",
+                game_manifest_url="https://example.com/game.manifest",
+            ),
+            game_path=Path("/tmp/unused"),
+        ),
+        runtime_cache={},
+    )
+
+    assert mutils.resolve_context_version(ctx) == "16.5"
+    assert ctx.runtime_cache["resolved_runtime_version"] == "16.5"
 
 
 def test_create_metadata_object():

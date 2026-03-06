@@ -18,9 +18,11 @@ from datetime import datetime
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as get_package_version
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from lol_audio_unpack.app_context import SourceMode
 from lol_audio_unpack.utils.common import (
     dump_json,
     dump_msgpack,
@@ -30,6 +32,10 @@ from lol_audio_unpack.utils.common import (
     load_msgpack,
     load_yaml,
 )
+from lol_audio_unpack.utils.versioning import extract_windows_file_version, normalize_patch_version
+
+if TYPE_CHECKING:
+    from lol_audio_unpack.app_context import AppContext
 
 
 def find_data_file(path: Path, *, dev_mode: bool) -> Path | None:
@@ -173,11 +179,81 @@ def get_game_version(game_path: Path) -> str:
     with open(meta, encoding="utf-8") as f:
         data = json.load(f)
 
-    version_v = data["version"]
+    return normalize_patch_version(data["version"])
 
-    if m := re.match(r"^(\d+\.\d+)\.", version_v):
-        return m.group(1)
-    raise ValueError(f"无法解析版本号: {version_v}")
+
+def get_lcu_version(game_path: Path) -> str | None:
+    """读取本地 ``LeagueClient.exe`` 的补丁版本。
+
+    Args:
+        game_path: 游戏根目录。
+
+    Returns:
+        若存在且成功解析，返回 ``major.minor`` 形式的版本号；否则返回 ``None``。
+    """
+    exe_path = game_path / "LeagueClient" / "LeagueClient.exe"
+    if not exe_path.is_file():
+        return None
+
+    try:
+        payload = exe_path.read_bytes()
+        return normalize_patch_version(extract_windows_file_version(payload))
+    except (OSError, ValueError) as exc:
+        logger.warning(f"无法从 LeagueClient.exe 解析版本，已跳过 LCU 一致性校验: {exe_path} | {exc}")
+        return None
+
+
+def validate_local_path_version(game_path: Path, game_version: str) -> None:
+    """校验本地 GAME 与 LCU 的主版本是否一致。
+
+    Args:
+        game_path: 游戏根目录。
+        game_version: 从 `content-metadata.json` 提取的补丁版本。
+    """
+    lcu_version = get_lcu_version(game_path)
+    if lcu_version is None:
+        logger.debug("未执行本地 LCU 一致性校验：缺少或无法读取 LeagueClient.exe 版本。")
+        return
+
+    if lcu_version == game_version:
+        logger.debug(f"本地 GAME / LCU 主版本一致: {game_version}")
+        return
+
+    logger.warning(
+        "检测到本地 GAME / LCU 主版本不一致："
+        f"GAME={game_version}, LCU={lcu_version}。请确认传入的游戏目录是否完整且自洽。"
+    )
+
+
+def resolve_context_version(ctx: "AppContext") -> str:
+    """根据来源模式解析当前运行版本。
+
+    Args:
+        ctx: 运行时上下文。
+
+    Returns:
+        当前运行使用的补丁版本号。
+
+    Raises:
+        ValueError: 当远端快照缺少版本信息时抛出。
+    """
+    cached_version = ctx.runtime_cache.get("resolved_runtime_version")
+    if isinstance(cached_version, str) and cached_version:
+        return cached_version
+
+    if ctx.config.source_mode is SourceMode.REMOTE_SNAPSHOT:
+        remote_snapshot = ctx.config.remote_snapshot
+        if remote_snapshot is None:
+            raise ValueError("REMOTE_SNAPSHOT 模式缺少远端快照配置，无法解析版本。")
+        version = remote_snapshot.version
+    else:
+        version = get_game_version(Path(ctx.config.game_path))
+        if not ctx.runtime_cache.get("local_version_validated", False):
+            validate_local_path_version(Path(ctx.config.game_path), version)
+            ctx.runtime_cache["local_version_validated"] = True
+
+    ctx.runtime_cache["resolved_runtime_version"] = version
+    return version
 
 
 def create_metadata_object(game_version: str, languages: list[str]) -> dict:

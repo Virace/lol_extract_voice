@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ from dotenv import dotenv_values
 from loguru import logger
 
 from lol_audio_unpack.utils.type_hints import StrPath
+from lol_audio_unpack.utils.versioning import normalize_patch_version
 
 KNOWN_AUDIO_TYPES: tuple[str, ...] = ("VO", "SFX", "MUSIC")
 SUPPORTED_KEYS: frozenset[str] = frozenset(
@@ -21,6 +23,10 @@ SUPPORTED_KEYS: frozenset[str] = frozenset(
         "GAME_REGION",
         "EXCLUDE_TYPE",
         "GROUP_BY_TYPE",
+        "SOURCE_MODE",
+        "REMOTE_VERSION",
+        "REMOTE_LCU_MANIFEST_URL",
+        "REMOTE_GAME_MANIFEST_URL",
         "WITH_BP_VO",
         "WWISER_PATH",
     }
@@ -29,12 +35,29 @@ DEFAULT_VALUES: dict[str, Any] = {
     "GAME_REGION": "zh_CN",
     "EXCLUDE_TYPE": "SFX,MUSIC",
     "GROUP_BY_TYPE": False,
+    "SOURCE_MODE": "local_path",
     "WITH_BP_VO": False,
 }
 
 
 class AppContextValidationError(ValueError):
     """应用上下文构建失败异常。"""
+
+
+class SourceMode(str, Enum):
+    """运行时内容来源模式。"""
+
+    LOCAL_PATH = "local_path"
+    REMOTE_SNAPSHOT = "remote_snapshot"
+
+
+@dataclass(frozen=True)
+class RemoteSnapshotConfig:
+    """远端快照配置。"""
+
+    version: str
+    lcu_manifest_url: str
+    game_manifest_url: str
 
 
 @dataclass(frozen=True)
@@ -46,6 +69,8 @@ class AppConfig:
     game_region: str = "zh_CN"
     exclude_types: tuple[str, ...] = ("SFX", "MUSIC")
     include_types: tuple[str, ...] = ("VO",)
+    source_mode: SourceMode = SourceMode.LOCAL_PATH
+    remote_snapshot: RemoteSnapshotConfig | None = None
     group_by_type: bool = False
     with_bp_vo: bool = False
     wwiser_path: Path | None = None
@@ -118,6 +143,19 @@ def _parse_exclude_types(value: Any) -> tuple[str, ...]:
     return _normalize_types([value])
 
 
+def _parse_source_mode(value: Any) -> SourceMode:
+    """解析内容来源模式。"""
+    if isinstance(value, SourceMode):
+        return value
+
+    raw_value = str(value or SourceMode.LOCAL_PATH.value).strip().lower()
+    try:
+        return SourceMode(raw_value)
+    except ValueError as exc:
+        valid_modes = ", ".join(mode.value for mode in SourceMode)
+        raise AppContextValidationError(f"SOURCE_MODE 无效: {raw_value}，可选值: {valid_modes}") from exc
+
+
 def _to_path(value: Any, key_name: str) -> Path:
     """将输入值转换为 ``Path``。"""
     if value is None:
@@ -126,6 +164,57 @@ def _to_path(value: Any, key_name: str) -> Path:
     if not text:
         raise AppContextValidationError(f"缺少必要的配置项: {key_name}")
     return Path(text)
+
+
+def _to_optional_text(value: Any) -> str | None:
+    """将输入标准化为可选非空字符串。"""
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _resolve_game_path(*, settings: Mapping[str, Any], output_path: Path, source_mode: SourceMode) -> Path:
+    """根据来源模式解析游戏根目录。"""
+    if source_mode is SourceMode.REMOTE_SNAPSHOT:
+        explicit_path = _to_optional_text(settings.get("GAME_PATH"))
+        if explicit_path is not None:
+            return Path(explicit_path)
+        return output_path / "_prepared_game"
+    return _to_path(settings.get("GAME_PATH"), "GAME_PATH")
+
+
+def _build_remote_snapshot_config(
+    *,
+    settings: Mapping[str, Any],
+    source_mode: SourceMode,
+) -> RemoteSnapshotConfig | None:
+    """根据原始设置构建远端快照配置。"""
+    if source_mode is not SourceMode.REMOTE_SNAPSHOT:
+        return None
+
+    version = _to_optional_text(settings.get("REMOTE_VERSION"))
+    lcu_manifest_url = _to_optional_text(settings.get("REMOTE_LCU_MANIFEST_URL"))
+    game_manifest_url = _to_optional_text(settings.get("REMOTE_GAME_MANIFEST_URL"))
+
+    missing_fields = [
+        key
+        for key, value in (
+            ("REMOTE_VERSION", version),
+            ("REMOTE_LCU_MANIFEST_URL", lcu_manifest_url),
+            ("REMOTE_GAME_MANIFEST_URL", game_manifest_url),
+        )
+        if value is None
+    ]
+    if missing_fields:
+        missing_text = ", ".join(missing_fields)
+        raise AppContextValidationError(f"REMOTE_SNAPSHOT 模式缺少必要配置项: {missing_text}")
+
+    return RemoteSnapshotConfig(
+        version=normalize_patch_version(version),
+        lcu_manifest_url=lcu_manifest_url,
+        game_manifest_url=game_manifest_url,
+    )
 
 
 def _resolve_env_dir(env_path: StrPath | None) -> Path:
@@ -208,8 +297,10 @@ def _build_raw_settings(
 
 def _build_app_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConfig:
     """从原始配置构建 ``AppConfig``。"""
-    game_path = _to_path(settings.get("GAME_PATH"), "GAME_PATH")
     output_path = _to_path(settings.get("OUTPUT_PATH"), "OUTPUT_PATH")
+    source_mode = _parse_source_mode(settings.get("SOURCE_MODE"))
+    game_path = _resolve_game_path(settings=settings, output_path=output_path, source_mode=source_mode)
+    remote_snapshot = _build_remote_snapshot_config(settings=settings, source_mode=source_mode)
 
     game_region = str(settings.get("GAME_REGION", "zh_CN") or "zh_CN")
     if game_region.lower() == "en_us":
@@ -226,6 +317,8 @@ def _build_app_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConf
         game_region=game_region,
         exclude_types=exclude_types,
         include_types=include_types,
+        source_mode=source_mode,
+        remote_snapshot=remote_snapshot,
         group_by_type=_parse_bool(settings.get("GROUP_BY_TYPE", False)),
         with_bp_vo=_parse_bool(settings.get("WITH_BP_VO", False)),
         wwiser_path=Path(wwiser_path_raw) if wwiser_path_raw else None,
@@ -322,6 +415,8 @@ __all__ = [
     "AppContextValidationError",
     "AppPaths",
     "OperationOptions",
+    "RemoteSnapshotConfig",
+    "SourceMode",
     "create_app_context",
     "initialize_context_from_env",
 ]
