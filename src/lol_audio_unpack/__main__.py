@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import sys
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 
 from loguru import logger
@@ -20,6 +21,7 @@ from loguru import logger
 from . import __version__, setup_app
 from .app_context import AppContext, AppContextValidationError, OperationOptions, SourceMode
 from .facade import LolAudioUnpackApp
+from .remote_preparer import RemoteSnapshotPreparer
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -155,6 +157,12 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="启用 'league_tools' 模块的日志输出，用于深度调试。",
     )
+    parser.add_argument(
+        "--cleanup-remote",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="remote_snapshot 模式下是否在整轮命令成功后自动清理远端准备产物。",
+    )
 
     # 配置覆盖参数（优先级最高）
     config_group = parser.add_argument_group("配置覆盖", "命令行显式配置（优先级高于系统环境变量和 .env）")
@@ -250,6 +258,7 @@ def build_cli_overrides(args: argparse.Namespace) -> dict[str, object]:
         "OUTPUT_PATH": args.output_path,
         "GAME_REGION": args.game_region,
         "EXCLUDE_TYPE": args.exclude_type,
+        "CLEANUP_REMOTE": args.cleanup_remote,
         "WITH_BP_VO": args.with_bp_vo,
         "WWISER_PATH": args.wwiser_path,
         "GROUP_BY_TYPE": args.group_by_type,
@@ -318,6 +327,187 @@ def build_operation_options(
         champion_ids=champion_ids,
         map_ids=map_ids,
     )
+
+
+@dataclass(frozen=True)
+class RemoteEntityWorkItem:
+    """remote 模式下的最小实体工作项。"""
+
+    entity_type: str
+    entity_id: int
+    need_extract: bool
+    need_mapping: bool
+
+
+def _has_update_actions(args: argparse.Namespace) -> bool:
+    """是否存在 update 操作。"""
+    return any([args.update, args.update_champions, args.update_maps])
+
+
+def _has_extract_actions(args: argparse.Namespace) -> bool:
+    """是否存在 extract 操作。"""
+    return any([args.extract, args.extract_champions, args.extract_maps])
+
+
+def _has_mapping_actions(args: argparse.Namespace) -> bool:
+    """是否存在 mapping 操作。"""
+    return any([args.mapping, args.mapping_champions, args.mapping_maps])
+
+
+def _build_remote_entity_work_items(args: argparse.Namespace, app: LolAudioUnpackApp) -> list[RemoteEntityWorkItem]:
+    """构建 remote 模式下的实体工作项队列。"""
+    reader = app._create_reader()
+    work_items: dict[tuple[str, int], RemoteEntityWorkItem] = {}
+
+    def register(entity_type: str, entity_id: int, *, need_extract: bool, need_mapping: bool) -> None:
+        key = (entity_type, entity_id)
+        existing = work_items.get(key)
+        if existing is None:
+            work_items[key] = RemoteEntityWorkItem(
+                entity_type=entity_type,
+                entity_id=entity_id,
+                need_extract=need_extract,
+                need_mapping=need_mapping,
+            )
+            return
+        work_items[key] = RemoteEntityWorkItem(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            need_extract=existing.need_extract or need_extract,
+            need_mapping=existing.need_mapping or need_mapping,
+        )
+
+    if args.extract:
+        for champion in reader.get_champions():
+            champion_id = champion.get("id")
+            if champion_id is not None:
+                register("champion", int(champion_id), need_extract=True, need_mapping=False)
+        for map_data in reader.get_maps():
+            map_id = map_data.get("id")
+            if map_id is not None:
+                register("map", int(map_id), need_extract=True, need_mapping=False)
+    elif args.extract_champions:
+        champion_ids = parse_int_ids(args.extract_champions)
+        if champion_ids is None:
+            for champion in reader.get_champions():
+                champion_id = champion.get("id")
+                if champion_id is not None:
+                    register("champion", int(champion_id), need_extract=True, need_mapping=False)
+        else:
+            for champion_id in champion_ids:
+                register("champion", champion_id, need_extract=True, need_mapping=False)
+    elif args.extract_maps:
+        map_ids = parse_int_ids(args.extract_maps)
+        if map_ids is None:
+            for map_data in reader.get_maps():
+                map_id = map_data.get("id")
+                if map_id is not None:
+                    register("map", int(map_id), need_extract=True, need_mapping=False)
+        else:
+            for map_id in map_ids:
+                register("map", map_id, need_extract=True, need_mapping=False)
+
+    if args.mapping:
+        for champion in reader.get_champions():
+            champion_id = champion.get("id")
+            if champion_id is not None:
+                register("champion", int(champion_id), need_extract=False, need_mapping=True)
+        for map_data in reader.get_maps():
+            map_id = map_data.get("id")
+            if map_id is not None:
+                register("map", int(map_id), need_extract=False, need_mapping=True)
+    elif args.mapping_champions:
+        champion_ids = parse_int_ids(args.mapping_champions)
+        if champion_ids is None:
+            for champion in reader.get_champions():
+                champion_id = champion.get("id")
+                if champion_id is not None:
+                    register("champion", int(champion_id), need_extract=False, need_mapping=True)
+        else:
+            for champion_id in champion_ids:
+                register("champion", champion_id, need_extract=False, need_mapping=True)
+    elif args.mapping_maps:
+        map_ids = parse_int_ids(args.mapping_maps)
+        if map_ids is None:
+            for map_data in reader.get_maps():
+                map_id = map_data.get("id")
+                if map_id is not None:
+                    register("map", int(map_id), need_extract=False, need_mapping=True)
+        else:
+            for map_id in map_ids:
+                register("map", map_id, need_extract=False, need_mapping=True)
+
+    return sorted(
+        work_items.values(),
+        key=lambda item: (item.entity_type != "champion", item.entity_id),
+    )
+
+
+def execute_remote_entity_workflow(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
+    """仅在 remote 模式下使用的单位驱动执行器。"""
+    if _has_update_actions(args):
+        execute_update_operations(args, app)
+        app.cleanup_remote_artifacts()
+
+    if not (_has_extract_actions(args) or _has_mapping_actions(args)):
+        return
+
+    work_items = _build_remote_entity_work_items(args, app)
+    if not work_items:
+        logger.warning("remote 模式未生成任何实体工作项。")
+        return
+
+    logger.info(f"remote 模式启用单位驱动执行，共 {len(work_items)} 个实体工作项。")
+    reader = app._create_reader()
+    remote_preparer = RemoteSnapshotPreparer(ctx=app.ctx)
+
+    for index, work_item in enumerate(work_items, start=1):
+        logger.info(
+            "remote 单位进度 {}/{}: {} {} (extract={}, mapping={})",
+            index,
+            len(work_items),
+            work_item.entity_type,
+            work_item.entity_id,
+            work_item.need_extract,
+            work_item.need_mapping,
+        )
+
+        is_champion = work_item.entity_type == "champion"
+        entity_options = OperationOptions(
+            max_workers=args.max_workers,
+            force_update=args.force,
+            process_events=not args.skip_events,
+            integrate_data=getattr(args, "integrate_data", False),
+            champion_ids=(work_item.entity_id,) if is_champion else None,
+            map_ids=(work_item.entity_id,) if not is_champion else None,
+        )
+
+        remote_preparer.prepare_entity_wads(
+            reader=reader,
+            champion_ids=entity_options.champion_ids,
+            map_ids=entity_options.map_ids,
+            include_champions=is_champion,
+            include_maps=not is_champion,
+            need_extract=work_item.need_extract,
+            need_mapping=work_item.need_mapping,
+        )
+        try:
+            if work_item.need_extract:
+                app.extract(
+                    entity_options,
+                    include_champions=is_champion,
+                    include_maps=not is_champion,
+                    prepare_remote=False,
+                )
+            if work_item.need_mapping:
+                app.mapping(
+                    entity_options,
+                    include_champions=is_champion,
+                    include_maps=not is_champion,
+                    prepare_remote=False,
+                )
+        finally:
+            app.cleanup_remote_artifacts()
 
 
 def execute_update_operations(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
@@ -454,9 +644,16 @@ def main() -> None:
         app_context = initialize_app(args)
         app = LolAudioUnpackApp(app_context)
 
+        if app_context.config.source_mode is SourceMode.REMOTE_SNAPSHOT and (
+            _has_extract_actions(args) or _has_mapping_actions(args)
+        ):
+            execute_remote_entity_workflow(args, app)
+            return
+
         execute_update_operations(args, app)
         execute_extract_operations(args, app)
         execute_mapping_operations(args, app)
+        app.cleanup_remote_artifacts()
 
     except KeyboardInterrupt:
         logger.warning("用户中断操作")

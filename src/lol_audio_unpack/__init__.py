@@ -46,7 +46,11 @@ def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs) -> AppC
     logger.enable("lol_audio_unpack")
 
     logger.remove()
-    logger.add(sys.stdout, level=log_level.upper(), enqueue=True, colorize=True)
+    try:
+        logger.add(sys.stdout, level=log_level.upper(), enqueue=True, colorize=True)
+    except (OSError, PermissionError):
+        logger.add(sys.stdout, level=log_level.upper(), enqueue=False, colorize=True)
+        logger.warning("日志队列初始化失败，已回退为非 enqueue 模式。")
 
     app_context = create_app_context(dev_mode=dev_mode, **kwargs)
 

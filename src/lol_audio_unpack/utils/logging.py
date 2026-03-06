@@ -25,6 +25,17 @@ class LoggingConfiguration:
     """Loguru 日志配置工具（无外部依赖，可独立使用）"""
 
     @staticmethod
+    def _add_handler_with_enqueue_fallback(*args, **kwargs) -> None:
+        """优先启用 enqueue，失败时回退为非 enqueue。"""
+        try:
+            logger.add(*args, **kwargs)
+        except (OSError, PermissionError):
+            fallback_kwargs = dict(kwargs)
+            fallback_kwargs["enqueue"] = False
+            logger.add(*args, **fallback_kwargs)
+            logger.warning("日志队列初始化失败，已回退为非 enqueue 模式。")
+
+    @staticmethod
     def setup_logging(
         *,
         dev_mode: bool = False,
@@ -57,7 +68,7 @@ class LoggingConfiguration:
             )
 
         # 添加控制台日志处理器
-        logger.add(
+        LoggingConfiguration._add_handler_with_enqueue_fallback(
             sys.stderr,
             level=log_level.upper(),
             format=console_format,
@@ -76,7 +87,7 @@ class LoggingConfiguration:
             # 文件日志格式（更详细，包含完整路径信息）
             file_format = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} | {message}"
 
-            logger.add(
+            LoggingConfiguration._add_handler_with_enqueue_fallback(
                 log_path / "{time:YYYY-MM-DD_HH-mm-ss}.log",
                 level="DEBUG",  # 文件日志通常记录更详细的信息
                 format=file_format,

@@ -1,5 +1,6 @@
 import io
 import json
+from dataclasses import replace
 from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
@@ -21,6 +22,7 @@ from lol_audio_unpack.remote_preparer import RemoteSnapshotPreparer
 pytestmark = pytest.mark.unit
 EXPECTED_BUNDLE_COUNT = 3
 EXPECTED_EXTRACTED_BIN_COUNT = 4
+EXPECTED_CLEANUP_LCU_WADS = 2
 
 
 def _build_remote_ctx(tmp_path: Path, *, game_region: str = "zh_CN") -> AppContext:
@@ -456,3 +458,124 @@ def test_facade_mapping_prepares_remote_wads_before_mapping(monkeypatch: pytest.
     app.mapping(OperationOptions())
 
     assert call_order == ["prepare_mapping", "mapping"]
+
+
+def test_remote_snapshot_preparer_cleanup_tracked_artifacts_supports_dry_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _build_remote_ctx(tmp_path, game_region="zh_CN")
+    ctx = AppContext(
+        config=replace(ctx.config, exclude_types=(), include_types=("VO", "SFX", "MUSIC")),
+        paths=ctx.paths,
+        logger=ctx.logger,
+        runtime_cache=ctx.runtime_cache,
+    )
+    monkeypatch.setattr(m_remote, "urlopen", lambda _url: io.BytesIO(b"manifest-data"))
+
+    class FakeFile:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class FakePatcherManifest:
+        def __init__(self, *, file: Path, path: Path) -> None:
+            self.file = file
+            self.path = Path(path)
+            names = [
+                "plugins/rcp-be-lol-game-data/description.json",
+                "plugins/rcp-be-lol-game-data/default-assets.wad",
+                "plugins/rcp-be-lol-game-data/zh_CN-assets.wad",
+                "DATA/FINAL/Champions/Annie.wad.client",
+            ]
+            self.files = {name: FakeFile(name) for name in names}
+
+        def file_output(self, file: FakeFile) -> str:
+            return str(self.path / PurePosixPath(file.name))
+
+        async def download_files_concurrently(self, files, raise_on_error=True):  # noqa: ARG002
+            for file in files:
+                output_path = Path(self.file_output(file))
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                if file.name.endswith("description.json"):
+                    output_path.write_text(
+                        json.dumps(
+                            {
+                                "riotMeta": {
+                                    "globalAssetBundles": ["default-assets.wad"],
+                                    "perLocaleAssetBundles": {"zh_CN": ["zh_CN-assets.wad"]},
+                                }
+                            }
+                        ),
+                        encoding="utf-8",
+                    )
+                else:
+                    output_path.write_bytes(file.name.encode())
+            return tuple(True for _ in files)
+
+    class FakeWADExtractor:
+        def __init__(self, manifest) -> None:  # noqa: ANN001
+            self.manifest = manifest
+
+        def extract_files(self, wad_file_paths: dict[str, list[str]]) -> dict[str, dict[str, bytes | None]]:
+            return {
+                wad_path: {bin_path: f"{wad_path}|{bin_path}".encode() for bin_path in bin_paths}
+                for wad_path, bin_paths in wad_file_paths.items()
+            }
+
+    monkeypatch.setattr(m_remote, "PatcherManifest", FakePatcherManifest)
+    monkeypatch.setattr(m_remote, "WADExtractor", FakeWADExtractor)
+
+    preparer = RemoteSnapshotPreparer(ctx=ctx)
+    lcu_result = preparer.prepare_lcu_game_data()
+    reader = SimpleNamespace(
+        get_champions=lambda: [
+            {
+                "alias": "Annie",
+                "wad": {"root": "Game/DATA/FINAL/Champions/Annie.wad.client"},
+                "skins": [{"id": 1000, "binPath": "data/characters/Annie/skins/skin0.bin"}],
+            }
+        ],
+        get_maps=lambda: [],
+        get_champion=lambda _id: {},
+        get_map=lambda _id: {},
+        ctx=ctx,
+    )
+    bin_result = preparer.prepare_bin_inputs(reader=reader, target="skin")
+    wad_result = preparer.prepare_extract_wads(
+        reader=SimpleNamespace(
+            ctx=ctx,
+            get_audio_type=lambda _category: "SFX",
+            get_champion=lambda _id: {
+                "id": 1,
+                "wad": {"root": "Game/DATA/FINAL/Champions/Annie.wad.client"},
+            },
+            get_champion_banks=lambda _id: {"skins": {"1000": {"CHARACTER_SFX": [["path1"]]}}},
+            get_map=lambda _id: {},
+            get_map_banks=lambda _id: None,
+            get_champions=lambda: [],
+            get_maps=lambda: [],
+        ),
+        champion_ids=(1,),
+        map_ids=None,
+        include_champions=True,
+        include_maps=False,
+    )
+
+    assert lcu_result.bundle_cache_paths
+    assert bin_result is not None
+    assert wad_result is not None
+
+    cleanup_result = preparer.cleanup_tracked_artifacts(dry_run=True)
+
+    assert cleanup_result["cached_lcu_wads"] == EXPECTED_CLEANUP_LCU_WADS
+    assert cleanup_result["prepared_lcu_wads"] == EXPECTED_CLEANUP_LCU_WADS
+    assert cleanup_result["bin_input_files"] == 1
+    assert cleanup_result["bin_input_flags"] == 1
+    assert cleanup_result["cached_game_wads"] == 1
+    assert cleanup_result["prepared_game_wads"] == 1
+
+    assert (ctx.paths.game_lcu_path / "description.json").exists()
+    assert (ctx.paths.game_lcu_path / "default-assets.wad").exists()
+    assert (ctx.paths.game_lcu_path / "zh_CN-assets.wad").exists()
+    assert bin_result.flag_file_path.exists()
+    assert any((ctx.paths.manifest_path / ctx.config.remote_snapshot.version / "bin_input").rglob("*"))

@@ -114,6 +114,15 @@ def test_build_cli_overrides_includes_with_bp_vo_when_explicit():
     assert overrides == {"WITH_BP_VO": True}
 
 
+def test_build_cli_overrides_includes_cleanup_remote_when_explicit():
+    parser = cli.create_parser()
+    args = parser.parse_args(["--update", "--no-cleanup-remote"])
+
+    overrides = cli.build_cli_overrides(args)
+
+    assert overrides == {"CLEANUP_REMOTE": False}
+
+
 def test_initialize_app_passes_cli_overrides_to_setup_app(monkeypatch, tmp_path):
     parser = cli.create_parser()
     game_path = tmp_path / "game"
@@ -199,3 +208,79 @@ def test_parse_int_ids():
     assert cli.parse_int_ids(None) is None
     assert cli.parse_int_ids("all") is None
     assert cli.parse_int_ids("1,2, 3") == (1, 2, 3)
+
+
+def test_build_remote_entity_work_items_merges_extract_and_mapping_targets():
+    args = SimpleNamespace(
+        extract=False,
+        extract_champions="1,103",
+        extract_maps=None,
+        mapping=False,
+        mapping_champions="103,555",
+        mapping_maps=None,
+    )
+
+    reader = SimpleNamespace(
+        get_champions=lambda: [],
+        get_maps=lambda: [],
+    )
+    app = SimpleNamespace(_create_reader=lambda: reader)
+
+    work_items = cli._build_remote_entity_work_items(args, app)
+
+    assert work_items == [
+        cli.RemoteEntityWorkItem(entity_type="champion", entity_id=1, need_extract=True, need_mapping=False),
+        cli.RemoteEntityWorkItem(entity_type="champion", entity_id=103, need_extract=True, need_mapping=True),
+        cli.RemoteEntityWorkItem(entity_type="champion", entity_id=555, need_extract=False, need_mapping=True),
+    ]
+
+
+def test_execute_remote_entity_workflow_runs_per_entity_and_cleans_between_entities(monkeypatch):
+    args = SimpleNamespace(
+        update=False,
+        update_champions=None,
+        update_maps=None,
+        extract=False,
+        extract_champions="1,103",
+        extract_maps=None,
+        mapping=False,
+        mapping_champions="103",
+        mapping_maps=None,
+        max_workers=4,
+        force=False,
+        skip_events=False,
+        integrate_data=False,
+    )
+
+    ctx = SimpleNamespace(config=SimpleNamespace(source_mode=SourceMode.REMOTE_SNAPSHOT))
+    reader = SimpleNamespace(get_champions=lambda: [], get_maps=lambda: [])
+    call_order = []
+
+    class FakePreparer:
+        def __init__(self, *, ctx):
+            assert ctx is not None
+
+        def prepare_entity_wads(self, **kwargs):
+            call_order.append(("prepare", kwargs["champion_ids"], kwargs["need_extract"], kwargs["need_mapping"]))
+
+    app = SimpleNamespace(
+        ctx=ctx,
+        _create_reader=lambda: reader,
+        extract=lambda opts, **kwargs: call_order.append(("extract", opts.champion_ids, kwargs["prepare_remote"])),
+        mapping=lambda opts, **kwargs: call_order.append(("mapping", opts.champion_ids, kwargs["prepare_remote"])),
+        cleanup_remote_artifacts=lambda: call_order.append(("cleanup",)),
+    )
+
+    monkeypatch.setattr(cli, "RemoteSnapshotPreparer", FakePreparer)
+
+    cli.execute_remote_entity_workflow(args, app)
+
+    assert call_order == [
+        ("prepare", (1,), True, False),
+        ("extract", (1,), False),
+        ("cleanup",),
+        ("prepare", (103,), True, True),
+        ("extract", (103,), False),
+        ("mapping", (103,), False),
+        ("cleanup",),
+    ]

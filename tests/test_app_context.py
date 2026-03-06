@@ -94,6 +94,7 @@ def test_create_app_context_builds_remote_snapshot_config(tmp_path: Path) -> Non
     )
 
     assert app_context.config.source_mode is SourceMode.REMOTE_SNAPSHOT
+    assert app_context.config.cleanup_remote is True
     assert app_context.config.game_path == output_path / "_prepared_game"
     assert app_context.config.remote_snapshot is not None
     assert app_context.config.remote_snapshot.version == "16.5"
@@ -124,6 +125,63 @@ def test_setup_app_returns_context_with_cli_overrides(monkeypatch: pytest.Monkey
     assert set(app_context.config.include_types) == {"SFX", "MUSIC"}
     assert app_context.paths.log_path == output_path / "logs"
     assert app_context.paths.log_path.is_dir()
+
+
+def test_setup_app_falls_back_when_enqueue_logging_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    env_dir = tmp_path / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+
+    game_path = tmp_path / "game"
+    output_path = tmp_path / "output"
+    _write_env_file(env_dir, game_path, output_path)
+
+    calls = []
+
+    def fake_add(*args, **kwargs):
+        calls.append(kwargs)
+        if kwargs.get("enqueue") is True:
+            raise PermissionError("no semaphore")
+        return 1
+
+    monkeypatch.setattr(app_pkg.logger, "add", fake_add)
+
+    app_context = setup_app(
+        env_path=env_dir,
+        dev_mode=False,
+        log_level="INFO",
+    )
+
+    assert isinstance(app_context, AppContext)
+    assert calls[0]["enqueue"] is True
+    assert calls[1]["enqueue"] is False
+    assert calls[2]["enqueue"] is True
+    assert calls[3]["enqueue"] is False
+
+
+def test_create_app_context_accepts_cleanup_remote_override(tmp_path: Path) -> None:
+    env_dir = tmp_path / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+    output_path = tmp_path / "output"
+    (env_dir / ".lol.env").write_text(
+        f'LOL_OUTPUT_PATH="{output_path}"\n',
+        encoding="utf-8",
+    )
+
+    app_context = create_app_context(
+        env_path=env_dir,
+        cli_overrides={
+            "SOURCE_MODE": "remote_snapshot",
+            "CLEANUP_REMOTE": False,
+            "REMOTE_VERSION": "16.5.751.1533",
+            "REMOTE_LCU_MANIFEST_URL": "https://example.com/lcu.manifest",
+            "REMOTE_GAME_MANIFEST_URL": "https://example.com/game.manifest",
+        },
+    )
+
+    assert app_context.config.cleanup_remote is False
 
 
 def test_operation_options_defaults() -> None:

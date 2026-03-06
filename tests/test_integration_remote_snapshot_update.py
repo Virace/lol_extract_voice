@@ -9,6 +9,7 @@ from lol_audio_unpack.facade import LolAudioUnpackApp
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.manager.utils import find_data_file, read_data
 from lol_audio_unpack.utils.common import Singleton
+from tests.remote_disk_usage import monitor_directory_usage
 
 pytestmark = pytest.mark.integration
 
@@ -63,12 +64,13 @@ def test_remote_snapshot_update_champions_live_latest() -> None:
         )
 
         app = LolAudioUnpackApp(ctx)
-        app.update(
-            OperationOptions(
-                champion_ids=TARGET_CHAMPION_IDS,
-            ),
-            target="skin",
-        )
+        with monitor_directory_usage(output_path, label="remote_update_champions_1_103_555"):
+            app.update(
+                OperationOptions(
+                    champion_ids=TARGET_CHAMPION_IDS,
+                ),
+                target="skin",
+            )
 
         data_file_base = output_path / "manifest" / version / "data"
         data_file = find_data_file(data_file_base, dev_mode=False)
@@ -87,5 +89,6 @@ def test_remote_snapshot_update_champions_live_latest() -> None:
 
         use_local_bin_flag = output_path / "manifest" / version / ".use_local_bin"
         assert use_local_bin_flag.exists()
+        assert (output_path / "space_usage_reports.json").exists()
     finally:
         _reset_data_reader_singleton()

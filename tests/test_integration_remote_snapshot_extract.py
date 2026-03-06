@@ -8,6 +8,7 @@ from lol_audio_unpack.facade import LolAudioUnpackApp
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.manager.utils import find_data_file
 from lol_audio_unpack.utils.common import Singleton
+from tests.remote_disk_usage import monitor_directory_usage
 
 pytestmark = pytest.mark.integration
 
@@ -87,7 +88,8 @@ def test_remote_snapshot_extract_champions_live_latest_vo_only() -> None:
             game_manifest_url=pair.game.url,
         )
         app = LolAudioUnpackApp(ctx)
-        app.extract(OperationOptions(champion_ids=TARGET_CHAMPION_IDS))
+        with monitor_directory_usage(output_path, label="remote_extract_champions_1_103_555_vo_only"):
+            app.extract(OperationOptions(champion_ids=TARGET_CHAMPION_IDS))
     finally:
         _reset_data_reader_singleton()
 
@@ -104,3 +106,4 @@ def test_remote_snapshot_extract_champions_live_latest_vo_only() -> None:
     assert prepared_root.exists()
     language_wads = list(prepared_root.glob("*.zh_CN.wad.client"))
     assert language_wads, "VO-only 解包后未找到任何语言 WAD"
+    assert (output_path / "space_usage_reports.json").exists()

@@ -67,6 +67,21 @@ class LolAudioUnpackApp:
             return None
         return RemoteSnapshotPreparer(ctx=self.ctx)
 
+    def cleanup_remote_artifacts(self) -> None:
+        """在 remote 模式下按配置清理已登记的远端产物。"""
+        if self.ctx.config.source_mode is not SourceMode.REMOTE_SNAPSHOT:
+            return
+        if not self.ctx.config.cleanup_remote:
+            logger.info("remote_snapshot 模式已显式关闭自动清理，保留远端准备产物。")
+            return
+
+        preparer = self._build_remote_preparer()
+        if preparer is None:
+            return
+        cleanup_result = preparer.cleanup_tracked_artifacts()
+        if cleanup_result:
+            logger.info(f"远端准备产物清理完成: {cleanup_result}")
+
     def update(self, opts: OperationOptions, *, target: str = "all") -> None:
         """执行更新流程。"""
         remote_preparer = self._prepare_remote_snapshot_for_update()
@@ -91,11 +106,12 @@ class LolAudioUnpackApp:
         *,
         include_champions: bool = True,
         include_maps: bool = True,
+        prepare_remote: bool = True,
     ) -> None:
         """执行解包流程。"""
         reader = self._create_reader()
         remote_preparer = self._build_remote_preparer()
-        if remote_preparer is not None:
+        if prepare_remote and remote_preparer is not None:
             remote_preparer.prepare_extract_wads(
                 reader=reader,
                 champion_ids=opts.champion_ids,
@@ -131,12 +147,13 @@ class LolAudioUnpackApp:
         *,
         include_champions: bool = True,
         include_maps: bool = True,
+        prepare_remote: bool = True,
     ) -> None:
         """执行映射流程。"""
         self._ensure_wwiser_path()
         reader = self._create_reader()
         remote_preparer = self._build_remote_preparer()
-        if remote_preparer is not None:
+        if prepare_remote and remote_preparer is not None:
             remote_preparer.prepare_mapping_wads(
                 reader=reader,
                 champion_ids=opts.champion_ids,

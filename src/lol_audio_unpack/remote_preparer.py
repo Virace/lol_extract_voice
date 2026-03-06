@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 LCU_PLUGIN_SUFFIX = "plugins/rcp-be-lol-game-data"
 DESCRIPTION_FILE_NAME = "description.json"
+REMOTE_CLEANUP_REGISTRY_KEY = "remote_cleanup_registry"
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,36 @@ class RemoteSnapshotPreparer:
         self.download_root = self.lcu_cache_root / "downloads"
         self.prepared_lcu_root = self.ctx.paths.game_lcu_path
 
+    def cleanup_tracked_artifacts(self, *, dry_run: bool = False) -> dict[str, int]:
+        """清理本轮已登记的远端准备产物。
+
+        Args:
+            dry_run: 为 `True` 时仅统计将删除的数量，不真正删除文件。
+
+        Returns:
+            各类产物删除数量统计。
+        """
+        registry = self._get_cleanup_registry()
+        cleanup_counts = {
+            "prepared_lcu_wads": self._remove_registered_paths(registry["prepared_lcu_wads"], dry_run=dry_run),
+            "cached_lcu_wads": self._remove_registered_paths(registry["cached_lcu_wads"], dry_run=dry_run),
+            "bin_input_files": self._remove_registered_paths(registry["bin_input_files"], dry_run=dry_run),
+            "bin_input_flags": self._remove_registered_paths(registry["bin_input_flags"], dry_run=dry_run),
+            "prepared_game_wads": self._remove_registered_paths(registry["prepared_game_wads"], dry_run=dry_run),
+            "cached_game_wads": self._remove_registered_paths(registry["cached_game_wads"], dry_run=dry_run),
+        }
+
+        if not dry_run:
+            self._prune_empty_tree(self.ctx.paths.manifest_path / self.snapshot.version / "bin_input")
+            self._prune_empty_tree(self.prepared_lcu_root)
+            self._prune_empty_tree(self.game_cache_root / "downloads")
+            self._prune_empty_tree(self.lcu_cache_root / "downloads")
+            self._prune_empty_tree(self.ctx.config.game_path / "Game" / "DATA" / "FINAL" / "Champions")
+            self._prune_empty_tree(self.ctx.config.game_path / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping")
+            self.ctx.runtime_cache.pop(REMOTE_CLEANUP_REGISTRY_KEY, None)
+
+        return cleanup_counts
+
     def prepare_lcu_game_data(self) -> LcuPrepareResult:
         """准备 `DataUpdater` 所需的 LCU 基础资源。
 
@@ -103,8 +134,12 @@ class RemoteSnapshotPreparer:
         bundle_names = self._resolve_required_bundle_names(description_cache_path)
         bundle_files = self._resolve_bundle_files(bundle_names, lcu_files)
         bundle_cache_paths = tuple(self._ensure_manifest_files_downloaded(manifest, bundle_files))
+        prepared_bundle_paths: list[Path] = []
         for bundle_cache_path in bundle_cache_paths:
-            self._sync_lcu_file_to_prepared_root(bundle_cache_path)
+            prepared_bundle_paths.append(self._sync_lcu_file_to_prepared_root(bundle_cache_path))
+
+        self._register_cleanup_paths("cached_lcu_wads", bundle_cache_paths)
+        self._register_cleanup_paths("prepared_lcu_wads", prepared_bundle_paths)
 
         logger.info(
             "远端 LCU 最小准备完成：version={}, region={}, bundles={}",
@@ -157,6 +192,7 @@ class RemoteSnapshotPreparer:
 
         bin_input_root = self.ctx.paths.manifest_path / self.snapshot.version / "bin_input"
         extracted_count = 0
+        extracted_paths: list[Path] = []
         for wad_path, bin_paths in extraction_plan.items():
             extraction_result = extractor.extract_files({wad_path: bin_paths})
             wad_results = extraction_result.get(wad_path, {})
@@ -167,12 +203,15 @@ class RemoteSnapshotPreparer:
                 target_path = bin_input_root / bin_path
                 target_path.parent.mkdir(parents=True, exist_ok=True)
                 target_path.write_bytes(payload)
+                extracted_paths.append(target_path)
                 extracted_count += 1
 
         flag_file_path = self.ctx.paths.manifest_path / self.snapshot.version / ".use_local_bin"
         if extracted_count > 0:
             flag_file_path.parent.mkdir(parents=True, exist_ok=True)
             flag_file_path.touch()
+            self._register_cleanup_paths("bin_input_files", extracted_paths)
+            self._register_cleanup_paths("bin_input_flags", [flag_file_path])
             logger.info("远端 BIN 输入准备完成：共提取 {} 个文件。", extracted_count)
             return BinInputPrepareResult(
                 manifest_cache_path=manifest_cache_path,
@@ -219,6 +258,41 @@ class RemoteSnapshotPreparer:
             include_champions=include_champions,
             include_maps=include_maps,
         )
+        return self._prepare_game_wads(wad_paths)
+
+    def prepare_entity_wads(  # noqa: PLR0913
+        self,
+        *,
+        reader: DataReader,
+        champion_ids: tuple[int, ...] | None,
+        map_ids: tuple[int, ...] | None,
+        include_champions: bool,
+        include_maps: bool,
+        need_extract: bool,
+        need_mapping: bool,
+    ) -> GameWadPrepareResult | None:
+        """为单个实体工作项准备所需 WAD 并集。"""
+        wad_paths: set[str] = set()
+        if need_extract:
+            wad_paths.update(
+                self._build_extract_wad_plan(
+                    reader=reader,
+                    champion_ids=champion_ids,
+                    map_ids=map_ids,
+                    include_champions=include_champions,
+                    include_maps=include_maps,
+                )
+            )
+        if need_mapping:
+            wad_paths.update(
+                self._build_mapping_wad_plan(
+                    reader=reader,
+                    champion_ids=champion_ids,
+                    map_ids=map_ids,
+                    include_champions=include_champions,
+                    include_maps=include_maps,
+                )
+            )
         return self._prepare_game_wads(wad_paths)
 
     def _ensure_manifest_cached(self, *, manifest_url: str, manifest_cache_dir: Path) -> Path:
@@ -674,6 +748,8 @@ class RemoteSnapshotPreparer:
         wad_files = [manifest.files[path] for path in sorted(normalized_paths)]
         cached_paths = self._ensure_manifest_files_downloaded(manifest, wad_files)
         prepared_paths = tuple(self._sync_game_file_to_prepared_root(path, download_root) for path in cached_paths)
+        self._register_cleanup_paths("cached_game_wads", cached_paths)
+        self._register_cleanup_paths("prepared_game_wads", prepared_paths)
         logger.info("远端 GAME WAD 准备完成：共 {} 个文件。", len(prepared_paths))
         return GameWadPrepareResult(
             manifest_cache_path=manifest_cache_path,
@@ -748,3 +824,63 @@ class RemoteSnapshotPreparer:
             os.link(source_path, target_path)
         except OSError:
             shutil.copy2(source_path, target_path)
+
+    def _get_cleanup_registry(self) -> dict[str, set[str]]:
+        """获取或初始化远端清理登记表。"""
+        registry = self.ctx.runtime_cache.get(REMOTE_CLEANUP_REGISTRY_KEY)
+        if isinstance(registry, dict):
+            return registry
+
+        registry = {
+            "cached_lcu_wads": set(),
+            "prepared_lcu_wads": set(),
+            "bin_input_files": set(),
+            "bin_input_flags": set(),
+            "cached_game_wads": set(),
+            "prepared_game_wads": set(),
+        }
+        self.ctx.runtime_cache[REMOTE_CLEANUP_REGISTRY_KEY] = registry
+        return registry
+
+    def _register_cleanup_paths(self, key: str, paths: list[Path] | tuple[Path, ...]) -> None:
+        """登记可清理文件路径。"""
+        registry = self._get_cleanup_registry()
+        registry[key].update(str(path) for path in paths)
+
+    @staticmethod
+    def _remove_registered_paths(paths: set[str], *, dry_run: bool) -> int:
+        """删除或统计已登记路径数量。"""
+        removed_count = 0
+        for raw_path in list(paths):
+            path = Path(raw_path)
+            if dry_run:
+                if path.exists():
+                    removed_count += 1
+                continue
+            try:
+                if path.exists():
+                    path.unlink()
+                    removed_count += 1
+            except OSError:
+                logger.warning(f"清理远端产物失败: {path}")
+            finally:
+                paths.discard(raw_path)
+        return removed_count
+
+    @staticmethod
+    def _prune_empty_tree(root: Path) -> None:
+        """删除根目录下的空目录。"""
+        if not root.exists():
+            return
+
+        for current_root, _, _ in os.walk(root, topdown=False):
+            current_path = Path(current_root)
+            try:
+                if any(current_path.iterdir()):
+                    continue
+            except OSError:
+                continue
+            try:
+                current_path.rmdir()
+            except OSError:
+                continue

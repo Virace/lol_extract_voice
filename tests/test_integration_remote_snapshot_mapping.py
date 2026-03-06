@@ -10,6 +10,7 @@ from lol_audio_unpack.facade import LolAudioUnpackApp
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.manager.utils import find_data_file
 from lol_audio_unpack.utils.common import Singleton
+from tests.remote_disk_usage import monitor_directory_usage
 
 pytestmark = pytest.mark.integration
 
@@ -119,7 +120,8 @@ def test_remote_snapshot_mapping_champions_live_latest() -> None:
             wwiser_path=wwiser_path,
         )
         app = LolAudioUnpackApp(ctx)
-        app.mapping(OperationOptions(max_workers=1, champion_ids=TARGET_CHAMPION_IDS))
+        with monitor_directory_usage(output_path, label="remote_mapping_champions_1_103_555"):
+            app.mapping(OperationOptions(max_workers=1, champion_ids=TARGET_CHAMPION_IDS))
     finally:
         _reset_data_reader_singleton()
 
@@ -128,3 +130,4 @@ def test_remote_snapshot_mapping_champions_live_latest() -> None:
     for champion_id in TARGET_CHAMPION_IDS:
         mapping_file = find_data_file(hash_root / str(champion_id), dev_mode=False)
         assert mapping_file is not None, f"未找到英雄 {champion_id} 的 mapping 输出"
+    assert (output_path / "space_usage_reports.json").exists()

@@ -22,6 +22,7 @@ SUPPORTED_KEYS: frozenset[str] = frozenset(
         "OUTPUT_PATH",
         "GAME_REGION",
         "EXCLUDE_TYPE",
+        "CLEANUP_REMOTE",
         "GROUP_BY_TYPE",
         "SOURCE_MODE",
         "REMOTE_VERSION",
@@ -34,6 +35,7 @@ SUPPORTED_KEYS: frozenset[str] = frozenset(
 DEFAULT_VALUES: dict[str, Any] = {
     "GAME_REGION": "zh_CN",
     "EXCLUDE_TYPE": "SFX,MUSIC",
+    "CLEANUP_REMOTE": True,
     "GROUP_BY_TYPE": False,
     "SOURCE_MODE": "local_path",
     "WITH_BP_VO": False,
@@ -69,6 +71,7 @@ class AppConfig:
     game_region: str = "zh_CN"
     exclude_types: tuple[str, ...] = ("SFX", "MUSIC")
     include_types: tuple[str, ...] = ("VO",)
+    cleanup_remote: bool = True
     source_mode: SourceMode = SourceMode.LOCAL_PATH
     remote_snapshot: RemoteSnapshotConfig | None = None
     group_by_type: bool = False
@@ -317,6 +320,7 @@ def _build_app_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConf
         game_region=game_region,
         exclude_types=exclude_types,
         include_types=include_types,
+        cleanup_remote=_parse_bool(settings.get("CLEANUP_REMOTE", True)),
         source_mode=source_mode,
         remote_snapshot=remote_snapshot,
         group_by_type=_parse_bool(settings.get("GROUP_BY_TYPE", False)),
