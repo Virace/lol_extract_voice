@@ -11,7 +11,7 @@ from lol_audio_unpack.manager.utils import find_data_file, read_data
 from lol_audio_unpack.utils.common import Singleton
 from tests.remote_disk_usage import monitor_directory_usage
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.remote_live]
 
 LIVE_REGION = "EUW"
 GAME_REGION = "zh_CN"
