@@ -1,8 +1,8 @@
 """远端快照最小准备器。
 
 说明：
-    当前 remote 模式已完成 `update` 主链路的真实远端验证；
-    `extract` / `mapping` 阶段目前仅完成单元测试，完整远端实链仍待补充验证。
+    当前 remote 模式已完成 3 个目标英雄的 `update / extract / mapping`
+    真实远端链路验证；后续仍需继续补充地图、更多音频类型与清理策略场景。
 """
 
 from __future__ import annotations
