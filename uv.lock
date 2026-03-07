@@ -609,7 +609,7 @@ requires-dist = [
     { name = "league-tools" },
     { name = "msgpack", specifier = ">=1.1.1" },
     { name = "python-dotenv", specifier = ">=1.1.1" },
-    { name = "riotmanifest", specifier = ">=2.2.2" },
+    { name = "riotmanifest", specifier = ">=2.3.0" },
     { name = "ruamel-yaml", specifier = ">=0.18.14" },
 ]
 
@@ -1202,7 +1202,7 @@ wheels = [
 
 [[package]]
 name = "riotmanifest"
-version = "2.2.2"
+version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1212,9 +1212,9 @@ dependencies = [
     { name = "pyzstd" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7f/cf/4863dd57c2e2b66025bfb914336eb8652c9e3fd8f36695cc72c80272b218/riotmanifest-2.2.2.tar.gz", hash = "sha256:e989fecbf5627973ea20cea407a790c14848cb6e0c0a188897700159ad879eb0", size = 63220, upload-time = "2026-03-06T11:05:26.357Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6b/f2/06568ceea69cd2b6868eb8e671c009f5ddcb67b13f51cc6abc755a3e48d5/riotmanifest-2.3.0.tar.gz", hash = "sha256:18b55cdd7a0c7efa0dff26f3748987f87e49b7ad41991a35c8baa8642e71c302", size = 64539, upload-time = "2026-03-07T10:52:34.755Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ba/1a/26938b63488bec0a36e231a89f5b8717e0eead593608ec2ceef5d730093d/riotmanifest-2.2.2-py3-none-any.whl", hash = "sha256:df10b501ad1ab5fa9fc629c4c7cdef825c0d01880a54f3b9f0e04f0898a87eea", size = 74009, upload-time = "2026-03-06T11:05:25.255Z" },
+    { url = "https://files.pythonhosted.org/packages/65/a8/9bc148762d6f66760c1622daa7fa7f0763d46aec70fe2299e9f3b4bbd6a9/riotmanifest-2.3.0-py3-none-any.whl", hash = "sha256:e4d225d557d61dda3205d40128bc9627d07897daeeab1b4d9a7ae192a690db37", size = 75335, upload-time = "2026-03-07T10:52:33.144Z" },
 ]
 
 [[package]]
