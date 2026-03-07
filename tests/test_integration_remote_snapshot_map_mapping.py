@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from league_tools.utils.wwiser import Singleton as WwiserSingleton
 from league_tools.utils.wwiser import WwiserManager
-from riotmanifest import RiotGameData
+from riotmanifest import RiotGameData, VersionMatchMode
 
 from lol_audio_unpack.app_context import OperationOptions, create_app_context
 from lol_audio_unpack.facade import LolAudioUnpackApp
@@ -98,7 +98,7 @@ def _ensure_wwiser_ready() -> Path:
 def test_remote_snapshot_mapping_single_map_live_latest() -> None:
     """基于最新远端清单执行单地图 `update -> mapping`，验证地图远端链路。"""
     rgd = RiotGameData()
-    pair = rgd.resolve_live_manifest_pair(LIVE_REGION)
+    pair = rgd.resolve_live_manifest_pair(LIVE_REGION, match_mode=VersionMatchMode.IGNORE_REVISION)
     version = str(pair.version)
 
     output_path = Path(".cache") / "remote_live_map_test" / LIVE_REGION.lower() / version / "update_map11_mapping"

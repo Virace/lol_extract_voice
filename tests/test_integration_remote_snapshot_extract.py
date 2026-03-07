@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from riotmanifest import RiotGameData
+from riotmanifest import RiotGameData, VersionMatchMode
 
 from lol_audio_unpack.app_context import OperationOptions, create_app_context
 from lol_audio_unpack.facade import LolAudioUnpackApp
@@ -66,7 +66,7 @@ def _ensure_remote_update_ready(
 def test_remote_snapshot_extract_champions_live_latest_vo_only() -> None:
     """基于最新远端清单执行 `update -> extract`，验证 VO-only 远端解包链路。"""
     rgd = RiotGameData()
-    pair = rgd.resolve_live_manifest_pair(LIVE_REGION)
+    pair = rgd.resolve_live_manifest_pair(LIVE_REGION, match_mode=VersionMatchMode.IGNORE_REVISION)
     version = str(pair.version)
 
     output_path = Path(".cache") / "remote_live_update_test" / LIVE_REGION.lower() / version / "update_champions_1_103_555"

@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
-from riotmanifest import RiotGameData
+from riotmanifest import RiotGameData, VersionMatchMode
 
 from lol_audio_unpack.app_context import OperationOptions, create_app_context
 from lol_audio_unpack.facade import LolAudioUnpackApp
@@ -26,7 +26,7 @@ def _reset_data_reader_singleton() -> None:
 def test_remote_snapshot_update_champions_live_latest() -> None:
     """基于最新远端清单执行 DataUpdater + BinUpdater 的最小闭环。"""
     rgd = RiotGameData()
-    pair = rgd.resolve_live_manifest_pair(LIVE_REGION)
+    pair = rgd.resolve_live_manifest_pair(LIVE_REGION, match_mode=VersionMatchMode.IGNORE_REVISION)
     version = str(pair.version)
 
     output_path = Path(".cache") / "remote_live_update_test" / LIVE_REGION.lower() / version / "update_champions_1_103_555"
