@@ -1,8 +1,10 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 import lol_audio_unpack as app_pkg
+import lol_audio_unpack.app_context as app_context_module
 from lol_audio_unpack import setup_app
 from lol_audio_unpack.app_context import (
     AppContext,
@@ -182,6 +184,97 @@ def test_create_app_context_accepts_cleanup_remote_override(tmp_path: Path) -> N
     )
 
     assert app_context.config.cleanup_remote is False
+
+
+def test_create_app_context_auto_resolves_remote_snapshot_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env_dir = tmp_path / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+    output_path = tmp_path / "output"
+    (env_dir / ".lol.env").write_text(
+        f'LOL_OUTPUT_PATH="{output_path}"\n',
+        encoding="utf-8",
+    )
+
+    captured: dict[str, str] = {}
+
+    class FakeRiotGameData:
+        def resolve_live_manifest_pair(self, region: str):
+            captured["region"] = region
+            return SimpleNamespace(
+                version="16.5.751.1533",
+                lcu=SimpleNamespace(url="https://example.com/live.lcu.manifest"),
+                game=SimpleNamespace(url="https://example.com/live.game.manifest"),
+            )
+
+    monkeypatch.setattr(app_context_module, "RiotGameData", FakeRiotGameData)
+
+    app_context = create_app_context(
+        env_path=env_dir,
+        cli_overrides={
+            "SOURCE_MODE": "remote_snapshot",
+        },
+    )
+
+    assert captured["region"] == "EUW"
+    assert app_context.config.remote_snapshot is not None
+    assert app_context.config.remote_snapshot.version == "16.5"
+    assert app_context.config.remote_snapshot.lcu_manifest_url == "https://example.com/live.lcu.manifest"
+    assert app_context.config.remote_snapshot.game_manifest_url == "https://example.com/live.game.manifest"
+
+
+def test_create_app_context_auto_resolves_remote_snapshot_config_with_live_region_override(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_dir = tmp_path / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+    output_path = tmp_path / "output"
+    (env_dir / ".lol.env").write_text(
+        f'LOL_OUTPUT_PATH="{output_path}"\n',
+        encoding="utf-8",
+    )
+
+    captured: dict[str, str] = {}
+
+    class FakeRiotGameData:
+        def resolve_live_manifest_pair(self, region: str):
+            captured["region"] = region
+            return SimpleNamespace(
+                version="16.5.751.1533",
+                lcu=SimpleNamespace(url="https://example.com/live.lcu.manifest"),
+                game=SimpleNamespace(url="https://example.com/live.game.manifest"),
+            )
+
+    monkeypatch.setattr(app_context_module, "RiotGameData", FakeRiotGameData)
+
+    create_app_context(
+        env_path=env_dir,
+        cli_overrides={
+            "SOURCE_MODE": "remote_snapshot",
+            "REMOTE_LIVE_REGION": "kr",
+        },
+    )
+
+    assert captured["region"] == "KR"
+
+
+def test_create_app_context_rejects_partial_remote_snapshot_override(tmp_path: Path) -> None:
+    env_dir = tmp_path / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+    output_path = tmp_path / "output"
+    (env_dir / ".lol.env").write_text(
+        f'LOL_OUTPUT_PATH="{output_path}"\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="必须同时提供"):
+        create_app_context(
+            env_path=env_dir,
+            cli_overrides={
+                "SOURCE_MODE": "remote_snapshot",
+                "REMOTE_VERSION": "16.5",
+            },
+        )
 
 
 def test_operation_options_defaults() -> None:
