@@ -129,3 +129,4 @@ benchmarks/
 
 !/params.json
 VERSIONING_GUIDE.md
+.serena/
