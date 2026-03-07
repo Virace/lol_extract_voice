@@ -34,10 +34,34 @@ def test_build_config_requires_exactly_three_champions(tmp_path: Path) -> None:
         integrate_data=True,
         auto_download_wwiser=True,
         wwiser_path=None,
+        skip_map_scenario=False,
     )
 
     with pytest.raises(ValueError):
         MODULE.build_config(args, tmp_path)
+
+
+def test_build_config_allows_single_champion_when_map_scenario_skipped(tmp_path: Path) -> None:
+    args = SimpleNamespace(
+        report=Path("benchmarks/remote_live/latest.json"),
+        output_root=Path(".cache/remote_live_benchmark"),
+        live_region="EUW",
+        game_region="zh_CN",
+        champion_ids="1",
+        map_id=11,
+        max_workers=1,
+        sampling_interval=0.5,
+        cleanup_remote=True,
+        integrate_data=True,
+        auto_download_wwiser=True,
+        wwiser_path=None,
+        skip_map_scenario=True,
+    )
+
+    config = MODULE.build_config(args, tmp_path)
+
+    assert config.champion_ids == (1,)
+    assert config.run_map_scenario is False
 
 
 def test_validate_extract_artifacts_counts_champion_outputs(tmp_path: Path) -> None:
@@ -155,14 +179,59 @@ def test_resolve_snapshot_meta_uses_ignore_revision(monkeypatch: pytest.MonkeyPa
         lcu = SimpleNamespace(url="https://example.com/lcu.manifest")
         game = SimpleNamespace(url="https://example.com/game.manifest")
 
-    class FakeRiotGameData:
-        def resolve_live_manifest_pair(self, region: str, *, match_mode: VersionMatchMode):
+    class FakeLeagueManifestResolver:
+        def resolve_manifest_pair(self, region: str, *, match_mode: VersionMatchMode):
             assert region == "EUW"
             assert match_mode is VersionMatchMode.IGNORE_REVISION
             return FakePair()
 
-    monkeypatch.setattr(MODULE, "RiotGameData", FakeRiotGameData)
+    monkeypatch.setattr(MODULE, "LeagueManifestResolver", FakeLeagueManifestResolver)
 
     meta = MODULE._resolve_snapshot_meta("EUW", match_mode=VersionMatchMode.IGNORE_REVISION)
 
     assert meta.version == "16.5"
+
+
+def test_run_remote_benchmark_skips_map_scenario(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    config = MODULE.RemoteBenchmarkConfig(
+        repo_root=tmp_path,
+        report_path=tmp_path / "report.json",
+        output_root=tmp_path / "out",
+        live_region="EUW",
+        game_region="zh_CN",
+        champion_ids=(1,),
+        map_id=11,
+        max_workers=1,
+        sampling_interval=0.5,
+        cleanup_remote=True,
+        integrate_data=True,
+        auto_download_wwiser=False,
+        wwiser_path=tmp_path / "wwiser.pyz",
+        run_map_scenario=False,
+    )
+
+    monkeypatch.setattr(
+        MODULE,
+        "_resolve_snapshot_meta",
+        lambda *_args, **_kwargs: MODULE.RemoteSnapshotMeta(
+            version="16.5",
+            lcu_manifest_url="https://example.com/lcu.manifest",
+            game_manifest_url="https://example.com/game.manifest",
+        ),
+    )
+    monkeypatch.setattr(MODULE, "_ensure_wwiser_ready", lambda _config: tmp_path / "wwiser.pyz")
+    monkeypatch.setattr(
+        MODULE,
+        "_run_champion_scenario",
+        lambda **_kwargs: {"scenario": "champions_full_chain", "summary": {"total_duration_seconds": 1.0}},
+    )
+    monkeypatch.setattr(
+        MODULE,
+        "_run_map_scenario",
+        lambda **_kwargs: pytest.fail("run_map_scenario should not be called when disabled"),
+    )
+
+    payload = MODULE.run_remote_benchmark(config)
+
+    assert [item["scenario"] for item in payload["scenarios"]] == ["champions_full_chain"]
+    assert payload["meta"]["run_map_scenario"] is False

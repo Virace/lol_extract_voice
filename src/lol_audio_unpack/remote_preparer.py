@@ -15,7 +15,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from loguru import logger
 from riotmanifest import PatcherManifest, WADExtractor
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 LCU_PLUGIN_SUFFIX = "plugins/rcp-be-lol-game-data"
 DESCRIPTION_FILE_NAME = "description.json"
 REMOTE_CLEANUP_REGISTRY_KEY = "remote_cleanup_registry"
+REMOTE_MANIFEST_HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 
 @dataclass(frozen=True)
@@ -303,7 +304,8 @@ class RemoteSnapshotPreparer:
             return manifest_path
 
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        with urlopen(manifest_url) as response, manifest_path.open("wb") as target:  # noqa: S310
+        request = Request(manifest_url, headers=REMOTE_MANIFEST_HEADERS)
+        with urlopen(request) as response, manifest_path.open("wb") as target:  # noqa: S310
             shutil.copyfileobj(response, target)
         logger.debug(f"已缓存远端 manifest: {manifest_path}")
         return manifest_path

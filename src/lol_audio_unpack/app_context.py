@@ -11,7 +11,7 @@ from typing import Any
 
 from dotenv import dotenv_values
 from loguru import logger
-from riotmanifest import RiotGameData, RiotGameDataError
+from riotmanifest import LeagueManifestError, LeagueManifestResolver
 
 from lol_audio_unpack.utils.type_hints import StrPath
 from lol_audio_unpack.utils.versioning import normalize_patch_version
@@ -174,8 +174,8 @@ def _normalize_remote_live_region(value: Any) -> str:
 def _resolve_latest_remote_snapshot_config(*, live_region: str) -> RemoteSnapshotConfig:
     """自动解析最新 live 快照配置。"""
     try:
-        pair = RiotGameData().resolve_live_manifest_pair(live_region)
-    except RiotGameDataError as exc:
+        pair = LeagueManifestResolver().resolve_manifest_pair(live_region)
+    except LeagueManifestError as exc:
         raise AppContextValidationError(
             f"REMOTE_SNAPSHOT 模式自动解析最新 live 快照失败: live_region={live_region}, error={exc}"
         ) from exc

@@ -11,7 +11,7 @@ dependencies = [
     "ruamel-yaml>=0.18.14",
     "alive-progress>=3.3.0",
     "league-tools",
-    "riotmanifest>=2.3.0",
+    "riotmanifest>=2.4.0",
 ]
 readme = "README.md"
 requires-python = ">= 3.10"

@@ -197,8 +197,8 @@ def test_create_app_context_auto_resolves_remote_snapshot_config(tmp_path: Path,
 
     captured: dict[str, str] = {}
 
-    class FakeRiotGameData:
-        def resolve_live_manifest_pair(self, region: str):
+    class FakeLeagueManifestResolver:
+        def resolve_manifest_pair(self, region: str, **_: object):
             captured["region"] = region
             return SimpleNamespace(
                 version="16.5.751.1533",
@@ -206,7 +206,7 @@ def test_create_app_context_auto_resolves_remote_snapshot_config(tmp_path: Path,
                 game=SimpleNamespace(url="https://example.com/live.game.manifest"),
             )
 
-    monkeypatch.setattr(app_context_module, "RiotGameData", FakeRiotGameData)
+    monkeypatch.setattr(app_context_module, "LeagueManifestResolver", FakeLeagueManifestResolver)
 
     app_context = create_app_context(
         env_path=env_dir,
@@ -236,8 +236,8 @@ def test_create_app_context_auto_resolves_remote_snapshot_config_with_live_regio
 
     captured: dict[str, str] = {}
 
-    class FakeRiotGameData:
-        def resolve_live_manifest_pair(self, region: str):
+    class FakeLeagueManifestResolver:
+        def resolve_manifest_pair(self, region: str, **_: object):
             captured["region"] = region
             return SimpleNamespace(
                 version="16.5.751.1533",
@@ -245,7 +245,7 @@ def test_create_app_context_auto_resolves_remote_snapshot_config_with_live_regio
                 game=SimpleNamespace(url="https://example.com/live.game.manifest"),
             )
 
-    monkeypatch.setattr(app_context_module, "RiotGameData", FakeRiotGameData)
+    monkeypatch.setattr(app_context_module, "LeagueManifestResolver", FakeLeagueManifestResolver)
 
     create_app_context(
         env_path=env_dir,

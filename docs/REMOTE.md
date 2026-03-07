@@ -22,7 +22,7 @@ remote 模式依赖上游 `RiotManifest` 提供一对 **已经对齐** 的 LCU /
 
 当前仓库的默认行为是：
 
-- 使用 `RiotGameData.resolve_live_manifest_pair(...)` 自动解析最新 live 快照
+- 使用 `LeagueManifestResolver.resolve_manifest_pair(...)` 自动解析最新 live 快照
 - 未显式覆盖时，按 `LOL_REMOTE_LIVE_REGION` 选择 live 区服（默认 `EUW`）
 
 如果你需要固定某个快照，也可以手动提供：

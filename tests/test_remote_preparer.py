@@ -119,6 +119,31 @@ def test_remote_snapshot_preparer_downloads_description_and_required_bundles(
     assert not (prepared_root / "fr_FR-assets.wad").exists()
 
 
+def test_ensure_manifest_cached_sends_user_agent_header(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _build_remote_ctx(tmp_path)
+    captured: dict[str, str] = {}
+
+    def fake_urlopen(request):
+        captured["url"] = request.full_url
+        captured["user_agent"] = request.headers.get("User-agent", "")
+        return io.BytesIO(b"manifest-data")
+
+    monkeypatch.setattr(m_remote, "urlopen", fake_urlopen)
+
+    preparer = RemoteSnapshotPreparer(ctx=ctx)
+    manifest_path = preparer._ensure_manifest_cached(
+        manifest_url=ctx.config.remote_snapshot.lcu_manifest_url,
+        manifest_cache_dir=preparer.lcu_manifest_cache_dir,
+    )
+
+    assert manifest_path.exists()
+    assert captured["url"] == ctx.config.remote_snapshot.lcu_manifest_url
+    assert captured["user_agent"] == "Mozilla/5.0"
+
+
 def test_facade_update_prepares_remote_snapshot_before_updaters(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     ctx = _build_remote_ctx(tmp_path)
     app = LolAudioUnpackApp(ctx)

@@ -17,7 +17,7 @@ from typing import Any
 from league_tools.utils.wwiser import Singleton as WwiserSingleton
 from league_tools.utils.wwiser import WwiserManager
 from loguru import logger
-from riotmanifest import RiotGameData, VersionMatchMode
+from riotmanifest import LeagueManifestResolver, VersionMatchMode
 
 from lol_audio_unpack.app_context import OperationOptions, create_app_context
 from lol_audio_unpack.facade import LolAudioUnpackApp
@@ -56,6 +56,7 @@ class RemoteBenchmarkConfig:
     integrate_data: bool
     auto_download_wwiser: bool
     wwiser_path: Path | None
+    run_map_scenario: bool = True
     match_mode: VersionMatchMode = DEFAULT_MATCH_MODE
 
 
@@ -158,6 +159,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=True,
         help="mapping 阶段是否同时输出 integrated 数据，默认开启",
     )
+    parser.add_argument(
+        "--skip-map-scenario",
+        action="store_true",
+        help="跳过地图场景，仅执行英雄链路 smoke",
+    )
     return parser.parse_args(argv)
 
 
@@ -216,7 +222,7 @@ def _resolve_snapshot_meta(live_region: str, *, match_mode: VersionMatchMode) ->
     Returns:
         远端快照元数据。
     """
-    pair = RiotGameData().resolve_live_manifest_pair(live_region, match_mode=match_mode)
+    pair = LeagueManifestResolver().resolve_manifest_pair(live_region, match_mode=match_mode)
     return RemoteSnapshotMeta(
         version=str(pair.version),
         lcu_manifest_url=pair.lcu.url,
@@ -735,6 +741,7 @@ def build_markdown_summary(payload: dict[str, Any]) -> str:
         f"- 版本匹配模式：{meta['match_mode']}",
         f"- 英雄：{', '.join(str(item) for item in meta['champion_ids'])}",
         f"- 地图：{meta['map_id']}",
+        f"- 地图场景：{'开启' if meta.get('run_map_scenario', True) else '跳过'}",
         f"- `integrate_data`：{meta['integrate_data']}",
         f"- `cleanup_remote`：{meta['cleanup_remote']}",
         f"- `wwiser_path`：{meta['wwiser_path']}",
@@ -783,8 +790,11 @@ def run_remote_benchmark(config: RemoteBenchmarkConfig) -> dict[str, Any]:
     started = time.perf_counter()
     scenarios = [
         _run_champion_scenario(config=config, snapshot_meta=snapshot_meta, wwiser_path=wwiser_path, run_root=run_root),
-        _run_map_scenario(config=config, snapshot_meta=snapshot_meta, wwiser_path=wwiser_path, run_root=run_root),
     ]
+    if config.run_map_scenario:
+        scenarios.append(
+            _run_map_scenario(config=config, snapshot_meta=snapshot_meta, wwiser_path=wwiser_path, run_root=run_root)
+        )
     total_seconds = round(time.perf_counter() - started, 3)
 
     payload = {
@@ -797,6 +807,7 @@ def run_remote_benchmark(config: RemoteBenchmarkConfig) -> dict[str, Any]:
             "match_mode": config.match_mode.value,
             "champion_ids": list(config.champion_ids),
             "map_id": config.map_id,
+            "run_map_scenario": config.run_map_scenario,
             "max_workers": config.max_workers,
             "sampling_interval": config.sampling_interval,
             "cleanup_remote": config.cleanup_remote,
@@ -816,7 +827,9 @@ def run_remote_benchmark(config: RemoteBenchmarkConfig) -> dict[str, Any]:
 def build_config(args: argparse.Namespace, repo_root: Path) -> RemoteBenchmarkConfig:
     """根据命令行参数构建 benchmark 配置。"""
     champion_ids = parse_id_csv(args.champion_ids)
-    if len(champion_ids) != EXPECTED_CHAMPION_BENCHMARK_COUNT:
+    if len(champion_ids) == 0:
+        raise ValueError("至少需要提供一个英雄 ID。")
+    if not args.skip_map_scenario and len(champion_ids) != EXPECTED_CHAMPION_BENCHMARK_COUNT:
         raise ValueError(
             "当前 benchmark 约定需要 "
             f"{EXPECTED_CHAMPION_BENCHMARK_COUNT} 个英雄，实际收到 {len(champion_ids)} 个。"
@@ -840,6 +853,7 @@ def build_config(args: argparse.Namespace, repo_root: Path) -> RemoteBenchmarkCo
         integrate_data=bool(args.integrate_data),
         auto_download_wwiser=bool(args.auto_download_wwiser),
         wwiser_path=args.wwiser_path,
+        run_map_scenario=not bool(args.skip_map_scenario),
         match_mode=DEFAULT_MATCH_MODE,
     )
 
