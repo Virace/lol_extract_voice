@@ -11,11 +11,13 @@ from typing import Any
 
 from dotenv import dotenv_values
 from loguru import logger
+from riotmanifest import RiotGameData, RiotGameDataError
 
 from lol_audio_unpack.utils.type_hints import StrPath
 from lol_audio_unpack.utils.versioning import normalize_patch_version
 
 KNOWN_AUDIO_TYPES: tuple[str, ...] = ("VO", "SFX", "MUSIC")
+DEFAULT_REMOTE_LIVE_REGION = "EUW"
 SUPPORTED_KEYS: frozenset[str] = frozenset(
     {
         "GAME_PATH",
@@ -25,6 +27,7 @@ SUPPORTED_KEYS: frozenset[str] = frozenset(
         "CLEANUP_REMOTE",
         "GROUP_BY_TYPE",
         "SOURCE_MODE",
+        "REMOTE_LIVE_REGION",
         "REMOTE_VERSION",
         "REMOTE_LCU_MANIFEST_URL",
         "REMOTE_GAME_MANIFEST_URL",
@@ -38,6 +41,7 @@ DEFAULT_VALUES: dict[str, Any] = {
     "CLEANUP_REMOTE": True,
     "GROUP_BY_TYPE": False,
     "SOURCE_MODE": "local_path",
+    "REMOTE_LIVE_REGION": DEFAULT_REMOTE_LIVE_REGION,
     "WITH_BP_VO": False,
 }
 
@@ -159,6 +163,36 @@ def _parse_source_mode(value: Any) -> SourceMode:
         raise AppContextValidationError(f"SOURCE_MODE 无效: {raw_value}，可选值: {valid_modes}") from exc
 
 
+def _normalize_remote_live_region(value: Any) -> str:
+    """标准化远端 live 区服。"""
+    text = str(value or DEFAULT_REMOTE_LIVE_REGION).strip()
+    if not text:
+        return DEFAULT_REMOTE_LIVE_REGION
+    return text.upper()
+
+
+def _resolve_latest_remote_snapshot_config(*, live_region: str) -> RemoteSnapshotConfig:
+    """自动解析最新 live 快照配置。"""
+    try:
+        pair = RiotGameData().resolve_live_manifest_pair(live_region)
+    except RiotGameDataError as exc:
+        raise AppContextValidationError(
+            f"REMOTE_SNAPSHOT 模式自动解析最新 live 快照失败: live_region={live_region}, error={exc}"
+        ) from exc
+
+    version = normalize_patch_version(str(pair.version))
+    logger.info(
+        "REMOTE_SNAPSHOT 未显式提供快照，已自动解析最新 live 清单：live_region={}, version={}",
+        live_region,
+        version,
+    )
+    return RemoteSnapshotConfig(
+        version=version,
+        lcu_manifest_url=pair.lcu.url,
+        game_manifest_url=pair.game.url,
+    )
+
+
 def _to_path(value: Any, key_name: str) -> Path:
     """将输入值转换为 ``Path``。"""
     if value is None:
@@ -199,25 +233,31 @@ def _build_remote_snapshot_config(
     version = _to_optional_text(settings.get("REMOTE_VERSION"))
     lcu_manifest_url = _to_optional_text(settings.get("REMOTE_LCU_MANIFEST_URL"))
     game_manifest_url = _to_optional_text(settings.get("REMOTE_GAME_MANIFEST_URL"))
+    snapshot_fields = {
+        "REMOTE_VERSION": version,
+        "REMOTE_LCU_MANIFEST_URL": lcu_manifest_url,
+        "REMOTE_GAME_MANIFEST_URL": game_manifest_url,
+    }
+    provided_fields = {key: value for key, value in snapshot_fields.items() if value is not None}
 
-    missing_fields = [
-        key
-        for key, value in (
-            ("REMOTE_VERSION", version),
-            ("REMOTE_LCU_MANIFEST_URL", lcu_manifest_url),
-            ("REMOTE_GAME_MANIFEST_URL", game_manifest_url),
-        )
-        if value is None
-    ]
-    if missing_fields:
+    if provided_fields and len(provided_fields) != len(snapshot_fields):
+        missing_fields = [key for key, value in snapshot_fields.items() if value is None]
         missing_text = ", ".join(missing_fields)
-        raise AppContextValidationError(f"REMOTE_SNAPSHOT 模式缺少必要配置项: {missing_text}")
+        raise AppContextValidationError(
+            "REMOTE_SNAPSHOT 模式下若显式指定远端快照，"
+            "REMOTE_VERSION、REMOTE_LCU_MANIFEST_URL、REMOTE_GAME_MANIFEST_URL 必须同时提供；"
+            f"当前缺少: {missing_text}"
+        )
 
-    return RemoteSnapshotConfig(
-        version=normalize_patch_version(version),
-        lcu_manifest_url=lcu_manifest_url,
-        game_manifest_url=game_manifest_url,
-    )
+    if provided_fields:
+        return RemoteSnapshotConfig(
+            version=normalize_patch_version(version),
+            lcu_manifest_url=lcu_manifest_url,
+            game_manifest_url=game_manifest_url,
+        )
+
+    live_region = _normalize_remote_live_region(settings.get("REMOTE_LIVE_REGION"))
+    return _resolve_latest_remote_snapshot_config(live_region=live_region)
 
 
 def _resolve_env_dir(env_path: StrPath | None) -> Path:
