@@ -20,17 +20,18 @@ remote 模式不适合：
 
 remote 模式依赖上游 `RiotManifest` 提供一对 **已经对齐** 的 LCU / GAME manifest。
 
-当前仓库默认假设：
+当前仓库的默认行为是：
+
+- 使用 `RiotGameData.resolve_live_manifest_pair(...)` 自动解析最新 live 快照
+- 未显式覆盖时，按 `LOL_REMOTE_LIVE_REGION` 选择 live 区服（默认 `EUW`）
+
+如果你需要固定某个快照，也可以手动提供：
 
 - `LOL_REMOTE_VERSION`
 - `LOL_REMOTE_LCU_MANIFEST_URL`
 - `LOL_REMOTE_GAME_MANIFEST_URL`
 
-三者来自同一个已对齐快照。
-
-推荐上游来源：
-
-- `RiotGameData.resolve_live_manifest_pair(...)`
+这三个字段必须来自同一个已对齐快照，且需要同时提供。
 
 ## 3. 当前能力边界
 
@@ -40,20 +41,16 @@ remote 模式依赖上游 `RiotManifest` 提供一对 **已经对齐** 的 LCU /
   - `update`
   - `extract`
   - `mapping`
+  - `mapping --integrate-data`
 - 地图：
   - `update`
+  - `mapping`
 
-### 3.2 已确认可运行但仍属专项长测
+### 3.2 当前定位
 
-- 地图 `mapping`
-
-这条链路已确认：
-
-- root / language WAD 准备正常
-- `wwiser` 调用正常
-- HIRC 缓存持续生成
-
-但由于耗时很长，当前仍视为专项长测项。
+- 地图 `mapping` 已通过真实 remote benchmark 验证
+- `mapping --integrate-data` 已完成真实远端验收
+- 由于地图链路整体耗时仍较长，相关回归继续保留为专项长测项
 
 ## 4. 运行模式
 
@@ -73,12 +70,22 @@ remote 模式依赖上游 `RiotManifest` 提供一对 **已经对齐** 的 LCU /
 
 ```bash
 export LOL_SOURCE_MODE=remote_snapshot
-export LOL_REMOTE_VERSION=16.5
-export LOL_REMOTE_LCU_MANIFEST_URL="https://..."
-export LOL_REMOTE_GAME_MANIFEST_URL="https://..."
 export LOL_OUTPUT_PATH="/tmp/lol-remote"
 export LOL_GAME_REGION="zh_CN"
+
+# 可选：切换 live 区服，默认 EUW
+export LOL_REMOTE_LIVE_REGION="EUW"
 ```
+
+若你需要固定某个快照、复现问题或调试指定 manifest，可额外显式提供：
+
+```bash
+export LOL_REMOTE_VERSION="16.5"
+export LOL_REMOTE_LCU_MANIFEST_URL="https://..."
+export LOL_REMOTE_GAME_MANIFEST_URL="https://..."
+```
+
+这三个高级覆盖项需要同时提供；不提供时会自动解析最新 live 快照。
 
 若要执行 `mapping`：
 
@@ -232,8 +239,8 @@ uv run pytest -q
 UV_CACHE_DIR=.cache/uv uv run pytest -q -m remote_live
 ```
 
-## 12. 当前未完全闭环的事项
+## 12. 当前仍可继续增强的事项
 
-- 地图 `mapping-map11` 最终落盘断言
-- `mapping --integrate-data` 真实远端验收
-- 更面向普通用户的 remote 命令示例与 FAQ 可继续补充
+- 补充更面向普通用户的 remote FAQ 与排障说明
+- 增加更多 live 区服的实测经验与建议
+- 视发布策略决定是否把专项长测进一步产品化为固定发布前检查项

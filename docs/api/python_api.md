@@ -102,13 +102,18 @@ def initialize_context_from_env(
 
 用途：构建 `AppConfig + AppPaths + AppContext` 组合对象。
 
-当前 remote 模式常用的 `cli_overrides` 包括：
+当前 remote 模式常用的 `cli_overrides` 分两层：
 
-- `SOURCE_MODE="remote_snapshot"`
-- `REMOTE_VERSION`
-- `REMOTE_LCU_MANIFEST_URL`
-- `REMOTE_GAME_MANIFEST_URL`
-- `CLEANUP_REMOTE`
+- 默认入口：
+  - `SOURCE_MODE="remote_snapshot"`
+  - `OUTPUT_PATH`
+  - `GAME_REGION`
+  - `REMOTE_LIVE_REGION`（可选，默认 `EUW`）
+- 高级覆盖：
+  - `REMOTE_VERSION`
+  - `REMOTE_LCU_MANIFEST_URL`
+  - `REMOTE_GAME_MANIFEST_URL`
+  - `CLEANUP_REMOTE`
 
 ## 4. 管理器类（显式上下文）
 
@@ -179,9 +184,6 @@ ctx = create_app_context(
         "OUTPUT_PATH": "./out",
         "GAME_REGION": "zh_CN",
         "SOURCE_MODE": "remote_snapshot",
-        "REMOTE_VERSION": "16.5",
-        "REMOTE_LCU_MANIFEST_URL": "...",
-        "REMOTE_GAME_MANIFEST_URL": "...",
     }
 )
 app = LolAudioUnpackApp(ctx)

@@ -88,7 +88,7 @@ def initialize_context_from_env(
 1. CLI 显式覆盖（`cli_overrides`）
 2. 系统环境变量（`LOL_*`）
 3. `.lol.env.dev` / `.lol.env`
-4. 内置默认值（`GAME_REGION`、`EXCLUDE_TYPE`、`CLEANUP_REMOTE`、`GROUP_BY_TYPE`、`SOURCE_MODE`、`WITH_BP_VO`）
+4. 内置默认值（`GAME_REGION`、`EXCLUDE_TYPE`、`CLEANUP_REMOTE`、`GROUP_BY_TYPE`、`SOURCE_MODE`、`REMOTE_LIVE_REGION`、`WITH_BP_VO`）
 
 ## 4. 必填项与校验
 
@@ -105,10 +105,12 @@ def initialize_context_from_env(
   - `GAME_PATH` 必须显式存在
 - `remote_snapshot` 模式下：
   - 若未显式给出 `GAME_PATH`，会默认派生为 `OUTPUT_PATH/_prepared_game`
-  - 必须额外提供：
+  - 默认会按 `REMOTE_LIVE_REGION`（默认 `EUW`）自动解析最新 live 快照
+  - 若显式指定快照覆盖：
     - `REMOTE_VERSION`
     - `REMOTE_LCU_MANIFEST_URL`
     - `REMOTE_GAME_MANIFEST_URL`
+    这三项必须同时提供
 
 ### 4.2 关键归一化规则
 
@@ -118,6 +120,7 @@ def initialize_context_from_env(
 - `SOURCE_MODE` 目前支持：
   - `local_path`
   - `remote_snapshot`
+- `REMOTE_LIVE_REGION` 会标准化为大写 live 区服代码（默认 `EUW`）。
 - `REMOTE_VERSION` 会标准化为 `major.minor`。
 
 ## 5. 运行目录派生
@@ -205,7 +208,9 @@ def format_sub_entity_folder_name(sub_id: str, sub_name: str) -> str
 
 ## 9. remote 相关说明
 
-当前 remote 主要通过 `create_app_context(..., cli_overrides=...)` 或环境变量驱动，推荐最小集合：
+当前 remote 主要通过 `create_app_context(..., cli_overrides=...)` 或环境变量驱动。
+
+默认最小集合：
 
 ```python
 ctx = create_app_context(
@@ -213,12 +218,24 @@ ctx = create_app_context(
         "OUTPUT_PATH": "./out",
         "GAME_REGION": "zh_CN",
         "SOURCE_MODE": "remote_snapshot",
-        "REMOTE_VERSION": "16.5",
-        "REMOTE_LCU_MANIFEST_URL": "...",
-        "REMOTE_GAME_MANIFEST_URL": "...",
     }
 )
 ```
+
+如需切换 live 区服，可额外提供：
+
+```python
+ctx = create_app_context(
+    cli_overrides={
+        "OUTPUT_PATH": "./out",
+        "GAME_REGION": "zh_CN",
+        "SOURCE_MODE": "remote_snapshot",
+        "REMOTE_LIVE_REGION": "KR",
+    }
+)
+```
+
+如需固定快照，再显式提供 `REMOTE_VERSION` / `REMOTE_LCU_MANIFEST_URL` / `REMOTE_GAME_MANIFEST_URL` 三项覆盖。
 
 `cleanup_remote=True` 时：
 

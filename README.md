@@ -186,21 +186,31 @@ remote 模式的核心思路是：
 #### remote 模式当前状态
 - 英雄 `update / extract / mapping` 已完成真实远端验证
 - 地图 `update` 已完成真实远端验证
-- 地图 `mapping` 已确认可运行，但属于长耗时专项验收项
+- 地图 `mapping` 已通过真实 remote benchmark 验证，但仍属于长耗时专项验收项
 - `mapping` 当前不只处理 `VO`，也会处理 `SFX/MUSIC` 等有事件数据的类别
 
 #### 最小配置
 
-当前 remote 模式主要通过环境变量驱动：
+当前 remote 模式默认会自动解析最新 live 快照，最小配置为：
 
 ```bash
 export LOL_SOURCE_MODE=remote_snapshot
-export LOL_REMOTE_VERSION=16.5
-export LOL_REMOTE_LCU_MANIFEST_URL="https://..."
-export LOL_REMOTE_GAME_MANIFEST_URL="https://..."
 export LOL_OUTPUT_PATH="/tmp/lol-remote"
 export LOL_GAME_REGION="zh_CN"
+
+# 可选：切换 Riot live 区服，默认 EUW
+export LOL_REMOTE_LIVE_REGION="EUW"
 ```
+
+如果要固定某个快照、复现问题或调试指定 manifest，可额外显式提供：
+
+```bash
+export LOL_REMOTE_VERSION="16.5"
+export LOL_REMOTE_LCU_MANIFEST_URL="https://..."
+export LOL_REMOTE_GAME_MANIFEST_URL="https://..."
+```
+
+这三个高级覆盖项需要同时提供；未提供时会走自动解析。
 
 如果要运行 `mapping`，还需要：
 

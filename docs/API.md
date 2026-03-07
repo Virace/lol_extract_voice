@@ -37,10 +37,9 @@ uv run unpack --update --extract --max-workers 8
 ```
 
 ```bash
-# remote_snapshot 目前主要通过环境变量驱动
+# remote_snapshot 默认自动解析最新 live 快照
 LOL_SOURCE_MODE=remote_snapshot \
-LOL_REMOTE_VERSION=16.5 \
-LOL_REMOTE_LCU_MANIFEST_URL=... \
-LOL_REMOTE_GAME_MANIFEST_URL=... \
+LOL_OUTPUT_PATH=/tmp/lol-remote \
+LOL_GAME_REGION=zh_CN \
 uv run unpack --update-champions 1,103,555 --extract-champions 1,103,555
 ```

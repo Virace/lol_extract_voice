@@ -55,15 +55,20 @@ python -m lol_audio_unpack [OPTIONS]
 
 ### 2.6 remote 模式相关配置
 
-当前 remote 模式仍主要通过环境变量或 `cli_overrides` 驱动，常用项为：
+当前 remote 模式仍主要通过环境变量或 `cli_overrides` 驱动，推荐分两层理解：
 
-- `LOL_SOURCE_MODE=remote_snapshot`
-- `LOL_REMOTE_VERSION`
-- `LOL_REMOTE_LCU_MANIFEST_URL`
-- `LOL_REMOTE_GAME_MANIFEST_URL`
-- `LOL_CLEANUP_REMOTE`
+- 默认入口：
+  - `LOL_SOURCE_MODE=remote_snapshot`
+  - `LOL_OUTPUT_PATH`
+  - `LOL_GAME_REGION`
+  - `LOL_REMOTE_LIVE_REGION`（可选，默认 `EUW`）
+- 高级覆盖：
+  - `LOL_REMOTE_VERSION`
+  - `LOL_REMOTE_LCU_MANIFEST_URL`
+  - `LOL_REMOTE_GAME_MANIFEST_URL`
+  - `LOL_CLEANUP_REMOTE`
 
-当前 CLI 还没有为这些 remote 字段单独提供一组正式参数。
+当前 CLI 没有把远端 manifest 细节暴露成独立参数；这组字段继续作为环境变量 / `cli_overrides` 的高级覆盖使用。
 
 ## 3. 执行顺序与校验
 
@@ -96,9 +101,8 @@ python -m lol_audio_unpack [OPTIONS]
 - 映射前会校验 `WWISER_PATH` 是否存在。
 - `local_path` 初始化阶段会校验 `GAME_PATH` 是否存在。
 - `remote_snapshot` 要求：
-  - `REMOTE_VERSION`
-  - `REMOTE_LCU_MANIFEST_URL`
-  - `REMOTE_GAME_MANIFEST_URL`
+  - 默认会按 `REMOTE_LIVE_REGION`（默认 `EUW`）自动解析最新 live 快照
+  - 若显式指定 `REMOTE_VERSION` / `REMOTE_LCU_MANIFEST_URL` / `REMOTE_GAME_MANIFEST_URL`，则三者必须同时提供
 
 ## 4. 退出语义
 
