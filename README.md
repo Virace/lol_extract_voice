@@ -68,6 +68,10 @@
 
         # 或，只更新指定ID的英雄 (例如：1,103,555)
         uv run unpack --update-champions 1,103,555
+
+        # 或，按英雄 alias 更新；ID 与 alias 都能准确定位到同一个英雄
+        # alias 来源于 DataUpdater 生成的结构化数据，信息稳定可靠
+        uv run unpack --update-champions Annie,Ahri
         
         # 或，只更新所有地图的数据
         uv run unpack --update-maps
@@ -90,6 +94,9 @@
 
         # 或，只解包指定ID的英雄
         uv run unpack --extract-champions 555,222
+
+        # 或，按英雄 alias 解包；ID 与 alias 都能准确定位到同一个英雄
+        uv run unpack --extract-champions Annie,Ahri
         
         # 或，只解包所有地图的音频
         uv run unpack --extract-maps

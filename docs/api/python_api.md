@@ -127,6 +127,13 @@ class OperationOptions:
 
 用途：承载一次操作的可变参数，替代散装参数穿透。
 
+补充说明：
+
+- `champion_ids` 是执行阶段使用的稳定英雄 ID。
+- 若调用方持有的是英雄 `alias`，建议先调用 `LolAudioUnpackApp.prepare_update_data()` 预热结构化数据，再调用 `LolAudioUnpackApp.resolve_champion_ids(...)` 反查为稳定 ID。
+- 该反查基于 `DataUpdater` 产出的聚合数据中的 `alias` 字段；`ID` 与 `alias` 都能准确定位到同一个英雄，信息可靠。
+- 英雄 `name` 不是稳定标识，不建议作为 Python API 的筛选条件。
+
 ## 3. 上下文工厂（`app_context.py`）
 
 ```python
@@ -238,6 +245,26 @@ ctx = create_app_context(
 app = LolAudioUnpackApp(ctx)
 app.update(OperationOptions(champion_ids=(1, 103)), target="skin")
 ```
+
+```python
+from lol_audio_unpack import LolAudioUnpackApp, OperationOptions
+from lol_audio_unpack.app_context import create_app_context
+
+ctx = create_app_context(
+    cli_overrides={
+        "GAME_PATH": "/path/to/League of Legends",
+        "OUTPUT_PATH": "./out",
+        "GAME_REGION": "zh_CN",
+    }
+)
+app = LolAudioUnpackApp(ctx)
+
+app.prepare_update_data()
+champion_ids = app.resolve_champion_ids(["Annie", "Ahri"])
+app.update(OperationOptions(champion_ids=champion_ids), target="skin")
+```
+
+上例中，`prepare_update_data()` 会先确保结构化数据可用于 alias 反查；之后即可把 alias 转成稳定 ID，再复用现有 `OperationOptions(champion_ids=...)` 主链路。
 
 ```python
 from lol_audio_unpack import LolAudioUnpackApp, OperationOptions

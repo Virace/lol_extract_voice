@@ -201,6 +201,89 @@ def test_facade_update_prepares_remote_snapshot_before_updaters(monkeypatch: pyt
     assert call_order == ["prepare_lcu", "data", "prepare_bin", "bin"]
 
 
+def test_prepare_update_data_warms_remote_data_once_per_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    ctx = _build_remote_ctx(tmp_path)
+    app = LolAudioUnpackApp(ctx)
+    call_order: list[str] = []
+
+    class FakePreparer:
+        def __init__(self, *, ctx) -> None:  # noqa: ANN001
+            assert ctx is not None
+
+        def prepare_lcu_game_data(self) -> None:
+            call_order.append("prepare_lcu")
+
+        def prepare_bin_inputs(  # noqa: PLR0913
+            self,
+            *,
+            reader,
+            target,
+            champion_ids=None,
+            map_ids=None,
+        ) -> None:
+            assert reader is not None
+            assert target == "all"
+            assert champion_ids is None
+            assert map_ids is None
+            call_order.append("prepare_bin")
+
+    class FakeDataUpdater:
+        def __init__(self, force_update=False, ctx=None):  # noqa: ANN001, FBT002
+            assert force_update is False
+            assert ctx is not None
+
+        def check_and_update(self) -> None:
+            call_order.append("data")
+
+    class FakeBinUpdater:
+        def __init__(self, force_update=False, process_events=True, ctx=None):  # noqa: ANN001, FBT002
+            assert force_update is False
+            assert process_events is True
+            assert ctx is not None
+
+        def update(self, *, target="all", champion_ids=None, map_ids=None) -> None:  # noqa: ANN001
+            assert target == "all"
+            assert champion_ids is None
+            assert map_ids is None
+            call_order.append("bin")
+
+    monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
+    monkeypatch.setattr(m_facade, "DataUpdater", FakeDataUpdater)
+    monkeypatch.setattr(m_facade, "BinUpdater", FakeBinUpdater)
+    monkeypatch.setattr(m_facade, "DataReader", lambda ctx: SimpleNamespace(ctx=ctx))
+
+    app.prepare_update_data()
+    app.update(OperationOptions())
+
+    assert call_order == ["prepare_lcu", "data", "prepare_lcu", "prepare_bin", "bin"]
+
+
+def test_resolve_champion_ids_supports_aliases(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    ctx = _build_remote_ctx(tmp_path)
+    app = LolAudioUnpackApp(ctx)
+
+    fake_reader = SimpleNamespace(
+        get_champions=lambda: [
+            {"id": 1, "alias": "Annie"},
+            {"id": 103, "alias": "Ahri"},
+        ]
+    )
+
+    monkeypatch.setattr(m_facade, "DataReader", lambda ctx: fake_reader)
+
+    champion_ids = app.resolve_champion_ids(["Annie", "ahri"])
+
+    assert champion_ids == (1, 103)
+
+
+def test_resolve_champion_ids_rejects_mixed_selectors(tmp_path: Path) -> None:
+    ctx = _build_remote_ctx(tmp_path)
+    app = LolAudioUnpackApp(ctx)
+
+    with pytest.raises(ValueError, match="混用 ID 与 alias"):
+        app.resolve_champion_ids([1, "Ahri"])
+
+
 def test_remote_snapshot_preparer_extracts_bin_inputs_for_bin_updater(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

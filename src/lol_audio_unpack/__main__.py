@@ -52,8 +52,8 @@ def create_parser() -> argparse.ArgumentParser:
         "--update-champions",
         nargs="?",
         const="all",
-        metavar="IDs",
-        help="更新英雄数据。无参数时更新所有英雄，有参数时更新指定ID（逗号分隔）。例如: --update-champions 103,222,1",
+        metavar="IDs|ALIASES",
+        help="更新英雄数据。无参数时更新所有英雄；有参数时支持指定 ID 或 alias（逗号分隔，暂不支持混用）。例如: --update-champions 103,222,1 或 --update-champions Annie,Ahri",
     )
     update_group.add_argument(
         "--update-maps",
@@ -74,8 +74,8 @@ def create_parser() -> argparse.ArgumentParser:
         "--extract-champions",
         nargs="?",
         const="all",
-        metavar="IDs",
-        help="解包英雄音频。无参数时解包所有英雄，有参数时解包指定ID（逗号分隔）。例如: --extract-champions 103,222,1",
+        metavar="IDs|ALIASES",
+        help="解包英雄音频。无参数时解包所有英雄；有参数时支持指定 ID 或 alias（逗号分隔，暂不支持混用）。例如: --extract-champions 103,222,1 或 --extract-champions Annie,Ahri",
     )
     extract_group.add_argument(
         "--extract-maps",
@@ -96,8 +96,8 @@ def create_parser() -> argparse.ArgumentParser:
         "--mapping-champions",
         nargs="?",
         const="all",
-        metavar="IDs",
-        help="构建英雄事件映射。无参数时构建所有英雄，有参数时构建指定ID（逗号分隔）。例如: --mapping-champions 103,222,1",
+        metavar="IDs|ALIASES",
+        help="构建英雄事件映射。无参数时构建所有英雄；有参数时支持指定 ID 或 alias（逗号分隔，暂不支持混用）。例如: --mapping-champions 103,222,1 或 --mapping-champions Annie,Ahri",
     )
     mapping_group.add_argument(
         "--mapping-maps",
@@ -311,6 +311,40 @@ def parse_int_ids(id_string: str | None) -> tuple[int, ...] | None:
     return tuple(int(item) for item in raw_ids)
 
 
+def resolve_cli_champion_ids(
+    id_string: str | None,
+    *,
+    app: LolAudioUnpackApp,
+    force_update: bool = False,
+) -> tuple[int, ...] | None:
+    """解析 CLI 英雄选择器，支持纯 ID 或纯 alias。
+
+    Args:
+        id_string: 命令行传入的英雄选择器字符串。
+        app: 应用门面实例。
+        force_update: 是否强制刷新结构化数据。
+
+    Returns:
+        解析后的英雄 ID 元组；当输入为 ``None`` 或 ``all`` 时返回 ``None``。
+
+    Raises:
+        ValueError: 当选择器格式非法、混用 ID/alias 或 alias 不存在时抛出。
+    """
+    raw_ids = parse_ids(id_string)
+    if raw_ids is None:
+        return None
+
+    has_numeric_selector = any(item.isdigit() for item in raw_ids)
+    has_alias_selector = any(not item.isdigit() for item in raw_ids)
+    if has_numeric_selector and has_alias_selector:
+        raise ValueError("CLI 暂不支持在同一次英雄选择中混用 ID 与 alias。")
+    if has_numeric_selector:
+        return tuple(int(item) for item in raw_ids)
+
+    app.prepare_update_data(force_update=force_update)
+    return app.resolve_champion_ids(raw_ids)
+
+
 def build_operation_options(
     args: argparse.Namespace,
     champion_ids: tuple[int, ...] | None = None,
@@ -349,7 +383,7 @@ def execute_remote_entity_workflow(args: argparse.Namespace, app: LolAudioUnpack
     if args.update:
         update_options = build_operation_options(args)
     elif args.update_champions:
-        champion_ids = parse_int_ids(args.update_champions)
+        champion_ids = resolve_cli_champion_ids(args.update_champions, app=app, force_update=args.force)
         update_options = build_operation_options(args, champion_ids=champion_ids)
         update_target = "skin"
     elif args.update_maps:
@@ -365,7 +399,10 @@ def execute_remote_entity_workflow(args: argparse.Namespace, app: LolAudioUnpack
         extract_include_champions = True
         extract_include_maps = True
     elif args.extract_champions:
-        extract_options = build_operation_options(args, champion_ids=parse_int_ids(args.extract_champions))
+        extract_options = build_operation_options(
+            args,
+            champion_ids=resolve_cli_champion_ids(args.extract_champions, app=app, force_update=args.force),
+        )
         extract_include_champions = True
     elif args.extract_maps:
         extract_options = build_operation_options(args, map_ids=parse_int_ids(args.extract_maps))
@@ -379,7 +416,10 @@ def execute_remote_entity_workflow(args: argparse.Namespace, app: LolAudioUnpack
         mapping_include_champions = True
         mapping_include_maps = True
     elif args.mapping_champions:
-        mapping_options = build_operation_options(args, champion_ids=parse_int_ids(args.mapping_champions))
+        mapping_options = build_operation_options(
+            args,
+            champion_ids=resolve_cli_champion_ids(args.mapping_champions, app=app, force_update=args.force),
+        )
         mapping_include_champions = True
     elif args.mapping_maps:
         mapping_options = build_operation_options(args, map_ids=parse_int_ids(args.mapping_maps))
@@ -412,7 +452,7 @@ def execute_update_operations(args: argparse.Namespace, app: LolAudioUnpackApp) 
         logger.info("开始更新所有数据（英雄和地图）...")
         app.update(build_operation_options(args), target="all")
     elif args.update_champions:
-        champion_ids = parse_int_ids(args.update_champions)
+        champion_ids = resolve_cli_champion_ids(args.update_champions, app=app, force_update=args.force)
         if champion_ids:
             logger.info(f"开始更新指定英雄数据：{list(champion_ids)}")
         else:
@@ -440,7 +480,7 @@ def execute_extract_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
         app.extract(build_operation_options(args))
     elif args.extract_champions:
         try:
-            champion_ids = parse_int_ids(args.extract_champions)
+            champion_ids = resolve_cli_champion_ids(args.extract_champions, app=app, force_update=args.force)
         except ValueError as e:
             logger.error(f"解包英雄失败: {e}")
             return
@@ -488,7 +528,7 @@ def execute_mapping_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
             logger.info("开始构建所有实体的事件映射（英雄和地图）...")
             app.mapping(build_operation_options(args))
         elif args.mapping_champions:
-            champion_ids = parse_int_ids(args.mapping_champions)
+            champion_ids = resolve_cli_champion_ids(args.mapping_champions, app=app, force_update=args.force)
             if champion_ids:
                 logger.info(f"开始构建指定英雄的事件映射：{list(champion_ids)}")
                 app.mapping(

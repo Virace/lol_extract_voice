@@ -35,6 +35,8 @@
 > 说明：全局 `config` 兼容路径已移除，主链路必须显式持有 `AppContext`。
 >
 > 说明：remote 模式的真实 live 长测统一打上 `remote_live` marker，默认不在常规 `pytest` 中执行。
+>
+> 说明：英雄筛选当前支持稳定 `ID` 与稳定 `alias` 两种方式，二者都会解析到同一个英雄 ID；`name` 不在推荐支持范围内。
 
 ## 3. 延伸文档
 

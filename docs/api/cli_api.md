@@ -20,8 +20,10 @@ python -m lol_audio_unpack [OPTIONS]
 
 ### 2.1 数据更新组
 
+> 说明：英雄选择参数当前支持两种可靠定位方式——稳定 `ID` 或稳定 `alias`。两者都会在运行时解析到同一个英雄 ID；`name` 不在支持范围内，且单次调用暂不支持混用 ID 与 alias。
+
 - `--update`：更新全部（英雄+地图）。
-- `--update-champions [IDs]`：更新全部英雄或指定英雄（逗号分隔）。
+- `--update-champions [IDs|ALIASES]`：更新全部英雄或指定英雄（逗号分隔）。
 - `--update-maps [IDs]`：更新全部地图或指定地图（逗号分隔）。
 - `-f, --force`：强制更新，跳过版本命中判断。
 - `--skip-events`：更新时跳过事件提取（更快）。
@@ -29,13 +31,13 @@ python -m lol_audio_unpack [OPTIONS]
 ### 2.2 音频解包组
 
 - `--extract`：解包全部（英雄+地图）。
-- `--extract-champions [IDs]`：解包全部英雄或指定英雄。
+- `--extract-champions [IDs|ALIASES]`：解包全部英雄或指定英雄。
 - `--extract-maps [IDs]`：解包全部地图或指定地图。
 
 ### 2.3 映射组
 
 - `--mapping`：构建全部事件映射。
-- `--mapping-champions [IDs]`：构建全部英雄或指定英雄映射。
+- `--mapping-champions [IDs|ALIASES]`：构建全部英雄或指定英雄映射。
 - `--mapping-maps [IDs]`：构建全部地图或指定地图映射。
 - `--integrate-data`：输出整合数据（必须和映射参数同时出现）。
 

@@ -6,7 +6,7 @@ Manager 与流程函数。
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -23,6 +23,7 @@ from lol_audio_unpack.utils.path_constants import format_entity_folder_name, get
 
 DEFAULT_REMOTE_DOWNLOAD_RETRY_ATTEMPTS = 3
 DEFAULT_REMOTE_ENTITY_RETRY_ATTEMPTS = 3
+UPDATE_DATA_PREPARED_FORCE_CACHE_KEY = "update_data_prepared_force"
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,94 @@ class LolAudioUnpackApp:
         preparer = RemoteSnapshotPreparer(ctx=self.ctx)
         preparer.prepare_lcu_game_data()
         return preparer
+
+    def _is_update_data_prepared(self, *, force_update: bool) -> bool:
+        """判断当前上下文是否已完成数据预热。"""
+        cached_force_update = self.ctx.runtime_cache.get(UPDATE_DATA_PREPARED_FORCE_CACHE_KEY)
+        if cached_force_update is True:
+            return True
+        if cached_force_update is False and not force_update:
+            return True
+        return False
+
+    def prepare_update_data(self, *, force_update: bool = False) -> RemoteSnapshotPreparer | None:
+        """预热 update 所需结构化数据，并复用当前运行中的缓存状态。
+
+        Args:
+            force_update: 是否强制刷新数据文件。
+
+        Returns:
+            remote 模式下返回远端准备器，否则返回 ``None``。
+        """
+        remote_preparer = self._prepare_remote_snapshot_for_update()
+        if not self._is_update_data_prepared(force_update=force_update):
+            DataUpdater(force_update=force_update, ctx=self.ctx).check_and_update()
+            self.ctx.runtime_cache[UPDATE_DATA_PREPARED_FORCE_CACHE_KEY] = force_update
+        return remote_preparer
+
+    def resolve_champion_ids(self, selectors: Sequence[int | str] | None) -> tuple[int, ...] | None:
+        """将英雄选择器解析为稳定的英雄 ID 元组。
+
+        Args:
+            selectors: 英雄选择器序列，支持整数 ID、数字字符串或英雄 alias。
+
+        Returns:
+            解析后的英雄 ID 元组；当 ``selectors`` 为 ``None`` 时返回 ``None``。
+
+        Raises:
+            ValueError: 当选择器为空、alias 不存在或类型不支持时抛出。
+        """
+        if selectors is None:
+            return None
+
+        normalized_selectors: list[str | int] = []
+        has_numeric_selector = False
+        has_alias_selector = False
+        for selector in selectors:
+            if isinstance(selector, int):
+                normalized_selectors.append(selector)
+                has_numeric_selector = True
+                continue
+
+            raw_selector = str(selector).strip()
+            if not raw_selector:
+                raise ValueError("英雄选择器不能为空。")
+            normalized_selectors.append(raw_selector)
+            if raw_selector.isdigit():
+                has_numeric_selector = True
+            else:
+                has_alias_selector = True
+
+        if has_numeric_selector and has_alias_selector:
+            raise ValueError("暂不支持在同一次英雄选择中混用 ID 与 alias。")
+        if has_numeric_selector:
+            return tuple(int(selector) for selector in normalized_selectors)
+
+        reader = self._create_reader()
+        champions = reader.get_champions()
+        alias_to_id = {
+            str(champion.get("alias", "")).strip().casefold(): int(champion["id"])
+            for champion in champions
+            if champion.get("id") is not None and champion.get("alias")
+        }
+
+        resolved_ids: list[int] = []
+        unresolved_aliases: list[str] = []
+        for selector in normalized_selectors:
+            champion_id = alias_to_id.get(str(selector).casefold())
+            if champion_id is None:
+                unresolved_aliases.append(str(selector))
+                continue
+            resolved_ids.append(champion_id)
+
+        if unresolved_aliases:
+            available_aliases = sorted(champion.get("alias", "") for champion in champions if champion.get("alias"))
+            raise ValueError(
+                "未找到对应的英雄 alias: "
+                f"{unresolved_aliases}。可用 alias 示例: {available_aliases[:10]}"
+            )
+
+        return tuple(resolved_ids)
 
     def _build_remote_preparer(self) -> RemoteSnapshotPreparer | None:
         """按需创建远端准备器。"""
@@ -552,8 +641,7 @@ class LolAudioUnpackApp:
 
     def update(self, opts: OperationOptions, *, target: str = "all") -> None:
         """执行更新流程。"""
-        remote_preparer = self._prepare_remote_snapshot_for_update()
-        DataUpdater(force_update=opts.force_update, ctx=self.ctx).check_and_update()
+        remote_preparer = self.prepare_update_data(force_update=opts.force_update)
         if remote_preparer is not None:
             remote_preparer.prepare_bin_inputs(
                 reader=self._create_reader(),

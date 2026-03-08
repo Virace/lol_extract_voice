@@ -142,6 +142,8 @@ uv run unpack \
 
 ## 7. Python API 调用方式
 
+> 说明：英雄筛选除稳定 `ID` 外，也支持稳定 `alias`。推荐做法是先调用 `prepare_update_data()`，再用 `resolve_champion_ids(...)` 将 alias 解析为稳定 ID；两者都能准确定位到同一个英雄。
+
 ### 7.1 最小 `update -> extract`
 
 ```python
@@ -165,6 +167,15 @@ app.run_remote_entity_workflow(
     extract_include_champions=True,
 )
 ```
+
+若上游只提供英雄 alias，可先这样处理：
+
+```python
+app.prepare_update_data()
+champion_ids = app.resolve_champion_ids(["Annie", "Ahri"])
+```
+
+随后再把 `champion_ids` 填入 `OperationOptions(...)` 即可。
 
 ### 7.2 `update -> extract -> mapping` + 回调
 

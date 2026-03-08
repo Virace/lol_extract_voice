@@ -210,6 +210,28 @@ def test_parse_int_ids():
     assert cli.parse_int_ids("1,2, 3") == (1, 2, 3)
 
 
+def test_resolve_cli_champion_ids_supports_aliases():
+    calls = []
+
+    class FakeApp:
+        def prepare_update_data(self, *, force_update=False):
+            calls.append(("prepare", force_update))
+
+        def resolve_champion_ids(self, selectors):
+            calls.append(("resolve", tuple(selectors)))
+            return (1, 103)
+
+    champion_ids = cli.resolve_cli_champion_ids("Annie,Ahri", app=FakeApp())
+
+    assert champion_ids == (1, 103)
+    assert calls == [("prepare", False), ("resolve", ("Annie", "Ahri"))]
+
+
+def test_resolve_cli_champion_ids_rejects_mixed_selectors():
+    with pytest.raises(ValueError, match="混用 ID 与 alias"):
+        cli.resolve_cli_champion_ids("1,Ahri", app=SimpleNamespace())
+
+
 def test_execute_remote_entity_workflow_delegates_to_facade(monkeypatch):
     args = SimpleNamespace(
         update=False,
@@ -246,3 +268,29 @@ def test_execute_remote_entity_workflow_delegates_to_facade(monkeypatch):
     assert captured["extract_include_maps"] is False
     assert captured["mapping_include_champions"] is True
     assert captured["mapping_include_maps"] is False
+
+
+def test_execute_update_operations_resolves_champion_aliases():
+    parser = cli.create_parser()
+    args = parser.parse_args(["--update-champions", "Annie,Ahri"])
+
+    calls = []
+
+    class FakeApp:
+        def prepare_update_data(self, *, force_update=False):
+            calls.append(("prepare", force_update))
+
+        def resolve_champion_ids(self, selectors):
+            calls.append(("resolve", tuple(selectors)))
+            return (1, 103)
+
+        def update(self, opts, *, target="all"):
+            calls.append(("update", target, opts.champion_ids))
+
+    cli.execute_update_operations(args, FakeApp())
+
+    assert calls == [
+        ("prepare", False),
+        ("resolve", ("Annie", "Ahri")),
+        ("update", "skin", (1, 103)),
+    ]
