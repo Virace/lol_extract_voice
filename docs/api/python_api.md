@@ -13,6 +13,8 @@
 - `RemoteSnapshotConfig`
 - `SourceMode`
 - `LolAudioUnpackApp`
+- `RemoteEntityCallbackPayload`
+- `RemoteEntityWorkItem`
 - `DataUpdater`
 - `BinUpdater`
 - `DataReader`
@@ -52,6 +54,8 @@ class LolAudioUnpackApp:
         include_maps: bool = True,
     ) -> None
     def cleanup_remote_artifacts(self) -> None
+    def build_remote_entity_work_items(...) -> list[RemoteEntityWorkItem]
+    def run_remote_entity_workflow(...) -> None
 ```
 
 用途：统一编排更新、解包、映射流程，供 CLI 与模块调用共用。
@@ -62,8 +66,53 @@ class LolAudioUnpackApp:
   - `update()` 会先准备 LCU 与 BIN 输入
   - `extract()` / `mapping()` 会先准备当前操作所需的实体 WAD
   - `cleanup_remote_artifacts()` 会在开启 `cleanup_remote` 时清理已登记的远端产物
+  - `run_remote_entity_workflow()` 会复用 CLI 当前的“按实体拆批 + 每轮清理”策略
 
-### 2.3 `OperationOptions`
+### 2.3 `run_remote_entity_workflow`
+
+适用场景：
+
+- 需要在纯 Python 中复用 CLI 现有 remote 单位驱动策略
+- 希望在 `update` 后按实体逐个执行 `extract` / `mapping`
+- 希望每个实体执行完成后立即清理已准备的远端 WAD，降低磁盘峰值
+
+关键参数：
+
+- `update_options` / `update_target`：可选的一次性 `update`
+- `extract_options`：extract 阶段的批量配置
+- `mapping_options`：mapping 阶段的批量配置
+- `extract_include_*` / `mapping_include_*`：控制各阶段是否包含 champions / maps
+- `download_retry_attempts`：单次实体尝试内，下载类错误的最大重试次数，默认 `3`
+- `entity_retry_attempts`：单实体完整流程的最大重试次数，默认 `3`
+
+说明：
+
+- 该方法仅在 `remote_snapshot` 模式下可用
+- 若 `extract_options` / `mapping_options` 未显式给 `champion_ids` 或 `map_ids`，会按 `include_*` 自动展开为全量实体
+- 若同一实体同时命中 extract 与 mapping，会先一次性准备该实体所需 WAD，再依次执行两阶段，最后统一清理
+- 可通过 `on_entity_complete(payload)` 接收当前实体完成后的产物路径回调
+- 下载类错误（`DownloadError` / `DecompressError` / `DownloadBatchError`）默认会在当前实体尝试内重试 3 次
+- 若单实体完整流程连续失败达到阈值（默认 3 次），会直接向上抛错，并提示当前解包脚本可能已不再适配最新二进制资源
+
+### 2.4 `RemoteEntityCallbackPayload`
+
+```python
+@dataclass(frozen=True)
+class RemoteEntityCallbackPayload:
+    entity_type: str
+    entity_id: int
+    audio_output_paths: tuple[Path, ...] = ()
+    mapping_output_path: Path | None = None
+```
+
+说明：
+
+- `audio_output_paths`：当前实体解包后实际存在的输出目录列表
+- `mapping_output_path`：当前实体 mapping 最终产物文件路径；若未产出则为 `None`
+- 当 `group_by_type=False` 时，`audio_output_paths` 通常只有 1 个实体目录
+- 当 `group_by_type=True` 且存在多种音频类型输出时，`audio_output_paths` 可能包含多个目录
+
+### 2.5 `OperationOptions`
 
 ```python
 @dataclass(frozen=True)
@@ -188,4 +237,32 @@ ctx = create_app_context(
 )
 app = LolAudioUnpackApp(ctx)
 app.update(OperationOptions(champion_ids=(1, 103)), target="skin")
+```
+
+```python
+from lol_audio_unpack import LolAudioUnpackApp, OperationOptions
+from lol_audio_unpack.app_context import create_app_context
+
+ctx = create_app_context(
+    cli_overrides={
+        "OUTPUT_PATH": "./out",
+        "GAME_REGION": "zh_CN",
+        "SOURCE_MODE": "remote_snapshot",
+        "WWISER_PATH": "./wwiser.pyz",
+    }
+)
+app = LolAudioUnpackApp(ctx)
+
+def on_entity_complete(payload):
+    print(payload.entity_id, payload.audio_output_paths, payload.mapping_output_path)
+
+app.run_remote_entity_workflow(
+    update_options=OperationOptions(champion_ids=(1, 103)),
+    update_target="skin",
+    extract_options=OperationOptions(max_workers=4, champion_ids=(1, 103)),
+    mapping_options=OperationOptions(max_workers=1, champion_ids=(103,), integrate_data=True),
+    extract_include_champions=True,
+    mapping_include_champions=True,
+    on_entity_complete=on_entity_complete,
+)
 ```

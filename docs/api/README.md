@@ -36,7 +36,11 @@
 >
 > 说明：remote 模式的真实 live 长测统一打上 `remote_live` marker，默认不在常规 `pytest` 中执行。
 
-## 3. 目录输出约定
+## 3. 延伸文档
+
+- [Remote 模式（运行与接入）](./remote_mode.md)
+
+## 4. 目录输出约定
 
 - `manifest/<version>/data.*`：基础聚合数据（英雄/地图元信息）
 - `manifest/<version>/banks/**`：分类后的 bank 路径数据
@@ -48,7 +52,7 @@
 - `cache/remote/**`：remote 模式下载缓存
 - `_prepared_game/**`：remote 模式最小运行环境
 
-## 4. 数据格式约定
+## 5. 数据格式约定
 
 `write_data(data, base_path, dev_mode=...)` 会根据模式决定写入格式：
 

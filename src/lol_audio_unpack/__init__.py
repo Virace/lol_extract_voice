@@ -25,7 +25,7 @@ from .app_context import (
     SourceMode,
     create_app_context,
 )
-from .facade import LolAudioUnpackApp
+from .facade import LolAudioUnpackApp, RemoteEntityCallbackPayload, RemoteEntityWorkItem
 from .manager import BinUpdater, DataReader, DataUpdater
 from .utils.logging import setup_logging
 
@@ -72,6 +72,8 @@ __all__ = [
     "AppPaths",
     "LolAudioUnpackApp",
     "OperationOptions",
+    "RemoteEntityCallbackPayload",
+    "RemoteEntityWorkItem",
     "RemoteSnapshotConfig",
     "SourceMode",
     "setup_app",

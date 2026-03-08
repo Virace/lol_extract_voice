@@ -210,32 +210,7 @@ def test_parse_int_ids():
     assert cli.parse_int_ids("1,2, 3") == (1, 2, 3)
 
 
-def test_build_remote_entity_work_items_merges_extract_and_mapping_targets():
-    args = SimpleNamespace(
-        extract=False,
-        extract_champions="1,103",
-        extract_maps=None,
-        mapping=False,
-        mapping_champions="103,555",
-        mapping_maps=None,
-    )
-
-    reader = SimpleNamespace(
-        get_champions=lambda: [],
-        get_maps=lambda: [],
-    )
-    app = SimpleNamespace(_create_reader=lambda: reader)
-
-    work_items = cli._build_remote_entity_work_items(args, app)
-
-    assert work_items == [
-        cli.RemoteEntityWorkItem(entity_type="champion", entity_id=1, need_extract=True, need_mapping=False),
-        cli.RemoteEntityWorkItem(entity_type="champion", entity_id=103, need_extract=True, need_mapping=True),
-        cli.RemoteEntityWorkItem(entity_type="champion", entity_id=555, need_extract=False, need_mapping=True),
-    ]
-
-
-def test_execute_remote_entity_workflow_runs_per_entity_and_cleans_between_entities(monkeypatch):
+def test_execute_remote_entity_workflow_delegates_to_facade(monkeypatch):
     args = SimpleNamespace(
         update=False,
         update_champions=None,
@@ -252,35 +227,22 @@ def test_execute_remote_entity_workflow_runs_per_entity_and_cleans_between_entit
         integrate_data=False,
     )
 
-    ctx = SimpleNamespace(config=SimpleNamespace(source_mode=SourceMode.REMOTE_SNAPSHOT))
-    reader = SimpleNamespace(get_champions=lambda: [], get_maps=lambda: [])
-    call_order = []
+    captured = {}
 
-    class FakePreparer:
-        def __init__(self, *, ctx):
-            assert ctx is not None
+    def fake_run_remote_entity_workflow(**kwargs):
+        captured.update(kwargs)
 
-        def prepare_entity_wads(self, **kwargs):
-            call_order.append(("prepare", kwargs["champion_ids"], kwargs["need_extract"], kwargs["need_mapping"]))
-
-    app = SimpleNamespace(
-        ctx=ctx,
-        _create_reader=lambda: reader,
-        extract=lambda opts, **kwargs: call_order.append(("extract", opts.champion_ids, kwargs["prepare_remote"])),
-        mapping=lambda opts, **kwargs: call_order.append(("mapping", opts.champion_ids, kwargs["prepare_remote"])),
-        cleanup_remote_artifacts=lambda: call_order.append(("cleanup",)),
-    )
-
-    monkeypatch.setattr(cli, "RemoteSnapshotPreparer", FakePreparer)
+    app = SimpleNamespace(run_remote_entity_workflow=fake_run_remote_entity_workflow)
 
     cli.execute_remote_entity_workflow(args, app)
 
-    assert call_order == [
-        ("prepare", (1,), True, False),
-        ("extract", (1,), False),
-        ("cleanup",),
-        ("prepare", (103,), True, True),
-        ("extract", (103,), False),
-        ("mapping", (103,), False),
-        ("cleanup",),
-    ]
+    assert captured["update_options"] is None
+    assert captured["update_target"] == "all"
+    assert captured["extract_options"].champion_ids == (1, 103)
+    assert captured["extract_options"].map_ids is None
+    assert captured["mapping_options"].champion_ids == (103,)
+    assert captured["mapping_options"].map_ids is None
+    assert captured["extract_include_champions"] is True
+    assert captured["extract_include_maps"] is False
+    assert captured["mapping_include_champions"] is True
+    assert captured["mapping_include_maps"] is False

@@ -42,11 +42,7 @@
 2.  **安装依赖**:
     *   **方式一: 使用 `uv` (推荐)**
         ```bash
-        # uv 会自动创建虚拟环境
         uv sync
-
-        # 如遇缓存目录权限问题，可使用仓库本地缓存目录
-        UV_CACHE_DIR=.cache/uv uv sync
         ```
     *   **方式二: 使用 `pip`**
         ```bash
@@ -105,24 +101,13 @@
         uv run unpack --update --extract --skip-events
         ```
 
-    *   **方式二: 使用 `python -m` (传统方式)**
-        ```bash
-        # --- 数据更新 ---
-        python -m lol_audio_unpack --update
-        python -m lol_audio_unpack --update-champions 1,103,555
-        python -m lol_audio_unpack --update-maps 11,12
-        python -m lol_audio_unpack --update --skip-events
-
-        # --- 音频解包 ---
-        python -m lol_audio_unpack --extract
-        python -m lol_audio_unpack --extract-champions 555
-        python -m lol_audio_unpack --extract-maps 11
-        ```
-    
-    ##### 注意：在单独更新地图数据时候，如果使用了下列命令，则去重失效
+    ##### 注意：单独更新地图数据时，若不带 `0`，地图去重会失效
     ```
-    # 地图去重依赖于地图ID为0的Common数据，所以如果想正确处理地图数据，建议无论你单独处理哪个地图数据都带上 "0"
-    lol_audio_unpack --update-maps 11,12
+    # 不推荐：缺少地图 ID=0 的 Common 数据
+    uv run unpack --update-maps 11,12
+
+    # 推荐：显式带上 0
+    uv run unpack --update-maps 0,11,12
     ```
     
 
@@ -222,20 +207,20 @@ export LOL_WWISER_PATH="/path/to/wwiser.pyz"
 
 ```bash
 # 1. 远端更新指定英雄数据
-UV_CACHE_DIR=.cache/uv uv run unpack \
+uv run unpack \
   --update-champions 1,103,555
 ```
 
 ```bash
 # 2. 远端更新并解包指定英雄 VO
-UV_CACHE_DIR=.cache/uv uv run unpack \
+uv run unpack \
   --update-champions 1,103,555 \
   --extract-champions 1,103,555
 ```
 
 ```bash
 # 3. 远端更新、解包并构建指定英雄映射
-UV_CACHE_DIR=.cache/uv uv run unpack \
+uv run unpack \
   --update-champions 1,103,555 \
   --extract-champions 1,103,555 \
   --mapping-champions 1,103,555 \
@@ -244,7 +229,7 @@ UV_CACHE_DIR=.cache/uv uv run unpack \
 
 ```bash
 # 4. 关闭自动清理，保留远端准备产物用于排查
-UV_CACHE_DIR=.cache/uv uv run unpack \
+uv run unpack \
   --update-champions 1,103,555 \
   --extract-champions 1,103,555 \
   --mapping-champions 1,103,555 \
@@ -277,7 +262,7 @@ UV_CACHE_DIR=.cache/uv uv run unpack \
 
 更详细的 remote 使用说明见：
 
-- [docs/REMOTE.md](./docs/REMOTE.md)
+- [docs/api/remote_mode.md](./docs/api/remote_mode.md)
 
 ### 基准测试
 项目内置基准脚本：`scripts/benchmark_cli.py`，用于评估 CLI 外部调用的真实耗时与稳定性。
@@ -285,7 +270,7 @@ UV_CACHE_DIR=.cache/uv uv run unpack \
 建议直接使用 `uv` 运行基准脚本：
 
 ```bash
-uv run python scripts/benchmark_cli.py --help
+uv run scripts/benchmark_cli.py --help
 ```
 
 #### 基准模式
@@ -305,14 +290,14 @@ uv run python scripts/benchmark_cli.py --help
 
 #### 示例 1：仅做 mock 自检
 ```bash
-uv run python scripts/benchmark_cli.py \
+uv run scripts/benchmark_cli.py \
   --mode mock \
   --output /tmp/bench_mock.json
 ```
 
 #### 示例 2：local_game 全流程（更新 + 解包 + 映射）
 ```bash
-uv run python scripts/benchmark_cli.py \
+uv run scripts/benchmark_cli.py \
   --mode local_game \
   --sample-size 10 \
   --max-workers auto \
@@ -335,7 +320,7 @@ uv run unpack \
 
 方式二（使用 benchmark_cli）：不给有效 `WWISER_PATH`，映射阶段会 `skip`，仅统计解包阶段。
 ```bash
-uv run python scripts/benchmark_cli.py \
+uv run scripts/benchmark_cli.py \
   --mode local_game \
   --sample-size 3 \
   --no-prepare-update \

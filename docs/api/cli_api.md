@@ -8,9 +8,13 @@
 uv run unpack [OPTIONS]
 ```
 
+兼容模块入口仍可用：
+
 ```bash
 python -m lol_audio_unpack [OPTIONS]
 ```
+
+但文档示例统一使用 `uv run unpack`。
 
 ## 2. 参数总表
 
@@ -93,6 +97,8 @@ python -m lol_audio_unpack [OPTIONS]
    - 构建实体 work item 队列
    - 单位顺序执行 `extract` / `mapping`
    - 单实体完成后立即清理当前实体远端 WAD
+   - 下载类错误（`DownloadError` / `DecompressError` / `DownloadBatchError`）默认重试 3 次
+   - 单实体完整流程默认最多重试 3 次；超过阈值会直接向上抛错，提示当前解包脚本可能已不再适配最新二进制资源
 
 ### 3.2 关键校验
 
@@ -127,5 +133,5 @@ uv run pytest -q
 显式运行远端长测：
 
 ```bash
-UV_CACHE_DIR=.cache/uv uv run pytest -q -m remote_live
+uv run pytest -q -m remote_live
 ```

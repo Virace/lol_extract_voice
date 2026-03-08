@@ -7,6 +7,7 @@
 - [API 导航与约定](./api/README.md)
 - [Python API（公开入口与管理器）](./api/python_api.md)
 - [CLI API（命令行参数与执行语义）](./api/cli_api.md)
+- [Remote 模式（运行与接入）](./api/remote_mode.md)
 - [解包与映射 API（核心流水线）](./api/pipeline_api.md)
 - [配置与数据读写 API](./api/config_api.md)
 

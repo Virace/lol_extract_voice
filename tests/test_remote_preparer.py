@@ -5,6 +5,7 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
 import pytest
+from riotmanifest import DownloadError
 
 import lol_audio_unpack.facade as m_facade
 import lol_audio_unpack.remote_preparer as m_remote
@@ -16,7 +17,7 @@ from lol_audio_unpack.app_context import (
     RemoteSnapshotConfig,
     SourceMode,
 )
-from lol_audio_unpack.facade import LolAudioUnpackApp
+from lol_audio_unpack.facade import LolAudioUnpackApp, RemoteEntityCallbackPayload, RemoteEntityWorkItem
 from lol_audio_unpack.remote_preparer import RemoteSnapshotPreparer
 
 pytestmark = pytest.mark.unit
@@ -483,6 +484,313 @@ def test_facade_mapping_prepares_remote_wads_before_mapping(monkeypatch: pytest.
     app.mapping(OperationOptions())
 
     assert call_order == ["prepare_mapping", "mapping"]
+
+
+def test_facade_build_remote_entity_work_items_merges_extract_and_mapping_targets(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    ctx = _build_remote_ctx(tmp_path)
+    app = LolAudioUnpackApp(ctx)
+    reader = SimpleNamespace(version="16.5", get_champions=lambda: [], get_maps=lambda: [])
+
+    monkeypatch.setattr(m_facade, "DataReader", lambda ctx: reader)
+
+    work_items = app.build_remote_entity_work_items(
+        extract_options=OperationOptions(champion_ids=(1, 103)),
+        mapping_options=OperationOptions(champion_ids=(103, 555)),
+        extract_include_champions=True,
+        mapping_include_champions=True,
+    )
+
+    assert work_items == [
+        RemoteEntityWorkItem(entity_type="champion", entity_id=1, need_extract=True, need_mapping=False),
+        RemoteEntityWorkItem(entity_type="champion", entity_id=103, need_extract=True, need_mapping=True),
+        RemoteEntityWorkItem(entity_type="champion", entity_id=555, need_extract=False, need_mapping=True),
+    ]
+
+
+def test_facade_run_remote_entity_workflow_runs_per_entity_and_cleans_between_entities(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    ctx = _build_remote_ctx(tmp_path)
+    app = LolAudioUnpackApp(ctx)
+    reader = SimpleNamespace(version="16.5", get_champions=lambda: [], get_maps=lambda: [])
+    call_order: list[tuple] = []
+
+    class FakePreparer:
+        def __init__(self, *, ctx) -> None:  # noqa: ANN001
+            assert ctx is not None
+
+        def prepare_entity_wads(self, **kwargs) -> None:  # noqa: ANN003
+            call_order.append(("prepare", kwargs["champion_ids"], kwargs["need_extract"], kwargs["need_mapping"]))
+
+    monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
+    monkeypatch.setattr(m_facade, "DataReader", lambda ctx: reader)
+    app._build_entity_data = lambda reader, **kwargs: SimpleNamespace(  # type: ignore[method-assign]
+        entity_id=str(kwargs["entity_id"]),
+        entity_name="测试实体",
+        entity_alias="test",
+        entity_title=None,
+        entity_type=kwargs["entity_type"],
+    )
+
+    app.update = lambda opts, *, target="all": call_order.append(("update", opts.champion_ids, target))  # type: ignore[method-assign]
+    app.extract = (  # type: ignore[method-assign]
+        lambda opts, **kwargs: call_order.append(("extract", opts.champion_ids, kwargs["prepare_remote"]))
+    )
+    app.mapping = (  # type: ignore[method-assign]
+        lambda opts, **kwargs: call_order.append(("mapping", opts.champion_ids, kwargs["prepare_remote"]))
+    )
+    app.cleanup_remote_artifacts = lambda: call_order.append(("cleanup",))  # type: ignore[method-assign]
+
+    app.run_remote_entity_workflow(
+        update_options=OperationOptions(champion_ids=(1, 103)),
+        update_target="skin",
+        extract_options=OperationOptions(champion_ids=(1, 103)),
+        mapping_options=OperationOptions(champion_ids=(103,)),
+        extract_include_champions=True,
+        mapping_include_champions=True,
+    )
+
+    assert call_order == [
+        ("update", (1, 103), "skin"),
+        ("cleanup",),
+        ("prepare", (1,), True, False),
+        ("extract", (1,), False),
+        ("cleanup",),
+        ("prepare", (103,), True, True),
+        ("extract", (103,), False),
+        ("mapping", (103,), False),
+        ("cleanup",),
+    ]
+
+
+def test_facade_run_remote_entity_workflow_invokes_callback_with_extract_and_mapping_paths(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    ctx = _build_remote_ctx(tmp_path)
+    app = LolAudioUnpackApp(ctx)
+    reader = SimpleNamespace(version="16.5", get_champions=lambda: [], get_maps=lambda: [])
+    callback_payloads: list[RemoteEntityCallbackPayload] = []
+
+    entity_data = SimpleNamespace(
+        entity_id="103",
+        entity_name="阿狸",
+        entity_alias="ahri",
+        entity_title="九尾妖狐",
+        entity_type="champion",
+    )
+
+    class FakePreparer:
+        def __init__(self, *, ctx) -> None:  # noqa: ANN001
+            assert ctx is not None
+
+        def prepare_entity_wads(self, **_kwargs) -> None:  # noqa: ANN003
+            return None
+
+    extract_dir = ctx.paths.audio_path / "16.5" / "champions" / "103·ahri·阿狸·九尾妖狐"
+    mapping_file = ctx.paths.hash_path / "16.5" / "champions" / "103.msgpack"
+
+    def fake_extract(opts, **kwargs) -> None:  # noqa: ANN001, ANN003
+        assert opts.champion_ids == (103,)
+        assert kwargs["prepare_remote"] is False
+        extract_dir.mkdir(parents=True, exist_ok=True)
+
+    def fake_mapping(opts, **kwargs) -> None:  # noqa: ANN001, ANN003
+        assert opts.champion_ids == (103,)
+        assert kwargs["prepare_remote"] is False
+        mapping_file.parent.mkdir(parents=True, exist_ok=True)
+        mapping_file.write_bytes(b"mapping")
+
+    monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
+    monkeypatch.setattr(m_facade, "DataReader", lambda ctx: reader)
+    app._build_entity_data = lambda reader, **kwargs: entity_data  # type: ignore[method-assign]
+    app.extract = fake_extract  # type: ignore[method-assign]
+    app.mapping = fake_mapping  # type: ignore[method-assign]
+    app.cleanup_remote_artifacts = lambda: None  # type: ignore[method-assign]
+
+    app.run_remote_entity_workflow(
+        extract_options=OperationOptions(champion_ids=(103,)),
+        mapping_options=OperationOptions(champion_ids=(103,)),
+        extract_include_champions=True,
+        mapping_include_champions=True,
+        on_entity_complete=callback_payloads.append,
+    )
+
+    assert callback_payloads == [
+        RemoteEntityCallbackPayload(
+            entity_type="champion",
+            entity_id=103,
+            audio_output_paths=(extract_dir,),
+            mapping_output_path=mapping_file,
+        )
+    ]
+
+
+def test_facade_run_remote_entity_workflow_callback_returns_multiple_audio_paths_when_grouped_by_type(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    ctx = _build_remote_ctx(tmp_path)
+    ctx.config = replace(
+        ctx.config,
+        group_by_type=True,
+        exclude_types=(),
+        include_types=("VO", "SFX", "MUSIC"),
+    )
+    app = LolAudioUnpackApp(ctx)
+    reader = SimpleNamespace(version="16.5", get_champions=lambda: [], get_maps=lambda: [])
+    callback_payloads: list[RemoteEntityCallbackPayload] = []
+
+    entity_data = SimpleNamespace(
+        entity_id="1",
+        entity_name="安妮",
+        entity_alias="annie",
+        entity_title="黑暗之女",
+        entity_type="champion",
+    )
+
+    class FakePreparer:
+        def __init__(self, *, ctx) -> None:  # noqa: ANN001
+            assert ctx is not None
+
+        def prepare_entity_wads(self, **_kwargs) -> None:  # noqa: ANN003
+            return None
+
+    vo_dir = ctx.paths.audio_path / "16.5" / "VO" / "champions" / "1·annie·安妮·黑暗之女"
+    sfx_dir = ctx.paths.audio_path / "16.5" / "SFX" / "champions" / "1·annie·安妮·黑暗之女"
+
+    def fake_extract(opts, **kwargs) -> None:  # noqa: ANN001, ANN003
+        assert opts.champion_ids == (1,)
+        assert kwargs["prepare_remote"] is False
+        vo_dir.mkdir(parents=True, exist_ok=True)
+        sfx_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
+    monkeypatch.setattr(m_facade, "DataReader", lambda ctx: reader)
+    app._build_entity_data = lambda reader, **kwargs: entity_data  # type: ignore[method-assign]
+    app.extract = fake_extract  # type: ignore[method-assign]
+    app.cleanup_remote_artifacts = lambda: None  # type: ignore[method-assign]
+
+    app.run_remote_entity_workflow(
+        extract_options=OperationOptions(champion_ids=(1,)),
+        extract_include_champions=True,
+        on_entity_complete=callback_payloads.append,
+    )
+
+    assert callback_payloads == [
+        RemoteEntityCallbackPayload(
+            entity_type="champion",
+            entity_id=1,
+            audio_output_paths=(vo_dir, sfx_dir),
+            mapping_output_path=None,
+        )
+    ]
+
+
+def test_facade_run_remote_entity_workflow_retries_download_errors_before_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    download_retry_attempts = 3
+    ctx = _build_remote_ctx(tmp_path)
+    app = LolAudioUnpackApp(ctx)
+    reader = SimpleNamespace(version="16.5", get_champions=lambda: [], get_maps=lambda: [])
+    call_order: list[tuple] = []
+    attempts = {"prepare": 0}
+
+    class FakePreparer:
+        def __init__(self, *, ctx) -> None:  # noqa: ANN001
+            assert ctx is not None
+
+        def prepare_entity_wads(self, **kwargs) -> None:  # noqa: ANN003
+            attempts["prepare"] += 1
+            call_order.append(("prepare", attempts["prepare"], kwargs["champion_ids"]))
+            if attempts["prepare"] < download_retry_attempts:
+                raise DownloadError("network")
+
+    monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
+    monkeypatch.setattr(m_facade, "DataReader", lambda ctx: reader)
+    app._build_entity_data = lambda reader, **kwargs: SimpleNamespace(  # type: ignore[method-assign]
+        entity_id=str(kwargs["entity_id"]),
+        entity_name="测试实体",
+        entity_alias="test",
+        entity_title=None,
+        entity_type=kwargs["entity_type"],
+    )
+    app.extract = lambda opts, **kwargs: call_order.append(("extract", opts.champion_ids, kwargs["prepare_remote"]))  # type: ignore[method-assign]
+    app.cleanup_remote_artifacts = lambda: call_order.append(("cleanup",))  # type: ignore[method-assign]
+
+    app.run_remote_entity_workflow(
+        extract_options=OperationOptions(champion_ids=(1,)),
+        extract_include_champions=True,
+        download_retry_attempts=download_retry_attempts,
+        entity_retry_attempts=2,
+    )
+
+    assert call_order == [
+        ("prepare", 1, (1,)),
+        ("prepare", 2, (1,)),
+        ("prepare", 3, (1,)),
+        ("extract", (1,), False),
+        ("cleanup",),
+    ]
+
+
+def test_facade_run_remote_entity_workflow_raises_after_entity_retry_threshold(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    ctx = _build_remote_ctx(tmp_path)
+    app = LolAudioUnpackApp(ctx)
+    reader = SimpleNamespace(version="16.5", get_champions=lambda: [], get_maps=lambda: [])
+    call_order: list[tuple] = []
+
+    class FakePreparer:
+        def __init__(self, *, ctx) -> None:  # noqa: ANN001
+            assert ctx is not None
+
+        def prepare_entity_wads(self, **kwargs) -> None:  # noqa: ANN003
+            call_order.append(("prepare", kwargs["champion_ids"]))
+
+    monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
+    monkeypatch.setattr(m_facade, "DataReader", lambda ctx: reader)
+    app._build_entity_data = lambda reader, **kwargs: SimpleNamespace(  # type: ignore[method-assign]
+        entity_id=str(kwargs["entity_id"]),
+        entity_name="测试实体",
+        entity_alias="test",
+        entity_title=None,
+        entity_type=kwargs["entity_type"],
+    )
+
+    def fake_extract(opts, **kwargs) -> None:  # noqa: ANN001, ANN003
+        call_order.append(("extract", opts.champion_ids, kwargs["prepare_remote"]))
+        raise RuntimeError("bnk format changed")
+
+    app.extract = fake_extract  # type: ignore[method-assign]
+    app.cleanup_remote_artifacts = lambda: call_order.append(("cleanup",))  # type: ignore[method-assign]
+
+    with pytest.raises(RuntimeError, match="当前解包脚本可能无法正常解包"):
+        app.run_remote_entity_workflow(
+            extract_options=OperationOptions(champion_ids=(1,)),
+            extract_include_champions=True,
+            entity_retry_attempts=3,
+        )
+
+    assert call_order == [
+        ("prepare", (1,)),
+        ("extract", (1,), False),
+        ("cleanup",),
+        ("prepare", (1,)),
+        ("extract", (1,), False),
+        ("cleanup",),
+        ("prepare", (1,)),
+        ("extract", (1,), False),
+        ("cleanup",),
+    ]
 
 
 def test_remote_snapshot_preparer_cleanup_tracked_artifacts_supports_dry_run(
