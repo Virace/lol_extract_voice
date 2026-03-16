@@ -187,8 +187,11 @@ class FixedSnapshotCard(ExpandGroupSettingCard):
 class SettingPage(SmoothScrollArea):
     """Settings Page — all persistent config in one scrollable view."""
 
-    # 信号：输出目录改变时发出
+    # 路径变更信号
+    game_path_changed = Signal(str)
     output_path_changed = Signal(str)
+    wwiser_path_changed = Signal(str)
+    vgmstream_path_changed = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent=parent)
@@ -467,6 +470,7 @@ class SettingPage(SmoothScrollArea):
             self._cfg.game_path = path
             self._cfg.save()
             self._apply_path_label(self.gamePathCard, path)
+            self.game_path_changed.emit(path)
 
     def _pick_output_path(self) -> None:
         """弹出文件夹选择对话框，更新解包输出目录。"""
@@ -485,12 +489,13 @@ class SettingPage(SmoothScrollArea):
         """弹出文件选择对话框，更新 wwiser.py 路径。"""
         current = self._cfg.wwiser_path or ""
         path, _ = QFileDialog.getOpenFileName(
-            self, "选择 wwiser.py", current, "Python 脚本 (wwiser.py);;所有文件 (*)"
+            self, "选择 wwiser.py", current, "Python 脚本 (wwiser.py wwiser.pyz);;所有文件 (*)"
         )
         if path:
             self._cfg.wwiser_path = path
             self._cfg.save()
             self._apply_path_label(self.wwiserCard, path, r".\tools\wwiser\wwiser.pyz")
+            self.wwiser_path_changed.emit(path)
 
     def _pick_vgmstream(self) -> None:
         """弹出文件选择对话框，更新 vgmstream-cli 路径。"""
@@ -503,6 +508,7 @@ class SettingPage(SmoothScrollArea):
             self._cfg.vgmstream_path = path
             self._cfg.save()
             self._apply_path_label(self.vgmstreamCard, path, r".\tools\vgmstream\vgmstream-cli.exe")
+            self.vgmstream_path_changed.emit(path)
 
     # ------------------------------------------------------------------
     # 动态显隐

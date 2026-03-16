@@ -39,11 +39,13 @@ class MainWindow(FluentWindow):
         self.splashScreen.setIconSize(QSize(106, 106))
         self.splashScreen.raise_()
 
-        # create sub interface
-        self.homeInterface = HomePage(self)
+        # create sub interface — SettingPage first so cfg is ready
+        self.settingInterface = SettingPage(self)
+        cfg = self.settingInterface.config
+
+        self.homeInterface = HomePage(cfg, self)
         self.unpackInterface = UnpackPage(self)
         self.mappingInterface = MappingPage(self)
-        self.settingInterface = SettingPage(self)
         self.aboutInterface = AboutPage(self)
 
         self._initNavigation()
@@ -113,14 +115,14 @@ class MainWindow(FluentWindow):
 
     def _connect_pages(self):
         """连接页面间的数据同步。"""
-        # 初始化时从设置同步输出目录到首页
-        output_path = self.settingInterface.config.output_path
-        self.homeInterface.update_output_dir(output_path)
+        si = self.settingInterface
+        hi = self.homeInterface
 
-        # 设置改变时同步到首页
-        self.settingInterface.output_path_changed.connect(
-            self.homeInterface.update_output_dir
-        )
+        # 路径改变时实时同步到首页
+        si.game_path_changed.connect(hi.update_game_dir)
+        si.output_path_changed.connect(hi.update_output_dir)
+        si.wwiser_path_changed.connect(hi.update_wwiser)
+        si.vgmstream_path_changed.connect(hi.update_vgmstream)
 
     def _inject_mock_data(self):
         self.unpackInterface.add_preview_data([
