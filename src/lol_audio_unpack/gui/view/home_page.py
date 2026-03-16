@@ -254,7 +254,9 @@ class HomePage(SmoothScrollArea):
         self.overview_flow.setVerticalSpacing(16)
 
         self.version_card = ClickableCard(FIF.CODE, "游戏版本", "读取中…", self)
-        self.version_card.linkIcon.hide()  # version is info-only, no path jump
+        self.version_card.linkIcon.hide()
+        self.version_card.setCursor(Qt.CursorShape.ArrowCursor)
+        self.version_card._raw_path = ""
 
         self.game_dir_card = ClickableCard(FIF.FOLDER, "游戏目录", "未设置", self)
         self.output_dir_card = ClickableCard(FIF.DOWNLOAD, "输出目录", r".\output", self)
@@ -264,9 +266,9 @@ class HomePage(SmoothScrollArea):
 
         for card in (
             self.version_card,
+            self.cache_card,
             self.game_dir_card,
             self.output_dir_card,
-            self.cache_card,
         ):
             self.overview_flow.addWidget(card)
 
