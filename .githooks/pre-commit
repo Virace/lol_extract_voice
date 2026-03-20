@@ -5,12 +5,12 @@ ROOT_DIR="$(git rev-parse --show-toplevel)"
 cd "${ROOT_DIR}"
 
 if command -v python3 >/dev/null 2>&1; then
-  python3 scripts/check_version_suffix.py
+  python3 scripts/check_version_suffix.py --sync --stage
   python3 scripts/check_main_local_sources.py --mode enforce
 elif command -v python >/dev/null 2>&1; then
-  python scripts/check_version_suffix.py
+  python scripts/check_version_suffix.py --sync --stage
   python scripts/check_main_local_sources.py --mode enforce
 else
-  echo "[fail] 未找到 python3/python，无法执行版本后缀校验。"
+  echo "[fail] 未找到 python3/python，无法执行版本后缀同步。"
   exit 1
 fi
