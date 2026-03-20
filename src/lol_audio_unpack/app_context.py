@@ -9,7 +9,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from dotenv import dotenv_values
 from loguru import logger
 from riotmanifest import LeagueManifestError, LeagueManifestResolver
 
@@ -282,12 +281,27 @@ def _load_prefixed_env_from_file(env_file: Path, env_prefix: str) -> dict[str, s
         logger.warning(f"环境变量文件不存在: {env_file}")
         return {}
 
-    loaded = dotenv_values(env_file)
     settings: dict[str, str] = {}
     prefix_len = len(env_prefix)
-    for env_name, env_value in loaded.items():
-        if env_value is None:
+    min_quoted_length = len("''")
+    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
+        stripped_line = raw_line.strip()
+        if not stripped_line or stripped_line.startswith("#"):
             continue
+
+        normalized_line = stripped_line[7:] if stripped_line.startswith("export ") else stripped_line
+        env_name, separator, env_value = normalized_line.partition("=")
+        if not separator:
+            continue
+
+        env_name = env_name.strip()
+        env_value = env_value.strip()
+        if (
+            len(env_value) >= min_quoted_length
+            and env_value[0] == env_value[-1]
+            and env_value[0] in {"'", '"'}
+        ):
+            env_value = env_value[1:-1]
         if not env_name.startswith(env_prefix):
             continue
         key = env_name[prefix_len:]
@@ -464,3 +478,4 @@ __all__ = [
     "create_app_context",
     "initialize_context_from_env",
 ]
+
