@@ -10,8 +10,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -21,6 +22,47 @@ from lol_audio_unpack.utils.logging import performance_monitor
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app_context import AppContext
+
+
+def get_default_hidden_champion_markers(champion: Mapping[str, Any]) -> tuple[str, ...]:
+    """返回英雄默认隐藏命中的稳定特征。
+
+    说明：
+        英雄名会随地区本地化变化，因此默认隐藏规则只依赖稳定字段：
+        alias、根 WAD 文件名和 ID 前缀。
+    """
+    markers: list[str] = []
+
+    alias = str(champion.get("alias", "")).strip().casefold()
+    if alias.startswith("ruby_"):
+        markers.append("alias:ruby")
+
+    wad_info = champion.get("wad", {})
+    wad_root = str(wad_info.get("root", "")) if isinstance(wad_info, dict) else ""
+    wad_filename = Path(wad_root).name.casefold()
+    if wad_filename.startswith("ruby_"):
+        markers.append("wad:ruby")
+
+    champion_id = str(champion.get("id", "")).strip()
+    if champion_id.startswith("666"):
+        markers.append("id:666")
+
+    return tuple(markers)
+
+
+def should_hide_champion_by_default(champion: Mapping[str, Any]) -> bool:
+    """判断英雄是否应在默认列表与默认全量任务中隐藏。"""
+    return bool(get_default_hidden_champion_markers(champion))
+
+
+def filter_default_visible_champions(champions: Iterable[dict]) -> list[dict]:
+    """过滤默认可见的英雄集合。"""
+    return [champion for champion in champions if not should_hide_champion_by_default(champion)]
+
+
+def get_default_visible_champions(reader: Any) -> list[dict]:
+    """从读取器中获取默认可见的英雄集合。"""
+    return filter_default_visible_champions(reader.get_champions())
 
 
 class DataReader(metaclass=Singleton):

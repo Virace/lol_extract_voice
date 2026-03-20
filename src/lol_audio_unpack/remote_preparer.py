@@ -20,6 +20,8 @@ from urllib.request import Request, urlopen
 from loguru import logger
 from riotmanifest import PatcherManifest, WADExtractor
 
+from lol_audio_unpack.manager.data_reader import get_default_visible_champions
+
 if TYPE_CHECKING:
     from riotmanifest import PatcherFile
 
@@ -413,7 +415,7 @@ class RemoteSnapshotPreparer:
                 champion = reader.get_champion(champion_id)
                 self._extend_champion_bin_plan(extraction_plan, champion)
         elif target in {"skin", "all"}:
-            for champion in reader.get_champions():
+            for champion in get_default_visible_champions(reader):
                 self._extend_champion_bin_plan(extraction_plan, champion)
 
         if map_ids is not None:
@@ -451,7 +453,7 @@ class RemoteSnapshotPreparer:
                     include_types=include_types,
                 )
         elif include_champions:
-            for champion in reader.get_champions():
+            for champion in get_default_visible_champions(reader):
                 champion_id = champion.get("id")
                 if champion_id is None:
                     continue
@@ -509,7 +511,7 @@ class RemoteSnapshotPreparer:
                     reader=reader,
                 )
         elif include_champions:
-            for champion in reader.get_champions():
+            for champion in get_default_visible_champions(reader):
                 champion_id = champion.get("id")
                 if champion_id is None:
                     continue

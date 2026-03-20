@@ -15,6 +15,7 @@ from riotmanifest import DecompressError, DownloadBatchError, DownloadError
 
 from lol_audio_unpack.app_context import AppContext, OperationOptions, SourceMode
 from lol_audio_unpack.manager import BinUpdater, DataReader, DataUpdater
+from lol_audio_unpack.manager.data_reader import get_default_visible_champions
 from lol_audio_unpack.mapping import (
     build_champions_mapping,
     build_mapping_all,
@@ -250,7 +251,7 @@ class LolAudioUnpackApp:
             return
 
         if include_champions:
-            for champion in reader.get_champions():
+            for champion in get_default_visible_champions(reader):
                 champion_id = champion.get("id")
                 if champion_id is None:
                     continue
