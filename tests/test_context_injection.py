@@ -94,7 +94,9 @@ def test_generate_output_path_supports_ctx_grouping(tmp_path: Path) -> None:
     assert path_by_entity == by_entity_ctx.paths.audio_path / relative_path / "VO"
 
 
-def test_attach_bp_vo_to_champion_uses_ctx_without_global_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_attach_bp_vo_to_champion_uses_ctx_without_global_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     version = "16.3"
     ctx = _build_ctx(tmp_path, game_region="zh_CN", with_bp_vo=True)
 
@@ -127,18 +129,44 @@ def test_attach_bp_vo_to_champion_uses_ctx_without_global_config(tmp_path: Path,
     assert (target_dir / "choose.ogg").read_bytes() == b"choose"
 
 
-def test_execute_mapping_tasks_passes_ctx_to_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_execute_mapping_tasks_defaults_to_native_hirc(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    ctx = _build_ctx(tmp_path)
+    captured: dict[str, object] = {}
+
+    def fail_wwiser_manager(_path: Path | str | None) -> object:
+        pytest.fail("默认 mapping 不应创建 WwiserManager")
+
+    def fake_build_champion_mapping(*args, **kwargs) -> dict[str, object]:
+        captured["wwiser_manager"] = args[2]
+        captured["ctx"] = kwargs.get("ctx")
+        return {}
+
+    monkeypatch.setattr(m_mapping, "WwiserManager", fail_wwiser_manager)
+    monkeypatch.setattr(m_mapping, "build_champion_mapping", fake_build_champion_mapping)
+
+    reader = SimpleNamespace()
+    m_mapping.execute_mapping_tasks([("champion", 1, "英雄ID 1")], reader, max_workers=1, ctx=ctx)
+
+    assert captured["wwiser_manager"] is None
+    assert captured["ctx"] == ctx
+
+
+def test_execute_mapping_tasks_passes_wwiser_manager_and_ctx_to_runtime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     wwiser_file = tmp_path / "wwiser.pyz"
     wwiser_file.write_bytes(b"dummy")
     ctx = _build_ctx(tmp_path, wwiser_path=wwiser_file)
 
     captured: dict[str, object] = {}
+    wwiser_manager = object()
 
     def fake_wwiser_manager(path: Path | str | None) -> object:
         captured["wwiser_path"] = path
-        return object()
+        return wwiser_manager
 
     def fake_build_champion_mapping(*args, **kwargs) -> dict[str, object]:
+        captured["wwiser_manager"] = args[2]
         captured["ctx"] = kwargs.get("ctx")
         return {}
 
@@ -149,4 +177,60 @@ def test_execute_mapping_tasks_passes_ctx_to_runtime(monkeypatch: pytest.MonkeyP
     m_mapping.execute_mapping_tasks([("champion", 1, "英雄ID 1")], reader, max_workers=1, ctx=ctx)
 
     assert captured["wwiser_path"] == wwiser_file
+    assert captured["wwiser_manager"] is wwiser_manager
     assert captured["ctx"] == ctx
+
+
+def test_get_cached_hirc_uses_native_hirc_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    bnk_path = tmp_path / "events.bnk"
+    hirc_cache_dir = tmp_path / "cache"
+    native_hirc = object()
+    captured: dict[str, object] = {}
+
+    def fake_native_from_bnk(path: Path, *, cache_dir: Path) -> object:
+        captured["native_args"] = (path, cache_dir)
+        return native_hirc
+
+    def fail_wwiser_from_bnk(*_args, **_kwargs) -> object:
+        pytest.fail("默认路径不应调用 WwiserHIRC")
+
+    monkeypatch.setattr(m_mapping, "NativeHIRC", SimpleNamespace(from_bnk=fake_native_from_bnk))
+    monkeypatch.setattr(m_mapping, "WwiserHIRC", SimpleNamespace(from_bnk=fail_wwiser_from_bnk))
+
+    result = m_mapping._get_cached_hirc(
+        bnk_path=bnk_path,
+        hirc_cache_dir=hirc_cache_dir,
+        wwiser_manager=None,
+        runtime_cache=None,
+    )
+
+    assert result is native_hirc
+    assert captured["native_args"] == (bnk_path, hirc_cache_dir)
+
+
+def test_get_cached_hirc_uses_wwiser_when_manager_is_provided(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    bnk_path = tmp_path / "events.bnk"
+    hirc_cache_dir = tmp_path / "cache"
+    wwiser_manager = object()
+    wwiser_hirc = object()
+    captured: dict[str, object] = {}
+
+    def fail_native_from_bnk(*_args, **_kwargs) -> object:
+        pytest.fail("显式提供 wwiser_manager 时不应调用 NativeHIRC")
+
+    def fake_wwiser_from_bnk(path: Path, *, cache_dir: Path, wwiser_manager: object) -> object:
+        captured["wwiser_args"] = (path, cache_dir, wwiser_manager)
+        return wwiser_hirc
+
+    monkeypatch.setattr(m_mapping, "NativeHIRC", SimpleNamespace(from_bnk=fail_native_from_bnk))
+    monkeypatch.setattr(m_mapping, "WwiserHIRC", SimpleNamespace(from_bnk=fake_wwiser_from_bnk))
+
+    result = m_mapping._get_cached_hirc(
+        bnk_path=bnk_path,
+        hirc_cache_dir=hirc_cache_dir,
+        wwiser_manager=wwiser_manager,
+        runtime_cache=None,
+    )
+
+    assert result is wwiser_hirc
+    assert captured["wwiser_args"] == (bnk_path, hirc_cache_dir, wwiser_manager)

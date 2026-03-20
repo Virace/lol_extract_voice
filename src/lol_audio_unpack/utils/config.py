@@ -30,7 +30,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
 from loguru import logger
 
 from lol_audio_unpack.utils.common import Singleton
@@ -222,29 +221,44 @@ class Config(metaclass=Singleton):
         :param dev_mode: 是否使用开发环境配置
         :return: None
         """
-        # 常规环境变量文件
         env_file = Path(env_path) / ".lol.env"
-
-        # 开发环境变量文件
         dev_env_file = Path(env_path) / ".lol.env.dev"
-
-        # 根据模式选择使用的文件
         target_file = dev_env_file if dev_mode and dev_env_file.exists() else env_file
+
+        def _apply_env_file_values(source_file: Path) -> None:
+            min_quoted_length = len("''")
+            for raw_line in source_file.read_text(encoding="utf-8").splitlines():
+                stripped_line = raw_line.strip()
+                if not stripped_line or stripped_line.startswith("#"):
+                    continue
+
+                normalized_line = stripped_line[7:] if stripped_line.startswith("export ") else stripped_line
+                env_name, separator, env_value = normalized_line.partition("=")
+                if not separator:
+                    continue
+
+                env_name = env_name.strip()
+                env_value = env_value.strip()
+                if (
+                    len(env_value) >= min_quoted_length
+                    and env_value[0] == env_value[-1]
+                    and env_value[0] in {"'", '"'}
+                ):
+                    env_value = env_value[1:-1]
+                os.environ.setdefault(env_name, env_value)
 
         try:
             if target_file.exists():
-                # 不覆盖系统环境变量，确保优先级: 系统环境变量 > .env
-                load_dotenv(dotenv_path=target_file, override=False)
+                _apply_env_file_values(target_file)
                 logger.debug(f"已加载环境变量文件: {target_file}" + (" (开发环境)" if dev_mode else ""))
                 return
 
-            # 如果请求开发环境但文件不存在，则提示并回退到常规环境文件
             if dev_mode and not dev_env_file.exists() and env_file.exists():
                 logger.warning(f"开发环境文件 {dev_env_file} 不存在，使用常规环境文件 {env_file}")
-                load_dotenv(dotenv_path=env_file, override=False)
+                _apply_env_file_values(env_file)
                 logger.debug(f"已加载环境变量文件: {env_file}")
             elif env_file.exists():
-                load_dotenv(dotenv_path=env_file, override=False)
+                _apply_env_file_values(env_file)
                 logger.debug(f"已加载环境变量文件: {env_file}")
             else:
                 logger.warning(f"环境变量文件不存在: {target_file}")
@@ -644,3 +658,4 @@ config = ConfigProxy()
 
 # 在模块级别导出
 __all__ = ["Config", "ConfigValidationError", "config", "ConfigProxy"]
+

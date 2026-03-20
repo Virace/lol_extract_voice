@@ -18,8 +18,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from league_tools import WAD, AudioEventMapper, WwiserHIRC
-from league_tools.utils.wwiser import WwiserManager
+from league_tools import WAD, AudioEventMapper, NativeHIRC, WwiserHIRC, WwiserManager
 from loguru import logger
 
 from lol_audio_unpack.manager import DataReader
@@ -31,9 +30,40 @@ if TYPE_CHECKING:
     from lol_audio_unpack.app_context import AppContext
 
 
+ParsedHIRC = NativeHIRC | WwiserHIRC
+
+
 def _get_wwiser_path(ctx: AppContext) -> Path | str | None:
     """获取 wwiser 可执行路径。"""
     return ctx.config.wwiser_path
+
+
+def _resolve_wwiser_path(ctx: AppContext) -> Path | None:
+    """解析并校验 wwiser 可执行路径。"""
+    wwiser_path = _get_wwiser_path(ctx)
+    if wwiser_path is None:
+        return None
+
+    path = Path(wwiser_path)
+    if not path.is_file():
+        raise ValueError(f"错误：Wwiser 工具路径不存在或不是文件: {path}")
+    return path
+
+
+def describe_hirc_backend(ctx: AppContext) -> str:
+    """返回当前 mapping 流程使用的 HIRC 后端描述。"""
+    wwiser_path = _resolve_wwiser_path(ctx)
+    if wwiser_path is None:
+        return "NativeHIRC（默认）"
+    return f"WwiserHIRC ({wwiser_path})"
+
+
+def _create_wwiser_manager(ctx: AppContext) -> WwiserManager | None:
+    """按上下文创建可选的 wwiser 管理器。"""
+    wwiser_path = _resolve_wwiser_path(ctx)
+    if wwiser_path is None:
+        return None
+    return WwiserManager(wwiser_path)
 
 
 def _get_cache_base_path(ctx: AppContext) -> Path:
@@ -57,7 +87,7 @@ class MappingRuntimeCache:
 
     wad_cache: dict[Path, WAD] = field(default_factory=dict)
     extract_cache: set[tuple[Path, str]] = field(default_factory=set)
-    hirc_cache: dict[Path, WwiserHIRC] = field(default_factory=dict)
+    hirc_cache: dict[tuple[Path, str], ParsedHIRC] = field(default_factory=dict)
     cache_lock: threading.Lock | None = None
 
 
@@ -140,45 +170,53 @@ def _mark_bnk_extracted(
 def _get_cached_hirc(
     bnk_path: Path,
     hirc_cache_dir: Path,
-    wwiser_manager: WwiserManager,
+    wwiser_manager: WwiserManager | None,
     runtime_cache: MappingRuntimeCache | None,
-) -> WwiserHIRC:
+) -> ParsedHIRC:
     """获取 HIRC 对象并复用缓存。
 
     Args:
         bnk_path: bnk 文件路径。
         hirc_cache_dir: hirc 缓存目录。
-        wwiser_manager: wwiser 管理器。
+        wwiser_manager: 可选的 wwiser 管理器；为 ``None`` 时走 ``NativeHIRC``。
         runtime_cache: 映射过程共享缓存。
 
     Returns:
-        解析后的 ``WwiserHIRC`` 对象。
+        解析后的 HIRC 对象。
     """
-    if runtime_cache is None:
+    backend_key = "wwiser" if wwiser_manager is not None else "native"
+    cache_key = (bnk_path, backend_key)
+
+    def parse_hirc() -> ParsedHIRC:
+        if wwiser_manager is None:
+            return NativeHIRC.from_bnk(bnk_path, cache_dir=hirc_cache_dir)
         return WwiserHIRC.from_bnk(bnk_path, cache_dir=hirc_cache_dir, wwiser_manager=wwiser_manager)
+
+    if runtime_cache is None:
+        return parse_hirc()
 
     hirc_cache = runtime_cache.hirc_cache
     cache_lock = runtime_cache.cache_lock
 
     if cache_lock is None:
-        cached = hirc_cache.get(bnk_path)
+        cached = hirc_cache.get(cache_key)
         if cached is not None:
             return cached
-        parsed = WwiserHIRC.from_bnk(bnk_path, cache_dir=hirc_cache_dir, wwiser_manager=wwiser_manager)
-        hirc_cache[bnk_path] = parsed
+        parsed = parse_hirc()
+        hirc_cache[cache_key] = parsed
         return parsed
 
     with cache_lock:
-        cached = hirc_cache.get(bnk_path)
+        cached = hirc_cache.get(cache_key)
     if cached is not None:
         return cached
 
-    parsed = WwiserHIRC.from_bnk(bnk_path, cache_dir=hirc_cache_dir, wwiser_manager=wwiser_manager)
+    parsed = parse_hirc()
     with cache_lock:
-        existing = hirc_cache.get(bnk_path)
+        existing = hirc_cache.get(cache_key)
         if existing is not None:
             return existing
-        hirc_cache[bnk_path] = parsed
+        hirc_cache[cache_key] = parsed
         return parsed
 
 
@@ -198,7 +236,7 @@ def build_audio_event_mapping(  # noqa: PLR0913
     Args:
         entity_data: 包含 events 的实体数据。
         reader: 数据读取器实例。
-        wwiser_manager: 可复用的 wwiser 管理器；为 ``None`` 时内部创建。
+        wwiser_manager: 可复用的 wwiser 管理器；为 ``None`` 时按 ``ctx`` 自动选择后端。
         integrate_data: 是否输出整合数据（实体信息 + banks + mapping）。
         runtime_cache: 映射流程共享缓存，用于复用 WAD/HIRC 解析结果。
         ctx: 运行时上下文。
@@ -214,9 +252,9 @@ def build_audio_event_mapping(  # noqa: PLR0913
 
     logger.info(f"构建 {entity_data.entity_name} (ID:{entity_data.entity_id}) 的事件映射")
 
-    # 使用传入的wwiser_manager或创建新实例
+    # 使用传入的 wwiser_manager，或按上下文决定是否启用 WwiserHIRC。
     if wwiser_manager is None:
-        wm = WwiserManager(_get_wwiser_path(ctx))
+        wm = _create_wwiser_manager(ctx)
     else:
         wm = wwiser_manager
 
@@ -320,7 +358,7 @@ def build_audio_event_mapping(  # noqa: PLR0913
                     hirc_cache_dir = version_cache_dir / "hirc"
                     hirc_cache_dir.mkdir(parents=True, exist_ok=True)
 
-                    # 使用 WwiserHIRC 解析
+                    # 默认走 NativeHIRC；仅在显式提供 wwiser 路径时走 WwiserHIRC。
                     hirc = _get_cached_hirc(
                         bnk_path=bnk_path,
                         hirc_cache_dir=hirc_cache_dir,
@@ -540,7 +578,7 @@ def build_champion_mapping(  # noqa: PLR0913
     Args:
         champion_id: 英雄 ID。
         reader: 数据读取器实例。
-        wwiser_manager: 可复用的 wwiser 管理器；为 ``None`` 时内部创建。
+        wwiser_manager: 可复用的 wwiser 管理器；为 ``None`` 时按 ``ctx`` 自动选择后端。
         integrate_data: 是否输出整合数据。
         runtime_cache: 映射流程共享缓存。
         ctx: 运行时上下文。
@@ -579,7 +617,7 @@ def build_map_mapping(  # noqa: PLR0913
     Args:
         map_id: 地图 ID。
         reader: 数据读取器实例。
-        wwiser_manager: 可复用的 wwiser 管理器；为 ``None`` 时内部创建。
+        wwiser_manager: 可复用的 wwiser 管理器；为 ``None`` 时按 ``ctx`` 自动选择后端。
         integrate_data: 是否输出整合数据。
         runtime_cache: 映射流程共享缓存。
         ctx: 运行时上下文。
@@ -641,9 +679,10 @@ def execute_mapping_tasks(
         f"开始构建 {total_tasks} 个实体的事件映射 ({' 和 '.join(summary_parts)})，"
         f"模式: {'多线程' if max_workers > 1 else '单线程'} (workers: {max_workers})"
     )
+    logger.info(f"HIRC 后端: {describe_hirc_backend(ctx)}")
 
-    # 初始化共享的Wwiser管理器（避免重复创建）
-    wwiser_manager = WwiserManager(_get_wwiser_path(ctx))
+    # 初始化共享的可选 wwiser 管理器，避免重复创建。
+    wwiser_manager = _create_wwiser_manager(ctx)
     runtime_cache = MappingRuntimeCache(cache_lock=threading.Lock() if max_workers > 1 else None)
 
     def build_entity_mapping(entity_type: str, entity_id: int) -> None:
