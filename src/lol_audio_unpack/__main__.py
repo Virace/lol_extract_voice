@@ -514,6 +514,21 @@ def execute_extract_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
     logger.success("音频解包完成！")
 
 
+def _log_mapping_runtime_error(error: ValueError) -> None:
+    """记录 mapping 运行时错误，并在 wwiser 配置错误时补充指引。"""
+    message = str(error)
+    logger.error(f"构建事件映射失败: {message}")
+
+    if "Wwiser 工具路径" not in message and "WWISER_PATH" not in message:
+        return
+
+    current_work_dir = Path.cwd()
+    logger.error(f"如果需要使用 WwiserHIRC 回退路径，请在 {current_work_dir / '.lol.env'} 中配置有效的 WWISER_PATH。")
+    logger.error(
+        "WWISER_PATH 应指向 wwiser.pyz 或 wwiser.exe 文件；如果不需要 wwiser，请移除该配置并直接使用默认 NativeHIRC。"
+    )
+
+
 def execute_mapping_operations(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
     """执行事件映射操作。"""
     mapping_actions = [args.mapping, args.mapping_champions, args.mapping_maps]
@@ -523,38 +538,45 @@ def execute_mapping_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
     if getattr(args, "integrate_data", False):
         logger.info("启用整合数据功能，将生成包含完整实体信息的整合文件")
 
-    try:
-        if args.mapping:
-            logger.info("开始构建所有实体的事件映射（英雄和地图）...")
-            app.mapping(build_operation_options(args))
-        elif args.mapping_champions:
+    if args.mapping:
+        logger.info("开始构建所有实体的事件映射（英雄和地图）...")
+        mapping_options = build_operation_options(args)
+        mapping_kwargs = {}
+    elif args.mapping_champions:
+        try:
             champion_ids = resolve_cli_champion_ids(args.mapping_champions, app=app, force_update=args.force)
-            if champion_ids:
-                logger.info(f"开始构建指定英雄的事件映射：{list(champion_ids)}")
-                app.mapping(
-                    build_operation_options(args, champion_ids=champion_ids),
-                    include_maps=False,
-                )
-            else:
-                logger.info("开始构建所有英雄的事件映射...")
-                app.mapping(build_operation_options(args), include_maps=False)
-        elif args.mapping_maps:
+        except ValueError as e:
+            logger.error(f"构建英雄映射失败: {e}")
+            return
+
+        if champion_ids:
+            logger.info(f"开始构建指定英雄的事件映射：{list(champion_ids)}")
+            mapping_options = build_operation_options(args, champion_ids=champion_ids)
+        else:
+            logger.info("开始构建所有英雄的事件映射...")
+            mapping_options = build_operation_options(args)
+        mapping_kwargs = {"include_maps": False}
+    elif args.mapping_maps:
+        try:
             map_ids = parse_int_ids(args.mapping_maps)
-            if map_ids:
-                logger.info(f"开始构建指定地图的事件映射：{list(map_ids)}")
-                app.mapping(
-                    build_operation_options(args, map_ids=map_ids),
-                    include_champions=False,
-                )
-            else:
-                logger.info("开始构建所有地图的事件映射...")
-                app.mapping(build_operation_options(args), include_champions=False)
+        except ValueError as e:
+            logger.error(f"构建地图映射失败: {e}")
+            return
+
+        if map_ids:
+            logger.info(f"开始构建指定地图的事件映射：{list(map_ids)}")
+            mapping_options = build_operation_options(args, map_ids=map_ids)
+        else:
+            logger.info("开始构建所有地图的事件映射...")
+            mapping_options = build_operation_options(args)
+        mapping_kwargs = {"include_champions": False}
+    else:
+        return
+
+    try:
+        app.mapping(mapping_options, **mapping_kwargs)
     except ValueError as e:
-        current_work_dir = Path.cwd()
-        logger.error(str(e))
-        logger.error(f"请在当前工作目录的 .lol.env 文件中配置 WWISER_PATH: {current_work_dir / '.lol.env'}")
-        logger.error("WWISER_PATH 应指向 wwiser.pyz 或 wwiser.exe 文件的完整路径。")
-        logger.error("您可以从 https://github.com/bnnm/wwiser/releases 下载 Wwiser 工具。")
+        _log_mapping_runtime_error(e)
         sys.exit(1)
 
     logger.success("事件映射构建完成！")
