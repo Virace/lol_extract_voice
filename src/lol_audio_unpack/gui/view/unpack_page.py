@@ -25,6 +25,7 @@ from qfluentwidgets import (
     RoundMenu,
     SearchLineEdit,
     SegmentedWidget,
+    SmoothMode,
     SmoothScrollArea,
     SubtitleLabel,
     TableWidget,
@@ -41,6 +42,7 @@ class UnpackPage(QWidget):
     """
     Main Unpack Page with Table layout of heroes.
     """
+
     def __init__(self, parent=None):
         super().__init__(parent=parent)
         self.setObjectName("UnpackPage")
@@ -85,7 +87,6 @@ class UnpackPage(QWidget):
         top_bar.addStretch(1)
         top_bar.addWidget(self.vo_filter)
 
-
         root_layout.addLayout(top_bar)
 
         # 中间内容区（实体表格）
@@ -93,6 +94,17 @@ class UnpackPage(QWidget):
         self.hero_table.setBorderVisible(True)
         self.hero_table.setBorderRadius(8)
         self.hero_table.setWordWrap(False)
+
+        # 优化罗技 MX Master 等高回报率滚轮鼠标的滑动卡顿问题：
+        # 1. 开启像素级滚动（默认是按 Item/行 滚动，导致每次滚动都需要强制对齐行，容易掉帧）
+        self.hero_table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.hero_table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+
+        # 2. 禁用平滑滚动动画 (qfluentwidgets 默认平滑滚动在数据量大或鼠标回报率高时可能导致掉帧/卡顿)
+        # 注意：qfluentwidgets 内部拼写为 scrollDelagate (带拼写错误)
+        if hasattr(self.hero_table, "scrollDelagate"):
+            self.hero_table.scrollDelagate.verticalSmoothScroll.setSmoothMode(SmoothMode.NO_SMOOTH)
+
         self.hero_table.setColumnCount(4)
         self.hero_table.setHorizontalHeaderLabels(["ID", "实体", "音频", "映射"])
         self.hero_table.verticalHeader().hide()
@@ -103,10 +115,12 @@ class UnpackPage(QWidget):
         self.hero_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
 
         # 表头拉伸
-        self.hero_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        # 使用 Fixed 替代 ResizeToContents 解决数据量大时滚动表格卡顿的问题
+        self.hero_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
         self.hero_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.hero_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self.hero_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self.hero_table.setColumnWidth(0, 85)
         self.hero_table.setColumnWidth(2, 85)
         self.hero_table.setColumnWidth(3, 85)
 
@@ -155,12 +169,20 @@ class UnpackPage(QWidget):
         """页面显示时展示已加载的数据"""
         super().showEvent(event)
         current_key = self.nav_pivot.currentRouteKey()
+
+        # 避免每次切页面都重绘整个表格，解决页面切换卡顿
+        if getattr(self, "_current_table_key", None) == current_key:
+            return
+
         logger.info(f"UnpackPage showEvent 触发，current_key={current_key}")
-        logger.info(f"缓存数据: champions={len(self._cached_data.get('champions', []))}, maps={len(self._cached_data.get('maps', []))}")
+        logger.info(
+            f"缓存数据: champions={len(self._cached_data.get('champions', []))}, maps={len(self._cached_data.get('maps', []))}"
+        )
 
         if current_key:
             if self._cached_data.get(current_key):
                 logger.info(f"显示 {current_key} 数据，共 {len(self._cached_data[current_key])} 条")
+                self._current_table_key = current_key
                 self.add_preview_data(self._cached_data[current_key])
             else:
                 logger.warning(f"没有可显示的数据: current_key={current_key}，尝试加载...")
@@ -173,19 +195,9 @@ class UnpackPage(QWidget):
 
     def _create_app_context(self):
         """从 GUI 配置创建 AppContext（用于数据读取）"""
-        cli_overrides = {
-            "source_mode": self.gui_config.source_mode,
-            "game_path": self.gui_config.game_path,
-            "output_path": self.gui_config.output_path,
-            "game_region": self.gui_config.game_region,
-            "group_by_type": self.gui_config.group_by_type,
-            "remote_live_region": self.gui_config.remote_live_region,
-            "cleanup_remote": self.gui_config.cleanup_remote,
-            "snapshot_version": self.gui_config.snapshot_version,
-            "snapshot_lcu_url": self.gui_config.snapshot_lcu_url,
-            "snapshot_game_url": self.gui_config.snapshot_game_url,
-        }
-        return create_app_context(cli_overrides=cli_overrides)
+        return create_app_context(
+            cli_overrides=self.gui_config.to_app_context_overrides()
+        )
 
     def load_data(self, entity_type: str, force_reload: bool = False):
         """异步加载实体数据（避免 200+ 实体阻塞 UI）"""
@@ -194,7 +206,9 @@ class UnpackPage(QWidget):
 
         # 使用缓存避免重复加载
         if not force_reload and self._cached_data[entity_type]:
-            self.add_preview_data(self._cached_data[entity_type])
+            if getattr(self, "_current_table_key", None) != entity_type:
+                self._current_table_key = entity_type
+                self.add_preview_data(self._cached_data[entity_type])
             return
 
         # 防止重复启动加载任务
@@ -218,6 +232,7 @@ class UnpackPage(QWidget):
         """数据加载完成"""
         self.progress_bar.setVisible(False)
         self._cached_data[entity_type] = data
+        self._current_table_key = entity_type
         self.add_preview_data(data)
 
     def _on_load_error(self, error: str):
@@ -252,6 +267,7 @@ class UnpackPage(QWidget):
 
     def add_preview_data(self, data_list):
         """Temporary helper to populate preview data into the table."""
+        self.hero_table.setUpdatesEnabled(False)
         self.hero_table.setRowCount(len(data_list))
         for row_idx, data in enumerate(data_list):
             id_item = QTableWidgetItem(data["id"])
@@ -283,12 +299,14 @@ class UnpackPage(QWidget):
 
             self.hero_table.setRowHeight(row_idx, 36)
 
+        self.hero_table.setUpdatesEnabled(True)
+
     def _show_context_menu(self, pos):
         """Show custom right-click context menu."""
         # 只有选中行时才展示菜单
         if not self.hero_table.selectedItems():
             return
         menu = RoundMenu(parent=self)
-        unpack_selected_action = Action("解包选中", triggered=lambda: print("Unpack Selected"))
+        unpack_selected_action = Action("解包选中", triggered=lambda: logger.info("用户点击了：解包选中"))
         menu.addAction(unpack_selected_action)
         menu.exec(self.hero_table.mapToGlobal(pos))

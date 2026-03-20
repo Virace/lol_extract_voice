@@ -17,20 +17,18 @@ Key design decisions
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSettings
+import os
+import sys
+from pathlib import Path
 
+from dotenv import dotenv_values, set_key, unset_key
+from PySide6.QtCore import QSettings
 
 # ---------------------------------------------------------------------------
 # Sentinel
 # ---------------------------------------------------------------------------
 
 _UNSET = object()  # distinguishes "not in file" from ""
-
-import os
-import sys
-from pathlib import Path
-
-from dotenv import load_dotenv, set_key
 
 
 class GuiConfig:
@@ -71,25 +69,40 @@ class GuiConfig:
 
     def load(self) -> None:
         """从 .lol.env 和 QSettings 加载配置。"""
-        # 1. 加载 .lol.env 文件到环境变量
-        if self._env_file.exists():
-            load_dotenv(self._env_file, override=False)
+        env_values = dotenv_values(self._env_file) if self._env_file.exists() else {}
 
-        # 2. 从环境变量读取 CLI 共享配置
-        self._source_mode = os.getenv("LOL_SOURCE_MODE", "local_path")
-        self._game_path = os.getenv("LOL_GAME_PATH", "")
-        self._remote_live_region = os.getenv("LOL_REMOTE_LIVE_REGION", "EUW")
-        self._cleanup_remote = self._to_bool(os.getenv("LOL_CLEANUP_REMOTE", "true"))
-        self._snapshot_version = os.getenv("LOL_REMOTE_VERSION", "")
-        self._snapshot_lcu_url = os.getenv("LOL_REMOTE_LCU_MANIFEST_URL", "")
-        self._snapshot_game_url = os.getenv("LOL_REMOTE_GAME_MANIFEST_URL", "")
-        self._output_path = os.getenv("LOL_OUTPUT_PATH", "")
-        self._game_region = os.getenv("LOL_GAME_REGION", "zh_CN")
-        self._group_by_type = self._to_bool(os.getenv("LOL_GROUP_BY_TYPE", "false"))
-        self._wwiser_path = os.getenv("LOL_WWISER_PATH", "")
-        self._vgmstream_path = os.getenv("LOL_VGMSTREAM_PATH", "")
+        def _shared_value(key: str, default: str) -> str:
+            system_value = os.getenv(key)
+            if system_value is not None:
+                return system_value
+            file_value = env_values.get(key)
+            return default if file_value is None else str(file_value)
 
-        # 3. 从 QSettings 读取 GUI 专有配置
+        # 1. 读取 CLI 共享配置，保持系统环境变量优先于 .lol.env
+        self._source_mode = _shared_value("LOL_SOURCE_MODE", "local_path")
+        self._game_path = _shared_value("LOL_GAME_PATH", "")
+        self._remote_live_region = _shared_value("LOL_REMOTE_LIVE_REGION", "EUW")
+        self._cleanup_remote = self._to_bool(_shared_value("LOL_CLEANUP_REMOTE", "true"))
+        self._snapshot_version = _shared_value("LOL_REMOTE_VERSION", "")
+        self._snapshot_lcu_url = _shared_value("LOL_REMOTE_LCU_MANIFEST_URL", "")
+        self._snapshot_game_url = _shared_value("LOL_REMOTE_GAME_MANIFEST_URL", "")
+        self._output_path = _shared_value("LOL_OUTPUT_PATH", "")
+        self._game_region = _shared_value("LOL_GAME_REGION", "zh_CN")
+        self._group_by_type = self._to_bool(_shared_value("LOL_GROUP_BY_TYPE", "false"))
+        self._wwiser_path = _shared_value("LOL_WWISER_PATH", "")
+
+        # 2. GUI 专有配置优先走 QSettings，兼容一次性迁移旧的 .lol.env 值
+        stored_vgmstream_path = self._qs.value("vgmstream_path", _UNSET)
+        if stored_vgmstream_path is _UNSET:
+            self._vgmstream_path = _shared_value("LOL_VGMSTREAM_PATH", "")
+        else:
+            self._vgmstream_path = str(stored_vgmstream_path or "")
+
+        if env_values.get("LOL_VGMSTREAM_PATH") is not None:
+            self._qs.setValue("vgmstream_path", self._vgmstream_path)
+            unset_key(self._env_file, "LOL_VGMSTREAM_PATH")
+
+        # 3. 从 QSettings 读取 GUI 主题配置
         self._theme_mode = self._qs.value("theme_mode", "Auto")
         self._theme_color = self._qs.value("theme_color", "#009faa")
 
@@ -110,11 +123,29 @@ class GuiConfig:
         set_key(self._env_file, "LOL_GAME_REGION", self._game_region)
         set_key(self._env_file, "LOL_GROUP_BY_TYPE", str(self._group_by_type).lower())
         set_key(self._env_file, "LOL_WWISER_PATH", self._wwiser_path)
-        set_key(self._env_file, "LOL_VGMSTREAM_PATH", self._vgmstream_path)
 
         # 保存 GUI 专有配置到 QSettings
+        if dotenv_values(self._env_file).get("LOL_VGMSTREAM_PATH") is not None:
+            unset_key(self._env_file, "LOL_VGMSTREAM_PATH")
+        self._qs.setValue("vgmstream_path", self._vgmstream_path)
         self._qs.setValue("theme_mode", self._theme_mode)
         self._qs.setValue("theme_color", self._theme_color)
+
+    def to_app_context_overrides(self) -> dict[str, str | bool]:
+        """构建供 ``create_app_context`` 使用的配置映射。"""
+        return {
+            "SOURCE_MODE": self._source_mode,
+            "GAME_PATH": self._game_path,
+            "OUTPUT_PATH": self._output_path,
+            "GAME_REGION": self._game_region,
+            "GROUP_BY_TYPE": self._group_by_type,
+            "REMOTE_LIVE_REGION": self._remote_live_region,
+            "CLEANUP_REMOTE": self._cleanup_remote,
+            "REMOTE_VERSION": self._snapshot_version,
+            "REMOTE_LCU_MANIFEST_URL": self._snapshot_lcu_url,
+            "REMOTE_GAME_MANIFEST_URL": self._snapshot_game_url,
+            "WWISER_PATH": self._wwiser_path,
+        }
 
     # ------------------------------------------------------------------
     # Properties — source

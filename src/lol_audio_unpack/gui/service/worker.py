@@ -23,17 +23,14 @@ class DataLoadWorker(QThread):
         self.entity_type = entity_type
 
     def run(self):
-        print(f"=== DataLoadWorker.run 开始: {self.entity_type} ===")
-        logger.info(f"开始加载 {self.entity_type} 数据")
+        logger.debug(f"DataLoadWorker 线程启动: {self.entity_type}")
         try:
             loader = EntityDataLoader(self.app_context)
-            print(f"=== EntityDataLoader 创建成功 ===")
+            logger.debug("EntityDataLoader 初始化成功")
             data = loader.load_entities(self.entity_type)
-            print(f"=== {self.entity_type} 数据加载成功，共 {len(data)} 条 ===")
             logger.info(f"{self.entity_type} 数据加载成功，共 {len(data)} 条")
             self.finished.emit(data)
-            print(f"=== finished 信号已发送 ===")
+            logger.debug(f"finished 信号已发送: {self.entity_type}")
         except Exception as e:
-            print(f"=== {self.entity_type} 数据加载失败: {e} ===")
-            logger.error(f"{self.entity_type} 数据加载失败: {e}", exc_info=True)
+            logger.error(f"{self.entity_type} 数据加载失败: {e}")
             self.error.emit(str(e))

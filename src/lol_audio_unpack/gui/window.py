@@ -47,6 +47,7 @@ class MainWindow(FluentWindow):
         self.unpackInterface = UnpackPage(self)
         self.mappingInterface = MappingPage(self)
         self.aboutInterface = AboutPage(self)
+        self._data_app_context = None
 
         self._initNavigation()
         self._initWindow()
@@ -113,14 +114,24 @@ class MainWindow(FluentWindow):
 
     def _connect_pages(self):
         """连接页面间的数据同步"""
-        print("=== _connect_pages 被调用 ===")
         from loguru import logger
-
-        logger.info("_connect_pages 被调用")
+        from lol_audio_unpack.utils.logging import setup_logging
+        from pathlib import Path
 
         si = self.settingInterface
         hi = self.homeInterface
         cfg = si.config
+
+        # 如果配置了输出目录，重新初始化日志系统到该目录
+        if cfg.output_path:
+            log_dir = Path(cfg.output_path) / "logs"
+            setup_logging(
+                dev_mode=True,
+                log_level="INFO",
+                log_file_path=log_dir,
+                show_function_info=True,
+            )
+            logger.info(f"日志系统已重定向到输出目录: {log_dir}")
 
         # 路径改变时实时同步到首页
         si.game_path_changed.connect(hi.update_game_dir)
@@ -130,19 +141,15 @@ class MainWindow(FluentWindow):
 
         # 注入配置到解包页面
         self.unpackInterface.set_gui_config(cfg)
-        print("=== 已注入配置到解包页面 ===")
-        logger.info("已注入配置到解包页面")
 
         # 配置变更时重新加载数据
         si.game_path_changed.connect(lambda: self._reload_unpack_data(cfg))
         si.output_path_changed.connect(lambda: self._reload_unpack_data(cfg))
 
         # 首页初始化完成后加载数据
-        print("=== 准备加载初始数据 ===")
-        logger.info("准备加载初始数据")
+        logger.info("准备加载初始数据...")
         hi.loading_label.setText("正在加载实体数据…")
         self._load_initial_data(cfg)
-        print("=== _load_initial_data 已调用 ===")
 
     def _load_initial_data(self, cfg):
         """程序启动时加载实体数据"""
@@ -150,76 +157,45 @@ class MainWindow(FluentWindow):
         from lol_audio_unpack.gui.service.worker import DataLoadWorker
         from loguru import logger
 
-        print("=== _load_initial_data 开始执行 ===")
-        logger.info("开始加载初始数据")
+        logger.info("开始加载初始数据...")
 
         try:
-            cli_overrides = {
-                "source_mode": cfg.source_mode,
-                "game_path": cfg.game_path,
-                "output_path": cfg.output_path,
-                "game_region": cfg.game_region,
-                "group_by_type": cfg.group_by_type,
-                "remote_live_region": cfg.remote_live_region,
-                "cleanup_remote": cfg.cleanup_remote,
-                "snapshot_version": cfg.snapshot_version,
-                "snapshot_lcu_url": cfg.snapshot_lcu_url,
-                "snapshot_game_url": cfg.snapshot_game_url,
-            }
-            print(f"=== 配置: output_path={cfg.output_path}, game_path={cfg.game_path} ===")
-            app_context = create_app_context(cli_overrides=cli_overrides)
-            print("=== AppContext 创建成功 ===")
-            logger.info(f"AppContext 创建成功: output_path={cfg.output_path}")
+            logger.debug(f"当前配置: output_path={cfg.output_path}, game_path={cfg.game_path}")
+            self._data_app_context = create_app_context(
+                cli_overrides=cfg.to_app_context_overrides()
+            )
+            logger.info("AppContext 创建成功")
         except Exception as e:
-            print(f"=== 创建 AppContext 失败: {e} ===")
+            self._data_app_context = None
             logger.error(f"创建 AppContext 失败: {e}")
             self.homeInterface.loading_label.setText("数据加载失败")
             self.homeInterface.progress_bar.stop()
             return
 
-        print("=== 启动 champions 数据加载 Worker ===")
-        logger.info("启动 champions 数据加载")
-        self._champions_worker = DataLoadWorker(app_context, "champions")
-        self._champions_worker.finished.connect(lambda data: self._on_champions_loaded(data, cfg))
+        logger.info("启动 champions 数据加载线程")
+        self._champions_worker = DataLoadWorker(self._data_app_context, "champions")
+        self._champions_worker.finished.connect(self._on_champions_loaded)
         self._champions_worker.error.connect(self._on_data_load_error)
         self._champions_worker.start()
-        print("=== Champions Worker 已启动 ===")
 
-    def _on_champions_loaded(self, data, cfg):
+    def _on_champions_loaded(self, data):
         """Champions 数据加载完成"""
         from loguru import logger
 
-        print(f"=== _on_champions_loaded 被调用，数据量: {len(data)} ===")
         logger.info(f"Champions 数据加载完成，共 {len(data)} 条")
 
         self.unpackInterface._cached_data["champions"] = data
-        print(f"=== Champions 数据已存入缓存 ===")
 
         # 继续加载 maps 数据
-        from lol_audio_unpack.app_context import create_app_context
         from lol_audio_unpack.gui.service.worker import DataLoadWorker
 
-        try:
-            cli_overrides = {
-                "source_mode": cfg.source_mode,
-                "game_path": cfg.game_path,
-                "output_path": cfg.output_path,
-                "game_region": cfg.game_region,
-                "group_by_type": cfg.group_by_type,
-                "remote_live_region": cfg.remote_live_region,
-                "cleanup_remote": cfg.cleanup_remote,
-                "snapshot_version": cfg.snapshot_version,
-                "snapshot_lcu_url": cfg.snapshot_lcu_url,
-                "snapshot_game_url": cfg.snapshot_game_url,
-            }
-            app_context = create_app_context(cli_overrides=cli_overrides)
-        except Exception as e:
-            logger.error(f"创建 AppContext 失败: {e}")
+        if self._data_app_context is None:
+            logger.error("AppContext 未初始化，无法继续加载 maps 数据")
             self._finish_data_loading()
             return
 
         logger.info("启动 maps 数据加载")
-        self._maps_worker = DataLoadWorker(app_context, "maps")
+        self._maps_worker = DataLoadWorker(self._data_app_context, "maps")
         self._maps_worker.finished.connect(lambda data: self._on_maps_loaded(data))
         self._maps_worker.error.connect(self._on_data_load_error)
         self._maps_worker.start()
@@ -254,6 +230,7 @@ class MainWindow(FluentWindow):
 
     def _reload_unpack_data(self, cfg):
         """配置变更时重新加载数据"""
+        self._data_app_context = None
         self.unpackInterface._cached_data = {"champions": [], "maps": []}
         self.homeInterface.loading_label.setText("正在重新加载数据…")
         self.homeInterface.progress_bar.start()
