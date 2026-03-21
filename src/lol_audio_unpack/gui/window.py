@@ -10,6 +10,8 @@ from PySide6.QtWidgets import QApplication
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets import (
     FluentWindow,
+    InfoBar,
+    InfoBarPosition,
     NavigationItemPosition,
     SplashScreen,
     Theme,
@@ -76,6 +78,8 @@ class MainWindow(FluentWindow):
         self.aboutInterface = AboutPage(self)
         previous_mark = _log_window_stage("AboutPage 初始化完成", startup_begin, previous_mark)
         self._data_app_context = None
+        self._is_loading_shared_data = False
+        self._pending_refresh_notice = False
 
         self._initNavigation()
         previous_mark = _log_window_stage("导航初始化完成", startup_begin, previous_mark)
@@ -93,7 +97,14 @@ class MainWindow(FluentWindow):
         # add sub interface top
         self.addSubInterface(self.homeInterface, FIF.HOME, '主页')
         self.addSubInterface(self.unpackInterface, FIF.DOWNLOAD, '英雄解包')
-        self.addSubInterface(self.mappingInterface, FIF.DOCUMENT, '资源映射')
+        self.addSubInterface(self.mappingInterface, FIF.DOCUMENT, '事件映射')
+        self.navigationInterface.addItem(
+            routeKey='refreshSharedData',
+            icon=FIF.SYNC,
+            text='刷新数据',
+            onClick=self._refresh_shared_output_data,
+            selectable=False,
+        )
 
         # add separator
         self.navigationInterface.addSeparator()
@@ -174,7 +185,6 @@ class MainWindow(FluentWindow):
         # 配置变更时重新加载数据
         si.game_path_changed.connect(lambda: self._reload_unpack_data(cfg))
         si.output_path_changed.connect(lambda: self._reload_unpack_data(cfg))
-        self.mappingInterface.refresh_requested.connect(lambda: self._reload_unpack_data(cfg))
 
         # 首页初始化完成后加载数据
         logger.info("准备加载初始数据...")
@@ -184,6 +194,7 @@ class MainWindow(FluentWindow):
     def _load_initial_data(self, cfg):
         """程序启动时加载实体数据"""
         logger.info("开始加载初始数据...")
+        self._is_loading_shared_data = True
 
         try:
             logger.debug(f"当前配置: output_path={cfg.output_path}, game_path={cfg.game_path}")
@@ -193,11 +204,19 @@ class MainWindow(FluentWindow):
             self.mappingInterface.set_app_context(self._data_app_context)
             logger.info("AppContext 创建成功")
         except Exception as e:
+            self._is_loading_shared_data = False
             self._data_app_context = None
             self.mappingInterface.set_app_context(None)
             self.mappingInterface.clear_data()
             logger.error(f"创建 AppContext 失败: {e}")
             self.homeInterface.set_loading_state("数据加载失败", active=False)
+            if self._pending_refresh_notice:
+                self._show_refresh_infobar(
+                    title="刷新失败",
+                    content=str(e),
+                    level="error",
+                )
+                self._pending_refresh_notice = False
             return
 
         logger.info("启动 champions 数据加载线程")
@@ -244,14 +263,51 @@ class MainWindow(FluentWindow):
 
     def _on_data_load_error(self, error):
         """数据加载失败"""
+        self._is_loading_shared_data = False
         self.homeInterface.set_loading_state(f"加载失败: {error}", active=False)
+        if self._pending_refresh_notice:
+            self._show_refresh_infobar(
+                title="刷新失败",
+                content=str(error),
+                level="error",
+            )
+            self._pending_refresh_notice = False
 
     def _finish_data_loading(self):
         """完成数据加载"""
+        self._is_loading_shared_data = False
         self.homeInterface.set_loading_state("实体数据已就绪", active=False)
+        if self._pending_refresh_notice:
+            self._show_refresh_infobar(
+                title="数据已刷新",
+                content="解包页和事件映射页已同步到当前本地输出目录。",
+                level="success",
+            )
+            self._pending_refresh_notice = False
+
+    def _refresh_shared_output_data(self):
+        """刷新解包页与事件映射页共用的本地输出数据。"""
+        if self._is_loading_shared_data:
+            logger.info("共享数据仍在加载中，忽略重复刷新请求")
+            return
+
+        self._pending_refresh_notice = True
+        self._reload_unpack_data(self.settingInterface.config)
+
+    def _show_refresh_infobar(self, *, title: str, content: str, level: str) -> None:
+        """在共享刷新完成后展示 InfoBar 通知。"""
+        factory = InfoBar.success if level == "success" else InfoBar.error
+        factory(
+            title=title,
+            content=content,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=2500,
+            parent=self,
+        )
 
     def _reload_unpack_data(self, cfg):
-        """配置变更时重新加载页面数据"""
+        """重新加载解包页与事件映射页共用的实体数据。"""
         self._data_app_context = None
         self.unpackInterface._cached_data = {"champions": [], "maps": []}
         self.mappingInterface.clear_data()

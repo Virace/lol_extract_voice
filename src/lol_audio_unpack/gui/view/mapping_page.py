@@ -1,15 +1,18 @@
-"""资源映射页面，负责展示并预览已生成的 mapping 文件。"""
+"""事件映射页面，负责展示并预览已生成的 mapping 文件。"""
 
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QSignalBlocker, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QSignalBlocker, QSize, Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QTextOption
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
+    QLineEdit,
     QListWidgetItem,
     QPlainTextEdit,
     QSplitter,
@@ -18,21 +21,21 @@ from PySide6.QtWidgets import (
 )
 from qfluentwidgets import (
     BodyLabel,
+    FluentIcon as FIF,
     InfoBar,
     InfoBarPosition,
     ListWidget,
     PlainTextEdit,
-    PrimaryPushButton,
-    PushButton,
     SearchLineEdit,
     SegmentedWidget,
     SmoothMode,
     SubtitleLabel,
+    TransparentToolButton,
 )
 
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 
-MAPPING_ITEM_HEIGHT = 60
+MAPPING_ITEM_HEIGHT = 44
 
 
 def should_display_mapping_row(row: dict[str, Any]) -> bool:
@@ -54,22 +57,31 @@ def build_mapping_item_text(row: dict[str, Any]) -> str:
         row: 映射列表行数据。
 
     Returns:
-        普通列表项展示文本，第二行包含完整文件名。
+        与解包页保持一致的实体名称文案。
     """
-    alias = str(row.get("alias", "") or "").strip()
-    title = f"{row['name']}·{alias}" if alias else str(row["name"])
-    file_name = Path(str(row.get("mapping_file", "") or "")).name
-    return f"{title}\n{file_name or '未找到 mapping 文件'}"
+    return str(row.get("name", "") or "")
+
+
+def build_mapping_preview_path_text(mapping_path: Path | None) -> str:
+    """构造右侧预览区域顶部路径文本。
+
+    Args:
+        mapping_path: 当前选中的映射文件路径。
+
+    Returns:
+        存在映射文件时返回完整路径，否则返回空字符串。
+    """
+    if mapping_path is None:
+        return ""
+    return str(mapping_path)
 
 
 class MappingPage(QWidget):
-    """资源映射页面。
+    """事件映射页面。
 
     负责展示当前输出目录里已生成的英雄或地图 mapping 文件，并在右侧
     预览序列化后的文件内容。
     """
-
-    refresh_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent=parent)
@@ -137,12 +149,10 @@ class MappingPage(QWidget):
         self._show_placeholder("当前暂无可预览的 mapping 文件。")
 
     def _setup_connections(self) -> None:
-        self.refresh_btn.clicked.connect(self.refresh_requested.emit)
-        self.refresh_btn.clicked.connect(self._render_current_list)
         self.nav_pivot.currentItemChanged.connect(self._on_nav_changed)
         self.search_input.textChanged.connect(self._on_search_text_changed)
         self.entity_list.currentItemChanged.connect(self._on_current_item_changed)
-        self.open_dir_btn.clicked.connect(self._open_selected_directory)
+        self.reveal_file_btn.clicked.connect(self._reveal_selected_mapping_file)
 
     def _current_entity_type(self) -> str:
         return self.nav_pivot.currentRouteKey() or "champions"
@@ -223,12 +233,10 @@ class MappingPage(QWidget):
 
         # 头部标题
         header_layout = QHBoxLayout()
-        title_label = SubtitleLabel("资源映射", self)
-        self.refresh_btn = PrimaryPushButton("刷新数据", self)
+        title_label = SubtitleLabel("事件映射", self)
 
         header_layout.addWidget(title_label)
         header_layout.addStretch(1)
-        header_layout.addWidget(self.refresh_btn)
         root_layout.addLayout(header_layout)
 
         self.nav_pivot = SegmentedWidget(self)
@@ -243,9 +251,9 @@ class MappingPage(QWidget):
         self.splitter.setStyleSheet("""
             QSplitter#MappingSplitter::handle {
                 background-color: rgba(255, 255, 255, 0.08);
-                margin: 4px 2px;
+                margin: 8px 4px;
                 border-radius: 2px;
-                width: 4px;
+                width: 6px;
             }
             QSplitter#MappingSplitter::handle:hover {
                 background-color: rgba(255, 255, 255, 0.15);
@@ -258,7 +266,7 @@ class MappingPage(QWidget):
         # 左侧面板
         left_widget = QWidget(self.splitter)
         left_layout = QVBoxLayout(left_widget)
-        left_layout.setContentsMargins(0, 0, 6, 0)
+        left_layout.setContentsMargins(0, 0, 12, 0)
 
         self.search_input = SearchLineEdit(left_widget)
         self.search_input.setPlaceholderText("搜索实体 / alias / ID")
@@ -280,22 +288,21 @@ class MappingPage(QWidget):
         # 右侧面板
         right_widget = QWidget(self.splitter)
         right_layout = QVBoxLayout(right_widget)
-        right_layout.setContentsMargins(6, 0, 0, 0)
+        right_layout.setContentsMargins(12, 0, 0, 0)
         right_layout.setSpacing(8)
 
         right_header = QHBoxLayout()
-        self.preview_title = SubtitleLabel("选中项预览", right_widget)
-        self.open_dir_btn = PushButton("打开所在目录", right_widget)
-        self.open_dir_btn.setEnabled(False)
+        self.preview_path_edit = QLineEdit(right_widget)
+        self.preview_path_edit.setReadOnly(True)
+        self.preview_path_edit.setPlaceholderText("请选择左侧实体以预览 mapping 文件内容。")
+        self.reveal_file_btn = TransparentToolButton(FIF.LINK, right_widget)
+        self.reveal_file_btn.setToolTip("打开文件所在位置")
+        self.reveal_file_btn.setFixedSize(32, 32)
+        self.reveal_file_btn.setEnabled(False)
 
-        right_header.addWidget(self.preview_title)
-        right_header.addStretch(1)
-        right_header.addWidget(self.open_dir_btn)
+        right_header.addWidget(self.preview_path_edit, 1)
+        right_header.addWidget(self.reveal_file_btn)
         right_layout.addLayout(right_header)
-
-        self.preview_meta_label = BodyLabel("请选择左侧实体以预览 mapping 文件内容。", right_widget)
-        self.preview_meta_label.setWordWrap(True)
-        right_layout.addWidget(self.preview_meta_label)
 
         self.text_preview = PlainTextEdit(right_widget)
         self.text_preview.setReadOnly(True)
@@ -345,23 +352,33 @@ class MappingPage(QWidget):
             return
 
         self._current_mapping_path = mapping_path
-        self.preview_title.setText(f"{row['name']} · {mapping_path.stem}")
-        self.preview_meta_label.setText(str(mapping_path))
+        self.preview_path_edit.setText(build_mapping_preview_path_text(mapping_path))
+        self.preview_path_edit.setCursorPosition(0)
+        self.preview_path_edit.setToolTip(str(mapping_path))
         self.text_preview.setPlainText(preview_content or "{}")
-        self.open_dir_btn.setEnabled(True)
+        self.reveal_file_btn.setEnabled(True)
 
     def _show_placeholder(self, message: str) -> None:
         self._current_mapping_path = None
-        self.preview_title.setText("选中项预览")
-        self.preview_meta_label.setText(message)
+        self.preview_path_edit.clear()
+        self.preview_path_edit.setToolTip("")
         self.text_preview.setPlainText(message)
-        self.open_dir_btn.setEnabled(False)
+        self.reveal_file_btn.setEnabled(False)
 
-    def _open_selected_directory(self) -> None:
+    def _reveal_selected_mapping_file(self) -> None:
         if self._current_mapping_path is None:
             return
 
-        directory = self._current_mapping_path.parent
+        target_path = self._current_mapping_path
+        directory = target_path.parent
+
+        try:
+            if os.name == "nt" and target_path.exists():
+                subprocess.Popen(["explorer.exe", "/select,", str(target_path)])
+                return
+        except OSError:
+            pass
+
         opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
         if not opened:
             InfoBar.warning(
