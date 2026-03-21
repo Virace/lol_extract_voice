@@ -1,12 +1,4 @@
-# 🐍 If the implementation is hard to explain, it's a bad idea.
-# 🐼 很难解释的，必然是坏方法
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2025/7/23 12:27
-# @Update  : 2025/8/7 11:28
-# @Detail  : 解包音频
+"""音频解包核心流程。"""
 
 from __future__ import annotations
 
@@ -15,6 +7,7 @@ import shutil
 import threading
 import time
 import traceback
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -623,6 +616,7 @@ def execute_unpack_tasks(
     max_workers: int = 4,
     *,
     ctx: AppContext,
+    progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> None:
     """执行批量解包任务。
 
@@ -631,6 +625,7 @@ def execute_unpack_tasks(
         reader: 数据读取器实例。
         max_workers: 最大并发线程数。
         ctx: 运行时上下文。
+        progress_callback: 每个实体处理结束后的可选进度回调。
     """
     if not tasks:
         logger.warning("没有任何任务需要执行")
@@ -673,29 +668,37 @@ def execute_unpack_tasks(
                 executor.submit(unpack_entity, entity_type, entity_id): (entity_type, entity_id, description)
                 for entity_type, entity_id, description in tasks
             }
-            completed_count = 0
+            finished_count = 0
 
             for future in as_completed(future_to_task):
-                entity_type, entity_id, description = future_to_task[future]
-                completed_count += 1
+                _entity_type, _entity_id, description = future_to_task[future]
+                finished_count += 1
 
                 try:
                     future.result()  # 获取结果，如果函数中出现异常，这里会重新抛出
-                    logger.info(f"进度: {completed_count}/{total_tasks} - {description} 解包完成。")
+                    progress_message = f"{description} 解包完成"
+                    logger.info(f"进度: {finished_count}/{total_tasks} - {progress_message}。")
                 except Exception as exc:
+                    progress_message = f"{description} 解包失败"
                     logger.error(f"{description} 解包时发生错误: {exc}")
                     logger.debug(traceback.format_exc())
+                if progress_callback is not None:
+                    progress_callback(finished_count, total_tasks, progress_message)
     else:
         # --- 单线程模式 ---
-        completed_count = 0
+        finished_count = 0
         for entity_type, entity_id, description in tasks:
             try:
                 unpack_entity(entity_type, entity_id)
-                completed_count += 1
-                logger.info(f"进度: {completed_count}/{total_tasks} - {description} 解包完成。")
+                progress_message = f"{description} 解包完成"
+                logger.info(f"进度: {finished_count + 1}/{total_tasks} - {progress_message}。")
             except Exception as exc:
+                progress_message = f"{description} 解包失败"
                 logger.error(f"{description} 解包时发生错误: {exc}")
                 logger.debug(traceback.format_exc())
+            finished_count += 1
+            if progress_callback is not None:
+                progress_callback(finished_count, total_tasks, progress_message)
 
     end_time = time.time()
     logger.success(f"解包完成: {' 和 '.join(summary_parts)}，耗时 {end_time - start_time:.2f}s")
@@ -704,23 +707,24 @@ def execute_unpack_tasks(
     reader.write_unknown_categories_to_file()
 
 
-def unpack_audio_all(
+def unpack_audio_all(  # noqa: PLR0913
     reader: DataReader,
     max_workers: int = 4,
     include_champions: bool = True,
     include_maps: bool = True,
     *,
     ctx: AppContext,
+    progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> None:
-    """使用线程池并发解包所有音频文件
+    """使用线程池并发解包全部实体。
 
-    解包所有可用的英雄和地图音频文件。
-    通过设置 max_workers=1 可以切换到单线程顺序执行模式。
-
-    :param reader: 一个已经初始化并加载了数据的DataReader实例
-    :param max_workers: 使用的最大线程数 (1: 单线程, >1: 多线程)
-    :param include_champions: 是否包含英雄解包
-    :param include_maps: 是否包含地图解包
+    Args:
+        reader: 已初始化的数据读取器。
+        max_workers: 最大并发线程数。
+        include_champions: 是否包含英雄。
+        include_maps: 是否包含地图。
+        ctx: 运行时上下文。
+        progress_callback: 每个实体处理结束后的可选进度回调。
     """
     tasks = []
 
@@ -741,7 +745,13 @@ def unpack_audio_all(
         return
 
     # 执行任务
-    execute_unpack_tasks(tasks, reader, max_workers, ctx=ctx)
+    execute_unpack_tasks(
+        tasks,
+        reader,
+        max_workers,
+        ctx=ctx,
+        progress_callback=progress_callback,
+    )
 
 
 def unpack_champions(
@@ -750,16 +760,25 @@ def unpack_champions(
     max_workers: int = 4,
     *,
     ctx: AppContext,
+    progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> None:
-    """便捷函数：解包指定英雄
+    """便捷函数：解包指定英雄。
 
-    :param reader: 数据读取器
-    :param champion_ids: 英雄ID列表
-    :param max_workers: 最大工作线程数
-    :raises ValueError: 当指定的ID不存在时
+    Args:
+        reader: 数据读取器。
+        champion_ids: 英雄 ID 列表。
+        max_workers: 最大并发线程数。
+        ctx: 运行时上下文。
+        progress_callback: 每个实体处理结束后的可选进度回调。
     """
     tasks = generate_champion_tasks(reader, champion_ids)
-    execute_unpack_tasks(tasks, reader, max_workers, ctx=ctx)
+    execute_unpack_tasks(
+        tasks,
+        reader,
+        max_workers,
+        ctx=ctx,
+        progress_callback=progress_callback,
+    )
 
 
 def unpack_maps(
@@ -768,13 +787,22 @@ def unpack_maps(
     max_workers: int = 4,
     *,
     ctx: AppContext,
+    progress_callback: Callable[[int, int, str], None] | None = None,
 ) -> None:
-    """便捷函数：解包指定地图
+    """便捷函数：解包指定地图。
 
-    :param reader: 数据读取器
-    :param map_ids: 地图ID列表
-    :param max_workers: 最大工作线程数
-    :raises ValueError: 当指定的ID不存在时
+    Args:
+        reader: 数据读取器。
+        map_ids: 地图 ID 列表。
+        max_workers: 最大并发线程数。
+        ctx: 运行时上下文。
+        progress_callback: 每个实体处理结束后的可选进度回调。
     """
     tasks = generate_map_tasks(reader, map_ids)
-    execute_unpack_tasks(tasks, reader, max_workers, ctx=ctx)
+    execute_unpack_tasks(
+        tasks,
+        reader,
+        max_workers,
+        ctx=ctx,
+        progress_callback=progress_callback,
+    )

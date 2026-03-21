@@ -181,6 +181,8 @@ class MainWindow(FluentWindow):
         # 注入配置到各业务页面
         self.unpackInterface.set_gui_config(cfg)
         self.mappingInterface.set_gui_config(cfg)
+        self.unpackInterface.refresh_requested.connect(self._refresh_shared_output_data)
+        self.unpackInterface.task_running_changed.connect(self._on_unpack_task_running_changed)
 
         # 配置变更时重新加载数据
         si.game_path_changed.connect(lambda: self._reload_unpack_data(cfg))
@@ -285,8 +287,23 @@ class MainWindow(FluentWindow):
             )
             self._pending_refresh_notice = False
 
+    def _on_unpack_task_running_changed(self, running: bool) -> None:
+        """同步解包任务运行态到共享配置页面。"""
+        self.settingInterface.setEnabled(not running)
+
     def _refresh_shared_output_data(self):
         """刷新解包页与事件映射页共用的本地输出数据。"""
+        if self.unpackInterface.is_task_running():
+            logger.info("解包任务进行中，忽略共享刷新请求")
+            InfoBar.warning(
+                title="解包进行中",
+                content="请等待当前解包任务结束后再刷新列表数据。",
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=2500,
+                parent=self,
+            )
+            return
         if self._is_loading_shared_data:
             logger.info("共享数据仍在加载中，忽略重复刷新请求")
             return
