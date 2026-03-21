@@ -1,4 +1,4 @@
-"""Application bootstrap for the Fluent-based GUI shell."""
+"""Fluent GUI 的启动入口。"""
 
 from __future__ import annotations
 
@@ -8,18 +8,17 @@ from collections.abc import Sequence
 from PySide6.QtWidgets import QApplication
 from qfluentwidgets import Theme, setTheme
 
-from .services import GuiPreviewService
 from .window import MainWindow
 
 
 def start_gui_app(argv: Sequence[str] | None = None) -> int:
-    """Start the Fluent GUI preview application.
+    """启动 Fluent GUI 应用。
 
     Args:
-        argv: Optional command-line arguments.
+        argv: 可选的命令行参数列表。
 
     Returns:
-        The Qt application exit code.
+        Qt 应用的退出码。
     """
     args = list(argv) if argv is not None else sys.argv
     app = QApplication(args)
@@ -27,7 +26,6 @@ def start_gui_app(argv: Sequence[str] | None = None) -> int:
     app.setOrganizationName("Virace")
     setTheme(Theme.DARK)
 
-    preview_state = GuiPreviewService().load_preview_state()
-    window = MainWindow(preview_state=preview_state)
+    window = MainWindow()
     window.show()
     return app.exec()

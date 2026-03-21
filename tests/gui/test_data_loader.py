@@ -9,6 +9,7 @@ from lol_audio_unpack.gui.service.data_loader import (
     EntityDataLoader,
     check_entity_status,
     resolve_entity_audio_paths,
+    resolve_mapping_file_path,
 )
 
 
@@ -21,6 +22,7 @@ def mock_app_context():
     ctx.paths.output_path = "/tmp/output"
     ctx.config.group_by_type = False
     ctx.config.include_types = ["VO", "SFX", "MUSIC"]
+    ctx.config.dev_mode = False
     return ctx
 
 
@@ -70,6 +72,16 @@ def test_check_entity_status_none_exist(mock_app_context, mock_entity_data):
         assert mapping_status == "未存在"
 
 
+def test_resolve_mapping_file_path(mock_app_context):
+    """测试映射文件路径解析"""
+    expected = Path("/tmp/hashes/14.1.0/champions/1.msgpack")
+    with patch("lol_audio_unpack.gui.service.data_loader.find_data_file", return_value=expected) as mock_find:
+        actual = resolve_mapping_file_path(mock_app_context, "champions", "1", "14.1.0")
+
+    assert actual == expected
+    mock_find.assert_called_once()
+
+
 def test_entity_data_loader_load_entities(mock_app_context):
     """测试实体数据加载"""
     with patch("lol_audio_unpack.gui.service.data_loader.DataReader") as mock_reader_cls:
@@ -86,7 +98,10 @@ def test_entity_data_loader_load_entities(mock_app_context):
             mock_entity.entity_alias = "annie"
             mock_from_champion.return_value = mock_entity
 
-            with patch("lol_audio_unpack.gui.service.data_loader.check_entity_status", return_value=("已存在", "未存在")):
+            with patch("lol_audio_unpack.gui.service.data_loader.check_entity_status", return_value=("已存在", "未存在")), patch(
+                "lol_audio_unpack.gui.service.data_loader.resolve_mapping_file_path",
+                return_value=None,
+            ):
                 loader = EntityDataLoader(mock_app_context)
                 data = loader.load_entities("champions")
 
@@ -96,3 +111,29 @@ def test_entity_data_loader_load_entities(mock_app_context):
                 assert data[0]["alias"] == "annie"
                 assert data[0]["audio"] == "已存在"
                 assert data[0]["mapping"] == "未存在"
+                assert data[0]["entity_type"] == "champions"
+                assert data[0]["mapping_file"] == ""
+
+
+def test_entity_data_loader_load_mapping_preview(mock_app_context):
+    """测试映射预览内容读取"""
+    expected_path = Path("/tmp/hashes/14.1.0/champions/1.json")
+
+    with patch("lol_audio_unpack.gui.service.data_loader.DataReader") as mock_reader_cls:
+        mock_reader = Mock()
+        mock_reader.version = "14.1.0"
+        mock_reader_cls.return_value = mock_reader
+
+        with patch(
+            "lol_audio_unpack.gui.service.data_loader.resolve_mapping_file_path",
+            return_value=expected_path,
+        ), patch(
+            "lol_audio_unpack.gui.service.data_loader.read_data",
+            return_value={"entityName": "安妮", "events": {"VO": {"Play_VO_Annie_Attack": [1, 2, 3]}}},
+        ):
+            loader = EntityDataLoader(mock_app_context)
+            actual_path, content = loader.load_mapping_preview("champions", "1")
+
+    assert actual_path == expected_path
+    assert '"entityName": "安妮"' in content
+    assert '"Play_VO_Annie_Attack"' in content
