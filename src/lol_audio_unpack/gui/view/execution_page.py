@@ -204,7 +204,6 @@ class ExecutionPage(SmoothScrollArea):
 
     refresh_requested = Signal()
     task_running_changed = Signal(bool)
-    log_text_changed = Signal(str)
     log_lines_appended = Signal(object)
 
     def __init__(self, parent=None):
@@ -445,6 +444,8 @@ class ExecutionPage(SmoothScrollArea):
     def attach_runtime_log_sink(self) -> None:
         """重新挂载 GUI 运行时日志 sink。"""
         self._detach_runtime_log_sink()
+        # 独立实例化执行中心时，也要确保项目命名空间日志不会被静默丢弃。
+        logger.enable("lol_audio_unpack")
         self._runtime_log_sink_id = logger.add(
             self._runtime_log_relay,
             level="INFO",
@@ -452,6 +453,15 @@ class ExecutionPage(SmoothScrollArea):
             enqueue=False,
             format=GUI_LOG_FORMAT,
         )
+
+    def _log_gui_event(self, level: str, message: str) -> None:
+        """通过 loguru 记录执行中心的界面交互日志。
+
+        Args:
+            level: loguru 使用的日志级别名称。
+            message: 需要写入统一日志链路的文本。
+        """
+        logger.log(level.upper(), message)
 
     def set_selected_entities(
         self,
@@ -476,7 +486,7 @@ class ExecutionPage(SmoothScrollArea):
                 feedback_parent=feedback_parent,
             )
             if choice == "cancel":
-                self._append_log_line("[同步] 已取消从实体总览同步选择。")
+                self._log_gui_event("info", "[同步] 已取消从实体总览同步选择。")
                 return None
             if choice == "merge":
                 champion_ids = _merge_unique_ids(current_champion_ids, champion_ids)
@@ -532,7 +542,7 @@ class ExecutionPage(SmoothScrollArea):
         }
         self.champion_ids_input.setText(",".join(champion_ids))
         self.map_ids_input.setText(",".join(map_ids))
-        self._append_log_line(f"[同步] {summary}")
+        self._log_gui_event("info", f"[同步] {summary}")
         self._refresh_task_builder_state()
 
     def _feedback_parent(self, feedback_parent: QWidget | None = None) -> QWidget:
@@ -794,7 +804,7 @@ class ExecutionPage(SmoothScrollArea):
                 updated_payload = self._update_queue_item(item, status=TASK_STATUS_RUNNING)
                 summary = str(updated_payload.get("summary", ""))
                 self._last_draft_summary = item.text()
-                self._append_log_line(f"[队列] 已自动开始任务：{summary}")
+                self._log_gui_event("info", f"[队列] 已自动开始任务：{summary}")
                 return item
         return None
 
@@ -812,7 +822,7 @@ class ExecutionPage(SmoothScrollArea):
         was_running = current_status == TASK_STATUS_RUNNING
         self._update_queue_item(item, status=TASK_STATUS_CANCELLED)
         self._last_draft_summary = item.text()
-        self._append_log_line(f"[队列] 已取消任务：{summary}")
+        self._log_gui_event("info", f"[队列] 已取消任务：{summary}")
         if was_running:
             self._start_next_waiting_task()
         self._refresh_progress_panel()
@@ -880,7 +890,7 @@ class ExecutionPage(SmoothScrollArea):
         """复制当前配置对应的 CLI 命令。"""
         command_text = self._build_cli_command_text()
         if command_text is None:
-            self._append_log_line("[CLI] 未勾选任何执行步骤，无法复制命令。")
+            self._log_gui_event("warning", "[CLI] 未勾选任何执行步骤，无法复制命令。")
             InfoBar.warning(
                 "无法复制 CLI 命令",
                 "请至少勾选音频解包或事件映射中的一个步骤。",
@@ -890,7 +900,7 @@ class ExecutionPage(SmoothScrollArea):
             return
 
         QGuiApplication.clipboard().setText(command_text)
-        self._append_log_line(f"[CLI] 已复制命令：{command_text}")
+        self._log_gui_event("info", f"[CLI] 已复制命令：{command_text}")
         InfoBar.success(
             "已复制 CLI 命令",
             command_text,
@@ -902,7 +912,7 @@ class ExecutionPage(SmoothScrollArea):
         """将当前界面参数写入任务队列，并自动开始首个任务。"""
         task_scope_summary = self._selected_task_scope_summary()
         if task_scope_summary == "未选择执行内容":
-            self._append_log_line("[队列] 未勾选任何执行步骤，已阻止创建任务。")
+            self._log_gui_event("warning", "[队列] 未勾选任何执行步骤，已阻止创建任务。")
             InfoBar.warning(
                 "无法创建任务",
                 "请至少勾选音频解包或事件映射中的一个步骤。",
@@ -934,7 +944,7 @@ class ExecutionPage(SmoothScrollArea):
             status_text="状态：任务已加入队列。" if status == TASK_STATUS_RUNNING else "状态：新任务已加入等待队列。",
             note_text="0% · 当前显示任务队列状态。",
         )
-        self._append_log_line(f"[队列] {row_text}")
+        self._log_gui_event("info", f"[队列] {row_text}")
         InfoBar.success(
             "已加入任务队列",
             row_text,
@@ -955,7 +965,7 @@ class ExecutionPage(SmoothScrollArea):
         self._set_queue_placeholder()
         self._last_draft_summary = "暂无队列任务。"
         self._refresh_progress_panel()
-        self._append_log_line("[队列] 已清空当前任务队列。")
+        self._log_gui_event("info", "[队列] 已清空当前任务队列。")
 
     def current_log_text(self) -> str:
         """返回执行中心当前累计日志文本。
@@ -965,12 +975,6 @@ class ExecutionPage(SmoothScrollArea):
         """
         self._flush_pending_log_lines()
         return "\n".join(self._log_lines)
-
-    def _append_log_line(self, message: str) -> None:
-        """向全局日志面板追加一条文本。"""
-        self._flush_pending_log_lines()
-        self._log_lines.append(message)
-        self.log_text_changed.emit(self.current_log_text())
 
     def _queue_runtime_log_line(self, message: str) -> None:
         """缓存运行时日志，并在下一帧统一刷新到界面。

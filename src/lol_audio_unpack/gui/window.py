@@ -247,7 +247,6 @@ class MainWindow(FluentWindow):
         self.overviewInterface.selection_sync_requested.connect(self._sync_selection_to_execution_center)
         self.executionInterface.refresh_requested.connect(self._refresh_shared_output_data)
         self.executionInterface.task_running_changed.connect(self._on_unpack_task_running_changed)
-        self.executionInterface.log_text_changed.connect(self._set_global_log_text)
         self.executionInterface.log_lines_appended.connect(self._append_global_log_lines)
         self.executionInterface.attach_runtime_log_sink()
         self.settingInterface.smooth_scroll_changed.connect(self._apply_smooth_scroll_setting)
@@ -360,10 +359,6 @@ class MainWindow(FluentWindow):
     def _on_unpack_task_running_changed(self, running: bool) -> None:
         """同步解包任务运行态到共享配置页面。"""
         self.settingInterface.setEnabled(not running)
-
-    def _set_global_log_text(self, text: str) -> None:
-        """同步执行中心日志全文到主窗口级日志面板。"""
-        self._global_log_drawer.set_log_text(text)
 
     def _append_global_log_lines(self, lines: tuple[str, ...]) -> None:
         """向主窗口级日志抽屉增量追加一批日志。"""

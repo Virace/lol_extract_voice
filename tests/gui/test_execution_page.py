@@ -27,24 +27,6 @@ from lol_audio_unpack.gui.components.log_drawer import (
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 
 
-def test_execution_page_emits_full_log_text_when_appending() -> None:
-    """执行中心追加日志后应同步发出完整文本，且不再保留页内日志卡片。"""
-    app = QApplication.instance() or QApplication([])
-    page = ExecutionPage()
-    received: list[str] = []
-    page.log_text_changed.connect(received.append)
-
-    page._append_log_line("[测试] 触发全局日志同步")
-    app.processEvents()
-
-    assert received
-    assert received[-1].endswith("[测试] 触发全局日志同步")
-    assert page.current_log_text() == received[-1]
-    assert not hasattr(page, "log_card")
-    page.deleteLater()
-    app.processEvents()
-
-
 def test_execution_page_preloads_buffered_startup_logs() -> None:
     """执行中心初始化时应带上启动期已缓冲的日志。"""
     app = QApplication.instance() or QApplication([])
@@ -87,9 +69,7 @@ def test_execution_page_batches_runtime_logs_before_render() -> None:
     app = QApplication.instance() or QApplication([])
     page = ExecutionPage()
     batches: list[tuple[str, ...]] = []
-    full_text_updates: list[str] = []
     page.log_lines_appended.connect(batches.append)
-    page.log_text_changed.connect(full_text_updates.append)
 
     page._queue_runtime_log_line("[测试] 第一条运行时日志")
     page._queue_runtime_log_line("[测试] 第二条运行时日志")
@@ -98,7 +78,6 @@ def test_execution_page_batches_runtime_logs_before_render() -> None:
     assert batches == [
         ("[测试] 第一条运行时日志", "[测试] 第二条运行时日志"),
     ]
-    assert not full_text_updates
     assert page.current_log_text().endswith("[测试] 第二条运行时日志")
     page.deleteLater()
     app.processEvents()
@@ -134,6 +113,7 @@ def test_execution_page_can_copy_full_cli_command() -> None:
     """复制按钮应输出与当前配置一致的 CLI 命令。"""
     app = QApplication.instance() or QApplication([])
     page = ExecutionPage()
+    page.attach_runtime_log_sink()
     page.champion_ids_input.setText("1,103")
     page.map_ids_input.setText("11")
     page.force_update_cb.setChecked(True)
@@ -153,6 +133,7 @@ def test_execution_page_can_copy_full_cli_command() -> None:
         "--max-workers 8 --no-with-bp-vo --exclude-type SFX,MUSIC --integrate-data"
     )
     assert QApplication.clipboard().text() == expected
+    assert "[CLI] 已复制命令：" in page.current_log_text()
 
     page.deleteLater()
     app.processEvents()
@@ -189,6 +170,7 @@ def test_execution_page_can_cancel_synced_selection_when_conflict_exists() -> No
     """总览同步遇到冲突且用户取消时，应保留当前输入。"""
     app = QApplication.instance() or QApplication([])
     page = ExecutionPage()
+    page.attach_runtime_log_sink()
     page.champion_ids_input.setText("1,103")
     page.map_ids_input.setText("11")
     page._ask_sync_conflict_resolution = lambda **_kwargs: "cancel"  # type: ignore[method-assign]
@@ -206,6 +188,7 @@ def test_execution_page_can_cancel_synced_selection_when_conflict_exists() -> No
     assert page.champion_ids_input.text() == "1,103"
     assert page.map_ids_input.text() == "11"
     assert page.selection_source_value.text() == "手动输入"
+    assert "[同步] 已取消从实体总览同步选择。" in page.current_log_text()
 
     page.deleteLater()
     app.processEvents()
@@ -215,6 +198,7 @@ def test_execution_page_builds_draft_from_checkbox_selection() -> None:
     """创建任务时应自动进入队列，并让首项处于运行态占位。"""
     app = QApplication.instance() or QApplication([])
     page = ExecutionPage()
+    page.attach_runtime_log_sink()
     page.champion_ids_input.setText("1,103")
     page.map_ids_input.setText("11")
     app.processEvents()
@@ -237,6 +221,7 @@ def test_execution_page_builds_draft_from_checkbox_selection() -> None:
     assert page.force_update_cb.isChecked() is False
     assert page.integrate_data_cb.isChecked() is False
     assert page.bp_voice_cb.isChecked() is True
+    assert "[队列] #1" in page.current_log_text()
 
     page.deleteLater()
     app.processEvents()
@@ -246,6 +231,7 @@ def test_execution_page_can_cancel_running_task_and_promote_waiting_task() -> No
     """取消运行中任务后，应自动把下一个等待任务提升为运行中。"""
     app = QApplication.instance() or QApplication([])
     page = ExecutionPage()
+    page.attach_runtime_log_sink()
     app.processEvents()
 
     page._queue_task_draft()
@@ -264,6 +250,8 @@ def test_execution_page_can_cancel_running_task_and_promote_waiting_task() -> No
     assert "[运行中]" in second_item.text()
     assert "运行中 1" in page.queue_progress_label.text()
     assert "已取消 1" in page.queue_progress_label.text()
+    assert "[队列] 已取消任务：" in page.current_log_text()
+    assert "[队列] 已自动开始任务：" in page.current_log_text()
 
     page.deleteLater()
     app.processEvents()
