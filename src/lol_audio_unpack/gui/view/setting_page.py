@@ -13,12 +13,14 @@ from qfluentwidgets import (
     CustomColorSettingCard,
     ExpandGroupSettingCard,
     ExpandLayout,
+    IndicatorPosition,
     LineEdit,
     OptionsSettingCard,
     PushSettingCard,
     SettingCard,
     SettingCardGroup,
     SmoothScrollArea,
+    SwitchButton,
     SwitchSettingCard,
     Theme,
     qconfig,
@@ -29,7 +31,7 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
-from lol_audio_unpack.gui.common import GuiConfig
+from lol_audio_unpack.gui.common import GuiConfig, apply_smooth_scroll_enabled
 
 
 def _log_setting_stage(stage: str, startup_begin: float, previous_mark: float) -> float:
@@ -113,6 +115,37 @@ class LineEditSettingCard(SettingCard):
 
     def setValue(self, text: str):
         self.lineEdit.setText(text)
+
+
+class LocalizedSwitchSettingCard(SwitchSettingCard):
+    """使用中文开关文案的设置卡。"""
+
+    def __init__(
+        self,
+        icon,
+        title: str,
+        content: str | None = None,
+        configItem=None,
+        parent=None,
+    ) -> None:
+        self._on_text = "开"
+        self._off_text = "关"
+        super().__init__(icon, title, content, configItem=configItem, parent=parent)
+        self._sync_switch_text(self.isChecked())
+
+    def _sync_switch_text(self, is_checked: bool) -> None:
+        """同步右侧开关按钮文案。"""
+        self.switchButton.setOnText(self._on_text)
+        self.switchButton.setOffText(self._off_text)
+        self.switchButton.setText(self._on_text if is_checked else self._off_text)
+
+    def setValue(self, isChecked: bool):
+        """设置当前勾选状态并保持中文文案。"""
+        if self.configItem:
+            qconfig.set(self.configItem, isChecked)
+
+        self.switchButton.setChecked(isChecked)
+        self._sync_switch_text(isChecked)
 
 
 # ---------------------------------------------------------------------------
@@ -200,6 +233,71 @@ class FixedSnapshotCard(ExpandGroupSettingCard):
         self.gameUrlEdit.setText(game_url)
 
 
+class SmoothScrollSettingCard(ExpandGroupSettingCard):
+    """可折叠的平滑滚动配置组。"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FIF.SCROLL,
+            "平滑滚动",
+            "数据量过多时开启平滑滚动可能会卡顿；页面滚动和列表/表格等控件可分别控制。",
+            parent,
+        )
+
+        self.viewLayout.setContentsMargins(0, 0, 0, 0)
+        self.viewLayout.setSpacing(0)
+
+        self.pageSwitchButton = self._add_switch_row(
+            "页面级滚动",
+            "设置页、主页、关于页、执行中心等页面容器的滚动动画。",
+        )
+        self.widgetSwitchButton = self._add_switch_row(
+            "控件级滚动",
+            "列表、表格、日志区、文本预览等可滚动控件的滚动动画。",
+        )
+
+    def _add_switch_row(self, title: str, content: str) -> SwitchButton:
+        """添加一行带中文开关按钮的说明项。"""
+        row = QWidget()
+        row.setMinimumHeight(76)
+
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(48, 12, 48, 12)
+        layout.setSpacing(16)
+
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(2)
+        text_layout.addWidget(BodyLabel(title))
+        content_label = CaptionLabel(content)
+        content_label.setWordWrap(True)
+        text_layout.addWidget(content_label)
+
+        layout.addLayout(text_layout)
+        layout.addStretch(1)
+
+        switch_button = SwitchButton("关", row, IndicatorPosition.RIGHT)
+        switch_button.setOnText("开")
+        switch_button.setOffText("关")
+        switch_button.setText("关")
+        layout.addWidget(switch_button, 0, Qt.AlignRight | Qt.AlignVCenter)
+
+        self.addGroupWidget(row)
+        return switch_button
+
+    def pageScrollEnabled(self) -> bool:
+        """返回是否启用页面级平滑滚动。"""
+        return self.pageSwitchButton.isChecked()
+
+    def widgetScrollEnabled(self) -> bool:
+        """返回是否启用控件级平滑滚动。"""
+        return self.widgetSwitchButton.isChecked()
+
+    def setValues(self, *, page_enabled: bool, widget_enabled: bool) -> None:
+        """同步两项平滑滚动开关状态。"""
+        self.pageSwitchButton.setChecked(page_enabled)
+        self.widgetSwitchButton.setChecked(widget_enabled)
+
+
 # ---------------------------------------------------------------------------
 # SettingPage
 # ---------------------------------------------------------------------------
@@ -212,6 +310,7 @@ class SettingPage(SmoothScrollArea):
     output_path_changed = Signal(str)
     wwiser_path_changed = Signal(str)
     vgmstream_path_changed = Signal(str)
+    smooth_scroll_changed = Signal(bool, bool)
 
     def __init__(self, parent=None):
         startup_begin = perf_counter()
@@ -235,6 +334,7 @@ class SettingPage(SmoothScrollArea):
         previous_mark = _log_setting_stage("_build_ui 完成", startup_begin, previous_mark)
         self._load_config()
         previous_mark = _log_setting_stage("_load_config 完成", startup_begin, previous_mark)
+        apply_smooth_scroll_enabled(self, self._cfg.page_smooth_scroll_enabled)
         self._connect_signals()
         previous_mark = _log_setting_stage("_connect_signals 完成", startup_begin, previous_mark)
 
@@ -317,7 +417,7 @@ class SettingPage(SmoothScrollArea):
             ["EUW", "NA", "KR", "JP", "BR", "TR", "RU", "OCE", "EUNE", "LAN", "LAS", "ME"],
         )
         group_mark = _log_setting_stage("source: remoteLiveRegionCard 创建完成", group_begin, group_mark)
-        self.cleanupRemoteCard = SwitchSettingCard(
+        self.cleanupRemoteCard = LocalizedSwitchSettingCard(
             FIF.DELETE,
             "完成后自动清理",
             "删除远程下载的阶段性冗余文件，保持输出目录整洁",
@@ -353,7 +453,7 @@ class SettingPage(SmoothScrollArea):
             "语音文件的区域标识，影响实际加载的语音资源",
             ["zh_CN", "en_US", "ja_JP", "ko_KR", "fr_FR", "de_DE", "es_ES", "pt_BR", "ru_RU"],
         )
-        self.groupByTypeCard = SwitchSettingCard(
+        self.groupByTypeCard = LocalizedSwitchSettingCard(
             FIF.FOLDER,
             "按类型分组输出",
             "开: audios/类型/英雄/…   关(默认): audios/英雄/类型/…",
@@ -418,6 +518,8 @@ class SettingPage(SmoothScrollArea):
 
         self.personalGroup.addSettingCard(self.themeCard)
         self.personalGroup.addSettingCard(self.colorCard)
+        self.smoothScrollCard = SmoothScrollSettingCard(self.personalGroup)
+        self.personalGroup.addSettingCard(self.smoothScrollCard)
         self.expandLayout.addWidget(self.personalGroup)
 
     # ------------------------------------------------------------------
@@ -453,6 +555,10 @@ class SettingPage(SmoothScrollArea):
 
         # 个性化 — 应用已保存的主题
         self._apply_theme_from_config()
+        self.smoothScrollCard.setValues(
+            page_enabled=cfg.page_smooth_scroll_enabled,
+            widget_enabled=cfg.widget_smooth_scroll_enabled,
+        )
 
     def _save_config(self) -> None:
         """将各控件当前值写入 GuiConfig 并持久化。"""
@@ -466,6 +572,8 @@ class SettingPage(SmoothScrollArea):
         cfg.snapshot_game_url = self.fixedSnapshotCard.gameUrlValue()
         cfg.game_region = self.gameRegionCard.value()
         cfg.group_by_type = self.groupByTypeCard.isChecked()
+        cfg.page_smooth_scroll_enabled = self.smoothScrollCard.pageScrollEnabled()
+        cfg.widget_smooth_scroll_enabled = self.smoothScrollCard.widgetScrollEnabled()
 
         cfg.save()
 
@@ -504,6 +612,8 @@ class SettingPage(SmoothScrollArea):
         # 基础设置
         self.gameRegionCard.comboBox.currentTextChanged.connect(self._save_config)
         self.groupByTypeCard.checkedChanged.connect(self._save_config)
+        self.smoothScrollCard.pageSwitchButton.checkedChanged.connect(self._on_smooth_scroll_changed)
+        self.smoothScrollCard.widgetSwitchButton.checkedChanged.connect(self._on_smooth_scroll_changed)
 
         # 个性化 — 主题变更时保存
         qconfig.themeChanged.connect(self._save_theme_config)
@@ -601,6 +711,14 @@ class SettingPage(SmoothScrollArea):
             card.setContent(f"默认: {default}")
         else:
             card.setContent("当前: 未设置")
+
+    def _on_smooth_scroll_changed(self, _checked: bool) -> None:
+        """保存并广播平滑滚动配置。"""
+        self._save_config()
+        page_enabled = self.smoothScrollCard.pageScrollEnabled()
+        widget_enabled = self.smoothScrollCard.widgetScrollEnabled()
+        apply_smooth_scroll_enabled(self, page_enabled)
+        self.smooth_scroll_changed.emit(page_enabled, widget_enabled)
 
     # ------------------------------------------------------------------
     # 公共值读取（供其他页面或 Worker 调用）
