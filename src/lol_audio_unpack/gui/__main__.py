@@ -43,7 +43,7 @@ def main() -> None:
     # 显式启用项目命名空间日志，并初始化基础日志系统到当前目录下的 .logs 文件夹
     setup_logging(
         dev_mode=True,
-        log_level="TRACE",
+        log_level="INFO",
         log_file_path=Path.cwd() / ".logs",
         show_function_info=True,
     )

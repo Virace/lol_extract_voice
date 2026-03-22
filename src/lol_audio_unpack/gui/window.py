@@ -1,4 +1,4 @@
-"""主窗口与全局日志面板布局逻辑。"""
+"""应用主窗口与页面装配逻辑。"""
 
 from __future__ import annotations
 
@@ -6,38 +6,29 @@ from pathlib import Path
 from time import perf_counter
 
 from loguru import logger
-from PySide6.QtCore import (
-    QEvent,
-    QRect,
-    QSize,
-    Qt,
-)
+from PySide6.QtCore import QEvent, QRect, QSize
 from PySide6.QtGui import QIcon, QResizeEvent
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication
+from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets import (
-    CaptionLabel,
-    CardWidget,
     FluentWindow,
     InfoBar,
     InfoBarPosition,
     NavigationItemPosition,
-    PlainTextEdit,
     SplashScreen,
-    StrongBodyLabel,
     Theme,
-    TransparentToolButton,
-    isDarkTheme,
     qconfig,
     setTheme,
     setThemeColor,
-)
-from qfluentwidgets import (
-    FluentIcon as FIF,
 )
 
 from lol_audio_unpack import __version__
 from lol_audio_unpack.app_context import create_app_context
 from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled
+from lol_audio_unpack.gui.components.log_drawer import (
+    GlobalLogDrawer,
+    _build_log_panel_host_rect,
+)
 from lol_audio_unpack.gui.service.worker import DataLoadWorker
 from lol_audio_unpack.gui.view.about_page import AboutPage
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
@@ -47,46 +38,6 @@ from lol_audio_unpack.gui.view.setting_page import SettingPage
 from lol_audio_unpack.utils.logging import setup_logging
 
 NAV_EXPANDED_WIDTH_THRESHOLD = 100
-LOG_PANEL_MIN_HEIGHT = 248
-LOG_PANEL_MAX_HEIGHT = 360
-LOG_PANEL_COLLAPSED_HEIGHT = 58
-LOG_PANEL_SIDE_MARGIN = 24
-LOG_PANEL_BOTTOM_MARGIN = 16
-LOG_PANEL_TOP_MARGIN = 16
-
-
-def _build_log_panel_host_rect(window_size: QSize, navigation_width: int) -> QRect:
-    """根据主窗口尺寸与导航宽度推导页面内容区矩形。
-
-    Args:
-        window_size: 主窗口当前尺寸。
-        navigation_width: 当前导航栏占用宽度。
-
-    Returns:
-        近似代表页面内容区的宿主矩形。
-    """
-    x = max(0, navigation_width)
-    width = max(0, window_size.width() - x)
-    return QRect(x, 0, width, window_size.height())
-
-
-def _build_log_panel_geometry(host_rect: QRect, expanded: bool) -> QRect:
-    """根据页面内容区计算全局日志面板的位置与大小。
-
-    Args:
-        host_rect: 页面内容区矩形。
-        expanded: 面板是否处于展开状态。
-
-    Returns:
-        日志面板对应的目标矩形区域。
-    """
-    width = max(0, host_rect.width() - LOG_PANEL_SIDE_MARGIN * 2)
-    expanded_height = min(max(int(host_rect.height() * 0.34), LOG_PANEL_MIN_HEIGHT), LOG_PANEL_MAX_HEIGHT)
-    height = expanded_height if expanded else LOG_PANEL_COLLAPSED_HEIGHT
-    x = host_rect.x() + LOG_PANEL_SIDE_MARGIN
-    max_y = host_rect.y() + host_rect.height() - LOG_PANEL_BOTTOM_MARGIN - height
-    y = max(host_rect.y() + LOG_PANEL_TOP_MARGIN, max_y)
-    return QRect(x, y, width, height)
 
 
 def _log_window_stage(stage: str, startup_begin: float, previous_mark: float) -> float:
@@ -155,13 +106,13 @@ class MainWindow(FluentWindow):
     def _initNavigation(self):
         """初始化主窗口导航项。"""
         # add sub interface top
-        self.addSubInterface(self.homeInterface, FIF.HOME, '主页')
-        self.addSubInterface(self.overviewInterface, FIF.DOCUMENT, '实体总览')
-        self.addSubInterface(self.executionInterface, FIF.DOWNLOAD, '执行中心')
+        self.addSubInterface(self.homeInterface, FIF.HOME, "主页")
+        self.addSubInterface(self.overviewInterface, FIF.DOCUMENT, "实体总览")
+        self.addSubInterface(self.executionInterface, FIF.DOWNLOAD, "执行中心")
         self.navigationInterface.addItem(
-            routeKey='refreshSharedData',
+            routeKey="refreshSharedData",
             icon=FIF.SYNC,
-            text='刷新数据',
+            text="刷新数据",
             onClick=self._refresh_shared_output_data,
             selectable=False,
         )
@@ -171,18 +122,16 @@ class MainWindow(FluentWindow):
 
         # add custom widget to bottom
         self.navigationInterface.addItem(
-            routeKey='themeSwitcher',
+            routeKey="themeSwitcher",
             icon=FIF.PALETTE,
-            text='主题切换',
+            text="主题切换",
             onClick=self.toggleTheme,
             selectable=False,
-            position=NavigationItemPosition.BOTTOM
+            position=NavigationItemPosition.BOTTOM,
         )
 
-        self.addSubInterface(
-            self.settingInterface, FIF.SETTING, '全局设置', position=NavigationItemPosition.BOTTOM)
-        self.addSubInterface(
-            self.aboutInterface, FIF.INFO, '关于', position=NavigationItemPosition.BOTTOM)
+        self.addSubInterface(self.settingInterface, FIF.SETTING, "全局设置", position=NavigationItemPosition.BOTTOM)
+        self.addSubInterface(self.aboutInterface, FIF.INFO, "关于", position=NavigationItemPosition.BOTTOM)
 
         self.navigationInterface.setExpandWidth(180)
 
@@ -190,8 +139,8 @@ class MainWindow(FluentWindow):
         """设置主窗口尺寸、标题与基础事件过滤器。"""
         self.resize(1130, 800)
         self.setMinimumWidth(860)
-        self.setWindowIcon(QIcon(":/app_icon.png")) # Placeholder for icon
-        self.setWindowTitle(f'Lol Audio Unpack  {__version__}')
+        self.setWindowIcon(QIcon(":/app_icon.png"))  # Placeholder for icon
+        self.setWindowTitle(f"Lol Audio Unpack  {__version__}")
 
         # Calculate screen center
         desktop = QApplication.primaryScreen().availableGeometry()
@@ -202,54 +151,10 @@ class MainWindow(FluentWindow):
         QApplication.instance().installEventFilter(self)
 
     def _init_global_log_panel(self) -> None:
-        """初始化主窗口底部的全局日志面板。"""
-        self._log_panel_expanded = True
-
-        self._log_panel_card = CardWidget(self)
-        self._log_panel_card.setObjectName("GlobalLogPanel")
-        panel_layout = QVBoxLayout(self._log_panel_card)
-        panel_layout.setContentsMargins(0, 0, 0, 0)
-        panel_layout.setSpacing(0)
-
-        self._log_panel_header = QWidget(self._log_panel_card)
-        self._log_panel_header.setObjectName("GlobalLogPanelHeader")
-        header_layout = QHBoxLayout(self._log_panel_header)
-        header_layout.setContentsMargins(20, 16, 20, 12)
-        header_layout.setSpacing(12)
-
-        title_layout = QVBoxLayout()
-        title_layout.setContentsMargins(0, 0, 0, 0)
-        title_layout.setSpacing(2)
-        self._log_panel_title = StrongBodyLabel("日志详情", self._log_panel_header)
-        self._log_panel_subtitle = CaptionLabel("执行中心日志会实时同步到这里。", self._log_panel_header)
-        self._log_panel_subtitle.setObjectName("GlobalLogPanelSubtitle")
-        title_layout.addWidget(self._log_panel_title)
-        title_layout.addWidget(self._log_panel_subtitle)
-        header_layout.addLayout(title_layout, 1)
-
-        self._log_panel_toggle_btn = TransparentToolButton(FIF.UP, self._log_panel_header)
-        self._log_panel_toggle_btn.setToolTip("收起日志详情")
-        self._log_panel_toggle_btn.clicked.connect(self._toggle_log_panel)
-        header_layout.addWidget(self._log_panel_toggle_btn, 0, Qt.AlignTop)
-
-        self._log_panel_body = QWidget(self._log_panel_card)
-        self._log_panel_body.setObjectName("GlobalLogPanelBody")
-        body_layout = QVBoxLayout(self._log_panel_body)
-        body_layout.setContentsMargins(20, 0, 20, 20)
-        body_layout.setSpacing(0)
-        self._global_log_output = PlainTextEdit(self._log_panel_body)
-        self._global_log_output.setReadOnly(True)
-        body_layout.addWidget(self._global_log_output, 1)
-
-        panel_layout.addWidget(self._log_panel_header, 0)
-        panel_layout.addWidget(self._log_panel_body, 1)
-
-        qconfig.themeChanged.connect(lambda _theme: self._refresh_log_panel_surface_style())
-        qconfig.themeColorChanged.connect(lambda _color: self._refresh_log_panel_surface_style())
-
-        self._set_global_log_text(self.executionInterface.current_log_text())
-        self._refresh_log_panel_surface_style()
-        self._set_log_panel_expanded(True)
+        """初始化主窗口底部的全局日志抽屉。"""
+        self._global_log_drawer = GlobalLogDrawer(self)
+        self._global_log_drawer.set_log_text(self.executionInterface.current_log_text())
+        self._global_log_drawer.sync_host_rect(self._current_log_panel_host_rect(), animate=False)
 
     def eventFilter(self, obj, event):
         """在点击导航栏外部区域时自动收起已展开的导航栏。"""
@@ -320,9 +225,7 @@ class MainWindow(FluentWindow):
 
         try:
             logger.debug(f"当前配置: output_path={cfg.output_path}, game_path={cfg.game_path}")
-            self._data_app_context = create_app_context(
-                cli_overrides=cfg.to_app_context_overrides()
-            )
+            self._data_app_context = create_app_context(cli_overrides=cfg.to_app_context_overrides())
             self.overviewInterface.set_app_context(self._data_app_context)
             self.executionInterface.clear_entity_data()
             logger.info("AppContext 创建成功")
@@ -406,98 +309,11 @@ class MainWindow(FluentWindow):
 
     def _set_global_log_text(self, text: str) -> None:
         """同步执行中心日志全文到主窗口级日志面板。"""
-        self._global_log_output.setPlainText(text)
-        self._global_log_output.verticalScrollBar().setValue(self._global_log_output.verticalScrollBar().maximum())
+        self._global_log_drawer.set_log_text(text)
 
     def _current_log_panel_host_rect(self) -> QRect:
         """返回当前主窗口中可用于日志面板的页面内容区。"""
         return _build_log_panel_host_rect(self.size(), self.navigationInterface.width())
-
-    def _update_log_panel_toggle_button(self, expanded: bool) -> None:
-        """刷新日志面板切换按钮的图标与提示文案。"""
-        self._log_panel_toggle_btn.setIcon(FIF.UP if expanded else FIF.DOWN)
-        self._log_panel_toggle_btn.setToolTip("收起日志详情" if expanded else "展开日志详情")
-
-    def _refresh_log_panel_surface_style(self) -> None:
-        """按当前主题刷新日志面板外壳与标题条样式。"""
-        if isDarkTheme():
-            card_border = "rgba(255, 255, 255, 41)"
-            card_background = "rgb(28, 31, 38)"
-            header_border = "rgba(255, 255, 255, 46)"
-            header_background = "rgb(28, 31, 38)"
-            title_color = "rgb(245, 245, 245)"
-            subtitle_color = "rgba(245, 245, 245, 0.72)"
-            editor_background = "rgb(28, 31, 38)"
-            editor_border = "rgba(255, 255, 255, 28)"
-        else:
-            card_border = "rgba(0, 0, 0, 26)"
-            card_background = "rgb(255, 255, 255)"
-            header_border = "rgba(0, 0, 0, 26)"
-            header_background = "rgb(255, 255, 255)"
-            title_color = "rgb(28, 28, 28)"
-            subtitle_color = "rgba(28, 28, 28, 0.64)"
-            editor_background = "rgb(255, 255, 255)"
-            editor_border = "rgba(0, 0, 0, 20)"
-        self._log_panel_card.setStyleSheet(
-            f"""
-            CardWidget#GlobalLogPanel {{
-                background-color: {card_background};
-                border: 1px solid {card_border};
-                border-radius: 16px;
-            }}
-            QWidget#GlobalLogPanelHeader {{
-                background-color: {header_background};
-                border-top-left-radius: 16px;
-                border-top-right-radius: 16px;
-                border-bottom: 1px solid {header_border};
-            }}
-            QWidget#GlobalLogPanelBody {{
-                background-color: {card_background};
-                border-bottom-left-radius: 16px;
-                border-bottom-right-radius: 16px;
-            }}
-            CaptionLabel#GlobalLogPanelSubtitle {{
-                color: {subtitle_color};
-                background-color: transparent;
-                border: none;
-                padding: 0;
-            }}
-            """
-        )
-        self._log_panel_title.setStyleSheet(
-            f"""
-            StrongBodyLabel {{
-                border: none;
-                background-color: transparent;
-                color: {title_color};
-                padding: 0;
-            }}
-            """
-        )
-        self._global_log_output.setStyleSheet(
-            f"""
-            PlainTextEdit {{
-                background-color: {editor_background};
-                border: 1px solid {editor_border};
-                border-radius: 12px;
-            }}
-            """
-        )
-
-    def _toggle_log_panel(self) -> None:
-        """切换全局日志面板的展开状态。"""
-        self._set_log_panel_expanded(not self._log_panel_expanded)
-
-    def _set_log_panel_expanded(self, expanded: bool) -> None:
-        """设置全局日志面板的展开状态。"""
-        self._log_panel_expanded = expanded
-        self._log_panel_subtitle.setVisible(expanded)
-        self._log_panel_body.setVisible(expanded)
-        self._update_log_panel_toggle_button(expanded)
-        self._log_panel_card.setGeometry(
-            _build_log_panel_geometry(self._current_log_panel_host_rect(), expanded)
-        )
-        self._log_panel_card.raise_()
 
     def _apply_smooth_scroll_setting(self, page_enabled: bool, widget_enabled: bool) -> None:
         """统一应用 GUI 的平滑滚动配置。"""
@@ -509,7 +325,7 @@ class MainWindow(FluentWindow):
             widget_enabled=widget_enabled,
         )
         self.overviewInterface.set_smooth_scroll_enabled(widget_enabled)
-        apply_smooth_scroll_enabled(self._global_log_output, widget_enabled)
+        apply_smooth_scroll_enabled(self._global_log_drawer.output_widget, widget_enabled)
 
     def _refresh_shared_output_data(self):
         """刷新解包页与事件映射页共用的本地输出数据。"""
@@ -567,6 +383,6 @@ class MainWindow(FluentWindow):
     def resizeEvent(self, event: QResizeEvent) -> None:
         """在窗口尺寸变化时重排全局日志面板。"""
         super().resizeEvent(event)
-        if not hasattr(self, "_log_panel_card"):
+        if not hasattr(self, "_global_log_drawer"):
             return
-        self._set_log_panel_expanded(self._log_panel_expanded)
+        self._global_log_drawer.sync_host_rect(self._current_log_panel_host_rect(), animate=False)
