@@ -169,7 +169,7 @@ class MainWindow(FluentWindow):
             logger.debug(f"启用 Mica Alt 材质失败: {exc}")
             return
 
-        logger.info(f"主窗口已启用 Mica Alt 材质效果: dark={is_dark_mode}")
+        logger.debug(f"主窗口已启用 Mica Alt 材质效果: dark={is_dark_mode}")
 
     def _schedule_window_material_refresh(self, *, delay_ms: int = 0) -> None:
         """安排下一轮窗口材质刷新。"""
@@ -244,7 +244,7 @@ class MainWindow(FluentWindow):
         # 注入配置到各业务页面
         self.executionInterface.set_gui_config(cfg)
         self.overviewInterface.set_gui_config(cfg)
-        self.overviewInterface.selection_sync_requested.connect(self.executionInterface.set_selected_entities)
+        self.overviewInterface.selection_sync_requested.connect(self._sync_selection_to_execution_center)
         self.executionInterface.refresh_requested.connect(self._refresh_shared_output_data)
         self.executionInterface.task_running_changed.connect(self._on_unpack_task_running_changed)
         self.executionInterface.log_text_changed.connect(self._set_global_log_text)
@@ -415,6 +415,21 @@ class MainWindow(FluentWindow):
         factory(
             title=title,
             content=content,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=2500,
+            parent=self,
+        )
+
+    def _sync_selection_to_execution_center(self, payload) -> None:
+        """以全局反馈方式处理中总览到执行中心的同步。"""
+        summary = self.executionInterface.set_selected_entities(payload, feedback_parent=self)
+        if summary is None:
+            return
+
+        InfoBar.success(
+            title="已同步到执行中心",
+            content=summary,
             isClosable=True,
             position=InfoBarPosition.TOP,
             duration=2500,

@@ -575,18 +575,12 @@ class OverviewPage(QWidget):
             InfoBar.warning(
                 "没有可同步的选择",
                 "请先在左侧列表中选择至少一个实体。",
-                parent=self,
+                parent=self.window(),
                 position=InfoBarPosition.TOP,
             )
             return
 
         self.selection_sync_requested.emit(payload)
-        InfoBar.success(
-            "已同步到执行中心",
-            f"当前选择：{payload['summary']}",
-            parent=self,
-            position=InfoBarPosition.TOP,
-        )
 
     def _clear_selected_entities(self) -> None:
         entity_type = self._current_entity_type()
@@ -673,7 +667,7 @@ class OverviewPage(QWidget):
             InfoBar.warning(
                 "打开目录失败",
                 f"无法打开目录：{directory}",
-                parent=self,
+                parent=self.window(),
                 position=InfoBarPosition.TOP,
             )
 

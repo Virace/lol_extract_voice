@@ -104,6 +104,171 @@ def test_execution_page_batches_runtime_logs_before_render() -> None:
     app.processEvents()
 
 
+def test_execution_page_uses_single_task_builder_instead_of_dual_cards() -> None:
+    """执行中心应收敛成单任务入口，并用复选项组合执行步骤。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    app.processEvents()
+
+    assert hasattr(page, "task_builder_card")
+    assert hasattr(page, "create_task_btn")
+    assert hasattr(page, "extract_task_cb")
+    assert hasattr(page, "mapping_task_cb")
+    assert hasattr(page, "copy_cli_btn")
+    assert not hasattr(page, "extract_card")
+    assert not hasattr(page, "mapping_card")
+    assert page.extract_task_cb.isChecked() is True
+    assert page.mapping_task_cb.isChecked() is True
+    assert page.bp_voice_cb.isChecked() is True
+    assert page.advanced_card.isExpand is True
+    assert page.draft_list.contextMenuPolicy() == Qt.ContextMenuPolicy.CustomContextMenu
+    assert not hasattr(page, "use_synced_selection_cb")
+    assert page.copy_cli_btn.text() == "复制 CLI 命令"
+    assert page.task_builder_summary_label.text() == "当前会创建：音频解包 + 事件映射。"
+
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_execution_page_can_copy_full_cli_command() -> None:
+    """复制按钮应输出与当前配置一致的 CLI 命令。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    page.champion_ids_input.setText("1,103")
+    page.map_ids_input.setText("11")
+    page.force_update_cb.setChecked(True)
+    page.bp_voice_cb.setChecked(False)
+    page.integrate_data_cb.setChecked(True)
+    page.max_workers_combo.setCurrentText("8")
+    app.processEvents()
+
+    page._copy_cli_command()
+    app.processEvents()
+
+    expected = (
+        "uv run unpack "
+        "--update-champions 1,103 --update-maps 11 --force "
+        "--extract-champions 1,103 --extract-maps 11 "
+        "--mapping-champions 1,103 --mapping-maps 11 "
+        "--max-workers 8 --no-with-bp-vo --exclude-type SFX,MUSIC --integrate-data"
+    )
+    assert QApplication.clipboard().text() == expected
+
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_execution_page_can_merge_synced_selection_with_manual_input() -> None:
+    """总览同步遇到已有输入时，应支持合并现有 ID。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    page.champion_ids_input.setText("1,103")
+    page.map_ids_input.setText("11")
+    page._ask_sync_conflict_resolution = lambda **_kwargs: "merge"  # type: ignore[method-assign]
+    app.processEvents()
+
+    page.set_selected_entities(
+        {
+            "champion_ids": ("103", "222"),
+            "map_ids": ("11", "12"),
+            "summary": "实体总览选中了 2 个英雄和 2 张地图",
+        }
+    )
+    app.processEvents()
+
+    assert page.champion_ids_input.text() == "1,103,222"
+    assert page.map_ids_input.text() == "11,12"
+    assert page.selection_source_value.text() == "实体总览同步"
+    assert "已与当前输入合并" in page.selection_source_hint.text()
+
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_execution_page_can_cancel_synced_selection_when_conflict_exists() -> None:
+    """总览同步遇到冲突且用户取消时，应保留当前输入。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    page.champion_ids_input.setText("1,103")
+    page.map_ids_input.setText("11")
+    page._ask_sync_conflict_resolution = lambda **_kwargs: "cancel"  # type: ignore[method-assign]
+    app.processEvents()
+
+    page.set_selected_entities(
+        {
+            "champion_ids": ("222",),
+            "map_ids": ("12",),
+            "summary": "实体总览选中了新的目标",
+        }
+    )
+    app.processEvents()
+
+    assert page.champion_ids_input.text() == "1,103"
+    assert page.map_ids_input.text() == "11"
+    assert page.selection_source_value.text() == "手动输入"
+
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_execution_page_builds_draft_from_checkbox_selection() -> None:
+    """创建任务时应自动进入队列，并让首项处于运行态占位。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    page.champion_ids_input.setText("1,103")
+    page.map_ids_input.setText("11")
+    app.processEvents()
+
+    page._queue_task_draft()
+    app.processEvents()
+
+    assert page.draft_list.count() == 1
+    row_text = page.draft_list.item(0).text()
+    assert "[运行中]" in row_text
+    assert "音频解包 + 事件映射" in row_text
+    assert "目标：英雄 2 个，地图 1 个" in row_text
+    assert "任务队列：1 条" in page.queue_progress_label.text()
+    assert "运行中 1" in page.queue_progress_label.text()
+    assert "音频解包 + 事件映射" in page.recent_task_label.text()
+    assert "任务已加入队列" in page.task_status_label.text()
+    assert page.champion_ids_input.text() == ""
+    assert page.map_ids_input.text() == ""
+    assert page.selection_source_value.text() == "默认范围"
+    assert page.force_update_cb.isChecked() is False
+    assert page.integrate_data_cb.isChecked() is False
+    assert page.bp_voice_cb.isChecked() is True
+
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_execution_page_can_cancel_running_task_and_promote_waiting_task() -> None:
+    """取消运行中任务后，应自动把下一个等待任务提升为运行中。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    app.processEvents()
+
+    page._queue_task_draft()
+    page._queue_task_draft()
+    app.processEvents()
+
+    first_item = page.draft_list.item(0)
+    second_item = page.draft_list.item(1)
+    assert "[运行中]" in first_item.text()
+    assert "[等待中]" in second_item.text()
+
+    page._cancel_task_item(first_item)
+    app.processEvents()
+
+    assert "[已取消]" in first_item.text()
+    assert "[运行中]" in second_item.text()
+    assert "运行中 1" in page.queue_progress_label.text()
+    assert "已取消 1" in page.queue_progress_label.text()
+
+    page.deleteLater()
+    app.processEvents()
+
+
 def test_global_log_drawer_keeps_appending_while_collapsed() -> None:
     """日志抽屉在隐藏状态下也应持续追加文本并保持滚动到底部。"""
     app = QApplication.instance() or QApplication([])
