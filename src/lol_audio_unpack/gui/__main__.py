@@ -1,3 +1,5 @@
+"""GUI 应用入口。"""
+
 from __future__ import annotations
 
 import sys
@@ -10,7 +12,11 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QApplication
 from qfluentwidgets import Theme, qconfig, setTheme, setThemeColor
 
-from lol_audio_unpack.gui.common import GuiConfig
+from lol_audio_unpack.gui.common import (
+    GuiConfig,
+    install_startup_log_buffer,
+    remove_startup_log_buffer,
+)
 from lol_audio_unpack.gui.window import MainWindow
 from lol_audio_unpack.utils.logging import setup_logging
 
@@ -43,10 +49,11 @@ def main() -> None:
     # 显式启用项目命名空间日志，并初始化基础日志系统到当前目录下的 .logs 文件夹
     setup_logging(
         dev_mode=True,
-        log_level="INFO",
+        log_level="DEBUG",
         log_file_path=Path.cwd() / ".logs",
         show_function_info=True,
     )
+    install_startup_log_buffer()
     logger.info("GUI 启动")
     previous_mark = _log_startup_stage("setup_logging 完成", startup_begin, previous_mark)
 
@@ -87,6 +94,7 @@ def main() -> None:
 
     # 获取桌面并应用大小
     window = MainWindow()
+    remove_startup_log_buffer()
     previous_mark = _log_startup_stage("MainWindow 构建完成", startup_begin, previous_mark)
     window.show()
     previous_mark = _log_startup_stage("主窗口 show() 完成", startup_begin, previous_mark)

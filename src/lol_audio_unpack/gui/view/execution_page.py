@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections import deque
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QListWidgetItem,
@@ -36,7 +37,12 @@ from qfluentwidgets import (
 from qfluentwidgets import FluentIcon as FIF
 
 from lol_audio_unpack.app_context import create_app_context
-from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled
+from lol_audio_unpack.gui.common import (
+    GUI_LOG_FORMAT,
+    GUI_LOG_MAX_LINES,
+    apply_smooth_scroll_enabled,
+    get_buffered_log_lines,
+)
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app_context import AppContext
@@ -52,6 +58,25 @@ def _build_target_summary(champion_ids: tuple[str, ...], map_ids: tuple[str, ...
     if not champion_ids and not map_ids:
         return "目标：默认全部实体"
     return f"目标：英雄 {len(champion_ids)} 个，地图 {len(map_ids)} 个"
+
+
+class _GuiLogTextRelay(QObject):
+    """将 loguru 文本 sink 转发为 Qt 信号。"""
+
+    message_received = Signal(str)
+
+    def write(self, message: str) -> None:
+        """接收 loguru 已格式化文本并转发。
+
+        Args:
+            message: loguru 已格式化后的单条日志文本。
+        """
+        normalized = message.rstrip()
+        if normalized:
+            self.message_received.emit(normalized)
+
+    def flush(self) -> None:
+        """兼容 file-like sink 所需的空刷新接口。"""
 
 
 class AdvancedInputCard(ExpandGroupSettingCard):
@@ -137,6 +162,7 @@ class ExecutionPage(SmoothScrollArea):
     refresh_requested = Signal()
     task_running_changed = Signal(bool)
     log_text_changed = Signal(str)
+    log_lines_appended = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent=parent)
@@ -151,10 +177,22 @@ class ExecutionPage(SmoothScrollArea):
         self._cached_data: dict[str, list[dict[str, Any]]] = {"champions": [], "maps": []}
         self._draft_count = 0
         self._is_task_running = False
-        self._log_lines = [
-            "执行中心日志会同步到主窗口底部日志面板。",
-            "当前阶段：仅记录界面草稿操作。",
-        ]
+        self._log_lines: deque[str] = deque(
+            [
+                "执行中心日志会同步到主窗口底部日志面板。",
+                "当前阶段：仅记录界面草稿操作。",
+            ],
+            maxlen=GUI_LOG_MAX_LINES,
+        )
+        self._log_lines.extend(get_buffered_log_lines())
+        self._pending_log_lines: list[str] = []
+        self._log_flush_timer = QTimer(self)
+        self._log_flush_timer.setSingleShot(True)
+        self._log_flush_timer.setInterval(0)
+        self._log_flush_timer.timeout.connect(self._flush_pending_log_lines)
+        self._runtime_log_relay = _GuiLogTextRelay(self)
+        self._runtime_log_relay.message_received.connect(self._queue_runtime_log_line)
+        self._runtime_log_sink_id: int | None = None
         self._synced_selection: dict[str, Any] = {
             "source": "未同步",
             "champion_ids": (),
@@ -162,6 +200,7 @@ class ExecutionPage(SmoothScrollArea):
             "summary": "尚未从实体总览同步选择。",
         }
         self._task_status_labels: dict[str, CaptionLabel] = {}
+        self.destroyed.connect(self._detach_runtime_log_sink)
         self._build_ui()
         self._setup_connections()
 
@@ -301,6 +340,17 @@ class ExecutionPage(SmoothScrollArea):
         """清空当前已加载实体目录摘要。"""
         self._cached_data = {"champions": [], "maps": []}
 
+    def attach_runtime_log_sink(self) -> None:
+        """重新挂载 GUI 运行时日志 sink。"""
+        self._detach_runtime_log_sink()
+        self._runtime_log_sink_id = logger.add(
+            self._runtime_log_relay,
+            level="INFO",
+            colorize=False,
+            enqueue=False,
+            format=GUI_LOG_FORMAT,
+        )
+
     def set_selected_entities(self, payload: dict[str, Any]) -> None:
         """接收来自实体总览的选择结果。"""
         champion_ids = tuple(str(entity_id) for entity_id in payload.get("champion_ids", ()))
@@ -391,12 +441,45 @@ class ExecutionPage(SmoothScrollArea):
         Returns:
             用换行拼接后的日志全文。
         """
+        self._flush_pending_log_lines()
         return "\n".join(self._log_lines)
 
     def _append_log_line(self, message: str) -> None:
         """向全局日志面板追加一条文本。"""
+        self._flush_pending_log_lines()
         self._log_lines.append(message)
         self.log_text_changed.emit(self.current_log_text())
+
+    def _queue_runtime_log_line(self, message: str) -> None:
+        """缓存运行时日志，并在下一帧统一刷新到界面。
+
+        Args:
+            message: 已格式化的运行时日志文本。
+        """
+        self._pending_log_lines.append(message)
+        if not self._log_flush_timer.isActive():
+            self._log_flush_timer.start(0)
+
+    def _flush_pending_log_lines(self) -> None:
+        """将待刷新的运行时日志批量合并进当前页面缓存。"""
+        if not self._pending_log_lines:
+            return
+
+        pending_lines = tuple(self._pending_log_lines)
+        self._pending_log_lines.clear()
+        self._log_lines.extend(pending_lines)
+        self.log_lines_appended.emit(pending_lines)
+
+    def _detach_runtime_log_sink(self, *_args: object) -> None:
+        """移除当前 GUI 运行时日志 sink，避免重复注册。"""
+        if self._runtime_log_sink_id is None:
+            return
+
+        try:
+            logger.remove(self._runtime_log_sink_id)
+        except ValueError:
+            pass
+        self._runtime_log_sink_id = None
 
     def set_smooth_scroll_enabled(
         self,

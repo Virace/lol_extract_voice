@@ -311,6 +311,7 @@ class SettingPage(SmoothScrollArea):
     wwiser_path_changed = Signal(str)
     vgmstream_path_changed = Signal(str)
     smooth_scroll_changed = Signal(bool, bool)
+    log_drawer_auto_collapse_changed = Signal(bool)
 
     def __init__(self, parent=None):
         startup_begin = perf_counter()
@@ -520,6 +521,13 @@ class SettingPage(SmoothScrollArea):
         self.personalGroup.addSettingCard(self.colorCard)
         self.smoothScrollCard = SmoothScrollSettingCard(self.personalGroup)
         self.personalGroup.addSettingCard(self.smoothScrollCard)
+        self.logDrawerAutoCollapseCard = LocalizedSwitchSettingCard(
+            FIF.SETTING,
+            "点击外部自动收起日志",
+            "开启后日志抽屉展开时会显示全局蒙版，并在点击内容区其他位置时自动收起。",
+            parent=self.personalGroup,
+        )
+        self.personalGroup.addSettingCard(self.logDrawerAutoCollapseCard)
         self.expandLayout.addWidget(self.personalGroup)
 
     # ------------------------------------------------------------------
@@ -559,6 +567,7 @@ class SettingPage(SmoothScrollArea):
             page_enabled=cfg.page_smooth_scroll_enabled,
             widget_enabled=cfg.widget_smooth_scroll_enabled,
         )
+        self.logDrawerAutoCollapseCard.setValue(cfg.log_drawer_auto_collapse_enabled)
 
     def _save_config(self) -> None:
         """将各控件当前值写入 GuiConfig 并持久化。"""
@@ -574,6 +583,7 @@ class SettingPage(SmoothScrollArea):
         cfg.group_by_type = self.groupByTypeCard.isChecked()
         cfg.page_smooth_scroll_enabled = self.smoothScrollCard.pageScrollEnabled()
         cfg.widget_smooth_scroll_enabled = self.smoothScrollCard.widgetScrollEnabled()
+        cfg.log_drawer_auto_collapse_enabled = self.logDrawerAutoCollapseCard.isChecked()
 
         cfg.save()
 
@@ -614,6 +624,7 @@ class SettingPage(SmoothScrollArea):
         self.groupByTypeCard.checkedChanged.connect(self._save_config)
         self.smoothScrollCard.pageSwitchButton.checkedChanged.connect(self._on_smooth_scroll_changed)
         self.smoothScrollCard.widgetSwitchButton.checkedChanged.connect(self._on_smooth_scroll_changed)
+        self.logDrawerAutoCollapseCard.checkedChanged.connect(self._on_log_drawer_auto_collapse_changed)
 
         # 个性化 — 主题变更时保存
         qconfig.themeChanged.connect(self._save_theme_config)
@@ -719,6 +730,11 @@ class SettingPage(SmoothScrollArea):
         widget_enabled = self.smoothScrollCard.widgetScrollEnabled()
         apply_smooth_scroll_enabled(self, page_enabled)
         self.smooth_scroll_changed.emit(page_enabled, widget_enabled)
+
+    def _on_log_drawer_auto_collapse_changed(self, _checked: bool) -> None:
+        """保存并广播日志抽屉点击外部自动收起配置。"""
+        self._save_config()
+        self.log_drawer_auto_collapse_changed.emit(self.logDrawerAutoCollapseCard.isChecked())
 
     # ------------------------------------------------------------------
     # 公共值读取（供其他页面或 Worker 调用）

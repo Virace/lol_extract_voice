@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from time import perf_counter
 
 from loguru import logger
-from PySide6.QtCore import QEvent, QRect, QSize
-from PySide6.QtGui import QIcon, QResizeEvent
+from PySide6.QtCore import QEvent, QRect, QSize, QTimer
+from PySide6.QtGui import QIcon, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import QApplication
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets import (
@@ -64,6 +65,7 @@ class MainWindow(FluentWindow):
         # apply specific real-time listeners for theme tracking
         qconfig.themeChanged.connect(setTheme)
         qconfig.themeColorChanged.connect(setThemeColor)
+        qconfig.themeChanged.connect(lambda _theme: self._try_enable_window_material())
         previous_mark = _log_window_stage("主题变更信号连接完成", startup_begin, previous_mark)
 
         # create splash screen
@@ -88,6 +90,7 @@ class MainWindow(FluentWindow):
         self._data_app_context = None
         self._is_loading_shared_data = False
         self._pending_refresh_notice = False
+        self._window_material_bootstrapped = False
 
         self._initNavigation()
         previous_mark = _log_window_stage("导航初始化完成", startup_begin, previous_mark)
@@ -150,6 +153,49 @@ class MainWindow(FluentWindow):
         # Install event filter to catch clicks outside the navigation bar
         QApplication.instance().installEventFilter(self)
 
+    def _try_enable_window_material(self) -> None:
+        """在支持的平台上启用 Windows 原生 Mica Alt 材质。"""
+        if sys.platform != "win32" or not self.isVisible():
+            return
+
+        is_dark_mode = qconfig.theme == Theme.DARK
+        try:
+            self.windowEffect.setMicaEffect(
+                self.winId(),
+                isDarkMode=is_dark_mode,
+                isAlt=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"启用 Mica Alt 材质失败: {exc}")
+            return
+
+        logger.info(f"主窗口已启用 Mica Alt 材质效果: dark={is_dark_mode}")
+
+    def _schedule_window_material_refresh(self, *, delay_ms: int = 0) -> None:
+        """安排下一轮窗口材质刷新。"""
+        if sys.platform != "win32":
+            return
+        QTimer.singleShot(delay_ms, self._try_enable_window_material)
+
+    def showEvent(self, event: QShowEvent) -> None:
+        """在窗口首次显示后补刷 Mica，避免首帧材质未生效。"""
+        super().showEvent(event)
+        self._schedule_window_material_refresh()
+        if not self._window_material_bootstrapped:
+            self._window_material_bootstrapped = True
+            self._schedule_window_material_refresh(delay_ms=80)
+            self._schedule_window_material_refresh(delay_ms=180)
+
+    def event(self, event):
+        """在窗口激活状态变化后重刷 Mica，修正首轮焦点切换才生效的问题。"""
+        if event.type() in {
+            QEvent.Type.WindowActivate,
+            QEvent.Type.WindowDeactivate,
+            QEvent.Type.WinIdChange,
+        }:
+            self._schedule_window_material_refresh()
+        return super().event(event)
+
     def _init_global_log_panel(self) -> None:
         """初始化主窗口底部的全局日志抽屉。"""
         self._global_log_drawer = GlobalLogDrawer(self)
@@ -188,7 +234,6 @@ class MainWindow(FluentWindow):
                 log_file_path=log_dir,
                 show_function_info=True,
             )
-            logger.info(f"日志系统已重定向到输出目录: {log_dir}")
 
         # 路径改变时实时同步到首页
         si.game_path_changed.connect(hi.update_game_dir)
@@ -203,11 +248,20 @@ class MainWindow(FluentWindow):
         self.executionInterface.refresh_requested.connect(self._refresh_shared_output_data)
         self.executionInterface.task_running_changed.connect(self._on_unpack_task_running_changed)
         self.executionInterface.log_text_changed.connect(self._set_global_log_text)
+        self.executionInterface.log_lines_appended.connect(self._append_global_log_lines)
+        self.executionInterface.attach_runtime_log_sink()
         self.settingInterface.smooth_scroll_changed.connect(self._apply_smooth_scroll_setting)
+        self.settingInterface.log_drawer_auto_collapse_changed.connect(
+            self._apply_log_drawer_auto_collapse_setting
+        )
         self._apply_smooth_scroll_setting(
             cfg.page_smooth_scroll_enabled,
             cfg.widget_smooth_scroll_enabled,
         )
+        self._apply_log_drawer_auto_collapse_setting(cfg.log_drawer_auto_collapse_enabled)
+
+        if cfg.output_path:
+            logger.info(f"日志系统已重定向到输出目录: {log_dir}")
 
         # 配置变更时重新加载数据
         si.game_path_changed.connect(lambda: self._reload_unpack_data(cfg))
@@ -310,6 +364,14 @@ class MainWindow(FluentWindow):
     def _set_global_log_text(self, text: str) -> None:
         """同步执行中心日志全文到主窗口级日志面板。"""
         self._global_log_drawer.set_log_text(text)
+
+    def _append_global_log_lines(self, lines: tuple[str, ...]) -> None:
+        """向主窗口级日志抽屉增量追加一批日志。"""
+        self._global_log_drawer.append_log_lines(lines)
+
+    def _apply_log_drawer_auto_collapse_setting(self, enabled: bool) -> None:
+        """应用日志抽屉点击外部自动收起设置。"""
+        self._global_log_drawer.set_auto_collapse_enabled(enabled)
 
     def _current_log_panel_host_rect(self) -> QRect:
         """返回当前主窗口中可用于日志面板的页面内容区。"""

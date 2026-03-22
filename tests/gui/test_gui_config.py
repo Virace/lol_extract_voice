@@ -140,3 +140,19 @@ def test_gui_config_persists_split_smooth_scroll_flags(monkeypatch, tmp_path):
     assert reloaded_cfg.page_smooth_scroll_enabled is True
     assert reloaded_cfg.widget_smooth_scroll_enabled is False
     assert reloaded_cfg.smooth_scroll_enabled is False
+
+
+def test_gui_config_persists_log_drawer_auto_collapse_flag(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _use_fake_qsettings(monkeypatch)
+
+    cfg = GuiConfig()
+    cfg.log_drawer_auto_collapse_enabled = False
+    cfg.save()
+
+    assert FakeQSettings._store["log_drawer_auto_collapse_enabled"] is False
+
+    reloaded_cfg = GuiConfig()
+    reloaded_cfg.load()
+
+    assert reloaded_cfg.log_drawer_auto_collapse_enabled is False

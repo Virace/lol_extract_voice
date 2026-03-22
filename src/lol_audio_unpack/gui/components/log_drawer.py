@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from PySide6.QtCore import (
     QAbstractAnimation,
     QEasingCurve,
@@ -12,9 +14,34 @@ from PySide6.QtCore import (
     Qt,
     Signal,
 )
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import QAbstractButton, QWidget
-from qfluentwidgets import HeaderCardWidget, PlainTextEdit, isDarkTheme, qconfig
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QSyntaxHighlighter,
+    QTextCharFormat,
+)
+from PySide6.QtWidgets import QAbstractButton, QHBoxLayout, QWidget
+from qfluentwidgets import (
+    CaptionLabel,
+    HeaderCardWidget,
+    IndicatorPosition,
+    PlainTextEdit,
+    SwitchButton,
+    isDarkTheme,
+    qconfig,
+)
+
+from lol_audio_unpack.gui.common import GUI_LOG_MAX_LINES
+from lol_audio_unpack.gui.common.loguru_palette import (
+    ANSI_FIXED_HEX_BY_SGR,
+    LOGURU_DEFAULT_LEVEL_ANSI_STYLES,
+    LOGURU_DEFAULT_SEGMENT_ANSI_STYLES,
+    AnsiStyleSpec,
+)
 
 LOG_PANEL_MIN_HEIGHT = 248
 LOG_PANEL_MAX_HEIGHT = 360
@@ -36,6 +63,116 @@ LOG_PANEL_CHEVRON_CENTER_X_SHIFT = 0.35
 LOG_PANEL_CHEVRON_COLLAPSED_CENTER_Y_SHIFT = 0.3
 LOG_PANEL_CHEVRON_EXPANDED_CENTER_Y_SHIFT = 0.7
 LOG_PANEL_CHEVRON_PEN_WIDTH = 1.8
+LOG_PANEL_FORMAT_SEGMENT_COUNT = 4
+LOG_PANEL_BACKDROP_DOWNSAMPLE_FACTOR = 18
+
+
+class _LogDrawerHighlighter(QSyntaxHighlighter):
+    """为日志抽屉提供接近 shell 的日志级别高亮。"""
+
+    def __init__(self, parent) -> None:
+        super().__init__(parent)
+        self._base_format = QTextCharFormat()
+        self._separator_format = QTextCharFormat()
+        self._time_format = QTextCharFormat()
+        self._location_format = QTextCharFormat()
+        self._level_formats: dict[str, QTextCharFormat] = {}
+        self._message_formats: dict[str, QTextCharFormat] = {}
+        self._editor_text_color = "rgb(245, 245, 245)"
+        self.refresh_theme()
+
+    @property
+    def editor_text_color(self) -> str:
+        """返回当前主题下正文基础颜色。"""
+        return self._editor_text_color
+
+    def refresh_theme(self) -> None:
+        """根据当前主题刷新日志高亮配色。"""
+        if isDarkTheme():
+            base = QColor(235, 238, 242)
+            separator = QColor(140, 146, 156)
+        else:
+            base = QColor(34, 39, 46)
+            separator = QColor(125, 132, 144)
+
+        self._editor_text_color = base.name()
+        self._base_format = self._build_format(base)
+        self._separator_format = self._build_format(separator)
+        self._time_format = self._build_format_from_style(
+            LOGURU_DEFAULT_SEGMENT_ANSI_STYLES["time"],
+            base_foreground=base,
+        )
+        self._location_format = self._build_format_from_style(
+            LOGURU_DEFAULT_SEGMENT_ANSI_STYLES["location"],
+            base_foreground=base,
+        )
+        self._level_formats = {
+            level: self._build_format_from_style(style, base_foreground=base)
+            for level, style in LOGURU_DEFAULT_LEVEL_ANSI_STYLES.items()
+        }
+        self._message_formats = {
+            level: self._build_format_from_style(style, base_foreground=base)
+            for level, style in LOGURU_DEFAULT_LEVEL_ANSI_STYLES.items()
+        }
+        self.rehighlight()
+
+    def highlightBlock(self, text: str) -> None:
+        """按 loguru 既定格式高亮单行日志。"""
+        if not text:
+            return
+
+        self.setFormat(0, len(text), self._base_format)
+        parts = text.split(" | ", 3)
+        if len(parts) != LOG_PANEL_FORMAT_SEGMENT_COUNT:
+            return
+
+        time_text, level_text, location_text, message_text = parts
+        level_name = level_text.strip()
+        level_format = self._level_formats.get(level_name, self._base_format)
+        message_format = self._message_formats.get(level_name, self._base_format)
+
+        cursor = 0
+        self._apply_segment(cursor, time_text, self._time_format)
+        cursor += len(time_text)
+        self._apply_segment(cursor, " | ", self._separator_format)
+        cursor += 3
+        self._apply_segment(cursor, level_text, level_format)
+        cursor += len(level_text)
+        self._apply_segment(cursor, " | ", self._separator_format)
+        cursor += 3
+        self._apply_segment(cursor, location_text, self._location_format)
+        cursor += len(location_text)
+        self._apply_segment(cursor, " | ", self._separator_format)
+        cursor += 3
+        self._apply_segment(cursor, message_text, message_format)
+
+    def _apply_segment(self, start: int, text: str, text_format: QTextCharFormat) -> None:
+        """为单段文本应用字符格式。"""
+        if text:
+            self.setFormat(start, len(text), text_format)
+
+    @staticmethod
+    def _build_format(color: QColor) -> QTextCharFormat:
+        """从颜色构造字符格式。"""
+        text_format = QTextCharFormat()
+        text_format.setForeground(color)
+        return text_format
+
+    @staticmethod
+    def _build_format_from_style(
+        style: AnsiStyleSpec,
+        *,
+        base_foreground: QColor,
+    ) -> QTextCharFormat:
+        """根据固定 ANSI 样式生成 Qt 字符格式。"""
+        foreground = base_foreground if style.fg_sgr is None else QColor(ANSI_FIXED_HEX_BY_SGR[style.fg_sgr])
+        text_format = QTextCharFormat()
+        text_format.setForeground(foreground)
+        if style.bg_sgr is not None:
+            text_format.setBackground(QColor(ANSI_FIXED_HEX_BY_SGR[style.bg_sgr]))
+        if style.bold:
+            text_format.setFontWeight(QFont.Weight.Bold)
+        return text_format
 
 
 def _build_log_panel_host_rect(window_size: QSize, navigation_width: int) -> QRect:
@@ -274,6 +411,77 @@ class _LogPanelResizeHandle(QWidget):
         super().mouseReleaseEvent(event)
 
 
+class _LogDrawerBackdrop(QWidget):
+    """为日志抽屉提供全局蒙版与点击外部自动收起能力。"""
+
+    clicked = Signal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._blurred_snapshot = QPixmap()
+        self._auto_collapse_enabled = True
+        self.setObjectName("GlobalLogBackdrop")
+        self.hide()
+
+    def sync_host_rect(self, host_rect: QRect) -> None:
+        """同步蒙版覆盖范围。"""
+        self.setGeometry(host_rect)
+
+    def set_auto_collapse_enabled(self, enabled: bool) -> None:
+        """设置是否在点击蒙版时自动收起日志抽屉。"""
+        self._auto_collapse_enabled = enabled
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, not enabled)
+
+    def refresh_snapshot(self) -> None:
+        """抓取当前宿主内容区并生成带模糊感的背景快照。"""
+        parent = self.parentWidget()
+        if parent is None or self.width() <= 0 or self.height() <= 0:
+            self._blurred_snapshot = QPixmap()
+            self.update()
+            return
+
+        source = parent.grab(self.geometry())
+        if source.isNull():
+            self._blurred_snapshot = source
+            self.update()
+            return
+
+        target_size = source.size()
+        reduced_width = max(1, target_size.width() // LOG_PANEL_BACKDROP_DOWNSAMPLE_FACTOR)
+        reduced_height = max(1, target_size.height() // LOG_PANEL_BACKDROP_DOWNSAMPLE_FACTOR)
+        reduced = source.scaled(
+            reduced_width,
+            reduced_height,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._blurred_snapshot = reduced.scaled(
+            target_size,
+            Qt.AspectRatioMode.IgnoreAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        """绘制带磨砂感的全局蒙版。"""
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        if not self._blurred_snapshot.isNull():
+            painter.drawPixmap(self.rect(), self._blurred_snapshot)
+
+        tint = QColor(12, 16, 22, 118) if isDarkTheme() else QColor(245, 247, 250, 164)
+        painter.fillRect(self.rect(), tint)
+
+    def mousePressEvent(self, event) -> None:
+        """在启用自动收起时响应蒙版点击。"""
+        if self._auto_collapse_enabled and event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+
 class GlobalLogDrawer(QObject):
     """管理主窗口底部的全局日志抽屉组件。"""
 
@@ -286,10 +494,14 @@ class GlobalLogDrawer(QObject):
         super().__init__(parent)
         self._parent = parent
         self._expanded = False
+        self._auto_collapse_enabled = True
+        self._follow_output_scroll = True
         self._handle_hovered = False
         self._height_override: int | None = None
         self._host_rect = QRect(0, 0, parent.width(), parent.height())
 
+        self._backdrop = _LogDrawerBackdrop(parent)
+        self._backdrop.clicked.connect(lambda: self.set_expanded(False))
         self._card = HeaderCardWidget(parent)
         self._card.setObjectName("GlobalLogPanel")
         self._card.setBorderRadius(LOG_PANEL_CARD_RADIUS)
@@ -302,12 +514,40 @@ class GlobalLogDrawer(QObject):
         self._card.viewLayout.setContentsMargins(5, 5, 5, 5)
         self._card.viewLayout.setSpacing(0)
         self._title = self._card.headerLabel
+        self._follow_scroll_label = CaptionLabel("保持滚动", self._card.headerView)
+        self._follow_scroll_label.setObjectName("GlobalLogPanelFollowScrollLabel")
+        self._follow_scroll_switch = SwitchButton("开", self._card.headerView, IndicatorPosition.RIGHT)
+        self._follow_scroll_switch.setOnText("开")
+        self._follow_scroll_switch.setOffText("关")
+        self._follow_scroll_switch.setChecked(True)
+        self._follow_scroll_switch.setText("开")
+        self._follow_scroll_switch.checkedChanged.connect(self.set_follow_scroll_enabled)
+
+        self._follow_scroll_widget = QWidget(self._card.headerView)
+        self._follow_scroll_widget.setObjectName("GlobalLogPanelFollowScroll")
+        self._follow_scroll_layout = QHBoxLayout(self._follow_scroll_widget)
+        self._follow_scroll_layout.setContentsMargins(0, 0, 0, 0)
+        self._follow_scroll_layout.setSpacing(8)
+        self._follow_scroll_layout.addWidget(self._follow_scroll_label)
+        self._follow_scroll_layout.addWidget(
+            self._follow_scroll_switch,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
+        self._card.headerLayout.addStretch(1)
+        self._card.headerLayout.addWidget(
+            self._follow_scroll_widget,
+            0,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+        )
 
         self._output = PlainTextEdit(self._card.view)
         self._output.setPlaceholderText("这里会同步原本输出到 shell 的运行日志。")
         self._output.setReadOnly(True)
         self._output.setViewportMargins(LOG_PANEL_OUTPUT_TEXT_LEFT_MARGIN, 0, 0, 0)
+        self._output.document().setMaximumBlockCount(GUI_LOG_MAX_LINES)
         self._card.viewLayout.addWidget(self._output, 1)
+        self._highlighter = _LogDrawerHighlighter(self._output.document())
 
         self._resize_handle = _LogPanelResizeHandle(self._card)
         self._resize_handle.drag_delta.connect(self._resize_by_drag)
@@ -320,6 +560,7 @@ class GlobalLogDrawer(QObject):
         self._card_animation.setDuration(LOG_PANEL_ANIMATION_DURATION_MS)
         self._card_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._card_animation.valueChanged.connect(self._sync_toggle_geometry)
+        self._card_animation.finished.connect(self._sync_backdrop_visibility)
 
         self._hover_animation = QPropertyAnimation(self._toggle_btn, b"geometry", self)
         self._hover_animation.setDuration(LOG_PANEL_ANIMATION_DURATION_MS)
@@ -342,8 +583,51 @@ class GlobalLogDrawer(QObject):
         Args:
             text: 当前累计日志文本。
         """
+        previous_value = self._output.verticalScrollBar().value()
         self._output.setPlainText(text)
-        self._output.verticalScrollBar().setValue(self._output.verticalScrollBar().maximum())
+        self._sync_output_scroll(previous_value=previous_value)
+
+    def append_log_lines(self, lines: Sequence[str]) -> None:
+        """向抽屉文本框增量追加多条日志。
+
+        Args:
+            lines: 需要按原始顺序写入的日志文本列表。
+        """
+        normalized_lines = [line for line in lines if line]
+        if not normalized_lines:
+            return
+
+        previous_value = self._output.verticalScrollBar().value()
+        self._output.appendPlainText("\n".join(normalized_lines))
+        self._sync_output_scroll(previous_value=previous_value)
+
+    def set_follow_scroll_enabled(self, enabled: bool) -> None:
+        """设置是否在新日志到来时自动滚动到底部。
+
+        Args:
+            enabled: 是否保持跟随最新日志滚动。
+        """
+        self._follow_output_scroll = enabled
+        self._follow_scroll_switch.blockSignals(True)
+        self._follow_scroll_switch.setChecked(enabled)
+        self._follow_scroll_switch.setText("开" if enabled else "关")
+        self._follow_scroll_switch.blockSignals(False)
+        if enabled:
+            self._sync_output_scroll()
+
+    def set_auto_collapse_enabled(self, enabled: bool) -> None:
+        """设置日志抽屉外部点击是否自动收起。"""
+        self._auto_collapse_enabled = enabled
+        self._backdrop.set_auto_collapse_enabled(enabled)
+
+    def _sync_output_scroll(self, *, previous_value: int | None = None) -> None:
+        """根据自动滚动设置刷新文本框滚动条位置。"""
+        scrollbar = self._output.verticalScrollBar()
+        if self._follow_output_scroll:
+            scrollbar.setValue(scrollbar.maximum())
+            return
+        if previous_value is not None:
+            scrollbar.setValue(min(previous_value, scrollbar.maximum()))
 
     def sync_host_rect(self, host_rect: QRect, *, animate: bool = False) -> None:
         """同步当前宿主内容区并重排抽屉。
@@ -353,6 +637,9 @@ class GlobalLogDrawer(QObject):
             animate: 是否在重排时使用滑动动画。
         """
         self._host_rect = QRect(host_rect)
+        self._backdrop.sync_host_rect(self._host_rect)
+        if self._expanded:
+            self._backdrop.refresh_snapshot()
         self._apply_layout(expanded=self._expanded, animate=animate)
 
     def set_expanded(self, expanded: bool, *, animate: bool = True) -> None:
@@ -421,11 +708,15 @@ class GlobalLogDrawer(QObject):
         self._card_animation.stop()
         self._hover_animation.stop()
         self._toggle_btn.set_arrow_progress(target_arrow_progress)
+        self._sync_backdrop_visibility(expanded=expanded)
+        self._backdrop.raise_()
         self._card.raise_()
+        self._toggle_btn.raise_()
 
         if not animate:
             self._card.setGeometry(target_panel_rect)
             self._sync_toggle_geometry(target_panel_rect)
+            self._sync_backdrop_visibility(expanded=expanded)
             return
 
         self._sync_toggle_geometry(self._card.geometry())
@@ -444,6 +735,18 @@ class GlobalLogDrawer(QObject):
         )
         self._apply_layout(expanded=True, animate=False)
 
+    def _sync_backdrop_visibility(self, *_args: object, expanded: bool | None = None) -> None:
+        """同步全局蒙版的显示、透明鼠标状态与快照。"""
+        current_expanded = self._expanded if expanded is None else expanded
+        self._backdrop.set_auto_collapse_enabled(self._auto_collapse_enabled)
+        if current_expanded:
+            self._backdrop.sync_host_rect(self._host_rect)
+            if not self._backdrop.isVisible():
+                self._backdrop.refresh_snapshot()
+            self._backdrop.show()
+        else:
+            self._backdrop.hide()
+
     def _refresh_surface_style(self) -> None:
         """按当前主题刷新抽屉外壳、标题条和把手样式。"""
         if isDarkTheme():
@@ -452,6 +755,7 @@ class GlobalLogDrawer(QObject):
             title_color = "rgb(245, 245, 245)"
             editor_background = "rgb(28, 31, 38)"
             editor_border = "rgba(255, 255, 255, 28)"
+            editor_text_color = "rgb(235, 238, 242)"
             handle_background = QColor(34, 37, 44, 244)
             handle_border = QColor(255, 255, 255, 58)
             handle_icon = QColor(245, 245, 245)
@@ -461,6 +765,7 @@ class GlobalLogDrawer(QObject):
             title_color = "rgb(28, 28, 28)"
             editor_background = "rgb(255, 255, 255)"
             editor_border = "rgba(0, 0, 0, 20)"
+            editor_text_color = "rgb(34, 39, 46)"
             handle_background = QColor(255, 255, 255, 244)
             handle_border = QColor(0, 0, 0, 28)
             handle_icon = QColor(28, 28, 28)
@@ -492,10 +797,21 @@ class GlobalLogDrawer(QObject):
             }}
             """
         )
+        self._follow_scroll_label.setStyleSheet(
+            f"""
+            QLabel#GlobalLogPanelFollowScrollLabel {{
+                border: none;
+                background-color: transparent;
+                color: {title_color};
+                padding: 0;
+            }}
+            """
+        )
         self._output.setStyleSheet(
             f"""
             PlainTextEdit {{
                 background-color: {editor_background};
+                color: {editor_text_color};
                 border: 1px solid {editor_border};
                 border-top-left-radius: 0px;
                 border-top-right-radius: 0px;
@@ -505,6 +821,8 @@ class GlobalLogDrawer(QObject):
             }}
             """
         )
+        self._highlighter.refresh_theme()
+        self._backdrop.update()
         self._toggle_btn.set_palette_colors(
             background=handle_background,
             border=handle_border,
