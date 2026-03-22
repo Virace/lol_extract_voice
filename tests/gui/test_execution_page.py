@@ -209,6 +209,23 @@ def test_global_log_drawer_backdrop_click_collapses_panel() -> None:
     app.processEvents()
 
 
+def test_global_log_drawer_backdrop_keeps_lightweight_refresh_entry() -> None:
+    """日志蒙版应保留轻量刷新入口，且不依赖实时 Qt 模糊效果。"""
+    app = QApplication.instance() or QApplication([])
+    host = QWidget()
+    host.resize(1130, 800)
+    drawer = GlobalLogDrawer(host)
+    app.processEvents()
+
+    drawer._backdrop.refresh_snapshot()
+    app.processEvents()
+
+    assert not hasattr(drawer._backdrop, "_snapshot_label")
+
+    host.deleteLater()
+    app.processEvents()
+
+
 def test_global_log_drawer_stylesheet_contains_theme_text_color() -> None:
     """日志抽屉正文样式应显式声明前景色。"""
     app = QApplication.instance() or QApplication([])

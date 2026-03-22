@@ -17,10 +17,10 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QColor,
     QFont,
+    QLinearGradient,
     QPainter,
     QPainterPath,
     QPen,
-    QPixmap,
     QSyntaxHighlighter,
     QTextCharFormat,
 )
@@ -64,7 +64,6 @@ LOG_PANEL_CHEVRON_COLLAPSED_CENTER_Y_SHIFT = 0.3
 LOG_PANEL_CHEVRON_EXPANDED_CENTER_Y_SHIFT = 0.7
 LOG_PANEL_CHEVRON_PEN_WIDTH = 1.8
 LOG_PANEL_FORMAT_SEGMENT_COUNT = 4
-LOG_PANEL_BACKDROP_DOWNSAMPLE_FACTOR = 18
 
 
 class _LogDrawerHighlighter(QSyntaxHighlighter):
@@ -418,7 +417,6 @@ class _LogDrawerBackdrop(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._blurred_snapshot = QPixmap()
         self._auto_collapse_enabled = True
         self.setObjectName("GlobalLogBackdrop")
         self.hide()
@@ -433,45 +431,33 @@ class _LogDrawerBackdrop(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, not enabled)
 
     def refresh_snapshot(self) -> None:
-        """抓取当前宿主内容区并生成带模糊感的背景快照。"""
-        parent = self.parentWidget()
-        if parent is None or self.width() <= 0 or self.height() <= 0:
-            self._blurred_snapshot = QPixmap()
-            self.update()
-            return
-
-        source = parent.grab(self.geometry())
-        if source.isNull():
-            self._blurred_snapshot = source
-            self.update()
-            return
-
-        target_size = source.size()
-        reduced_width = max(1, target_size.width() // LOG_PANEL_BACKDROP_DOWNSAMPLE_FACTOR)
-        reduced_height = max(1, target_size.height() // LOG_PANEL_BACKDROP_DOWNSAMPLE_FACTOR)
-        reduced = source.scaled(
-            reduced_width,
-            reduced_height,
-            Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self._blurred_snapshot = reduced.scaled(
-            target_size,
-            Qt.AspectRatioMode.IgnoreAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
+        """保留统一刷新入口，当前蒙版不再做实时背景采样。"""
         self.update()
 
     def paintEvent(self, event) -> None:
-        """绘制带磨砂感的全局蒙版。"""
+        """绘制高性能的假毛玻璃蒙版。"""
         del event
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        if not self._blurred_snapshot.isNull():
-            painter.drawPixmap(self.rect(), self._blurred_snapshot)
+        painter.setRenderHint(QPainter.Antialiasing)
 
-        tint = QColor(12, 16, 22, 118) if isDarkTheme() else QColor(245, 247, 250, 164)
-        painter.fillRect(self.rect(), tint)
+        if isDarkTheme():
+            base_tint = QColor(10, 14, 20, 176)
+            top_glow = QColor(255, 255, 255, 18)
+            bottom_shade = QColor(0, 0, 0, 48)
+        else:
+            base_tint = QColor(248, 250, 252, 204)
+            top_glow = QColor(255, 255, 255, 92)
+            bottom_shade = QColor(214, 220, 228, 74)
+
+        painter.fillRect(self.rect(), base_tint)
+
+        vertical_gradient = QLinearGradient(self.rect().topLeft(), self.rect().bottomLeft())
+        vertical_gradient.setColorAt(0.0, top_glow)
+        vertical_gradient.setColorAt(0.18, QColor(top_glow.red(), top_glow.green(), top_glow.blue(), int(top_glow.alpha() * 0.72)))
+        vertical_gradient.setColorAt(0.42, QColor(top_glow.red(), top_glow.green(), top_glow.blue(), int(top_glow.alpha() * 0.26)))
+        vertical_gradient.setColorAt(0.7, QColor(bottom_shade.red(), bottom_shade.green(), bottom_shade.blue(), int(bottom_shade.alpha() * 0.45)))
+        vertical_gradient.setColorAt(1.0, bottom_shade)
+        painter.fillRect(self.rect(), vertical_gradient)
 
     def mousePressEvent(self, event) -> None:
         """在启用自动收起时响应蒙版点击。"""
