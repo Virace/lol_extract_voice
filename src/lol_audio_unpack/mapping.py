@@ -1,18 +1,11 @@
-# 🐍 Although that way may not be obvious at first unless you're Dutch.
-# 🐼 尽管这方法一开始并非如此直观，除非你是荷兰人
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2025/8/4 8:00
-# @Update  : 2025/8/5 8:04
-# @Detail  : 音频文件映射
+"""音频事件映射核心流程。"""
 
 from __future__ import annotations
 
 import threading
 import time
 import traceback
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -642,13 +635,14 @@ def build_map_mapping(  # noqa: PLR0913
         return {}
 
 
-def execute_mapping_tasks(
+def execute_mapping_tasks(  # noqa: PLR0913
     tasks: list[tuple[str, int, str]],
     reader: DataReader,
     max_workers: int = 4,
     integrate_data: bool = False,
     *,
     ctx: AppContext,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
 ) -> None:
     """执行映射任务集
 
@@ -674,6 +668,14 @@ def execute_mapping_tasks(
         summary_parts.append(f"{champion_count} 个英雄")
     if map_count > 0:
         summary_parts.append(f"{map_count} 个地图")
+    totals_by_type = {
+        "champion": champion_count,
+        "map": map_count,
+    }
+    finished_by_type = {
+        "champion": 0,
+        "map": 0,
+    }
 
     logger.info(
         f"开始构建 {total_tasks} 个实体的事件映射 ({' 和 '.join(summary_parts)})，"
@@ -720,24 +722,44 @@ def execute_mapping_tasks(
             for future in as_completed(future_to_task):
                 entity_type, entity_id, description = future_to_task[future]
                 completed_count += 1
+                finished_by_type[entity_type] = finished_by_type.get(entity_type, 0) + 1
 
                 try:
                     future.result()  # 获取结果，如果函数中出现异常，这里会重新抛出
-                    logger.info(f"进度: {completed_count}/{total_tasks} - {description} 映射完成。")
+                    progress_message = f"{description} 映射完成"
+                    logger.info(f"进度: {completed_count}/{total_tasks} - {progress_message}。")
                 except Exception as exc:
+                    progress_message = f"{description} 映射失败"
                     logger.error(f"{description} 映射时发生错误: {exc}")
                     logger.debug(traceback.format_exc())
+                if progress_callback is not None:
+                    progress_callback(
+                        entity_type,
+                        finished_by_type.get(entity_type, completed_count),
+                        max(totals_by_type.get(entity_type, total_tasks), 1),
+                        progress_message,
+                    )
     else:
         # --- 单线程模式 ---
         completed_count = 0
         for entity_type, entity_id, description in tasks:
             try:
                 build_entity_mapping(entity_type, entity_id)
+                progress_message = f"{description} 映射完成"
                 completed_count += 1
-                logger.info(f"进度: {completed_count}/{total_tasks} - {description} 映射完成。")
+                logger.info(f"进度: {completed_count}/{total_tasks} - {progress_message}。")
             except Exception as exc:
+                progress_message = f"{description} 映射失败"
                 logger.error(f"{description} 映射时发生错误: {exc}")
                 logger.debug(traceback.format_exc())
+            finished_by_type[entity_type] = finished_by_type.get(entity_type, 0) + 1
+            if progress_callback is not None:
+                progress_callback(
+                    entity_type,
+                    finished_by_type.get(entity_type, completed_count),
+                    max(totals_by_type.get(entity_type, total_tasks), 1),
+                    progress_message,
+                )
 
     end_time = time.time()
     logger.success(f"映射完成: {' 和 '.join(summary_parts)}，耗时 {end_time - start_time:.2f}s")
@@ -751,6 +773,7 @@ def build_mapping_all(  # noqa: PLR0913
     integrate_data: bool = False,
     *,
     ctx: AppContext,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
 ) -> None:
     """使用线程池并发构建所有实体的事件映射
 
@@ -779,16 +802,24 @@ def build_mapping_all(  # noqa: PLR0913
         return
 
     # 执行任务
-    execute_mapping_tasks(tasks, reader, max_workers, integrate_data, ctx=ctx)
+    execute_mapping_tasks(
+        tasks,
+        reader,
+        max_workers,
+        integrate_data,
+        ctx=ctx,
+        progress_callback=progress_callback,
+    )
 
 
-def build_champions_mapping(
+def build_champions_mapping(  # noqa: PLR0913
     reader: DataReader,
     champion_ids: list[int],
     max_workers: int = 4,
     integrate_data: bool = False,
     *,
     ctx: AppContext,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
 ) -> None:
     """便捷函数：构建指定英雄的事件映射
 
@@ -799,16 +830,24 @@ def build_champions_mapping(
     :raises ValueError: 当指定的ID不存在时
     """
     tasks = generate_champion_tasks(reader, champion_ids)
-    execute_mapping_tasks(tasks, reader, max_workers, integrate_data, ctx=ctx)
+    execute_mapping_tasks(
+        tasks,
+        reader,
+        max_workers,
+        integrate_data,
+        ctx=ctx,
+        progress_callback=progress_callback,
+    )
 
 
-def build_maps_mapping(
+def build_maps_mapping(  # noqa: PLR0913
     reader: DataReader,
     map_ids: list[int],
     max_workers: int = 4,
     integrate_data: bool = False,
     *,
     ctx: AppContext,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
 ) -> None:
     """便捷函数：构建指定地图的事件映射
 
@@ -819,7 +858,14 @@ def build_maps_mapping(
     :raises ValueError: 当指定的ID不存在时
     """
     tasks = generate_map_tasks(reader, map_ids)
-    execute_mapping_tasks(tasks, reader, max_workers, integrate_data, ctx=ctx)
+    execute_mapping_tasks(
+        tasks,
+        reader,
+        max_workers,
+        integrate_data,
+        ctx=ctx,
+        progress_callback=progress_callback,
+    )
 
 
 def main():

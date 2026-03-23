@@ -1,12 +1,8 @@
-# 🐍 Unless explicitly silenced.
-# 🐼 除非它明确需要如此
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2025/7/26 0:34
-# @Update  : 2026/3/5 21:48
-# @Detail  : 项目命令行入口
+"""lol_audio_unpack 的命令行入口。
+
+该模块负责解析命令行参数、构建应用上下文，并分发数据更新、
+音频解包和事件映射等流程。
+"""
 
 from __future__ import annotations
 
@@ -20,6 +16,7 @@ from loguru import logger
 from . import __version__, setup_app
 from .app_context import AppContext, AppContextValidationError, OperationOptions, SourceMode
 from .facade import LolAudioUnpackApp
+from .utils.run_summary import attach_run_summary_sink, emit_cli_run_summary, get_or_create_run_summary
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -584,6 +581,9 @@ def execute_mapping_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
 
 def main() -> None:
     """主程序入口，协调处理命令行参数和执行相应操作。"""
+    app_context: AppContext | None = None
+    run_summary = None
+    summary_sink_id: int | None = None
     try:
         parser = create_parser()
         args = parser.parse_args()
@@ -592,16 +592,25 @@ def main() -> None:
 
         app_context = initialize_app(args)
         app = LolAudioUnpackApp(app_context)
+        run_summary = get_or_create_run_summary(app_context.runtime_cache)
+        summary_sink_id = attach_run_summary_sink(run_summary)
 
         if app_context.config.source_mode is SourceMode.REMOTE_SNAPSHOT and (
             _has_extract_actions(args) or _has_mapping_actions(args)
         ):
-            execute_remote_entity_workflow(args, app)
+            with run_summary.stage_context("remote_workflow", label="远端实体工作流"):
+                execute_remote_entity_workflow(args, app)
             return
 
-        execute_update_operations(args, app)
-        execute_extract_operations(args, app)
-        execute_mapping_operations(args, app)
+        if _has_update_actions(args):
+            with run_summary.stage_context("update", label="数据更新"):
+                execute_update_operations(args, app)
+        if _has_extract_actions(args):
+            with run_summary.stage_context("extract", label="音频解包"):
+                execute_extract_operations(args, app)
+        if _has_mapping_actions(args):
+            with run_summary.stage_context("mapping", label="事件映射"):
+                execute_mapping_operations(args, app)
         app.cleanup_remote_artifacts()
 
     except KeyboardInterrupt:
@@ -615,6 +624,11 @@ def main() -> None:
         except (NameError, AttributeError):
             pass
         sys.exit(1)
+    finally:
+        if summary_sink_id is not None:
+            logger.remove(summary_sink_id)
+        if app_context is not None and run_summary is not None:
+            emit_cli_run_summary(run_summary, log_path=app_context.paths.log_path)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 [project]
 name = "lol-audio-unpack"
-version = "3.5.1.dev0+hash"
+version = "3.5.1.dev0+test"
 description = "英雄联盟游戏音频文件解包工具"
 authors = [
     { name = "Virace", email = "Virace@aliyun.com" }
@@ -16,9 +16,16 @@ dependencies = [
 readme = "README.md"
 requires-python = ">= 3.10"
 
+[project.optional-dependencies]
+gui = [
+    "pyside6>=6",
+    "pyside6-fluent-widgets>=1.7.0",
+]
+
 [project.scripts]
 "unpack" = "lol_audio_unpack.__main__:main"
 "mapping" = "lol_audio_unpack.mapping:main"
+"unpack-gui" = "lol_audio_unpack.gui.__main__:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from lol_audio_unpack.manager import DataReader
+from lol_audio_unpack.manager.data_reader import get_default_visible_champions
 from lol_audio_unpack.utils.common import sanitize_filename
 
 if TYPE_CHECKING:
@@ -260,14 +261,14 @@ def generate_champion_tasks(reader: DataReader, champion_ids: list[int] | None =
     :returns: 任务元组列表 [("champion", id, description), ...]
     :raises ValueError: 当指定的ID不存在时
     """
-    champions = reader.get_champions()
-    available_ids = {champ.get("id") for champ in champions if champ.get("id") is not None}
+    all_champions = reader.get_champions()
+    available_ids = {champ.get("id") for champ in all_champions if champ.get("id") is not None}
 
     if champion_ids is None:
         # 处理所有英雄
         return [
             ("champion", champ.get("id"), f"英雄ID {champ.get('id')}")
-            for champ in champions
+            for champ in get_default_visible_champions(reader)
             if champ.get("id") is not None
         ]
     else:
