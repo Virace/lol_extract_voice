@@ -278,6 +278,9 @@ def build_audio_event_mapping(  # noqa: PLR0913
         mapping_data_key = "map"
 
     mapping_result = base_data
+    mapped_event_count = 0
+    errored_event_count = 0
+    skipped_event_count = 0
 
     # 遍历所有子实体（皮肤或地图）
     for sub_id, sub_data in entity_data.sub_entities.items():
@@ -304,6 +307,7 @@ def build_audio_event_mapping(  # noqa: PLR0913
                 logger.info(f"特殊情况，{sub_id} {category} 有 {len(paths_list)} 个路径组合，将逐个处理并合并")
 
             category_mapping = None  # 用于合并多个映射结果
+            category_error_count = 0
 
             # 循环处理每个路径组合
             for path_group_idx, path_group in enumerate(paths_list):
@@ -374,6 +378,7 @@ def build_audio_event_mapping(  # noqa: PLR0913
                         logger.debug(f"路径组合 {path_group_idx + 1}: 合并映射完成")
 
                 except Exception as e:
+                    category_error_count += 1
                     logger.error(f"处理路径组合 {path_group_idx + 1} 时出错: {e}")
                     logger.debug(traceback.format_exc())
                     continue
@@ -382,13 +387,23 @@ def build_audio_event_mapping(  # noqa: PLR0913
             if category_mapping is not None:
                 # 检查映射结果是否为空，只保存非空的映射
                 if category_mapping.forward_mapping:
+                    mapped_count = len(category_mapping.forward_mapping)
+                    skipped_count = max(len(event_list) - mapped_count, 0)
+                    mapped_event_count += mapped_count
+                    skipped_event_count += skipped_count
                     sub_mapping[category] = category_mapping.forward_mapping
-                    logger.success(
-                        f"完成 {category} 的映射，处理了 {len(paths_list)} 个路径组合，事件数: {len(event_list)}，映射条目: {len(category_mapping.forward_mapping)}"
+                    logger.debug(
+                        f"完成 {category} 的映射，处理了 {len(paths_list)} 个路径组合，事件数: {len(event_list)}，"
+                        f"映射条目: {mapped_count}，未映射跳过: {skipped_count}"
                     )
                 else:
+                    skipped_event_count += len(event_list)
                     logger.warning(f"类别 {category} 映射结果为空，跳过保存")
             else:
+                if category_error_count > 0:
+                    errored_event_count += len(event_list)
+                else:
+                    skipped_event_count += len(event_list)
                 logger.warning(f"类别 {category} 没有生成任何有效的映射结果")
 
         # 只保存非空的子实体映射
@@ -412,9 +427,12 @@ def build_audio_event_mapping(  # noqa: PLR0913
             integration_save_dir.mkdir(parents=True, exist_ok=True)
             integration_file_base = integration_save_dir / entity_data.entity_id
             write_data(integrated_result, integration_file_base, dev_mode=ctx.config.dev_mode)
-            logger.success(f"整合数据已保存: {integration_file_base}")
+            logger.debug(f"整合数据已保存: {integration_file_base}")
 
-        logger.success(f"完成 {entity_data.entity_name} 的整合数据构建")
+        logger.success(
+            f"{entity_data.entity_name} 的整合数据统计：成功映射事件 {mapped_event_count} 个，"
+            f"异常事件 {errored_event_count} 个，未映射跳过 {skipped_event_count} 个"
+        )
         return integrated_result
     else:
         # 移除 languages 字段（映射文件不需要）
@@ -424,11 +442,14 @@ def build_audio_event_mapping(  # noqa: PLR0913
         if mapping_result[mapping_data_key]:
             mapping_file_base = mapping_save_dir / entity_data.entity_id
             write_data(mapping_result, mapping_file_base, dev_mode=ctx.config.dev_mode)
-            logger.success(f"映射结果已保存: {mapping_file_base}")
+            logger.debug(f"映射结果已保存: {mapping_file_base}")
         else:
             logger.warning(f"{entity_data.entity_name} 没有找到任何有效映射数据")
 
-        logger.success(f"完成 {entity_data.entity_name} 的事件映射构建")
+        logger.success(
+            f"{entity_data.entity_name} 的事件映射统计：成功映射事件 {mapped_event_count} 个，"
+            f"异常事件 {errored_event_count} 个，未映射跳过 {skipped_event_count} 个"
+        )
         return mapping_result
 
 
