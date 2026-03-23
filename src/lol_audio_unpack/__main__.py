@@ -1,12 +1,8 @@
-# 🐍 Unless explicitly silenced.
-# 🐼 除非它明确需要如此
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2025/7/26 0:34
-# @Update  : 2026/3/5 21:48
-# @Detail  : 项目命令行入口
+"""lol_audio_unpack 的命令行入口。
+
+该模块负责解析命令行参数、构建应用上下文，并分发数据更新、
+音频解包和事件映射等流程。
+"""
 
 from __future__ import annotations
 
@@ -20,6 +16,7 @@ from loguru import logger
 from . import __version__, setup_app
 from .app_context import AppContext, AppContextValidationError, OperationOptions, SourceMode
 from .facade import LolAudioUnpackApp
+from .utils.run_summary import attach_run_summary_sink, emit_cli_run_summary, get_or_create_run_summary
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -514,6 +511,21 @@ def execute_extract_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
     logger.success("音频解包完成！")
 
 
+def _log_mapping_runtime_error(error: ValueError) -> None:
+    """记录 mapping 运行时错误，并在 wwiser 配置错误时补充指引。"""
+    message = str(error)
+    logger.error(f"构建事件映射失败: {message}")
+
+    if "Wwiser 工具路径" not in message and "WWISER_PATH" not in message:
+        return
+
+    current_work_dir = Path.cwd()
+    logger.error(f"如果需要使用 WwiserHIRC 回退路径，请在 {current_work_dir / '.lol.env'} 中配置有效的 WWISER_PATH。")
+    logger.error(
+        "WWISER_PATH 应指向 wwiser.pyz 或 wwiser.exe 文件；如果不需要 wwiser，请移除该配置并直接使用默认 NativeHIRC。"
+    )
+
+
 def execute_mapping_operations(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
     """执行事件映射操作。"""
     mapping_actions = [args.mapping, args.mapping_champions, args.mapping_maps]
@@ -523,38 +535,45 @@ def execute_mapping_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
     if getattr(args, "integrate_data", False):
         logger.info("启用整合数据功能，将生成包含完整实体信息的整合文件")
 
-    try:
-        if args.mapping:
-            logger.info("开始构建所有实体的事件映射（英雄和地图）...")
-            app.mapping(build_operation_options(args))
-        elif args.mapping_champions:
+    if args.mapping:
+        logger.info("开始构建所有实体的事件映射（英雄和地图）...")
+        mapping_options = build_operation_options(args)
+        mapping_kwargs = {}
+    elif args.mapping_champions:
+        try:
             champion_ids = resolve_cli_champion_ids(args.mapping_champions, app=app, force_update=args.force)
-            if champion_ids:
-                logger.info(f"开始构建指定英雄的事件映射：{list(champion_ids)}")
-                app.mapping(
-                    build_operation_options(args, champion_ids=champion_ids),
-                    include_maps=False,
-                )
-            else:
-                logger.info("开始构建所有英雄的事件映射...")
-                app.mapping(build_operation_options(args), include_maps=False)
-        elif args.mapping_maps:
+        except ValueError as e:
+            logger.error(f"构建英雄映射失败: {e}")
+            return
+
+        if champion_ids:
+            logger.info(f"开始构建指定英雄的事件映射：{list(champion_ids)}")
+            mapping_options = build_operation_options(args, champion_ids=champion_ids)
+        else:
+            logger.info("开始构建所有英雄的事件映射...")
+            mapping_options = build_operation_options(args)
+        mapping_kwargs = {"include_maps": False}
+    elif args.mapping_maps:
+        try:
             map_ids = parse_int_ids(args.mapping_maps)
-            if map_ids:
-                logger.info(f"开始构建指定地图的事件映射：{list(map_ids)}")
-                app.mapping(
-                    build_operation_options(args, map_ids=map_ids),
-                    include_champions=False,
-                )
-            else:
-                logger.info("开始构建所有地图的事件映射...")
-                app.mapping(build_operation_options(args), include_champions=False)
+        except ValueError as e:
+            logger.error(f"构建地图映射失败: {e}")
+            return
+
+        if map_ids:
+            logger.info(f"开始构建指定地图的事件映射：{list(map_ids)}")
+            mapping_options = build_operation_options(args, map_ids=map_ids)
+        else:
+            logger.info("开始构建所有地图的事件映射...")
+            mapping_options = build_operation_options(args)
+        mapping_kwargs = {"include_champions": False}
+    else:
+        return
+
+    try:
+        app.mapping(mapping_options, **mapping_kwargs)
     except ValueError as e:
-        current_work_dir = Path.cwd()
-        logger.error(str(e))
-        logger.error(f"请在当前工作目录的 .lol.env 文件中配置 WWISER_PATH: {current_work_dir / '.lol.env'}")
-        logger.error("WWISER_PATH 应指向 wwiser.pyz 或 wwiser.exe 文件的完整路径。")
-        logger.error("您可以从 https://github.com/bnnm/wwiser/releases 下载 Wwiser 工具。")
+        _log_mapping_runtime_error(e)
         sys.exit(1)
 
     logger.success("事件映射构建完成！")
@@ -562,6 +581,9 @@ def execute_mapping_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
 
 def main() -> None:
     """主程序入口，协调处理命令行参数和执行相应操作。"""
+    app_context: AppContext | None = None
+    run_summary = None
+    summary_sink_id: int | None = None
     try:
         parser = create_parser()
         args = parser.parse_args()
@@ -570,16 +592,25 @@ def main() -> None:
 
         app_context = initialize_app(args)
         app = LolAudioUnpackApp(app_context)
+        run_summary = get_or_create_run_summary(app_context.runtime_cache)
+        summary_sink_id = attach_run_summary_sink(run_summary)
 
         if app_context.config.source_mode is SourceMode.REMOTE_SNAPSHOT and (
             _has_extract_actions(args) or _has_mapping_actions(args)
         ):
-            execute_remote_entity_workflow(args, app)
+            with run_summary.stage_context("remote_workflow", label="远端实体工作流"):
+                execute_remote_entity_workflow(args, app)
             return
 
-        execute_update_operations(args, app)
-        execute_extract_operations(args, app)
-        execute_mapping_operations(args, app)
+        if _has_update_actions(args):
+            with run_summary.stage_context("update", label="数据更新"):
+                execute_update_operations(args, app)
+        if _has_extract_actions(args):
+            with run_summary.stage_context("extract", label="音频解包"):
+                execute_extract_operations(args, app)
+        if _has_mapping_actions(args):
+            with run_summary.stage_context("mapping", label="事件映射"):
+                execute_mapping_operations(args, app)
         app.cleanup_remote_artifacts()
 
     except KeyboardInterrupt:
@@ -593,6 +624,11 @@ def main() -> None:
         except (NameError, AttributeError):
             pass
         sys.exit(1)
+    finally:
+        if summary_sink_id is not None:
+            logger.remove(summary_sink_id)
+        if app_context is not None and run_summary is not None:
+            emit_cli_run_summary(run_summary, log_path=app_context.paths.log_path)
 
 
 if __name__ == "__main__":

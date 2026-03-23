@@ -15,7 +15,13 @@ from riotmanifest import DecompressError, DownloadBatchError, DownloadError
 
 from lol_audio_unpack.app_context import AppContext, OperationOptions, SourceMode
 from lol_audio_unpack.manager import BinUpdater, DataReader, DataUpdater
-from lol_audio_unpack.mapping import build_champions_mapping, build_mapping_all, build_maps_mapping
+from lol_audio_unpack.manager.data_reader import get_default_visible_champions
+from lol_audio_unpack.mapping import (
+    build_champions_mapping,
+    build_mapping_all,
+    build_maps_mapping,
+    describe_hirc_backend,
+)
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.remote_preparer import RemoteSnapshotPreparer
 from lol_audio_unpack.unpack import unpack_audio_all, unpack_champions, unpack_maps
@@ -68,17 +74,9 @@ class LolAudioUnpackApp:
         """创建数据读取器实例。"""
         return DataReader(ctx=self.ctx)
 
-    def _ensure_wwiser_path(self) -> None:
-        """校验 Wwiser 路径可用性。
-
-        Raises:
-            ValueError: 路径未配置或不存在。
-        """
-        wwiser_path = self.ctx.config.wwiser_path
-        if wwiser_path is None:
-            raise ValueError("错误：未找到有效的 Wwiser 工具路径 (WWISER_PATH)。")
-        if not Path(wwiser_path).exists():
-            raise ValueError(f"错误：Wwiser 工具路径不存在: {wwiser_path}")
+    def _describe_mapping_backend(self) -> str:
+        """返回 mapping 流程使用的 HIRC 后端。"""
+        return describe_hirc_backend(self.ctx)
 
     def _prepare_remote_snapshot_for_update(self) -> RemoteSnapshotPreparer | None:
         """在远端快照模式下准备更新流程所需的远端资源。"""
@@ -171,10 +169,7 @@ class LolAudioUnpackApp:
 
         if unresolved_aliases:
             available_aliases = sorted(champion.get("alias", "") for champion in champions if champion.get("alias"))
-            raise ValueError(
-                "未找到对应的英雄 alias: "
-                f"{unresolved_aliases}。可用 alias 示例: {available_aliases[:10]}"
-            )
+            raise ValueError(f"未找到对应的英雄 alias: {unresolved_aliases}。可用 alias 示例: {available_aliases[:10]}")
 
         return tuple(resolved_ids)
 
@@ -256,7 +251,7 @@ class LolAudioUnpackApp:
             return
 
         if include_champions:
-            for champion in reader.get_champions():
+            for champion in get_default_visible_champions(reader):
                 champion_id = champion.get("id")
                 if champion_id is None:
                     continue
@@ -699,8 +694,7 @@ class LolAudioUnpackApp:
                 include_maps=include_maps,
             )
         logger.info(
-            f"音频类型配置 - 包含: {list(self.ctx.config.include_types)}, "
-            f"排除: {list(self.ctx.config.exclude_types)}"
+            f"音频类型配置 - 包含: {list(self.ctx.config.include_types)}, 排除: {list(self.ctx.config.exclude_types)}"
         )
         logger.info(f"输出路径: {self.ctx.config.output_path}")
         logger.info(f"语言: {self.ctx.config.game_region}")
@@ -742,7 +736,7 @@ class LolAudioUnpackApp:
         prepare_remote: bool = True,
     ) -> None:
         """执行映射流程。"""
-        self._ensure_wwiser_path()
+        backend_label = self._describe_mapping_backend()
         reader = self._create_reader()
         remote_preparer = self._build_remote_preparer()
         if prepare_remote and remote_preparer is not None:
@@ -756,7 +750,7 @@ class LolAudioUnpackApp:
 
         logger.info(f"缓存路径: {self.ctx.paths.cache_path}")
         logger.info(f"哈希路径: {self.ctx.paths.hash_path}")
-        logger.info(f"Wwiser 路径: {self.ctx.config.wwiser_path}")
+        logger.info(f"HIRC 后端: {backend_label}")
         logger.info(f"语言: {self.ctx.config.game_region}")
 
         if opts.champion_ids is not None:

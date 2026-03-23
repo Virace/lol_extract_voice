@@ -12,7 +12,7 @@ from loguru import logger
 if TYPE_CHECKING:
     from lol_audio_unpack.app_context import AppContext
 
-from lol_audio_unpack.manager.data_reader import DataReader
+from lol_audio_unpack.manager.data_reader import DataReader, get_default_visible_champions
 from lol_audio_unpack.manager.utils import find_data_file, read_data
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.utils.path_constants import format_entity_folder_name, get_output_dir_name
@@ -138,7 +138,7 @@ class EntityDataLoader:
         """
         try:
             version = self.data_reader.version
-            raw_data = self.data_reader.get_champions() if entity_type == "champions" else self.data_reader.get_maps()
+            raw_data = get_default_visible_champions(self.data_reader) if entity_type == "champions" else self.data_reader.get_maps()
         except Exception as e:
             logger.warning(f"Error initializing data for {entity_type}: {e}")
             logger.debug(traceback.format_exc())

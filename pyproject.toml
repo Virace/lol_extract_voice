@@ -6,11 +6,11 @@ authors = [
     { name = "Virace", email = "Virace@aliyun.com" }
 ]
 dependencies = [
-    "python-dotenv>=1.1.1",
+    "python-dotenv>=1.2.2",
     "msgpack>=1.1.1",
     "ruamel-yaml>=0.18.14",
     "alive-progress>=3.3.0",
-    "league-tools",
+    "league-tools>=1.1.3",
     "riotmanifest>=2.4.0",
 ]
 readme = "README.md"

@@ -80,6 +80,91 @@ def test_execute_update_operations_targeted_champions():
     assert calls["opts"].champion_ids == (103, 222, 1)
 
 
+def test_execute_mapping_operations_defaults_to_native_hirc_without_wwiser():
+    parser = cli.create_parser()
+    args = parser.parse_args(["--mapping"])
+
+    calls = {}
+
+    class FakeApp:
+        def mapping(self, opts, **kwargs):
+            calls["opts"] = opts
+            calls["kwargs"] = kwargs
+
+    cli.execute_mapping_operations(args, FakeApp())
+
+    assert calls["opts"].champion_ids is None
+    assert calls["opts"].map_ids is None
+    assert calls["opts"].integrate_data is False
+    assert calls["kwargs"] == {}
+
+
+def test_execute_mapping_operations_resolves_champion_aliases():
+    parser = cli.create_parser()
+    args = parser.parse_args(["--mapping-champions", "Annie,Ahri"])
+
+    calls = []
+
+    class FakeApp:
+        def prepare_update_data(self, *, force_update=False):
+            calls.append(("prepare", force_update))
+
+        def resolve_champion_ids(self, selectors):
+            calls.append(("resolve", tuple(selectors)))
+            return (1, 103)
+
+        def mapping(self, opts, **kwargs):
+            calls.append(("mapping", opts.champion_ids, kwargs))
+
+    cli.execute_mapping_operations(args, FakeApp())
+
+    assert calls == [
+        ("prepare", False),
+        ("resolve", ("Annie", "Ahri")),
+        ("mapping", (1, 103), {"include_maps": False}),
+    ]
+
+
+def test_execute_mapping_operations_invalid_selector_does_not_show_wwiser_hint(monkeypatch):
+    parser = cli.create_parser()
+    args = parser.parse_args(["--mapping-champions", "1,Ahri"])
+    errors: list[str] = []
+
+    monkeypatch.setattr(cli, "logger", SimpleNamespace(error=errors.append, info=lambda *_args, **_kwargs: None))
+
+    cli.execute_mapping_operations(args, SimpleNamespace())
+
+    assert any("构建英雄映射失败" in message for message in errors)
+    assert all("WWISER_PATH" not in message for message in errors)
+
+
+def test_execute_mapping_operations_invalid_wwiser_path_shows_native_hint(monkeypatch):
+    parser = cli.create_parser()
+    args = parser.parse_args(["--mapping", "--wwiser-path", "/tmp/missing/wwiser.pyz"])
+    errors: list[str] = []
+
+    monkeypatch.setattr(
+        cli,
+        "logger",
+        SimpleNamespace(
+            error=errors.append,
+            info=lambda *_args, **_kwargs: None,
+            success=lambda *_args, **_kwargs: None,
+        ),
+    )
+
+    class FakeApp:
+        def mapping(self, _opts, **_kwargs):
+            raise ValueError("错误：Wwiser 工具路径不存在或不是文件: /tmp/missing/wwiser.pyz")
+
+    with pytest.raises(SystemExit) as exc:
+        cli.execute_mapping_operations(args, FakeApp())
+
+    assert exc.value.code == 1
+    assert any("默认 NativeHIRC" in message for message in errors)
+    assert any("WWISER_PATH" in message for message in errors)
+
+
 def test_build_cli_overrides_only_keeps_explicit_values():
     parser = cli.create_parser()
     args = parser.parse_args(

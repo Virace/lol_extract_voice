@@ -145,7 +145,9 @@ def test_ensure_manifest_cached_sends_user_agent_header(
     assert captured["user_agent"] == "Mozilla/5.0"
 
 
-def test_facade_update_prepares_remote_snapshot_before_updaters(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_facade_update_prepares_remote_snapshot_before_updaters(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     ctx = _build_remote_ctx(tmp_path)
     app = LolAudioUnpackApp(ctx)
     call_order: list[str] = []
@@ -529,16 +531,6 @@ def test_facade_mapping_prepares_remote_wads_before_mapping(monkeypatch: pytest.
     ctx = _build_remote_ctx(tmp_path)
     app = LolAudioUnpackApp(ctx)
     call_order: list[str] = []
-    wwiser_file = tmp_path / "wwiser.pyz"
-    wwiser_file.write_bytes(b"dummy")
-    app.ctx.config = AppConfig(
-        game_path=ctx.config.game_path,
-        output_path=ctx.config.output_path,
-        game_region=ctx.config.game_region,
-        source_mode=ctx.config.source_mode,
-        remote_snapshot=ctx.config.remote_snapshot,
-        wwiser_path=wwiser_file,
-    )
 
     class FakePreparer:
         def __init__(self, *, ctx) -> None:  # noqa: ANN001

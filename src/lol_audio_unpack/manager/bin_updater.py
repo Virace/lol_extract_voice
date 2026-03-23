@@ -1,12 +1,8 @@
-# 🐍 There should be one-- and preferably only one --obvious way to do it.
-# 🐼 任何问题应有一种，且最好只有一种，显而易见的解决方法
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2025/7/30 7:40
-# @Update  : 2025/8/3 8:57
-# @Detail  : BIN文件更新器
+"""本地与预处理游戏资源的 BIN 更新辅助逻辑。
+
+该模块负责协调 BIN 来源选择、资源提取，以及更新流程中的
+元数据刷新。
+"""
 
 from __future__ import annotations
 
@@ -26,12 +22,14 @@ from lol_audio_unpack.manager.utils import (
     write_data,
 )
 from lol_audio_unpack.utils.logging import performance_monitor
+from lol_audio_unpack.utils.run_summary import record_runtime_note
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app_context import AppContext
 
 # 类型别名定义
 ChampionData = dict[str, Any]
+CommonEventSourceIndex = dict[str, set[str]]
 
 
 class BinUpdater:
@@ -108,6 +106,7 @@ class BinUpdater:
             if champion_ids and filtered_data.get("champions"):
                 self._update_champions(filtered_data)
             if map_ids and filtered_data.get("maps"):
+                self._record_targeted_map_event_scope_note(map_ids)
                 self._update_maps(filtered_data)
             logger.success(f"BinUpdater 更新完成 (精确模式: champions={champion_ids}, maps={map_ids})")
         else:
@@ -117,6 +116,19 @@ class BinUpdater:
             if target in ["map", "all"]:
                 self._update_maps(data)
             logger.success(f"BinUpdater 更新完成 (批量模式: {target})")
+
+    def _record_targeted_map_event_scope_note(self, map_ids: list[str]) -> None:
+        """记录精确地图更新在未包含 Common 地图时的事件差异说明。"""
+        if not self.process_events or "0" in map_ids:
+            return
+
+        normalized_ids = [map_id for map_id in map_ids if map_id]
+        if not normalized_ids:
+            return
+
+        message = "本次仅处理指定地图且未包含 Common 地图 0，地图事件不会应用公共事件去重；结果可能与全量更新不同。"
+        detail = f"精确地图更新目标: {normalized_ids}；由于未包含地图 0，Common 事件差量规则不会参与本次运行。"
+        record_runtime_note(self.ctx.runtime_cache, "update", message, label="数据更新", detail=detail)
 
     def _is_local_bin_mode_enabled(self) -> bool:
         """
@@ -287,7 +299,7 @@ class BinUpdater:
         maps = data.get("maps", {})
 
         # 预处理公共地图(ID 0)的事件数据和Banks数据
-        common_events_set = set()
+        common_event_sources: CommonEventSourceIndex = {}
         common_banks_set = set()
         if "0" in maps:
             logger.debug("正在预处理公共地图(ID 0)的数据...")
@@ -295,9 +307,9 @@ class BinUpdater:
                 # 预处理事件数据
                 if map_events := self._process_map_events_for_id("0", maps["0"]):
                     if "events" in map_events:
-                        for events_list in map_events["events"].values():
+                        for category, events_list in map_events["events"].items():
                             for event_string in events_list:
-                                common_events_set.add(event_string)
+                                common_event_sources.setdefault(event_string, set()).add(f"地图 0/{category}")
 
                 # 预处理Banks数据
                 if map_banks := self._process_map_banks_for_id("0", maps["0"]):
@@ -313,7 +325,7 @@ class BinUpdater:
         map_bar = alive_it(maps.items(), title="地图音频与事件数据处理")
         for map_id, map_data in map_bar:
             map_bar.text(f"处理地图 {map_id}")
-            self._process_single_map(map_id, map_data, common_events_set, common_banks_set)
+            self._process_single_map(map_id, map_data, common_event_sources, common_banks_set)
 
         logger.success("地图Banks数据更新完成")
 
@@ -450,14 +462,18 @@ class BinUpdater:
             write_data(final_event_data, events_file_base, dev_mode=self._is_dev_mode())
 
     def _process_single_map(
-        self, map_id: str, map_data: dict, common_events_set: set | None = None, common_banks_set: set | None = None
+        self,
+        map_id: str,
+        map_data: dict,
+        common_event_sources: CommonEventSourceIndex | None = None,
+        common_banks_set: set | None = None,
     ) -> None:
         """
         处理单个地图的Banks和Events数据
 
         :param map_id: 地图ID
         :param map_data: 地图数据字典
-        :param common_events_set: 公共事件集合，用于去重
+        :param common_event_sources: 公共事件来源索引，用于事件去重和总结
         :param common_banks_set: 公共Banks集合，用于去重
         """
         banks_file_base = self.map_banks_dir / map_id
@@ -512,7 +528,13 @@ class BinUpdater:
             self.force_update,
             dev_mode=self._is_dev_mode(),
         ):
-            if map_events := self._extract_map_events(bin_file, common_events_set if map_id != "0" else None):
+            map_events, dedup_summary = self._extract_map_events(
+                bin_file,
+                common_event_sources if map_id != "0" else None,
+            )
+            if dedup_summary:
+                self._record_map_event_dedup_summary(map_id, map_data, dedup_summary)
+            if map_events:
                 final_event_data = self._create_base_data(
                     map_id, "map", name=self._get_map_name(map_data), map=map_events
                 )
@@ -591,15 +613,20 @@ class BinUpdater:
 
         return skin_events if skin_events else None
 
-    def _extract_map_events(self, bin_file: BIN, common_events_set: set | None = None) -> dict | None:
+    def _extract_map_events(
+        self,
+        bin_file: BIN,
+        common_event_sources: CommonEventSourceIndex | None = None,
+    ) -> tuple[dict | None, dict[str, Any] | None]:
         """
         从BIN文件中提取并根据公共事件集合进行去重
 
         :param bin_file: BIN文件对象
-        :param common_events_set: 公共事件集合，用于去重
-        :returns: 地图事件数据字典，无数据时返回None
+        :param common_event_sources: 公共事件来源索引，用于去重和记录来源
+        :returns: 地图事件数据字典，以及公共事件去重摘要
         """
         map_events = {}
+        dedup_by_category: dict[str, dict[str, set[str]]] = {}
         if bin_file.theme_music:
             map_events["theme_music"] = bin_file.theme_music
 
@@ -611,22 +638,53 @@ class BinUpdater:
                 if not event_data.events:
                     continue
 
+                category = event_data.category
                 event_strings = [e.string for e in event_data.events]
                 unique_events_in_group = list(dict.fromkeys(event_strings))  # 保持顺序的去重
 
-                if common_events_set:
-                    unique_events_in_group = [e for e in unique_events_in_group if e not in common_events_set]
+                removed_events: list[str] = []
+                if common_event_sources:
+                    filtered_events: list[str] = []
+                    for event_name in unique_events_in_group:
+                        if event_name in common_event_sources:
+                            removed_events.append(event_name)
+                        else:
+                            filtered_events.append(event_name)
+                    unique_events_in_group = filtered_events
+
+                if removed_events:
+                    category_entry = dedup_by_category.setdefault(category, {"events": set(), "sources": set()})
+                    category_entry["events"].update(removed_events)
+                    for event_name in removed_events:
+                        category_entry["sources"].update(common_event_sources.get(event_name, set()))
 
                 if unique_events_in_group:
-                    category = event_data.category
                     if category not in all_events_by_category:
                         all_events_by_category[category] = []
                     all_events_by_category[category].extend(unique_events_in_group)
 
+        dedup_summary = None
+        if dedup_by_category:
+            categories = {}
+            total_removed = 0
+            for category, payload in dedup_by_category.items():
+                removed_event_names = sorted(payload["events"])
+                total_removed += len(removed_event_names)
+                categories[category] = {
+                    "count": len(removed_event_names),
+                    "examples": removed_event_names[:5],
+                    "sources": sorted(payload["sources"]),
+                }
+            dedup_summary = {
+                "total_removed": total_removed,
+                "remaining_event_count": sum(len(events) for events in all_events_by_category.values()),
+                "categories": categories,
+            }
+
         if all_events_by_category:
             map_events["events"] = all_events_by_category
 
-        return map_events if map_events else None
+        return map_events if map_events else None, dedup_summary
 
     def _deduplicate_single_map_banks(self, map_data: dict, common_banks_set: set) -> None:
         """
@@ -688,14 +746,14 @@ class BinUpdater:
                     champion_data["skinAudioMappings"][skin_id] = owner_id
 
     def _process_map_events_for_id(
-        self, map_id: str, map_data: dict, common_events_set: set | None = None
+        self, map_id: str, map_data: dict, common_event_sources: CommonEventSourceIndex | None = None
     ) -> dict | None:
         """
         提取、去重并保存单个地图的事件数据（兼容性方法）
 
         :param map_id: 地图ID
         :param map_data: 地图数据字典
-        :param common_events_set: 公共事件集合，用于去重
+        :param common_event_sources: 公共事件来源索引，用于去重
         :returns: 地图事件数据字典，失败时返回None
         """
         # 如果未启用事件处理，直接返回None
@@ -709,7 +767,48 @@ class BinUpdater:
         if bin_file is None:
             return None
 
-        return self._extract_map_events(bin_file, common_events_set)
+        return self._extract_map_events(bin_file, common_event_sources)[0]
+
+    def _record_map_event_dedup_summary(self, map_id: str, map_data: dict, dedup_summary: dict[str, Any]) -> None:
+        """记录地图公共事件去重造成的可解释差异。"""
+        total_removed = int(dedup_summary.get("total_removed", 0))
+        if total_removed <= 0:
+            return
+
+        map_name = self._get_map_name(map_data)
+        remaining_event_count = int(dedup_summary.get("remaining_event_count", 0))
+        source_labels = sorted(
+            {
+                source.split("/", 1)[0]
+                for payload in dedup_summary.get("categories", {}).values()
+                for source in payload.get("sources", [])
+            }
+        )
+        source_text = "、".join(source_labels) if source_labels else "公共地图"
+
+        if remaining_event_count == 0:
+            message = (
+                f"地图 {map_id} ({map_name}) 的事件在与 {source_text} 的公共事件去重后为空，"
+                f"共省略 {total_removed} 个事件；单独处理该地图时结果可能不同。"
+            )
+        else:
+            message = (
+                f"地图 {map_id} ({map_name}) 有 {total_removed} 个事件因与 {source_text} 的公共事件去重被省略，"
+                f"当前仍保留 {remaining_event_count} 个事件。"
+            )
+
+        detail_lines = []
+        for category, payload in sorted(dedup_summary.get("categories", {}).items()):
+            examples = ", ".join(payload.get("examples", [])) or "-"
+            sources = ", ".join(payload.get("sources", [])) or "-"
+            detail_lines.append(
+                f"category={category}, removed={payload.get('count', 0)}, sources=[{sources}], examples=[{examples}]"
+            )
+
+        detail = "\n".join(detail_lines)
+        record_runtime_note(self.ctx.runtime_cache, "update", message, label="数据更新", detail=detail)
+        for line in detail_lines:
+            logger.trace(f"地图 {map_id} 公共事件去重明细: {line}")
 
     def _process_map_banks_for_id(self, map_id: str, map_data: dict) -> dict | None:
         """
