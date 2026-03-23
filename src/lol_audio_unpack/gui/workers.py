@@ -1,4 +1,4 @@
-"""Qt worker scaffolding for future Python API integration."""
+"""GUI 后台任务执行器。"""
 
 from __future__ import annotations
 
@@ -13,28 +13,30 @@ class WorkerSignals(QObject):
     started = Signal()
     finished = Signal(object)
     failed = Signal(str)
-    progress = Signal(int, int, str)
+    progress = Signal(object)
     log = Signal(str)
 
 
 class TaskWorker(QRunnable):
-    """Run a callable in Qt's worker pool.
+    """在线程池中执行后台任务。
 
     Args:
-        fn: Work function that will be executed in the background.
+        fn: 后台执行函数。
+        pass_signals: 为 ``True`` 时，将 ``WorkerSignals`` 作为唯一参数传入 ``fn``。
     """
 
-    def __init__(self, fn: Callable[[], object]):
+    def __init__(self, fn: Callable[..., object], *, pass_signals: bool = False):
         super().__init__()
         self.fn = fn
+        self._pass_signals = pass_signals
         self.signals = WorkerSignals()
 
     @Slot()
     def run(self) -> None:
-        """Execute the worker function and emit basic lifecycle signals."""
+        """执行后台函数并发出基础生命周期信号。"""
         self.signals.started.emit()
         try:
-            result = self.fn()
+            result = self.fn(self.signals) if self._pass_signals else self.fn()
         except Exception as exc:  # noqa: BLE001
             self.signals.failed.emit(str(exc))
             return

@@ -4,31 +4,28 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QThreadPool
+from PySide6.QtCore import Qt, QThreadPool, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtCore import QUrl
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
-
+from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
-    SmoothScrollArea,
-    TitleLabel,
     BodyLabel,
-    CardWidget,
-    SubtitleLabel,
     CaptionLabel,
-    ProgressBar,
+    CardWidget,
     FlowLayout,
     IconWidget,
+    IndeterminateProgressBar,
     InfoBar,
     InfoBarPosition,
-    IndeterminateProgressBar,
+    ProgressBar,
+    SmoothScrollArea,
+    SubtitleLabel,
+    TitleLabel,
 )
 from qfluentwidgets import FluentIcon as FIF
 
 from lol_audio_unpack.gui.common import GuiConfig
 from lol_audio_unpack.gui.workers import TaskWorker
 from lol_audio_unpack.manager.utils import get_game_version
-
 
 # ---------------------------------------------------------------------------
 # Worker result dataclass
@@ -379,9 +376,6 @@ class HomePage(SmoothScrollArea):
 
     def _start_background_check(self) -> None:
         """Kick off the background initialisation worker."""
-        self._loading_widget.setVisible(True)
-        self.progress_bar.start()
-
         worker = TaskWorker(self._build_check_fn())
         worker.signals.finished.connect(self._on_check_finished)
         worker.signals.failed.connect(self._on_check_failed)
@@ -413,18 +407,25 @@ class HomePage(SmoothScrollArea):
             self.cache_card.setPath(str(audios_dir))
             self.cache_card.setDisplayText(f"无 {r.version} 缓存")
 
-        self._finish_loading("就绪")
-
     def _on_check_failed(self, error: str) -> None:
         """Handle unexpected worker exception."""
         self.version_card.setDisplayText("读取失败")
         self.cache_card.setDisplayText("检查失败")
         self.cache_card.linkIcon.hide()
-        self._finish_loading(f"初始化失败: {error}")
 
-    def _finish_loading(self, message: str) -> None:
-        self.progress_bar.stop()
+    def set_loading_state(self, message: str, *, active: bool) -> None:
+        """更新首页顶部的加载状态条。
+
+        Args:
+            message: 当前要展示的状态文案。
+            active: 是否处于活跃加载阶段。
+        """
+        self._loading_widget.setVisible(True)
         self.loading_label.setText(message)
+        if active:
+            self.progress_bar.start()
+        else:
+            self.progress_bar.stop()
 
     # ------------------------------------------------------------------
     # Public update helpers (called by MainWindow on settings change)

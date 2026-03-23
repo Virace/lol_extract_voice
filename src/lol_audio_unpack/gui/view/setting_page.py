@@ -1,27 +1,49 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QFileDialog
+from time import perf_counter
 
+from loguru import logger
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
-    SmoothScrollArea,
-    SettingCardGroup,
-    SettingCard,
-    ExpandGroupSettingCard,
-    PushSettingCard,
-    SwitchSettingCard,
-    OptionsSettingCard,
-    CustomColorSettingCard,
-    FluentIcon as FIF,
-    ExpandLayout,
-    ComboBox,
-    LineEdit,
     BodyLabel,
     CaptionLabel,
+    ComboBox,
+    CustomColorSettingCard,
+    ExpandGroupSettingCard,
+    ExpandLayout,
+    IndicatorPosition,
+    LineEdit,
+    OptionsSettingCard,
+    PushSettingCard,
+    SettingCard,
+    SettingCardGroup,
+    SmoothScrollArea,
+    SwitchButton,
+    SwitchSettingCard,
+    Theme,
     qconfig,
+    setTheme,
+    setThemeColor,
+)
+from qfluentwidgets import (
+    FluentIcon as FIF,
 )
 
-from lol_audio_unpack.gui.common import GuiConfig
+from lol_audio_unpack.gui.common import GuiConfig, apply_smooth_scroll_enabled
+
+
+def _log_setting_stage(stage: str, startup_begin: float, previous_mark: float) -> float:
+    """记录设置页初始化阶段耗时。"""
+    current_mark = perf_counter()
+    logger.trace(
+        "设置页阶段 | {} | 本段 {:.3f}s | 累计 {:.3f}s",
+        stage,
+        current_mark - previous_mark,
+        current_mark - startup_begin,
+    )
+    return current_mark
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +58,7 @@ class ComboRowSettingCard(SettingCard):
         label_map:  可选 {显示文字: 实际值} 映射；不传则显示文字即实际值。
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         icon,
         title: str,
@@ -93,6 +115,37 @@ class LineEditSettingCard(SettingCard):
 
     def setValue(self, text: str):
         self.lineEdit.setText(text)
+
+
+class LocalizedSwitchSettingCard(SwitchSettingCard):
+    """使用中文开关文案的设置卡。"""
+
+    def __init__(
+        self,
+        icon,
+        title: str,
+        content: str | None = None,
+        configItem=None,
+        parent=None,
+    ) -> None:
+        self._on_text = "开"
+        self._off_text = "关"
+        super().__init__(icon, title, content, configItem=configItem, parent=parent)
+        self._sync_switch_text(self.isChecked())
+
+    def _sync_switch_text(self, is_checked: bool) -> None:
+        """同步右侧开关按钮文案。"""
+        self.switchButton.setOnText(self._on_text)
+        self.switchButton.setOffText(self._off_text)
+        self.switchButton.setText(self._on_text if is_checked else self._off_text)
+
+    def setValue(self, isChecked: bool):
+        """设置当前勾选状态并保持中文文案。"""
+        if self.configItem:
+            qconfig.set(self.configItem, isChecked)
+
+        self.switchButton.setChecked(isChecked)
+        self._sync_switch_text(isChecked)
 
 
 # ---------------------------------------------------------------------------
@@ -180,6 +233,71 @@ class FixedSnapshotCard(ExpandGroupSettingCard):
         self.gameUrlEdit.setText(game_url)
 
 
+class SmoothScrollSettingCard(ExpandGroupSettingCard):
+    """可折叠的平滑滚动配置组。"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FIF.SCROLL,
+            "平滑滚动",
+            "数据量过多时开启平滑滚动可能会卡顿；页面滚动和列表/表格等控件可分别控制。",
+            parent,
+        )
+
+        self.viewLayout.setContentsMargins(0, 0, 0, 0)
+        self.viewLayout.setSpacing(0)
+
+        self.pageSwitchButton = self._add_switch_row(
+            "页面级滚动",
+            "设置页、主页、关于页、执行中心等页面容器的滚动动画。",
+        )
+        self.widgetSwitchButton = self._add_switch_row(
+            "控件级滚动",
+            "列表、表格、日志区、文本预览等可滚动控件的滚动动画。",
+        )
+
+    def _add_switch_row(self, title: str, content: str) -> SwitchButton:
+        """添加一行带中文开关按钮的说明项。"""
+        row = QWidget()
+        row.setMinimumHeight(76)
+
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(48, 12, 48, 12)
+        layout.setSpacing(16)
+
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(2)
+        text_layout.addWidget(BodyLabel(title))
+        content_label = CaptionLabel(content)
+        content_label.setWordWrap(True)
+        text_layout.addWidget(content_label)
+
+        layout.addLayout(text_layout)
+        layout.addStretch(1)
+
+        switch_button = SwitchButton("关", row, IndicatorPosition.RIGHT)
+        switch_button.setOnText("开")
+        switch_button.setOffText("关")
+        switch_button.setText("关")
+        layout.addWidget(switch_button, 0, Qt.AlignRight | Qt.AlignVCenter)
+
+        self.addGroupWidget(row)
+        return switch_button
+
+    def pageScrollEnabled(self) -> bool:
+        """返回是否启用页面级平滑滚动。"""
+        return self.pageSwitchButton.isChecked()
+
+    def widgetScrollEnabled(self) -> bool:
+        """返回是否启用控件级平滑滚动。"""
+        return self.widgetSwitchButton.isChecked()
+
+    def setValues(self, *, page_enabled: bool, widget_enabled: bool) -> None:
+        """同步两项平滑滚动开关状态。"""
+        self.pageSwitchButton.setChecked(page_enabled)
+        self.widgetSwitchButton.setChecked(widget_enabled)
+
+
 # ---------------------------------------------------------------------------
 # SettingPage
 # ---------------------------------------------------------------------------
@@ -192,9 +310,14 @@ class SettingPage(SmoothScrollArea):
     output_path_changed = Signal(str)
     wwiser_path_changed = Signal(str)
     vgmstream_path_changed = Signal(str)
+    smooth_scroll_changed = Signal(bool, bool)
+    log_drawer_auto_collapse_changed = Signal(bool)
 
     def __init__(self, parent=None):
+        startup_begin = perf_counter()
+        previous_mark = startup_begin
         super().__init__(parent=parent)
+        previous_mark = _log_setting_stage("SmoothScrollArea 基类初始化", startup_begin, previous_mark)
         self.setObjectName("SettingPage")
         self.view = QWidget(self)
         self.view.setObjectName("SettingPageView")
@@ -202,16 +325,23 @@ class SettingPage(SmoothScrollArea):
         self.setWidget(self.view)
         self.setWidgetResizable(True)
         self.setStyleSheet("QScrollArea {border: none; background: transparent;}")
+        previous_mark = _log_setting_stage("滚动容器与视图初始化完成", startup_begin, previous_mark)
 
         # 配置对象：先建好再构建 UI，确保 load() 后可立即应用
         self._cfg = GuiConfig()
+        previous_mark = _log_setting_stage("GuiConfig 实例创建完成", startup_begin, previous_mark)
 
         self._build_ui()
+        previous_mark = _log_setting_stage("_build_ui 完成", startup_begin, previous_mark)
         self._load_config()
+        previous_mark = _log_setting_stage("_load_config 完成", startup_begin, previous_mark)
+        apply_smooth_scroll_enabled(self, self._cfg.page_smooth_scroll_enabled)
         self._connect_signals()
+        previous_mark = _log_setting_stage("_connect_signals 完成", startup_begin, previous_mark)
 
         # 初始化时根据当前模式刷新动态显隐
         self._on_source_mode_changed(self.sourceModeCard.displayValue())
+        _log_setting_stage("_on_source_mode_changed 完成", startup_begin, previous_mark)
 
     # ------------------------------------------------------------------
     # UI 建造
@@ -222,10 +352,17 @@ class SettingPage(SmoothScrollArea):
         self.expandLayout.setContentsMargins(36, 10, 36, 0)
         self.expandLayout.setSpacing(28)
 
+        build_begin = perf_counter()
+        build_mark = build_begin
+
         self._build_source_group()   # 1. 数据来源（动态显隐子组）
+        build_mark = _log_setting_stage("_build_source_group 完成", build_begin, build_mark)
         self._build_base_group()     # 2. 基础设置
+        build_mark = _log_setting_stage("_build_base_group 完成", build_begin, build_mark)
         self._build_tools_group()    # 3. 工具配置
+        build_mark = _log_setting_stage("_build_tools_group 完成", build_begin, build_mark)
         self._build_personal_group() # 4. 个性化
+        _log_setting_stage("_build_personal_group 完成", build_begin, build_mark)
 
     # 1. 数据来源 -------------------------------------------------------
 
@@ -236,8 +373,12 @@ class SettingPage(SmoothScrollArea):
     }
 
     def _build_source_group(self):
+        group_begin = perf_counter()
+        group_mark = group_begin
+
         # 1-A 模式选择（始终可见）
         self.sourceModeGroup = SettingCardGroup("数据来源", self.view)
+        group_mark = _log_setting_stage("source: sourceModeGroup 创建完成", group_begin, group_mark)
         self.sourceModeCard = ComboRowSettingCard(
             FIF.CLOUD,
             "来源模式",
@@ -245,22 +386,30 @@ class SettingPage(SmoothScrollArea):
             list(self._SOURCE_MODE_MAP.keys()),
             label_map=self._SOURCE_MODE_MAP,
         )
+        group_mark = _log_setting_stage("source: sourceModeCard 创建完成", group_begin, group_mark)
         self.sourceModeGroup.addSettingCard(self.sourceModeCard)
+        group_mark = _log_setting_stage("source: sourceModeGroup.addSettingCard 完成", group_begin, group_mark)
         self.expandLayout.addWidget(self.sourceModeGroup)
+        group_mark = _log_setting_stage("source: sourceModeGroup.addWidget 完成", group_begin, group_mark)
 
         # 1-B Local 子组（本地模式时显示）
         self.localGroup = SettingCardGroup("本地目录", self.view)
+        group_mark = _log_setting_stage("source: localGroup 创建完成", group_begin, group_mark)
         self.gamePathCard = PushSettingCard(
             "选择文件夹",
             FIF.FOLDER,
             "游戏根目录",
             "当前: 未设置",
         )
+        group_mark = _log_setting_stage("source: gamePathCard 创建完成", group_begin, group_mark)
         self.localGroup.addSettingCard(self.gamePathCard)
+        group_mark = _log_setting_stage("source: localGroup.addSettingCard 完成", group_begin, group_mark)
         self.expandLayout.addWidget(self.localGroup)
+        group_mark = _log_setting_stage("source: localGroup.addWidget 完成", group_begin, group_mark)
 
         # 1-C Remote 子组（远程模式时显示）
         self.remoteGroup = SettingCardGroup("远程配置", self.view)
+        group_mark = _log_setting_stage("source: remoteGroup 创建完成", group_begin, group_mark)
 
         self.remoteLiveRegionCard = ComboRowSettingCard(
             FIF.GLOBE,
@@ -268,18 +417,25 @@ class SettingPage(SmoothScrollArea):
             "自动解析最新快照使用的 Riot 区服（默认 EUW，速度最稳定）",
             ["EUW", "NA", "KR", "JP", "BR", "TR", "RU", "OCE", "EUNE", "LAN", "LAS", "ME"],
         )
-        self.cleanupRemoteCard = SwitchSettingCard(
+        group_mark = _log_setting_stage("source: remoteLiveRegionCard 创建完成", group_begin, group_mark)
+        self.cleanupRemoteCard = LocalizedSwitchSettingCard(
             FIF.DELETE,
             "完成后自动清理",
             "删除远程下载的阶段性冗余文件，保持输出目录整洁",
         )
+        group_mark = _log_setting_stage("source: cleanupRemoteCard 创建完成", group_begin, group_mark)
         # 固定快照三元组 — 折叠在 ExpandGroupSettingCard 中
         self.fixedSnapshotCard = FixedSnapshotCard()
+        group_mark = _log_setting_stage("source: fixedSnapshotCard 创建完成", group_begin, group_mark)
 
         self.remoteGroup.addSettingCard(self.remoteLiveRegionCard)
+        group_mark = _log_setting_stage("source: remoteGroup.add remoteLiveRegionCard", group_begin, group_mark)
         self.remoteGroup.addSettingCard(self.cleanupRemoteCard)
+        group_mark = _log_setting_stage("source: remoteGroup.add cleanupRemoteCard", group_begin, group_mark)
         self.remoteGroup.addSettingCard(self.fixedSnapshotCard)
+        group_mark = _log_setting_stage("source: remoteGroup.add fixedSnapshotCard", group_begin, group_mark)
         self.expandLayout.addWidget(self.remoteGroup)
+        _log_setting_stage("source: remoteGroup.addWidget 完成", group_begin, group_mark)
 
     # 2. 基础设置 -------------------------------------------------------
 
@@ -298,7 +454,7 @@ class SettingPage(SmoothScrollArea):
             "语音文件的区域标识，影响实际加载的语音资源",
             ["zh_CN", "en_US", "ja_JP", "ko_KR", "fr_FR", "de_DE", "es_ES", "pt_BR", "ru_RU"],
         )
-        self.groupByTypeCard = SwitchSettingCard(
+        self.groupByTypeCard = LocalizedSwitchSettingCard(
             FIF.FOLDER,
             "按类型分组输出",
             "开: audios/类型/英雄/…   关(默认): audios/英雄/类型/…",
@@ -363,6 +519,15 @@ class SettingPage(SmoothScrollArea):
 
         self.personalGroup.addSettingCard(self.themeCard)
         self.personalGroup.addSettingCard(self.colorCard)
+        self.smoothScrollCard = SmoothScrollSettingCard(self.personalGroup)
+        self.personalGroup.addSettingCard(self.smoothScrollCard)
+        self.logDrawerAutoCollapseCard = LocalizedSwitchSettingCard(
+            FIF.SETTING,
+            "点击外部自动收起日志",
+            "开启后日志抽屉展开时会显示全局蒙版，并在点击内容区其他位置时自动收起。",
+            parent=self.personalGroup,
+        )
+        self.personalGroup.addSettingCard(self.logDrawerAutoCollapseCard)
         self.expandLayout.addWidget(self.personalGroup)
 
     # ------------------------------------------------------------------
@@ -398,6 +563,11 @@ class SettingPage(SmoothScrollArea):
 
         # 个性化 — 应用已保存的主题
         self._apply_theme_from_config()
+        self.smoothScrollCard.setValues(
+            page_enabled=cfg.page_smooth_scroll_enabled,
+            widget_enabled=cfg.widget_smooth_scroll_enabled,
+        )
+        self.logDrawerAutoCollapseCard.setValue(cfg.log_drawer_auto_collapse_enabled)
 
     def _save_config(self) -> None:
         """将各控件当前值写入 GuiConfig 并持久化。"""
@@ -411,12 +581,14 @@ class SettingPage(SmoothScrollArea):
         cfg.snapshot_game_url = self.fixedSnapshotCard.gameUrlValue()
         cfg.game_region = self.gameRegionCard.value()
         cfg.group_by_type = self.groupByTypeCard.isChecked()
+        cfg.page_smooth_scroll_enabled = self.smoothScrollCard.pageScrollEnabled()
+        cfg.widget_smooth_scroll_enabled = self.smoothScrollCard.widgetScrollEnabled()
+        cfg.log_drawer_auto_collapse_enabled = self.logDrawerAutoCollapseCard.isChecked()
 
         cfg.save()
 
     def _save_theme_config(self) -> None:
         """保存主题配置到 GuiConfig。"""
-        from qfluentwidgets import Theme
         cfg = self._cfg
         # 从 qconfig 读取当前主题设置
         theme_map = {Theme.LIGHT: "Light", Theme.DARK: "Dark", Theme.AUTO: "Auto"}
@@ -450,6 +622,9 @@ class SettingPage(SmoothScrollArea):
         # 基础设置
         self.gameRegionCard.comboBox.currentTextChanged.connect(self._save_config)
         self.groupByTypeCard.checkedChanged.connect(self._save_config)
+        self.smoothScrollCard.pageSwitchButton.checkedChanged.connect(self._on_smooth_scroll_changed)
+        self.smoothScrollCard.widgetSwitchButton.checkedChanged.connect(self._on_smooth_scroll_changed)
+        self.logDrawerAutoCollapseCard.checkedChanged.connect(self._on_log_drawer_auto_collapse_changed)
 
         # 个性化 — 主题变更时保存
         qconfig.themeChanged.connect(self._save_theme_config)
@@ -526,9 +701,6 @@ class SettingPage(SmoothScrollArea):
 
     def _apply_theme_from_config(self) -> None:
         """从 GuiConfig 应用主题设置到 qconfig。"""
-        from qfluentwidgets import Theme, setTheme, setThemeColor
-        from PySide6.QtGui import QColor
-
         cfg = self._cfg
         # 应用主题模式
         theme_map = {"Light": Theme.LIGHT, "Dark": Theme.DARK, "Auto": Theme.AUTO}
@@ -550,6 +722,19 @@ class SettingPage(SmoothScrollArea):
             card.setContent(f"默认: {default}")
         else:
             card.setContent("当前: 未设置")
+
+    def _on_smooth_scroll_changed(self, _checked: bool) -> None:
+        """保存并广播平滑滚动配置。"""
+        self._save_config()
+        page_enabled = self.smoothScrollCard.pageScrollEnabled()
+        widget_enabled = self.smoothScrollCard.widgetScrollEnabled()
+        apply_smooth_scroll_enabled(self, page_enabled)
+        self.smooth_scroll_changed.emit(page_enabled, widget_enabled)
+
+    def _on_log_drawer_auto_collapse_changed(self, _checked: bool) -> None:
+        """保存并广播日志抽屉点击外部自动收起配置。"""
+        self._save_config()
+        self.log_drawer_auto_collapse_changed.emit(self.logDrawerAutoCollapseCard.isChecked())
 
     # ------------------------------------------------------------------
     # 公共值读取（供其他页面或 Worker 调用）

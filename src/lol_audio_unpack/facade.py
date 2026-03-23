@@ -489,6 +489,7 @@ class LolAudioUnpackApp:
         mapping_include_champions: bool = True,
         mapping_include_maps: bool = True,
         on_entity_complete: Callable[[RemoteEntityCallbackPayload], None] | None = None,
+        progress_callback: Callable[[int, int, str], None] | None = None,
         download_retry_attempts: int = DEFAULT_REMOTE_DOWNLOAD_RETRY_ATTEMPTS,
         entity_retry_attempts: int = DEFAULT_REMOTE_ENTITY_RETRY_ATTEMPTS,
     ) -> None:
@@ -504,6 +505,7 @@ class LolAudioUnpackApp:
             mapping_include_champions: mapping 阶段是否包含英雄。
             mapping_include_maps: mapping 阶段是否包含地图。
             on_entity_complete: 当前实体执行完成后的可选回调。
+            progress_callback: 每个实体处理结束后的可选进度回调。
             download_retry_attempts: 单次实体尝试内，WAD 下载类错误的最大重试次数。
             entity_retry_attempts: 单实体完整流程失败时的最大重试次数。
 
@@ -536,7 +538,8 @@ class LolAudioUnpackApp:
             logger.warning("remote 模式未生成任何实体工作项。")
             return
 
-        logger.info(f"remote 模式启用单位驱动执行，共 {len(work_items)} 个实体工作项。")
+        total_work_items = len(work_items)
+        logger.info(f"remote 模式启用单位驱动执行，共 {total_work_items} 个实体工作项。")
         reader = self._create_reader()
         remote_preparer = RemoteSnapshotPreparer(ctx=self.ctx)
 
@@ -544,7 +547,7 @@ class LolAudioUnpackApp:
             logger.info(
                 "remote 单位进度 {}/{}: {} {} (extract={}, mapping={})",
                 index,
-                len(work_items),
+                total_work_items,
                 work_item.entity_type,
                 work_item.entity_id,
                 work_item.need_extract,
@@ -606,6 +609,17 @@ class LolAudioUnpackApp:
                             entity_id=work_item.entity_id,
                             integrate_data=mapping_options.integrate_data,
                         )
+                    if progress_callback is not None:
+                        operation_name = "解包/映射"
+                        if work_item.need_extract and not work_item.need_mapping:
+                            operation_name = "解包"
+                        elif work_item.need_mapping and not work_item.need_extract:
+                            operation_name = "映射"
+                        progress_callback(
+                            index,
+                            total_work_items,
+                            f"{entity_data.entity_name} {operation_name}完成",
+                        )
                     if on_entity_complete is not None and (extract_output_paths or mapping_output_path is not None):
                         on_entity_complete(
                             RemoteEntityCallbackPayload(
@@ -658,8 +672,17 @@ class LolAudioUnpackApp:
         include_champions: bool = True,
         include_maps: bool = True,
         prepare_remote: bool = True,
+        progress_callback: Callable[[str, int, int, str], None] | None = None,
     ) -> None:
-        """执行解包流程。"""
+        """执行解包流程。
+
+        Args:
+            opts: 解包操作选项。
+            include_champions: 是否包含英雄。
+            include_maps: 是否包含地图。
+            prepare_remote: 是否在 remote 模式下预准备所需资源。
+            progress_callback: 每个实体处理结束后的可选进度回调。
+        """
         reader = self._create_reader()
         remote_preparer = self._build_remote_preparer()
         if prepare_remote and remote_preparer is not None:
@@ -678,11 +701,21 @@ class LolAudioUnpackApp:
 
         if opts.champion_ids is not None:
             unpack_champions(
-                reader=reader, champion_ids=list(opts.champion_ids), max_workers=opts.max_workers, ctx=self.ctx
+                reader=reader,
+                champion_ids=list(opts.champion_ids),
+                max_workers=opts.max_workers,
+                ctx=self.ctx,
+                progress_callback=progress_callback,
             )
             return
         if opts.map_ids is not None:
-            unpack_maps(reader=reader, map_ids=list(opts.map_ids), max_workers=opts.max_workers, ctx=self.ctx)
+            unpack_maps(
+                reader=reader,
+                map_ids=list(opts.map_ids),
+                max_workers=opts.max_workers,
+                ctx=self.ctx,
+                progress_callback=progress_callback,
+            )
             return
 
         unpack_audio_all(
@@ -691,6 +724,7 @@ class LolAudioUnpackApp:
             include_champions=include_champions,
             include_maps=include_maps,
             ctx=self.ctx,
+            progress_callback=progress_callback,
         )
 
     def mapping(
@@ -700,6 +734,7 @@ class LolAudioUnpackApp:
         include_champions: bool = True,
         include_maps: bool = True,
         prepare_remote: bool = True,
+        progress_callback: Callable[[str, int, int, str], None] | None = None,
     ) -> None:
         """执行映射流程。"""
         backend_label = self._describe_mapping_backend()
@@ -726,6 +761,7 @@ class LolAudioUnpackApp:
                 max_workers=opts.max_workers,
                 integrate_data=opts.integrate_data,
                 ctx=self.ctx,
+                progress_callback=progress_callback,
             )
             return
         if opts.map_ids is not None:
@@ -735,6 +771,7 @@ class LolAudioUnpackApp:
                 max_workers=opts.max_workers,
                 integrate_data=opts.integrate_data,
                 ctx=self.ctx,
+                progress_callback=progress_callback,
             )
             return
 
@@ -745,6 +782,7 @@ class LolAudioUnpackApp:
             include_maps=include_maps,
             integrate_data=opts.integrate_data,
             ctx=self.ctx,
+            progress_callback=progress_callback,
         )
 
 

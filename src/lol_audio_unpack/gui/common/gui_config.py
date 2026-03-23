@@ -66,6 +66,9 @@ class GuiConfig:
         # GUI 专有配置
         self._theme_mode: str = "Auto"  # Light, Dark, Auto
         self._theme_color: str = "#009faa"
+        self._page_smooth_scroll_enabled: bool = False
+        self._widget_smooth_scroll_enabled: bool = False
+        self._log_drawer_auto_collapse_enabled: bool = True
 
     def load(self) -> None:
         """从 .lol.env 和 QSettings 加载配置。"""
@@ -106,6 +109,26 @@ class GuiConfig:
         self._theme_mode = self._qs.value("theme_mode", "Auto")
         self._theme_color = self._qs.value("theme_color", "#009faa")
 
+        legacy_smooth_scroll = self._qs.value("smooth_scroll_enabled", _UNSET)
+        stored_page_smooth_scroll = self._qs.value("page_smooth_scroll_enabled", _UNSET)
+        stored_widget_smooth_scroll = self._qs.value("widget_smooth_scroll_enabled", _UNSET)
+        legacy_smooth_scroll_enabled = (
+            False if legacy_smooth_scroll is _UNSET else self._to_bool(legacy_smooth_scroll)
+        )
+        self._page_smooth_scroll_enabled = (
+            legacy_smooth_scroll_enabled
+            if stored_page_smooth_scroll is _UNSET
+            else self._to_bool(stored_page_smooth_scroll)
+        )
+        self._widget_smooth_scroll_enabled = (
+            legacy_smooth_scroll_enabled
+            if stored_widget_smooth_scroll is _UNSET
+            else self._to_bool(stored_widget_smooth_scroll)
+        )
+        self._log_drawer_auto_collapse_enabled = self._to_bool(
+            self._qs.value("log_drawer_auto_collapse_enabled", True)
+        )
+
     def save(self) -> None:
         """保存配置到 .lol.env。"""
         # 确保目录存在
@@ -130,6 +153,10 @@ class GuiConfig:
         self._qs.setValue("vgmstream_path", self._vgmstream_path)
         self._qs.setValue("theme_mode", self._theme_mode)
         self._qs.setValue("theme_color", self._theme_color)
+        self._qs.setValue("page_smooth_scroll_enabled", self._page_smooth_scroll_enabled)
+        self._qs.setValue("widget_smooth_scroll_enabled", self._widget_smooth_scroll_enabled)
+        self._qs.setValue("log_drawer_auto_collapse_enabled", self._log_drawer_auto_collapse_enabled)
+        self._qs.setValue("smooth_scroll_enabled", self.smooth_scroll_enabled)
 
     def to_app_context_overrides(self) -> dict[str, str | bool]:
         """构建供 ``create_app_context`` 使用的配置映射。"""
@@ -289,6 +316,44 @@ class GuiConfig:
     @theme_color.setter
     def theme_color(self, v: str) -> None:
         self._theme_color = v
+
+    @property
+    def page_smooth_scroll_enabled(self) -> bool:
+        """是否启用页面级平滑滚动。"""
+        return self._page_smooth_scroll_enabled
+
+    @page_smooth_scroll_enabled.setter
+    def page_smooth_scroll_enabled(self, v: bool) -> None:
+        self._page_smooth_scroll_enabled = bool(v)
+
+    @property
+    def widget_smooth_scroll_enabled(self) -> bool:
+        """是否启用控件级平滑滚动。"""
+        return self._widget_smooth_scroll_enabled
+
+    @widget_smooth_scroll_enabled.setter
+    def widget_smooth_scroll_enabled(self, v: bool) -> None:
+        self._widget_smooth_scroll_enabled = bool(v)
+
+    @property
+    def smooth_scroll_enabled(self) -> bool:
+        """兼容旧配置的聚合平滑滚动开关。"""
+        return self._page_smooth_scroll_enabled and self._widget_smooth_scroll_enabled
+
+    @smooth_scroll_enabled.setter
+    def smooth_scroll_enabled(self, v: bool) -> None:
+        enabled = bool(v)
+        self._page_smooth_scroll_enabled = enabled
+        self._widget_smooth_scroll_enabled = enabled
+
+    @property
+    def log_drawer_auto_collapse_enabled(self) -> bool:
+        """点击日志抽屉外部区域时是否自动收起。"""
+        return self._log_drawer_auto_collapse_enabled
+
+    @log_drawer_auto_collapse_enabled.setter
+    def log_drawer_auto_collapse_enabled(self, v: bool) -> None:
+        self._log_drawer_auto_collapse_enabled = bool(v)
 
     # ------------------------------------------------------------------
     # Helpers
