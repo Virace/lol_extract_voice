@@ -4,6 +4,7 @@ from loguru import logger
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QApplication, QWidget
 
+import lol_audio_unpack.gui.view.execution_page as execution_page_module
 from lol_audio_unpack.gui.common import (
     clear_buffered_log_lines,
     install_startup_log_buffer,
@@ -24,6 +25,7 @@ from lol_audio_unpack.gui.components.log_drawer import (
     _build_log_panel_toggle_rect,
     _resolve_log_panel_height,
 )
+from lol_audio_unpack.gui.task_models import ExecutionTaskResult
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 
 
@@ -194,18 +196,36 @@ def test_execution_page_can_cancel_synced_selection_when_conflict_exists() -> No
     app.processEvents()
 
 
-def test_execution_page_builds_draft_from_checkbox_selection() -> None:
-    """创建任务时应自动进入队列，并让首项处于运行态占位。"""
+def test_execution_page_builds_task_model_from_checkbox_selection(monkeypatch) -> None:
+    """创建任务时应生成正式任务模型，并让首项进入运行态。"""
     app = QApplication.instance() or QApplication([])
     page = ExecutionPage()
     page.attach_runtime_log_sink()
     page.champion_ids_input.setText("1,103")
     page.map_ids_input.setText("11")
+    page.force_update_cb.setChecked(True)
+    page.bp_voice_cb.setChecked(False)
+    page.integrate_data_cb.setChecked(True)
+    started_tasks = []
+
+    def capture_started_task(task) -> None:
+        started_tasks.append(task)
+
+    monkeypatch.setattr(page, "_start_task_worker", capture_started_task)
     app.processEvents()
 
     page._queue_task_draft()
     app.processEvents()
 
+    assert len(started_tasks) == 1
+    queued_task = started_tasks[0]
+    assert queued_task.draft.champion_ids == (1, 103)
+    assert queued_task.draft.map_ids == (11,)
+    assert queued_task.draft.run_update is True
+    assert queued_task.draft.run_extract is True
+    assert queued_task.draft.run_mapping is True
+    assert queued_task.draft.with_bp_vo is False
+    assert queued_task.draft.integrate_data is True
     assert page.draft_list.count() == 1
     row_text = page.draft_list.item(0).text()
     assert "[运行中]" in row_text
@@ -227,11 +247,12 @@ def test_execution_page_builds_draft_from_checkbox_selection() -> None:
     app.processEvents()
 
 
-def test_execution_page_can_cancel_running_task_and_promote_waiting_task() -> None:
-    """取消运行中任务后，应自动把下一个等待任务提升为运行中。"""
+def test_execution_page_can_cancel_waiting_task_without_touching_running_task(monkeypatch) -> None:
+    """当前仅支持取消等待中的任务，不应伪装成已中断运行中任务。"""
     app = QApplication.instance() or QApplication([])
     page = ExecutionPage()
     page.attach_runtime_log_sink()
+    monkeypatch.setattr(page, "_start_task_worker", lambda task: None)
     app.processEvents()
 
     page._queue_task_draft()
@@ -243,15 +264,61 @@ def test_execution_page_can_cancel_running_task_and_promote_waiting_task() -> No
     assert "[运行中]" in first_item.text()
     assert "[等待中]" in second_item.text()
 
-    page._cancel_task_item(first_item)
+    page._cancel_task_item(second_item)
     app.processEvents()
 
-    assert "[已取消]" in first_item.text()
-    assert "[运行中]" in second_item.text()
+    assert "[运行中]" in first_item.text()
+    assert "[已取消]" in second_item.text()
     assert "运行中 1" in page.queue_progress_label.text()
     assert "已取消 1" in page.queue_progress_label.text()
     assert "[队列] 已取消任务：" in page.current_log_text()
-    assert "[队列] 已自动开始任务：" in page.current_log_text()
+
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_execution_page_marks_task_completed_after_worker_finishes(monkeypatch) -> None:
+    """首个任务完成后应写回完成状态并触发数据刷新请求。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    refresh_events: list[bool] = []
+    page.refresh_requested.connect(lambda: refresh_events.append(True))
+
+    class _ImmediateThreadPool:
+        def start(self, worker) -> None:
+            worker.run()
+
+    def fake_global_instance() -> _ImmediateThreadPool:
+        return _ImmediateThreadPool()
+
+    def fake_run_execution_task(task, signals) -> ExecutionTaskResult:
+        signals.progress.emit(1, 2, "音频解包完成")
+        signals.progress.emit(2, 2, "事件映射完成")
+        return ExecutionTaskResult(
+            completed_steps=("音频解包", "事件映射"),
+            summary="已完成：音频解包 -> 事件映射（1.2s）",
+            duration_seconds=1.2,
+        )
+
+    monkeypatch.setattr(execution_page_module, "run_execution_task", fake_run_execution_task)
+    monkeypatch.setattr(
+        execution_page_module.QThreadPool,
+        "globalInstance",
+        staticmethod(fake_global_instance),
+    )
+
+    page.champion_ids_input.setText("1,103")
+    page.map_ids_input.setText("11")
+    app.processEvents()
+
+    page._queue_task_draft()
+    app.processEvents()
+
+    assert page.draft_list.count() == 1
+    assert "[已完成]" in page.draft_list.item(0).text()
+    assert "已完成 1" in page.queue_progress_label.text()
+    assert page.task_progress_note.text().startswith("100%")
+    assert refresh_events == [True]
 
     page.deleteLater()
     app.processEvents()

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections import deque
+from dataclasses import replace
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -46,6 +48,18 @@ from lol_audio_unpack.gui.common import (
     apply_smooth_scroll_enabled,
     get_buffered_log_lines,
 )
+from lol_audio_unpack.gui.service.task_runner import run_execution_task
+from lol_audio_unpack.gui.task_models import (
+    TASK_STATUS_CANCELLED,
+    TASK_STATUS_COMPLETED,
+    TASK_STATUS_FAILED,
+    TASK_STATUS_RUNNING,
+    TASK_STATUS_WAITING,
+    ExecutionTaskDraft,
+    ExecutionTaskResult,
+    QueuedExecutionTask,
+)
+from lol_audio_unpack.gui.workers import TaskWorker
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app_context import AppContext
@@ -54,6 +68,29 @@ if TYPE_CHECKING:
 def _parse_csv_ids(text: str) -> tuple[str, ...]:
     """将逗号分隔的 ID 输入解析为字符串元组。"""
     return tuple(part.strip() for part in text.split(",") if part.strip())
+
+
+def _parse_csv_int_ids(text: str, *, label: str) -> tuple[int, ...] | None:
+    """将逗号分隔的数字 ID 输入解析为整数元组。
+
+    Args:
+        text: 输入框中的原始文本。
+        label: 用于错误提示的人类可读标签。
+
+    Returns:
+        解析成功后的整数元组；为空时返回 ``None``。
+
+    Raises:
+        ValueError: 当存在非数字 ID 时抛出。
+    """
+    raw_ids = _parse_csv_ids(text)
+    if not raw_ids:
+        return None
+
+    try:
+        return tuple(int(entity_id) for entity_id in raw_ids)
+    except ValueError as exc:  # pragma: no cover - 由下层错误文本补充即可
+        raise ValueError(f"{label} 仅支持逗号分隔的数字 ID。") from exc
 
 
 def _build_target_summary(champion_ids: tuple[str, ...], map_ids: tuple[str, ...]) -> str:
@@ -72,11 +109,7 @@ def _build_task_scope_summary(*, include_extract: bool, include_mapping: bool) -
         parts.append("事件映射")
     return " + ".join(parts) if parts else "未选择执行内容"
 
-
 TASK_ITEM_ROLE = int(Qt.ItemDataRole.UserRole)
-TASK_STATUS_WAITING = "等待中"
-TASK_STATUS_RUNNING = "运行中"
-TASK_STATUS_CANCELLED = "已取消"
 
 
 def _build_queue_item_text(*, task_id: int, status: str, summary: str) -> str:
@@ -237,6 +270,8 @@ class ExecutionPage(SmoothScrollArea):
         self._runtime_log_sink_id: int | None = None
         self._synced_selection: dict[str, Any] = self._build_empty_synced_selection()
         self._last_draft_summary = "暂无队列任务。"
+        self._active_task_id: int | None = None
+        self._active_worker: TaskWorker | None = None
         self.destroyed.connect(self._detach_runtime_log_sink)
         self._build_ui()
         self._setup_connections()
@@ -394,7 +429,7 @@ class ExecutionPage(SmoothScrollArea):
         draft_header.addWidget(self.clear_drafts_btn)
         draft_layout.addLayout(draft_header)
 
-        draft_hint = CaptionLabel("右键任务可取消。", self.draft_card)
+        draft_hint = CaptionLabel("右键等待中的任务可取消；运行中任务暂不支持中断。", self.draft_card)
         draft_hint.setWordWrap(True)
         draft_layout.addWidget(draft_hint)
 
@@ -524,6 +559,65 @@ class ExecutionPage(SmoothScrollArea):
             "map_ids": (),
             "summary": "尚未从实体总览同步选择。",
         }
+
+    def _current_selection_source(self) -> str:
+        """返回当前任务输入的来源标识。"""
+        champion_ids, map_ids = self._current_target_ids()
+        if (
+            self._synced_selection["source"] != "未同步"
+            and champion_ids == tuple(self._synced_selection["champion_ids"])
+            and map_ids == tuple(self._synced_selection["map_ids"])
+        ):
+            return str(self._synced_selection["source"])
+        if champion_ids or map_ids:
+            return "manual_input"
+        return "default_scope"
+
+    def _build_task_draft(self) -> ExecutionTaskDraft:
+        """根据当前界面状态创建任务草稿快照。"""
+        champion_ids = _parse_csv_int_ids(self.champion_ids_input.text(), label="英雄 ID")
+        map_ids = _parse_csv_int_ids(self.map_ids_input.text(), label="地图 ID")
+        exclude_types = ("SFX", "MUSIC") if self.vo_filter.currentRouteKey() == "VO" else ()
+        app_context_overrides = tuple((self.gui_config.to_app_context_overrides() if self.gui_config else {}).items())
+        return ExecutionTaskDraft(
+            source=self._current_selection_source(),
+            source_summary=self.selection_source_hint.text(),
+            champion_ids=champion_ids,
+            map_ids=map_ids,
+            run_update=self.force_update_cb.isChecked(),
+            run_extract=self.extract_task_cb.isChecked(),
+            run_mapping=self.mapping_task_cb.isChecked(),
+            max_workers=int(self.max_workers_combo.currentText()),
+            with_bp_vo=self.bp_voice_cb.isChecked(),
+            exclude_types=exclude_types,
+            integrate_data=self.integrate_data_cb.isChecked(),
+            app_context_overrides=app_context_overrides,
+        )
+
+    def _build_task_item_tooltip(self, task: QueuedExecutionTask) -> str:
+        """构造任务列表项的悬停提示文本。"""
+        lines = [task.summary]
+        if task.result_summary:
+            lines.append(task.result_summary)
+        if task.error_message:
+            lines.append(f"错误：{task.error_message}")
+        return "\n".join(lines)
+
+    def _set_task_running_state(self, running: bool) -> None:
+        """同步内部运行态并向主窗口发出状态信号。"""
+        if self._is_task_running == running:
+            return
+        self._is_task_running = running
+        self.task_running_changed.emit(running)
+
+    def _find_task_item_by_id(self, task_id: int) -> QListWidgetItem | None:
+        """按任务编号查找对应的列表项。"""
+        for index in range(self.draft_list.count()):
+            item = self.draft_list.item(index)
+            payload = item.data(TASK_ITEM_ROLE)
+            if isinstance(payload, QueuedExecutionTask) and payload.task_id == task_id:
+                return item
+        return None
 
     def _apply_selected_entities(
         self,
@@ -745,14 +839,16 @@ class ExecutionPage(SmoothScrollArea):
         counts = {
             TASK_STATUS_RUNNING: 0,
             TASK_STATUS_WAITING: 0,
+            TASK_STATUS_COMPLETED: 0,
+            TASK_STATUS_FAILED: 0,
             TASK_STATUS_CANCELLED: 0,
         }
         for index in range(self.draft_list.count()):
             item = self.draft_list.item(index)
             payload = item.data(TASK_ITEM_ROLE)
-            if not isinstance(payload, dict):
+            if not isinstance(payload, QueuedExecutionTask):
                 continue
-            status = str(payload.get("status", ""))
+            status = payload.status
             if status in counts:
                 counts[status] += 1
         return counts
@@ -762,35 +858,52 @@ class ExecutionPage(SmoothScrollArea):
         for index in range(self.draft_list.count()):
             item = self.draft_list.item(index)
             payload = item.data(TASK_ITEM_ROLE)
-            if isinstance(payload, dict) and payload.get("status") == TASK_STATUS_RUNNING:
+            if isinstance(payload, QueuedExecutionTask) and payload.status == TASK_STATUS_RUNNING:
                 return item
         return None
 
-    def _update_queue_item(
+    def _update_queue_item(  # noqa: PLR0913
         self,
         item: QListWidgetItem,
         *,
         status: str | None = None,
         summary: str | None = None,
-    ) -> dict[str, Any]:
-        """更新任务项元数据并同步文本显示。"""
+        started_at: datetime | None = None,
+        finished_at: datetime | None = None,
+        progress_current: int | None = None,
+        progress_total: int | None = None,
+        progress_message: str | None = None,
+        result_summary: str | None = None,
+        error_message: str | None = None,
+    ) -> QueuedExecutionTask:
+        """更新任务项模型并同步文本显示。"""
         payload = item.data(TASK_ITEM_ROLE)
-        if not isinstance(payload, dict):
-            payload = {}
-        if status is not None:
-            payload["status"] = status
-        if summary is not None:
-            payload["summary"] = summary
+        if not isinstance(payload, QueuedExecutionTask):
+            raise TypeError("任务队列项缺少有效的任务模型。")
 
-        item.setData(TASK_ITEM_ROLE, payload)
+        updated_payload = replace(
+            payload,
+            status=status if status is not None else payload.status,
+            summary=summary if summary is not None else payload.summary,
+            started_at=started_at if started_at is not None else payload.started_at,
+            finished_at=finished_at if finished_at is not None else payload.finished_at,
+            progress_current=progress_current if progress_current is not None else payload.progress_current,
+            progress_total=progress_total if progress_total is not None else payload.progress_total,
+            progress_message=progress_message if progress_message is not None else payload.progress_message,
+            result_summary=result_summary if result_summary is not None else payload.result_summary,
+            error_message=error_message if error_message is not None else payload.error_message,
+        )
+
+        item.setData(TASK_ITEM_ROLE, updated_payload)
         item.setText(
             _build_queue_item_text(
-                task_id=int(payload.get("task_id", 0)),
-                status=str(payload.get("status", TASK_STATUS_WAITING)),
-                summary=str(payload.get("summary", "")),
+                task_id=updated_payload.task_id,
+                status=updated_payload.status,
+                summary=updated_payload.summary,
             )
         )
-        return payload
+        item.setToolTip(self._build_task_item_tooltip(updated_payload))
+        return updated_payload
 
     def _start_next_waiting_task(self) -> QListWidgetItem | None:
         """将下一个等待中的任务提升为运行中。"""
@@ -800,35 +913,184 @@ class ExecutionPage(SmoothScrollArea):
         for index in range(self.draft_list.count()):
             item = self.draft_list.item(index)
             payload = item.data(TASK_ITEM_ROLE)
-            if isinstance(payload, dict) and payload.get("status") == TASK_STATUS_WAITING:
-                updated_payload = self._update_queue_item(item, status=TASK_STATUS_RUNNING)
-                summary = str(updated_payload.get("summary", ""))
+            if isinstance(payload, QueuedExecutionTask) and payload.status == TASK_STATUS_WAITING:
+                updated_payload = self._update_queue_item(
+                    item,
+                    status=TASK_STATUS_RUNNING,
+                    started_at=datetime.now(),
+                    progress_current=0,
+                    progress_total=max(1, len(payload.draft.selected_steps())),
+                    progress_message="等待后台线程启动…",
+                    error_message="",
+                )
+                self._active_task_id = updated_payload.task_id
+                self._set_task_running_state(True)
                 self._last_draft_summary = item.text()
-                self._log_gui_event("info", f"[队列] 已自动开始任务：{summary}")
+                self._log_gui_event("info", f"[队列] 已自动开始任务：{updated_payload.summary}")
+                self._refresh_progress_panel(
+                    status_text="状态：任务启动中。",
+                    note_text="0% · 等待后台线程启动。",
+                )
+                self._start_task_worker(updated_payload)
                 return item
         return None
+
+    def _start_task_worker(self, task: QueuedExecutionTask) -> None:
+        """为指定任务创建后台 worker 并提交到线程池。"""
+
+        def run_with_signals(signals) -> ExecutionTaskResult:
+            return run_execution_task(task, signals)
+
+        worker = TaskWorker(run_with_signals, pass_signals=True)
+        worker.signals.started.connect(lambda task_id=task.task_id: self._on_task_started(task_id))
+        worker.signals.progress.connect(
+            lambda current, total, message, task_id=task.task_id: self._on_task_progress(
+                task_id,
+                current,
+                total,
+                message,
+            )
+        )
+        worker.signals.finished.connect(lambda result, task_id=task.task_id: self._on_task_finished(task_id, result))
+        worker.signals.failed.connect(lambda error, task_id=task.task_id: self._on_task_failed(task_id, error))
+        self._active_worker = worker
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_task_started(self, task_id: int) -> None:
+        """处理后台任务真正启动后的 UI 同步。"""
+        item = self._find_task_item_by_id(task_id)
+        if item is None:
+            return
+        payload = item.data(TASK_ITEM_ROLE)
+        if not isinstance(payload, QueuedExecutionTask):
+            return
+        self._refresh_progress_panel(
+            status_text="状态：任务执行中。",
+            note_text=f"0% · {payload.progress_message or '后台任务已开始执行。'}",
+        )
+
+    def _on_task_progress(self, task_id: int, current: int, total: int, message: str) -> None:
+        """接收后台任务进度并刷新面板。"""
+        item = self._find_task_item_by_id(task_id)
+        if item is None:
+            return
+        self._update_queue_item(
+            item,
+            progress_current=current,
+            progress_total=max(total, 1),
+            progress_message=message,
+        )
+        if self._active_task_id == task_id:
+            self._refresh_progress_panel()
+
+    def _on_task_finished(self, task_id: int, result: object) -> None:
+        """处理后台任务成功完成后的状态收敛。"""
+        item = self._find_task_item_by_id(task_id)
+        if item is None:
+            return
+
+        task_result = (
+            result
+            if isinstance(result, ExecutionTaskResult)
+            else ExecutionTaskResult(completed_steps=(), summary="任务执行完成。", duration_seconds=0.0)
+        )
+        payload = item.data(TASK_ITEM_ROLE)
+        if not isinstance(payload, QueuedExecutionTask):
+            return
+
+        updated_payload = self._update_queue_item(
+            item,
+            status=TASK_STATUS_COMPLETED,
+            finished_at=datetime.now(),
+            progress_current=max(payload.progress_total, len(task_result.completed_steps), 1),
+            progress_total=max(payload.progress_total, len(task_result.completed_steps), 1),
+            progress_message=task_result.summary,
+            result_summary=task_result.summary,
+            error_message="",
+        )
+        self._last_draft_summary = item.text()
+        self._active_task_id = None
+        self._active_worker = None
+        self._set_task_running_state(False)
+        next_item = self._start_next_waiting_task()
+        if next_item is None:
+            self._refresh_progress_panel(
+                status_text="状态：最近任务已完成。",
+                note_text=f"100% · {updated_payload.result_summary or task_result.summary}",
+            )
+            self.refresh_requested.emit()
+        else:
+            self._refresh_progress_panel()
+
+    def _on_task_failed(self, task_id: int, error: str) -> None:
+        """处理后台任务失败后的状态收敛。"""
+        item = self._find_task_item_by_id(task_id)
+        if item is None:
+            return
+
+        payload = item.data(TASK_ITEM_ROLE)
+        if not isinstance(payload, QueuedExecutionTask):
+            return
+
+        progress_total = max(payload.progress_total, 1)
+        progress_current = min(payload.progress_current, progress_total)
+        updated_payload = self._update_queue_item(
+            item,
+            status=TASK_STATUS_FAILED,
+            finished_at=datetime.now(),
+            progress_current=progress_current,
+            progress_total=progress_total,
+            progress_message=error,
+            error_message=error,
+        )
+        self._last_draft_summary = item.text()
+        self._active_task_id = None
+        self._active_worker = None
+        self._set_task_running_state(False)
+        logger.error(f"[队列] 任务 #{task_id} 执行失败：{error}")
+        next_item = self._start_next_waiting_task()
+        if next_item is None:
+            percent = int((progress_current / progress_total) * 100) if progress_total else 0
+            self._refresh_progress_panel(
+                status_text="状态：最近任务执行失败。",
+                note_text=f"{percent}% · {updated_payload.error_message or error}",
+            )
+            self.refresh_requested.emit()
+        else:
+            self._refresh_progress_panel()
+        InfoBar.error(
+            "任务执行失败",
+            error,
+            parent=self._feedback_parent(),
+            position=InfoBarPosition.TOP,
+        )
 
     def _cancel_task_item(self, item: QListWidgetItem) -> None:
         """取消指定任务项，并在需要时启动下一个等待任务。"""
         payload = item.data(TASK_ITEM_ROLE)
-        if not isinstance(payload, dict):
+        if not isinstance(payload, QueuedExecutionTask):
             return
 
-        current_status = str(payload.get("status", ""))
+        current_status = payload.status
         if current_status == TASK_STATUS_CANCELLED:
             return
 
-        summary = str(payload.get("summary", ""))
-        was_running = current_status == TASK_STATUS_RUNNING
-        self._update_queue_item(item, status=TASK_STATUS_CANCELLED)
+        if current_status != TASK_STATUS_WAITING:
+            InfoBar.warning(
+                "暂不支持取消",
+                "当前仅支持取消等待中的任务，运行中的真实任务暂不支持中断。",
+                parent=self._feedback_parent(),
+                position=InfoBarPosition.TOP,
+            )
+            return
+
+        self._update_queue_item(item, status=TASK_STATUS_CANCELLED, finished_at=datetime.now())
         self._last_draft_summary = item.text()
-        self._log_gui_event("info", f"[队列] 已取消任务：{summary}")
-        if was_running:
-            self._start_next_waiting_task()
+        self._log_gui_event("info", f"[队列] 已取消任务：{payload.summary}")
         self._refresh_progress_panel()
         InfoBar.info(
             "任务已取消",
-            summary or item.text(),
+            payload.summary or item.text(),
             parent=self._feedback_parent(),
             position=InfoBarPosition.TOP,
         )
@@ -840,16 +1102,15 @@ class ExecutionPage(SmoothScrollArea):
             return
 
         payload = item.data(TASK_ITEM_ROLE)
-        if not isinstance(payload, dict):
+        if not isinstance(payload, QueuedExecutionTask):
             return
 
-        status = str(payload.get("status", ""))
-        if status == TASK_STATUS_CANCELLED:
+        status = payload.status
+        if status in {TASK_STATUS_CANCELLED, TASK_STATUS_RUNNING, TASK_STATUS_COMPLETED, TASK_STATUS_FAILED}:
             return
 
         menu = QMenu(self.draft_list)
-        action_text = "取消运行中任务" if status == TASK_STATUS_RUNNING else "取消排队任务"
-        cancel_action = menu.addAction(action_text)
+        cancel_action = menu.addAction("取消排队任务")
         selected_action = menu.exec(self.draft_list.viewport().mapToGlobal(pos))
         if selected_action == cancel_action:
             self._cancel_task_item(item)
@@ -863,26 +1124,44 @@ class ExecutionPage(SmoothScrollArea):
         """刷新右侧任务进度面板的摘要。"""
         draft_count = self._draft_queue_size()
         counts = self._queue_status_counts()
+        running_item = self._find_running_task_item()
+        running_task = running_item.data(TASK_ITEM_ROLE) if running_item is not None else None
+        progress_value = 0
         if status_text is None:
             if draft_count == 0:
                 status_text = "状态：界面已就绪，等待创建第一条任务。"
-            elif counts[TASK_STATUS_RUNNING] > 0:
+            elif isinstance(running_task, QueuedExecutionTask):
                 status_text = "状态：队列中有运行中的任务。"
             elif counts[TASK_STATUS_WAITING] > 0:
                 status_text = "状态：队列中有等待中的任务。"
+            elif counts[TASK_STATUS_FAILED] > 0:
+                status_text = "状态：队列中存在执行失败的任务。"
+            elif counts[TASK_STATUS_COMPLETED] > 0:
+                status_text = "状态：队列中的任务已执行完成。"
             else:
                 status_text = "状态：当前队列中的任务已取消。"
         if note_text is None:
-            if draft_count == 0:
+            if isinstance(running_task, QueuedExecutionTask):
+                progress_total = max(running_task.progress_total, 1)
+                progress_value = int((running_task.progress_current / progress_total) * 100)
+                note_text = f"{progress_value}% · {running_task.progress_message or '后台任务执行中。'}"
+            elif draft_count == 0:
                 note_text = "0% · 当前还没有待执行任务。"
+            elif counts[TASK_STATUS_COMPLETED] > 0 and counts[TASK_STATUS_RUNNING] == 0 and counts[TASK_STATUS_WAITING] == 0:
+                progress_value = 100
+                note_text = "100% · 队列中的可执行任务已完成。"
+            elif counts[TASK_STATUS_FAILED] > 0 and counts[TASK_STATUS_RUNNING] == 0:
+                note_text = "0% · 请查看日志抽屉和错误提示定位失败原因。"
             else:
                 note_text = "0% · 当前显示任务队列状态。"
 
-        self.task_progress_bar.setValue(0)
+        self.task_progress_bar.setValue(progress_value)
         self.task_status_label.setText(status_text)
         self.task_progress_note.setText(note_text)
         self.queue_progress_label.setText(
-            f"任务队列：{draft_count} 条 · 运行中 {counts[TASK_STATUS_RUNNING]} · 等待中 {counts[TASK_STATUS_WAITING]} · 已取消 {counts[TASK_STATUS_CANCELLED]}"
+            "任务队列："
+            f"{draft_count} 条 · 运行中 {counts[TASK_STATUS_RUNNING]} · 等待中 {counts[TASK_STATUS_WAITING]} "
+            f"· 已完成 {counts[TASK_STATUS_COMPLETED]} · 失败 {counts[TASK_STATUS_FAILED]} · 已取消 {counts[TASK_STATUS_CANCELLED]}"
         )
         self.recent_task_label.setText(f"最近任务：{self._last_draft_summary}")
 
@@ -921,30 +1200,50 @@ class ExecutionPage(SmoothScrollArea):
             )
             return
 
+        try:
+            draft = self._build_task_draft()
+        except ValueError as exc:
+            self._log_gui_event("warning", f"[队列] {exc}")
+            InfoBar.warning(
+                "无法创建任务",
+                str(exc),
+                parent=self._feedback_parent(),
+                position=InfoBarPosition.TOP,
+            )
+            return
+
         self._draft_count += 1
         summary = self._current_task_config_summary()
-        status = TASK_STATUS_WAITING if self._find_running_task_item() is not None else TASK_STATUS_RUNNING
-        row_text = _build_queue_item_text(task_id=self._draft_count, status=status, summary=summary)
+        queued_task = QueuedExecutionTask(
+            task_id=self._draft_count,
+            draft=draft,
+            summary=summary,
+        )
+        row_text = _build_queue_item_text(
+            task_id=queued_task.task_id,
+            status=queued_task.status,
+            summary=queued_task.summary,
+        )
 
         if self.draft_list.count() == 1 and self.draft_list.item(0).flags() == Qt.NoItemFlags:
             self.draft_list.clear()
 
         item = QListWidgetItem(row_text)
-        item.setData(
-            TASK_ITEM_ROLE,
-            {
-                "task_id": self._draft_count,
-                "status": status,
-                "summary": summary,
-            },
-        )
+        item.setData(TASK_ITEM_ROLE, queued_task)
+        item.setToolTip(self._build_task_item_tooltip(queued_task))
         self.draft_list.addItem(item)
-        self._last_draft_summary = row_text
-        self._refresh_progress_panel(
-            status_text="状态：任务已加入队列。" if status == TASK_STATUS_RUNNING else "状态：新任务已加入等待队列。",
-            note_text="0% · 当前显示任务队列状态。",
-        )
+        self._last_draft_summary = item.text()
         self._log_gui_event("info", f"[队列] {row_text}")
+        started_item = self._start_next_waiting_task()
+        if started_item is None:
+            self._refresh_progress_panel(
+                status_text="状态：新任务已加入等待队列。",
+                note_text="0% · 当前显示任务队列状态。",
+            )
+        elif self._active_task_id is not None:
+            self._refresh_progress_panel(status_text="状态：任务已加入队列。")
+        else:
+            self._refresh_progress_panel()
         InfoBar.success(
             "已加入任务队列",
             row_text,
@@ -962,6 +1261,29 @@ class ExecutionPage(SmoothScrollArea):
 
     def _clear_draft_queue(self) -> None:
         """清空当前任务队列。"""
+        running_item = self._find_running_task_item()
+        if running_item is not None:
+            removed_count = 0
+            for index in range(self.draft_list.count() - 1, -1, -1):
+                item = self.draft_list.item(index)
+                payload = item.data(TASK_ITEM_ROLE)
+                if isinstance(payload, QueuedExecutionTask) and payload.status != TASK_STATUS_RUNNING:
+                    self.draft_list.takeItem(index)
+                    removed_count += 1
+
+            if removed_count == 0:
+                self._log_gui_event("warning", "[队列] 当前存在运行中的任务，暂不支持直接清空。")
+                InfoBar.warning(
+                    "暂无法清空",
+                    "运行中的真实任务暂不支持直接移出队列，请等待任务结束后再清空。",
+                    parent=self._feedback_parent(),
+                    position=InfoBarPosition.TOP,
+                )
+            else:
+                self._log_gui_event("info", f"[队列] 已清空 {removed_count} 条非运行中任务。")
+                self._refresh_progress_panel()
+            return
+
         self._set_queue_placeholder()
         self._last_draft_summary = "暂无队列任务。"
         self._refresh_progress_panel()
