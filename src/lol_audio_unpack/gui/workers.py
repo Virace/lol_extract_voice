@@ -13,7 +13,7 @@ class WorkerSignals(QObject):
     started = Signal()
     finished = Signal(object)
     failed = Signal(str)
-    progress = Signal(int, int, str)
+    progress = Signal(object)
     log = Signal(str)
 
 

@@ -56,6 +56,7 @@ from lol_audio_unpack.gui.task_models import (
     TASK_STATUS_RUNNING,
     TASK_STATUS_WAITING,
     ExecutionTaskDraft,
+    ExecutionTaskProgress,
     ExecutionTaskResult,
     QueuedExecutionTask,
 )
@@ -272,6 +273,7 @@ class ExecutionPage(SmoothScrollArea):
         self._last_draft_summary = "暂无队列任务。"
         self._active_task_id: int | None = None
         self._active_worker: TaskWorker | None = None
+        self._stage_completion_notifications: set[tuple[int, str]] = set()
         self.destroyed.connect(self._detach_runtime_log_sink)
         self._build_ui()
         self._setup_connections()
@@ -379,13 +381,13 @@ class ExecutionPage(SmoothScrollArea):
         progress_layout.setContentsMargins(18, 16, 18, 16)
         progress_layout.setSpacing(10)
         progress_title = StrongBodyLabel("任务进度", self.progress_card)
-        progress_hint = CaptionLabel("这里会显示任务队列状态和最近一条任务。", self.progress_card)
+        progress_hint = CaptionLabel("这里会显示当前阶段、实体进度和最近一条任务。", self.progress_card)
         progress_hint.setWordWrap(True)
         self.task_status_label = CaptionLabel("状态：界面已就绪，等待创建第一条任务。", self.progress_card)
         self.task_progress_bar = ProgressBar(self.progress_card)
-        self.task_progress_bar.setRange(0, 100)
+        self.task_progress_bar.setRange(0, 1)
         self.task_progress_bar.setValue(0)
-        self.task_progress_note = BodyLabel("0% · 当前还没有待执行任务。", self.progress_card)
+        self.task_progress_note = BodyLabel("当前进度：暂无运行中的任务。", self.progress_card)
         self.queue_progress_label = CaptionLabel("任务队列：0 条", self.progress_card)
         self.recent_task_label = CaptionLabel("最近任务：暂无队列任务。", self.progress_card)
         self.recent_task_label.setWordWrap(True)
@@ -873,6 +875,7 @@ class ExecutionPage(SmoothScrollArea):
         progress_current: int | None = None,
         progress_total: int | None = None,
         progress_message: str | None = None,
+        progress_detail: ExecutionTaskProgress | None = None,
         result_summary: str | None = None,
         error_message: str | None = None,
     ) -> QueuedExecutionTask:
@@ -890,6 +893,7 @@ class ExecutionPage(SmoothScrollArea):
             progress_current=progress_current if progress_current is not None else payload.progress_current,
             progress_total=progress_total if progress_total is not None else payload.progress_total,
             progress_message=progress_message if progress_message is not None else payload.progress_message,
+            progress_detail=progress_detail if progress_detail is not None else payload.progress_detail,
             result_summary=result_summary if result_summary is not None else payload.result_summary,
             error_message=error_message if error_message is not None else payload.error_message,
         )
@@ -919,8 +923,9 @@ class ExecutionPage(SmoothScrollArea):
                     status=TASK_STATUS_RUNNING,
                     started_at=datetime.now(),
                     progress_current=0,
-                    progress_total=max(1, len(payload.draft.selected_steps())),
+                    progress_total=0,
                     progress_message="等待后台线程启动…",
+                    progress_detail=None,
                     error_message="",
                 )
                 self._active_task_id = updated_payload.task_id
@@ -929,7 +934,9 @@ class ExecutionPage(SmoothScrollArea):
                 self._log_gui_event("info", f"[队列] 已自动开始任务：{updated_payload.summary}")
                 self._refresh_progress_panel(
                     status_text="状态：任务启动中。",
-                    note_text="0% · 等待后台线程启动。",
+                    note_text="当前进度：准备中 · 等待后台线程启动。",
+                    progress_current=0,
+                    progress_total=1,
                 )
                 self._start_task_worker(updated_payload)
                 return item
@@ -944,11 +951,9 @@ class ExecutionPage(SmoothScrollArea):
         worker = TaskWorker(run_with_signals, pass_signals=True)
         worker.signals.started.connect(lambda task_id=task.task_id: self._on_task_started(task_id))
         worker.signals.progress.connect(
-            lambda current, total, message, task_id=task.task_id: self._on_task_progress(
+            lambda progress, task_id=task.task_id: self._on_task_progress(
                 task_id,
-                current,
-                total,
-                message,
+                progress,
             )
         )
         worker.signals.finished.connect(lambda result, task_id=task.task_id: self._on_task_finished(task_id, result))
@@ -966,20 +971,42 @@ class ExecutionPage(SmoothScrollArea):
             return
         self._refresh_progress_panel(
             status_text="状态：任务执行中。",
-            note_text=f"0% · {payload.progress_message or '后台任务已开始执行。'}",
+            note_text=f"当前进度：准备中 · {payload.progress_message or '后台任务已开始执行。'}",
+            progress_current=0,
+            progress_total=1,
         )
 
-    def _on_task_progress(self, task_id: int, current: int, total: int, message: str) -> None:
+    def _on_task_progress(self, task_id: int, progress: object) -> None:
         """接收后台任务进度并刷新面板。"""
+        if not isinstance(progress, ExecutionTaskProgress):
+            return
         item = self._find_task_item_by_id(task_id)
         if item is None:
             return
         self._update_queue_item(
             item,
-            progress_current=current,
-            progress_total=max(total, 1),
-            progress_message=message,
+            progress_current=max(progress.current, 0),
+            progress_total=max(progress.total, 0),
+            progress_message=progress.message,
+            progress_detail=progress,
         )
+        if progress.stage_finished and progress.stage_key == "extract":
+            notification_key = (task_id, progress.stage_key)
+            if notification_key not in self._stage_completion_notifications:
+                self._stage_completion_notifications.add(notification_key)
+                payload = item.data(TASK_ITEM_ROLE)
+                if isinstance(payload, QueuedExecutionTask):
+                    content = f"任务 #{task_id} 已结束音频解包阶段。"
+                    if payload.draft.run_mapping:
+                        content = f"{content} 正在继续事件映射。"
+                else:
+                    content = f"任务 #{task_id} 已结束音频解包阶段。"
+                InfoBar.info(
+                    "音频解包阶段已结束",
+                    content,
+                    parent=self._feedback_parent(),
+                    position=InfoBarPosition.TOP,
+                )
         if self._active_task_id == task_id:
             self._refresh_progress_panel()
 
@@ -998,6 +1025,16 @@ class ExecutionPage(SmoothScrollArea):
         if not isinstance(payload, QueuedExecutionTask):
             return
 
+        completed_progress_detail = (
+            replace(
+                payload.progress_detail,
+                current=max(payload.progress_detail.total, 1),
+                total=max(payload.progress_detail.total, 1),
+                message=task_result.summary,
+            )
+            if isinstance(payload.progress_detail, ExecutionTaskProgress)
+            else None
+        )
         updated_payload = self._update_queue_item(
             item,
             status=TASK_STATUS_COMPLETED,
@@ -1005,18 +1042,24 @@ class ExecutionPage(SmoothScrollArea):
             progress_current=max(payload.progress_total, len(task_result.completed_steps), 1),
             progress_total=max(payload.progress_total, len(task_result.completed_steps), 1),
             progress_message=task_result.summary,
+            progress_detail=completed_progress_detail,
             result_summary=task_result.summary,
             error_message="",
         )
         self._last_draft_summary = item.text()
         self._active_task_id = None
         self._active_worker = None
+        self._stage_completion_notifications = {
+            entry for entry in self._stage_completion_notifications if entry[0] != task_id
+        }
         self._set_task_running_state(False)
         next_item = self._start_next_waiting_task()
         if next_item is None:
             self._refresh_progress_panel(
                 status_text="状态：最近任务已完成。",
                 note_text=f"100% · {updated_payload.result_summary or task_result.summary}",
+                progress_current=1,
+                progress_total=1,
             )
             self.refresh_requested.emit()
         else:
@@ -1034,6 +1077,11 @@ class ExecutionPage(SmoothScrollArea):
 
         progress_total = max(payload.progress_total, 1)
         progress_current = min(payload.progress_current, progress_total)
+        failed_progress_detail = (
+            replace(payload.progress_detail, message=error)
+            if isinstance(payload.progress_detail, ExecutionTaskProgress)
+            else None
+        )
         updated_payload = self._update_queue_item(
             item,
             status=TASK_STATUS_FAILED,
@@ -1041,19 +1089,24 @@ class ExecutionPage(SmoothScrollArea):
             progress_current=progress_current,
             progress_total=progress_total,
             progress_message=error,
+            progress_detail=failed_progress_detail,
             error_message=error,
         )
         self._last_draft_summary = item.text()
         self._active_task_id = None
         self._active_worker = None
+        self._stage_completion_notifications = {
+            entry for entry in self._stage_completion_notifications if entry[0] != task_id
+        }
         self._set_task_running_state(False)
         logger.error(f"[队列] 任务 #{task_id} 执行失败：{error}")
         next_item = self._start_next_waiting_task()
         if next_item is None:
-            percent = int((progress_current / progress_total) * 100) if progress_total else 0
             self._refresh_progress_panel(
                 status_text="状态：最近任务执行失败。",
-                note_text=f"{percent}% · {updated_payload.error_message or error}",
+                note_text=f"当前进度：{progress_current}/{progress_total} · {updated_payload.error_message or error}",
+                progress_current=progress_current,
+                progress_total=progress_total,
             )
             self.refresh_requested.emit()
         else:
@@ -1120,16 +1173,39 @@ class ExecutionPage(SmoothScrollArea):
         *,
         status_text: str | None = None,
         note_text: str | None = None,
+        progress_current: int | None = None,
+        progress_total: int | None = None,
     ) -> None:
         """刷新右侧任务进度面板的摘要。"""
         draft_count = self._draft_queue_size()
         counts = self._queue_status_counts()
         running_item = self._find_running_task_item()
         running_task = running_item.data(TASK_ITEM_ROLE) if running_item is not None else None
-        progress_value = 0
+        progress_bar_total = max(progress_total, 1) if progress_total is not None else 1
+        progress_value = min(max(progress_current or 0, 0), progress_bar_total)
+        running_progress = (
+            running_task.progress_detail
+            if isinstance(running_task, QueuedExecutionTask) and isinstance(running_task.progress_detail, ExecutionTaskProgress)
+            else None
+        )
+        if progress_current is None and progress_total is None and isinstance(running_task, QueuedExecutionTask):
+            if running_progress is not None and running_progress.total > 0:
+                progress_bar_total = max(running_progress.total, 1)
+                progress_value = min(max(running_progress.current, 0), progress_bar_total)
+            elif running_task.progress_total > 0:
+                progress_bar_total = max(running_task.progress_total, 1)
+                progress_value = min(max(running_task.progress_current, 0), progress_bar_total)
+            else:
+                progress_bar_total = 1
+                progress_value = 0
         if status_text is None:
             if draft_count == 0:
                 status_text = "状态：界面已就绪，等待创建第一条任务。"
+            elif isinstance(running_task, QueuedExecutionTask) and running_progress is not None:
+                stage_text = f"当前阶段：{running_progress.stage_label}"
+                if running_progress.entity_scope_label:
+                    stage_text = f"{stage_text} · {running_progress.entity_scope_label}"
+                status_text = stage_text
             elif isinstance(running_task, QueuedExecutionTask):
                 status_text = "状态：队列中有运行中的任务。"
             elif counts[TASK_STATUS_WAITING] > 0:
@@ -1142,12 +1218,24 @@ class ExecutionPage(SmoothScrollArea):
                 status_text = "状态：当前队列中的任务已取消。"
         if note_text is None:
             if isinstance(running_task, QueuedExecutionTask):
-                progress_total = max(running_task.progress_total, 1)
-                progress_value = int((running_task.progress_current / progress_total) * 100)
-                note_text = f"{progress_value}% · {running_task.progress_message or '后台任务执行中。'}"
+                if running_progress is not None and running_progress.total > 0:
+                    note_text = (
+                        f"当前进度：{progress_value}/{progress_bar_total} · "
+                        f"{running_progress.message or '后台任务执行中。'}"
+                    )
+                elif running_progress is not None:
+                    note_text = f"当前进度：准备中 · {running_progress.message or '后台任务执行中。'}"
+                elif running_task.progress_total > 0:
+                    note_text = (
+                        f"当前进度：{progress_value}/{progress_bar_total} · "
+                        f"{running_task.progress_message or '后台任务执行中。'}"
+                    )
+                else:
+                    note_text = f"当前进度：准备中 · {running_task.progress_message or '后台任务执行中。'}"
             elif draft_count == 0:
                 note_text = "0% · 当前还没有待执行任务。"
             elif counts[TASK_STATUS_COMPLETED] > 0 and counts[TASK_STATUS_RUNNING] == 0 and counts[TASK_STATUS_WAITING] == 0:
+                progress_bar_total = 100
                 progress_value = 100
                 note_text = "100% · 队列中的可执行任务已完成。"
             elif counts[TASK_STATUS_FAILED] > 0 and counts[TASK_STATUS_RUNNING] == 0:
@@ -1155,6 +1243,7 @@ class ExecutionPage(SmoothScrollArea):
             else:
                 note_text = "0% · 当前显示任务队列状态。"
 
+        self.task_progress_bar.setRange(0, progress_bar_total)
         self.task_progress_bar.setValue(progress_value)
         self.task_status_label.setText(status_text)
         self.task_progress_note.setText(note_text)

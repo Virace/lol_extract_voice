@@ -672,7 +672,7 @@ class LolAudioUnpackApp:
         include_champions: bool = True,
         include_maps: bool = True,
         prepare_remote: bool = True,
-        progress_callback: Callable[[int, int, str], None] | None = None,
+        progress_callback: Callable[[str, int, int, str], None] | None = None,
     ) -> None:
         """执行解包流程。
 
@@ -734,6 +734,7 @@ class LolAudioUnpackApp:
         include_champions: bool = True,
         include_maps: bool = True,
         prepare_remote: bool = True,
+        progress_callback: Callable[[str, int, int, str], None] | None = None,
     ) -> None:
         """执行映射流程。"""
         backend_label = self._describe_mapping_backend()
@@ -760,6 +761,7 @@ class LolAudioUnpackApp:
                 max_workers=opts.max_workers,
                 integrate_data=opts.integrate_data,
                 ctx=self.ctx,
+                progress_callback=progress_callback,
             )
             return
         if opts.map_ids is not None:
@@ -769,6 +771,7 @@ class LolAudioUnpackApp:
                 max_workers=opts.max_workers,
                 integrate_data=opts.integrate_data,
                 ctx=self.ctx,
+                progress_callback=progress_callback,
             )
             return
 
@@ -779,6 +782,7 @@ class LolAudioUnpackApp:
             include_maps=include_maps,
             integrate_data=opts.integrate_data,
             ctx=self.ctx,
+            progress_callback=progress_callback,
         )
 
 

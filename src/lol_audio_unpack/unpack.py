@@ -616,7 +616,7 @@ def execute_unpack_tasks(
     max_workers: int = 4,
     *,
     ctx: AppContext,
-    progress_callback: Callable[[int, int, str], None] | None = None,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
 ) -> None:
     """执行批量解包任务。
 
@@ -643,6 +643,14 @@ def execute_unpack_tasks(
         summary_parts.append(f"{champion_count} 个英雄")
     if map_count > 0:
         summary_parts.append(f"{map_count} 个地图")
+    totals_by_type = {
+        "champion": champion_count,
+        "map": map_count,
+    }
+    finished_by_type = {
+        "champion": 0,
+        "map": 0,
+    }
 
     logger.info(
         f"开始解包 {total_tasks} 个实体 ({' 和 '.join(summary_parts)})，"
@@ -671,8 +679,9 @@ def execute_unpack_tasks(
             finished_count = 0
 
             for future in as_completed(future_to_task):
-                _entity_type, _entity_id, description = future_to_task[future]
+                entity_type, _entity_id, description = future_to_task[future]
                 finished_count += 1
+                finished_by_type[entity_type] = finished_by_type.get(entity_type, 0) + 1
 
                 try:
                     future.result()  # 获取结果，如果函数中出现异常，这里会重新抛出
@@ -683,7 +692,12 @@ def execute_unpack_tasks(
                     logger.error(f"{description} 解包时发生错误: {exc}")
                     logger.debug(traceback.format_exc())
                 if progress_callback is not None:
-                    progress_callback(finished_count, total_tasks, progress_message)
+                    progress_callback(
+                        entity_type,
+                        finished_by_type.get(entity_type, finished_count),
+                        max(totals_by_type.get(entity_type, total_tasks), 1),
+                        progress_message,
+                    )
     else:
         # --- 单线程模式 ---
         finished_count = 0
@@ -697,8 +711,14 @@ def execute_unpack_tasks(
                 logger.error(f"{description} 解包时发生错误: {exc}")
                 logger.debug(traceback.format_exc())
             finished_count += 1
+            finished_by_type[entity_type] = finished_by_type.get(entity_type, 0) + 1
             if progress_callback is not None:
-                progress_callback(finished_count, total_tasks, progress_message)
+                progress_callback(
+                    entity_type,
+                    finished_by_type.get(entity_type, finished_count),
+                    max(totals_by_type.get(entity_type, total_tasks), 1),
+                    progress_message,
+                )
 
     end_time = time.time()
     logger.success(f"解包完成: {' 和 '.join(summary_parts)}，耗时 {end_time - start_time:.2f}s")
@@ -714,7 +734,7 @@ def unpack_audio_all(  # noqa: PLR0913
     include_maps: bool = True,
     *,
     ctx: AppContext,
-    progress_callback: Callable[[int, int, str], None] | None = None,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
 ) -> None:
     """使用线程池并发解包全部实体。
 
@@ -760,7 +780,7 @@ def unpack_champions(
     max_workers: int = 4,
     *,
     ctx: AppContext,
-    progress_callback: Callable[[int, int, str], None] | None = None,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
 ) -> None:
     """便捷函数：解包指定英雄。
 
@@ -787,7 +807,7 @@ def unpack_maps(
     max_workers: int = 4,
     *,
     ctx: AppContext,
-    progress_callback: Callable[[int, int, str], None] | None = None,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
 ) -> None:
     """便捷函数：解包指定地图。
 

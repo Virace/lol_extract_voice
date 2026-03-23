@@ -78,6 +78,29 @@ class ExecutionTaskDraft:
 
 
 @dataclass(slots=True, frozen=True)
+class ExecutionTaskProgress:
+    """执行中心中当前阶段的结构化进度快照。
+
+    Args:
+        stage_key: 阶段标识，例如 ``extract`` 或 ``mapping``。
+        stage_label: 展示给用户的阶段名称。
+        entity_scope_label: 当前正在推进的实体范围，例如 ``英雄`` 或 ``地图``。
+        current: 当前阶段内已完成的实体数量。
+        total: 当前阶段内的实体总数。
+        message: 当前进度提示文案。
+        stage_finished: 当前阶段是否已经收尾完成。
+    """
+
+    stage_key: str
+    stage_label: str
+    entity_scope_label: str = ""
+    current: int = 0
+    total: int = 0
+    message: str = ""
+    stage_finished: bool = False
+
+
+@dataclass(slots=True, frozen=True)
 class QueuedExecutionTask:
     """已经进入执行中心队列的任务实体。
 
@@ -92,6 +115,7 @@ class QueuedExecutionTask:
         progress_current: 当前进度计数。
         progress_total: 总进度计数。
         progress_message: 当前进度提示文案。
+        progress_detail: 当前阶段的结构化进度快照。
         result_summary: 成功执行后的结果摘要。
         error_message: 失败时的错误摘要。
     """
@@ -106,6 +130,7 @@ class QueuedExecutionTask:
     progress_current: int = 0
     progress_total: int = 0
     progress_message: str = ""
+    progress_detail: ExecutionTaskProgress | None = None
     result_summary: str = ""
     error_message: str = ""
 

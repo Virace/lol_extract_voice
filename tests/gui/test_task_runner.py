@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import lol_audio_unpack.gui.service.task_runner as task_runner_module
 from lol_audio_unpack.gui.service.task_runner import run_execution_task
-from lol_audio_unpack.gui.task_models import ExecutionTaskDraft, QueuedExecutionTask
+from lol_audio_unpack.gui.task_models import (
+    ExecutionTaskDraft,
+    ExecutionTaskProgress,
+    QueuedExecutionTask,
+)
 
 
 class _CapturedEmitter:
@@ -39,11 +43,29 @@ def test_run_execution_task_executes_backend_steps_in_order(monkeypatch) -> None
         def update(self, opts, *, target: str = "all") -> None:
             calls.append(("update", target, opts.max_workers, opts.force_update, opts.champion_ids, opts.map_ids))
 
-        def extract(self, opts, *, include_champions: bool = True, include_maps: bool = True) -> None:
+        def extract(
+            self,
+            opts,
+            *,
+            include_champions: bool = True,
+            include_maps: bool = True,
+            progress_callback=None,
+        ) -> None:
             calls.append(("extract", include_champions, include_maps, opts.integrate_data))
+            if progress_callback is not None:
+                progress_callback("champion", 1, 2, "Annie 解包完成")
 
-        def mapping(self, opts, *, include_champions: bool = True, include_maps: bool = True) -> None:
+        def mapping(
+            self,
+            opts,
+            *,
+            include_champions: bool = True,
+            include_maps: bool = True,
+            progress_callback=None,
+        ) -> None:
             calls.append(("mapping", include_champions, include_maps, opts.integrate_data))
+            if progress_callback is not None:
+                progress_callback("map", 1, 1, "召唤师峡谷 映射完成")
 
     def fake_create_app_context(*, cli_overrides):
         captured_overrides.update(cli_overrides)
@@ -85,12 +107,77 @@ def test_run_execution_task_executes_backend_steps_in_order(monkeypatch) -> None
         ("mapping", True, True, True),
     ]
     assert signals.progress.calls == [
-        (0, 3, "开始更新数据"),
-        (1, 3, "更新数据完成"),
-        (1, 3, "开始音频解包"),
-        (2, 3, "音频解包完成"),
-        (2, 3, "开始事件映射"),
-        (3, 3, "事件映射完成"),
+        (
+            ExecutionTaskProgress(
+                stage_key="update",
+                stage_label="更新数据",
+                entity_scope_label="英雄 + 地图",
+                current=0,
+                total=1,
+                message="正在更新基础数据…",
+            ),
+        ),
+        (
+            ExecutionTaskProgress(
+                stage_key="update",
+                stage_label="更新数据",
+                entity_scope_label="英雄 + 地图",
+                current=1,
+                total=1,
+                message="更新数据完成",
+            ),
+        ),
+        (
+            ExecutionTaskProgress(
+                stage_key="extract",
+                stage_label="音频解包",
+                entity_scope_label="英雄 + 地图",
+                current=0,
+                total=0,
+                message="正在准备解包任务…",
+            ),
+        ),
+        (
+            ExecutionTaskProgress(
+                stage_key="extract",
+                stage_label="音频解包",
+                entity_scope_label="英雄",
+                current=1,
+                total=2,
+                message="Annie 解包完成",
+            ),
+        ),
+        (
+            ExecutionTaskProgress(
+                stage_key="extract",
+                stage_label="音频解包",
+                entity_scope_label="英雄 + 地图",
+                current=1,
+                total=1,
+                message="音频解包阶段已结束",
+                stage_finished=True,
+            ),
+        ),
+        (
+            ExecutionTaskProgress(
+                stage_key="mapping",
+                stage_label="事件映射",
+                entity_scope_label="英雄 + 地图",
+                current=0,
+                total=0,
+                message="正在准备事件映射任务…",
+            ),
+        ),
+        (
+            ExecutionTaskProgress(
+                stage_key="mapping",
+                stage_label="事件映射",
+                entity_scope_label="地图",
+                current=1,
+                total=1,
+                message="召唤师峡谷 映射完成",
+            ),
+        ),
     ]
     assert result.completed_steps == ("更新数据", "音频解包", "事件映射")
     assert result.summary.startswith("已完成：更新数据 -> 音频解包 -> 事件映射")

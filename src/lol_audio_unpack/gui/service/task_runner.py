@@ -9,10 +9,30 @@ from loguru import logger
 
 from lol_audio_unpack.app_context import create_app_context
 from lol_audio_unpack.facade import LolAudioUnpackApp
-from lol_audio_unpack.gui.task_models import ExecutionTaskResult, QueuedExecutionTask
+from lol_audio_unpack.gui.task_models import (
+    ExecutionTaskProgress,
+    ExecutionTaskResult,
+    QueuedExecutionTask,
+)
 
 if TYPE_CHECKING:
     from lol_audio_unpack.gui.workers import WorkerSignals
+
+
+STAGE_KEY_BY_STEP_NAME = {
+    "更新数据": "update",
+    "音频解包": "extract",
+    "事件映射": "mapping",
+}
+STAGE_LABEL_BY_KEY = {
+    "update": "更新数据",
+    "extract": "音频解包",
+    "mapping": "事件映射",
+}
+ENTITY_SCOPE_LABEL_BY_TYPE = {
+    "champion": "英雄",
+    "map": "地图",
+}
 
 
 def _resolve_task_scope(task: QueuedExecutionTask) -> tuple[str, bool, bool]:
@@ -54,6 +74,40 @@ def _build_runtime_overrides(task: QueuedExecutionTask) -> dict[str, str | bool]
     return overrides
 
 
+def _build_scope_label(*, include_champions: bool, include_maps: bool) -> str:
+    """将当前任务范围格式化为用户可读文案。"""
+    scope_parts: list[str] = []
+    if include_champions:
+        scope_parts.append("英雄")
+    if include_maps:
+        scope_parts.append("地图")
+    return " + ".join(scope_parts) if scope_parts else "未选择目标"
+
+
+def _emit_stage_progress(  # noqa: PLR0913
+    signals: WorkerSignals,
+    *,
+    stage_key: str,
+    entity_scope_label: str,
+    current: int = 0,
+    total: int = 0,
+    message: str = "",
+    stage_finished: bool = False,
+) -> None:
+    """向 GUI 发出结构化阶段进度。"""
+    signals.progress.emit(
+        ExecutionTaskProgress(
+            stage_key=stage_key,
+            stage_label=STAGE_LABEL_BY_KEY.get(stage_key, stage_key),
+            entity_scope_label=entity_scope_label,
+            current=current,
+            total=total,
+            message=message,
+            stage_finished=stage_finished,
+        )
+    )
+
+
 def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> ExecutionTaskResult:
     """在后台线程中执行单个队列任务。
 
@@ -73,31 +127,120 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     app = LolAudioUnpackApp(app_context)
     options = task.draft.to_operation_options()
     target, include_champions, include_maps = _resolve_task_scope(task)
+    task_scope_label = _build_scope_label(
+        include_champions=include_champions,
+        include_maps=include_maps,
+    )
     steps = task.draft.selected_steps()
     completed_steps: list[str] = []
 
     try:
-        for index, step_name in enumerate(steps, start=1):
-            signals.progress.emit(index - 1, len(steps), f"开始{step_name}")
+        for step_name in steps:
+            stage_key = STAGE_KEY_BY_STEP_NAME.get(step_name, "unknown")
             logger.info(f"[执行中心] 任务 #{task.task_id} 开始{step_name}")
 
             if step_name == "更新数据":
+                _emit_stage_progress(
+                    signals,
+                    stage_key=stage_key,
+                    entity_scope_label=task_scope_label,
+                    current=0,
+                    total=1,
+                    message="正在更新基础数据…",
+                )
                 app.update(options, target=target)
+                _emit_stage_progress(
+                    signals,
+                    stage_key=stage_key,
+                    entity_scope_label=task_scope_label,
+                    current=1,
+                    total=1,
+                    message="更新数据完成",
+                )
             elif step_name == "音频解包":
+                def emit_extract_progress(
+                    entity_type: str,
+                    current: int,
+                    total: int,
+                    message: str,
+                    *,
+                    resolved_stage_key: str = stage_key,
+                ) -> None:
+                    _emit_stage_progress(
+                        signals,
+                        stage_key=resolved_stage_key,
+                        entity_scope_label=ENTITY_SCOPE_LABEL_BY_TYPE.get(entity_type, task_scope_label),
+                        current=current,
+                        total=total,
+                        message=message,
+                    )
+
+                _emit_stage_progress(
+                    signals,
+                    stage_key=stage_key,
+                    entity_scope_label=task_scope_label,
+                    message="正在准备解包任务…",
+                )
                 app.extract(
                     options,
                     include_champions=include_champions,
                     include_maps=include_maps,
+                    progress_callback=emit_extract_progress,
+                )
+                _emit_stage_progress(
+                    signals,
+                    stage_key=stage_key,
+                    entity_scope_label=task_scope_label,
+                    current=1,
+                    total=1,
+                    message="音频解包阶段已结束",
+                    stage_finished=True,
                 )
             elif step_name == "事件映射":
+                mapping_progress_seen = False
+
+                def emit_mapping_progress(
+                    entity_type: str,
+                    current: int,
+                    total: int,
+                    message: str,
+                    *,
+                    resolved_stage_key: str = stage_key,
+                ) -> None:
+                    nonlocal mapping_progress_seen
+                    mapping_progress_seen = True
+                    _emit_stage_progress(
+                        signals,
+                        stage_key=resolved_stage_key,
+                        entity_scope_label=ENTITY_SCOPE_LABEL_BY_TYPE.get(entity_type, task_scope_label),
+                        current=current,
+                        total=total,
+                        message=message,
+                    )
+
+                _emit_stage_progress(
+                    signals,
+                    stage_key=stage_key,
+                    entity_scope_label=task_scope_label,
+                    message="正在准备事件映射任务…",
+                )
                 app.mapping(
                     options,
                     include_champions=include_champions,
                     include_maps=include_maps,
+                    progress_callback=emit_mapping_progress,
                 )
+                if not mapping_progress_seen:
+                    _emit_stage_progress(
+                        signals,
+                        stage_key=stage_key,
+                        entity_scope_label=task_scope_label,
+                        current=1,
+                        total=1,
+                        message="事件映射完成",
+                    )
 
             completed_steps.append(step_name)
-            signals.progress.emit(index, len(steps), f"{step_name}完成")
 
     except Exception:  # noqa: BLE001
         logger.exception(f"[执行中心] 任务 #{task.task_id} 执行失败")

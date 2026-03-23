@@ -25,7 +25,7 @@ from lol_audio_unpack.gui.components.log_drawer import (
     _build_log_panel_toggle_rect,
     _resolve_log_panel_height,
 )
-from lol_audio_unpack.gui.task_models import ExecutionTaskResult
+from lol_audio_unpack.gui.task_models import ExecutionTaskProgress, ExecutionTaskResult
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 
 
@@ -277,6 +277,82 @@ def test_execution_page_can_cancel_waiting_task_without_touching_running_task(mo
     app.processEvents()
 
 
+def test_execution_page_renders_stage_progress_details(monkeypatch) -> None:
+    """运行中任务应展示当前阶段、实体类型与当前/总数。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    monkeypatch.setattr(page, "_start_task_worker", lambda task: None)
+    page.champion_ids_input.setText("1,103")
+    app.processEvents()
+
+    page._queue_task_draft()
+    app.processEvents()
+
+    item = page.draft_list.item(0)
+    payload = item.data(execution_page_module.TASK_ITEM_ROLE)
+    page._on_task_progress(
+        payload.task_id,
+        ExecutionTaskProgress(
+            stage_key="extract",
+            stage_label="音频解包",
+            entity_scope_label="英雄",
+            current=1,
+            total=2,
+            message="Annie 解包完成",
+        ),
+    )
+    app.processEvents()
+
+    assert page.task_status_label.text() == "当前阶段：音频解包 · 英雄"
+    assert page.task_progress_note.text() == "当前进度：1/2 · Annie 解包完成"
+    expected_total = 2
+    assert page.task_progress_bar.maximum() == expected_total
+    assert page.task_progress_bar.value() == 1
+
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_execution_page_shows_infobar_after_extract_stage_finishes(monkeypatch) -> None:
+    """解包阶段结束后应弹出全局 InfoBar 通知。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    info_calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(page, "_start_task_worker", lambda task: None)
+    monkeypatch.setattr(
+        execution_page_module.InfoBar,
+        "info",
+        lambda title, content, **_kwargs: info_calls.append((title, content)),
+    )
+    page.champion_ids_input.setText("1,103")
+    page.map_ids_input.setText("11")
+    app.processEvents()
+
+    page._queue_task_draft()
+    app.processEvents()
+
+    item = page.draft_list.item(0)
+    payload = item.data(execution_page_module.TASK_ITEM_ROLE)
+    page._on_task_progress(
+        payload.task_id,
+        ExecutionTaskProgress(
+            stage_key="extract",
+            stage_label="音频解包",
+            entity_scope_label="英雄 + 地图",
+            current=1,
+            total=1,
+            message="音频解包阶段已结束",
+            stage_finished=True,
+        ),
+    )
+    app.processEvents()
+
+    assert info_calls == [("音频解包阶段已结束", f"任务 #{payload.task_id} 已结束音频解包阶段。 正在继续事件映射。")]
+
+    page.deleteLater()
+    app.processEvents()
+
+
 def test_execution_page_marks_task_completed_after_worker_finishes(monkeypatch) -> None:
     """首个任务完成后应写回完成状态并触发数据刷新请求。"""
     app = QApplication.instance() or QApplication([])
@@ -292,8 +368,26 @@ def test_execution_page_marks_task_completed_after_worker_finishes(monkeypatch) 
         return _ImmediateThreadPool()
 
     def fake_run_execution_task(task, signals) -> ExecutionTaskResult:
-        signals.progress.emit(1, 2, "音频解包完成")
-        signals.progress.emit(2, 2, "事件映射完成")
+        signals.progress.emit(
+            ExecutionTaskProgress(
+                stage_key="extract",
+                stage_label="音频解包",
+                entity_scope_label="英雄",
+                current=2,
+                total=2,
+                message="英雄解包完成",
+            )
+        )
+        signals.progress.emit(
+            ExecutionTaskProgress(
+                stage_key="mapping",
+                stage_label="事件映射",
+                entity_scope_label="地图",
+                current=1,
+                total=1,
+                message="地图映射完成",
+            )
+        )
         return ExecutionTaskResult(
             completed_steps=("音频解包", "事件映射"),
             summary="已完成：音频解包 -> 事件映射（1.2s）",
