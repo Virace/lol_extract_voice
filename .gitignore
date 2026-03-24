@@ -125,6 +125,7 @@ packer/
 .ai_memory/
 .CODING_STYLE.md
 benchmarks/
+.temp/
 
 
 !/params.json
