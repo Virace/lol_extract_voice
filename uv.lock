@@ -615,6 +615,7 @@ gui = [
 dev = [
     { name = "memory-profiler" },
     { name = "pytest" },
+    { name = "pytest-qt" },
     { name = "ruff" },
 ]
 
@@ -635,6 +636,7 @@ provides-extras = ["gui"]
 dev = [
     { name = "memory-profiler", specifier = ">=0.61.0" },
     { name = "pytest", specifier = ">=9.0.0" },
+    { name = "pytest-qt", specifier = ">=4.5.0" },
     { name = "ruff", specifier = ">=0.13.0" },
 ]
 
@@ -4125,6 +4127,20 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/d1/db/7ef3487e0fb0049ddb5ce41d3a49c235bf9ad299b6a25d5780a89f19230f/pytest-9.0.2.tar.gz", hash = "sha256:75186651a92bd89611d1d9fc20f0b4345fd827c41ccd5c299a868a05d70edf11", size = 1568901, upload-time = "2025-12-06T21:30:51.014Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3b/ab/b3226f0bd7cdcf710fbede2b3548584366da3b19b5021e74f5bde2a8fa3f/pytest-9.0.2-py3-none-any.whl", hash = "sha256:711ffd45bf766d5264d487b917733b453d917afd2b0ad65223959f59089f875b", size = 374801, upload-time = "2025-12-06T21:30:49.154Z" },
+]
+
+[[package]]
+name = "pytest-qt"
+version = "4.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pluggy" },
+    { name = "pytest" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d3/61/8bdec02663c18bf5016709b909411dce04a868710477dc9b9844ffcf8dd2/pytest_qt-4.5.0.tar.gz", hash = "sha256:51620e01c488f065d2036425cbc1cbcf8a6972295105fd285321eb47e66a319f", size = 128702, upload-time = "2025-07-01T17:24:39.889Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cc/d0/8339b888ad64a3d4e508fed8245a402b503846e1972c10ad60955883dcbb/pytest_qt-4.5.0-py3-none-any.whl", hash = "sha256:ed21ea9b861247f7d18090a26bfbda8fb51d7a8a7b6f776157426ff2ccf26eff", size = 37214, upload-time = "2025-07-01T17:24:38.226Z" },
 ]
 
 [[package]]

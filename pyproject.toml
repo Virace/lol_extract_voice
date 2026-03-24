@@ -39,6 +39,7 @@ default-groups = ["dev"]
 dev = [
     "memory-profiler>=0.61.0",
     "pytest>=9.0.0",
+    "pytest-qt>=4.5.0",
     "ruff>=0.13.0",
 ]
 
