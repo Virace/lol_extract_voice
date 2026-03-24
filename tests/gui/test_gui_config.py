@@ -30,14 +30,22 @@ def _use_fake_qsettings(monkeypatch) -> None:
     monkeypatch.setattr(gui_config_module, "QSettings", FakeQSettings)
 
 
+def _sample_path(tmp_path: Path, *parts: str) -> str:
+    return str(tmp_path.joinpath(*parts))
+
+
 def test_gui_config_to_app_context_overrides(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     _use_fake_qsettings(monkeypatch)
+    sample_game_path = _sample_path(tmp_path, "game-client")
+    sample_output_path = _sample_path(tmp_path, "output-root")
+    sample_wwiser_path = _sample_path(tmp_path, "tools", "wwiser.pyz")
+    sample_vgmstream_path = _sample_path(tmp_path, "tools", "vgmstream-cli.exe")
 
     cfg = GuiConfig()
     cfg.source_mode = "remote_snapshot"
-    cfg.game_path = r"D:\Games\League of Legends"
-    cfg.output_path = r"E:\Temp\lol"
+    cfg.game_path = sample_game_path
+    cfg.output_path = sample_output_path
     cfg.game_region = "zh_CN"
     cfg.group_by_type = True
     cfg.remote_live_region = "KR"
@@ -45,13 +53,13 @@ def test_gui_config_to_app_context_overrides(monkeypatch, tmp_path):
     cfg.snapshot_version = "14.1"
     cfg.snapshot_lcu_url = "https://example.com/lcu"
     cfg.snapshot_game_url = "https://example.com/game"
-    cfg.wwiser_path = r"C:\tools\wwiser.pyz"
-    cfg.vgmstream_path = r"C:\tools\vgmstream-cli.exe"
+    cfg.wwiser_path = sample_wwiser_path
+    cfg.vgmstream_path = sample_vgmstream_path
 
     assert cfg.to_app_context_overrides() == {
         "SOURCE_MODE": "remote_snapshot",
-        "GAME_PATH": r"D:\Games\League of Legends",
-        "OUTPUT_PATH": r"E:\Temp\lol",
+        "GAME_PATH": sample_game_path,
+        "OUTPUT_PATH": sample_output_path,
         "GAME_REGION": "zh_CN",
         "GROUP_BY_TYPE": True,
         "REMOTE_LIVE_REGION": "KR",
@@ -59,52 +67,57 @@ def test_gui_config_to_app_context_overrides(monkeypatch, tmp_path):
         "REMOTE_VERSION": "14.1",
         "REMOTE_LCU_MANIFEST_URL": "https://example.com/lcu",
         "REMOTE_GAME_MANIFEST_URL": "https://example.com/game",
-        "WWISER_PATH": r"C:\tools\wwiser.pyz",
+        "WWISER_PATH": sample_wwiser_path,
     }
 
 
 def test_gui_config_load_migrates_legacy_vgmstream_env_key(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     _use_fake_qsettings(monkeypatch)
+    sample_output_path = _sample_path(tmp_path, "output-root")
+    sample_vgmstream_path = _sample_path(tmp_path, "tools", "vgmstream-cli.exe")
 
     env_file = Path(tmp_path) / ".lol.env"
     env_file.write_text(
-        "LOL_OUTPUT_PATH='E:\\Temp\\lol'\n"
-        "LOL_VGMSTREAM_PATH='C:\\tools\\vgmstream-cli.exe'\n",
+        f"LOL_OUTPUT_PATH='{sample_output_path}'\n"
+        f"LOL_VGMSTREAM_PATH='{sample_vgmstream_path}'\n",
         encoding="utf-8",
     )
 
     cfg = GuiConfig()
     cfg.load()
 
-    assert cfg.output_path == r"E:\Temp\lol"
-    assert cfg.vgmstream_path == r"C:\tools\vgmstream-cli.exe"
-    assert FakeQSettings._store["vgmstream_path"] == r"C:\tools\vgmstream-cli.exe"
+    assert cfg.output_path == sample_output_path
+    assert cfg.vgmstream_path == sample_vgmstream_path
+    assert FakeQSettings._store["vgmstream_path"] == sample_vgmstream_path
     assert "LOL_VGMSTREAM_PATH" not in env_file.read_text(encoding="utf-8")
 
     reloaded_cfg = GuiConfig()
     reloaded_cfg.load()
 
-    assert reloaded_cfg.vgmstream_path == r"C:\tools\vgmstream-cli.exe"
+    assert reloaded_cfg.vgmstream_path == sample_vgmstream_path
 
 
 def test_gui_config_save_keeps_vgmstream_in_qsettings_only(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     _use_fake_qsettings(monkeypatch)
+    sample_game_path = _sample_path(tmp_path, "game-client")
+    sample_output_path = _sample_path(tmp_path, "output-root")
+    sample_vgmstream_path = _sample_path(tmp_path, "tools", "vgmstream-cli.exe")
 
     cfg = GuiConfig()
     cfg.source_mode = "local_path"
-    cfg.game_path = r"D:\Games\League of Legends"
-    cfg.output_path = r"E:\Temp\lol"
-    cfg.vgmstream_path = r"C:\tools\vgmstream-cli.exe"
+    cfg.game_path = sample_game_path
+    cfg.output_path = sample_output_path
+    cfg.vgmstream_path = sample_vgmstream_path
 
     cfg.save()
 
     env_text = (Path(tmp_path) / ".lol.env").read_text(encoding="utf-8")
     assert "LOL_SOURCE_MODE='local_path'" in env_text
-    assert "LOL_OUTPUT_PATH='E:\\Temp\\lol'" in env_text
+    assert f"LOL_OUTPUT_PATH='{sample_output_path}'" in env_text
     assert "LOL_VGMSTREAM_PATH" not in env_text
-    assert FakeQSettings._store["vgmstream_path"] == r"C:\tools\vgmstream-cli.exe"
+    assert FakeQSettings._store["vgmstream_path"] == sample_vgmstream_path
 
 
 def test_gui_config_loads_legacy_smooth_scroll_into_split_flags(monkeypatch, tmp_path):

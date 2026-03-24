@@ -94,7 +94,7 @@ def test_resolve_context_version_uses_remote_snapshot_version():
                 lcu_manifest_url="https://example.com/lcu.manifest",
                 game_manifest_url="https://example.com/game.manifest",
             ),
-            game_path=Path("/tmp/unused"),
+            game_path=Path("unused-game-root"),
         ),
         runtime_cache={},
     )

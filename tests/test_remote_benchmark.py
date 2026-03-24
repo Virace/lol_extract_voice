@@ -127,6 +127,8 @@ def test_validate_mapping_artifacts_allows_missing_mapping_file_when_integrated_
 
 
 def test_build_markdown_summary_includes_stage_table() -> None:
+    sample_wwiser_path = str(Path("samples") / "wwiser.pyz")
+    sample_output_path = str(Path("samples") / "out")
     payload = {
         "meta": {
             "generated_at": "2026-03-07T15:00:00+08:00",
@@ -138,12 +140,12 @@ def test_build_markdown_summary_includes_stage_table() -> None:
             "map_id": 11,
             "integrate_data": True,
             "cleanup_remote": True,
-            "wwiser_path": "/tmp/wwiser.pyz",
+            "wwiser_path": sample_wwiser_path,
         },
         "scenarios": [
             {
                 "scenario": "champions_full_chain",
-                "output_path": "/tmp/out",
+                "output_path": sample_output_path,
                 "summary": {
                     "status": "ok",
                     "total_duration_seconds": 12.3,
