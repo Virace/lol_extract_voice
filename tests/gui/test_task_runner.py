@@ -29,10 +29,12 @@ class _FakeSignals:
         self.progress = _CapturedEmitter()
 
 
-def test_run_execution_task_executes_backend_steps_in_order(monkeypatch) -> None:
+def test_run_execution_task_executes_backend_steps_in_order(monkeypatch, tmp_path) -> None:
     """运行器应按 update -> extract -> mapping 顺序调用后端门面。"""
     captured_overrides: dict[str, str | bool] = {}
     calls: list[tuple[object, ...]] = []
+    sample_game_path = str(tmp_path / "game-root")
+    sample_output_path = str(tmp_path / "output-root")
 
     class FakeApp:
         """记录后端门面调用顺序的替身。"""
@@ -89,15 +91,15 @@ def test_run_execution_task_executes_backend_steps_in_order(monkeypatch) -> None
             with_bp_vo=False,
             exclude_types=("SFX", "MUSIC"),
             integrate_data=True,
-            app_context_overrides=(("GAME_PATH", "H:/Game"), ("OUTPUT_PATH", "H:/Output")),
+            app_context_overrides=(("GAME_PATH", sample_game_path), ("OUTPUT_PATH", sample_output_path)),
         ),
     )
     signals = _FakeSignals()
 
     result = run_execution_task(task, signals)
 
-    assert captured_overrides["GAME_PATH"] == "H:/Game"
-    assert captured_overrides["OUTPUT_PATH"] == "H:/Output"
+    assert captured_overrides["GAME_PATH"] == sample_game_path
+    assert captured_overrides["OUTPUT_PATH"] == sample_output_path
     assert captured_overrides["WITH_BP_VO"] is False
     assert captured_overrides["EXCLUDE_TYPE"] == "SFX,MUSIC"
     assert calls == [

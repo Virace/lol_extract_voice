@@ -1,6 +1,6 @@
 [project]
 name = "lol-audio-unpack"
-version = "3.5.1.dev0+test"
+version = "3.5.1.dev0"
 description = "英雄联盟游戏音频文件解包工具"
 authors = [
     { name = "Virace", email = "Virace@aliyun.com" }
@@ -105,7 +105,8 @@ docstring-code-format = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not remote_live'"
+addopts = "-m 'not remote_live' --basetemp=.temp/pytest"
+cache_dir = ".temp/.pytest_cache"
 markers = [
     "unit: 纯单元测试，不依赖本地游戏实体资源",
     "integration: 集成测试，可能依赖临时文件与多模块协作",

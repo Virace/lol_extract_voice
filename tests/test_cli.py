@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -140,7 +141,8 @@ def test_execute_mapping_operations_invalid_selector_does_not_show_wwiser_hint(m
 
 def test_execute_mapping_operations_invalid_wwiser_path_shows_native_hint(monkeypatch):
     parser = cli.create_parser()
-    args = parser.parse_args(["--mapping", "--wwiser-path", "/tmp/missing/wwiser.pyz"])
+    missing_wwiser_path = str(Path("missing") / "wwiser.pyz")
+    args = parser.parse_args(["--mapping", "--wwiser-path", missing_wwiser_path])
     errors: list[str] = []
 
     monkeypatch.setattr(
@@ -155,7 +157,7 @@ def test_execute_mapping_operations_invalid_wwiser_path_shows_native_hint(monkey
 
     class FakeApp:
         def mapping(self, _opts, **_kwargs):
-            raise ValueError("错误：Wwiser 工具路径不存在或不是文件: /tmp/missing/wwiser.pyz")
+            raise ValueError(f"错误：Wwiser 工具路径不存在或不是文件: {missing_wwiser_path}")
 
     with pytest.raises(SystemExit) as exc:
         cli.execute_mapping_operations(args, FakeApp())
@@ -167,13 +169,15 @@ def test_execute_mapping_operations_invalid_wwiser_path_shows_native_hint(monkey
 
 def test_build_cli_overrides_only_keeps_explicit_values():
     parser = cli.create_parser()
+    sample_game_path = str(Path("samples") / "game")
+    sample_output_path = str(Path("samples") / "output")
     args = parser.parse_args(
         [
             "--update",
             "--game-path",
-            "/tmp/game",
+            sample_game_path,
             "--output-path",
-            "/tmp/output",
+            sample_output_path,
             "--exclude-type",
             "MUSIC",
             "--no-group-by-type",
@@ -183,8 +187,8 @@ def test_build_cli_overrides_only_keeps_explicit_values():
     overrides = cli.build_cli_overrides(args)
 
     assert overrides == {
-        "GAME_PATH": "/tmp/game",
-        "OUTPUT_PATH": "/tmp/output",
+        "GAME_PATH": sample_game_path,
+        "OUTPUT_PATH": sample_output_path,
         "EXCLUDE_TYPE": "MUSIC",
         "GROUP_BY_TYPE": False,
     }

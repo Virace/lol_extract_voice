@@ -14,12 +14,13 @@ from lol_audio_unpack.gui.service.data_loader import (
 
 
 @pytest.fixture
-def mock_app_context():
+def mock_app_context(tmp_path):
     """创建 mock AppContext"""
+    root_path = tmp_path / "gui-loader"
     ctx = Mock()
-    ctx.paths.audio_path = "/tmp/audios"
-    ctx.paths.hash_path = Path("/tmp/hashes")
-    ctx.paths.output_path = "/tmp/output"
+    ctx.paths.audio_path = str(root_path / "audios")
+    ctx.paths.hash_path = root_path / "hashes"
+    ctx.paths.output_path = str(root_path / "output")
     ctx.config.group_by_type = False
     ctx.config.include_types = ["VO", "SFX", "MUSIC"]
     ctx.config.dev_mode = False
@@ -74,7 +75,7 @@ def test_check_entity_status_none_exist(mock_app_context, mock_entity_data):
 
 def test_resolve_mapping_file_path(mock_app_context):
     """测试映射文件路径解析"""
-    expected = Path("/tmp/hashes/14.1.0/champions/1.msgpack")
+    expected = Path(mock_app_context.paths.hash_path) / "14.1.0" / "champions" / "1.msgpack"
     with patch("lol_audio_unpack.gui.service.data_loader.find_data_file", return_value=expected) as mock_find:
         actual = resolve_mapping_file_path(mock_app_context, "champions", "1", "14.1.0")
 
@@ -117,8 +118,8 @@ def test_entity_data_loader_load_entities(mock_app_context):
 
 def test_entity_data_loader_load_mapping_preview(mock_app_context):
     """测试映射预览内容读取"""
-    expected_path = Path("/tmp/hashes/14.1.0/champions/1.json")
     expected_data = {"entityName": "安妮", "events": {"VO": {"Play_VO_Annie_Attack": [1, 2, 3]}}}
+    expected_path = Path(mock_app_context.paths.hash_path) / "14.1.0" / "champions" / "1.json"
 
     with patch("lol_audio_unpack.gui.service.data_loader.DataReader") as mock_reader_cls:
         mock_reader = Mock()

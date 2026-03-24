@@ -1,17 +1,9 @@
-# 🐍 Although never is often better than *right* now.
-# 🐼 然而不假思索还不如不做
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2024/9/3 10:14
-# @Update  : 2025/8/5 8:06
-# @Detail  : lol_audio_unpack
+"""应用入口与运行时版本元数据导出。"""
 
-
-__version__ = "3.5.1.dev0+test"
+from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from loguru import logger
 
@@ -28,6 +20,10 @@ from .app_context import (
 from .facade import LolAudioUnpackApp, RemoteEntityCallbackPayload, RemoteEntityWorkItem
 from .manager import BinUpdater, DataReader, DataUpdater
 from .utils.logging import setup_logging
+from .utils.versioning import resolve_runtime_version
+
+_STATIC_VERSION = "3.5.1.dev0"
+__version__ = resolve_runtime_version(Path(__file__).resolve().parents[2], _STATIC_VERSION)
 
 logger.disable("lol_audio_unpack")
 
@@ -76,9 +72,9 @@ __all__ = [
     "RemoteEntityWorkItem",
     "RemoteSnapshotConfig",
     "SourceMode",
+    "__version__",
     "setup_app",
     "BinUpdater",
     "DataUpdater",
     "DataReader",
 ]
-
