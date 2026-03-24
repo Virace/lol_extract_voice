@@ -127,6 +127,21 @@ class EntityDataLoader:
         self.ctx = app_context
         self.data_reader = DataReader(app_context)
 
+    def _build_entity_data(self, entity_type: GuiEntityType, entity_id: str) -> AudioEntityData:
+        """按 GUI 实体类型构造对应的实体数据对象。
+
+        Args:
+            entity_type: GUI 使用的实体类型目录名。
+            entity_id: 实体 ID。
+
+        Returns:
+            对应实体的数据对象。
+        """
+        if entity_type == "champions":
+            return AudioEntityData.from_champion(int(entity_id), self.data_reader, ctx=self.ctx)
+
+        return AudioEntityData.from_map(int(entity_id), self.data_reader, ctx=self.ctx)
+
     def load_entities(self, entity_type: Literal["champions", "maps"]) -> list[dict]:
         """加载指定类型的实体数据。
 
@@ -148,15 +163,7 @@ class EntityDataLoader:
         for entity_dict in raw_data:
             try:
                 entity_id = str(entity_dict["id"])
-
-                if entity_type == "champions":
-                    entity_data = AudioEntityData.from_champion(
-                        int(entity_id), self.data_reader, ctx=self.ctx
-                    )
-                else:
-                    entity_data = AudioEntityData.from_map(
-                        int(entity_id), self.data_reader, ctx=self.ctx
-                    )
+                entity_data = self._build_entity_data(entity_type, entity_id)
 
                 audio_status, mapping_status = check_entity_status(
                     self.ctx, entity_data, version
@@ -189,7 +196,7 @@ class EntityDataLoader:
 
         return result
 
-    def load_mapping_preview(self, entity_type: GuiEntityType, entity_id: str) -> tuple[Path | None, str]:
+    def load_mapping_preview(self, entity_type: GuiEntityType, entity_id: str) -> tuple[Path | None, dict | None, str]:
         """读取实体映射文件并序列化为可预览文本。
 
         Args:
@@ -197,7 +204,7 @@ class EntityDataLoader:
             entity_id: 实体 ID。
 
         Returns:
-            映射文件路径与序列化后的文本内容；未找到文件时返回 ``(None, "")``。
+            映射文件路径、原始映射数据与序列化后的文本内容；未找到文件时返回 ``(None, None, "")``。
         """
         mapping_path = resolve_mapping_file_path(
             self.ctx,
@@ -206,7 +213,30 @@ class EntityDataLoader:
             self.data_reader.version,
         )
         if mapping_path is None:
-            return None, ""
+            return None, None, ""
 
         mapping_data = read_data(mapping_path, dev_mode=getattr(self.ctx.config, "dev_mode", False))
-        return mapping_path, json.dumps(mapping_data, ensure_ascii=False, indent=2)
+        return mapping_path, mapping_data, json.dumps(mapping_data, ensure_ascii=False, indent=2)
+
+    def load_available_audio_ids(self, entity_type: GuiEntityType, entity_id: str) -> set[str]:
+        """加载当前实体在本地已存在的音频 ID 集合。
+
+        Args:
+            entity_type: 实体类型目录名。
+            entity_id: 实体 ID。
+
+        Returns:
+            当前实体输出目录下已存在的 ``.wem`` 文件 stem 集合。
+        """
+        entity_data = self._build_entity_data(entity_type, str(entity_id))
+        audio_paths = resolve_entity_audio_paths(self.ctx, entity_data, self.data_reader.version)
+        available_ids: set[str] = set()
+
+        for audio_path in audio_paths:
+            if not audio_path.exists():
+                continue
+
+            for wem_path in audio_path.rglob("*.wem"):
+                available_ids.add(wem_path.stem)
+
+        return available_ids

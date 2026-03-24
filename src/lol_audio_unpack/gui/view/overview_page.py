@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import os
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
 from PySide6.QtCore import QSignalBlocker, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices, QTextOption
 from PySide6.QtWidgets import (
@@ -14,11 +16,11 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidgetItem,
     QPlainTextEdit,
     QSplitter,
     QStackedWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -28,6 +30,7 @@ from qfluentwidgets import (
     CustomStyleSheet,
     InfoBar,
     InfoBarPosition,
+    LineEdit,
     ListWidget,
     PlainTextEdit,
     PrimaryPushButton,
@@ -37,6 +40,7 @@ from qfluentwidgets import (
     StrongBodyLabel,
     SubtitleLabel,
     TransparentToolButton,
+    TreeWidget,
     setCustomStyleSheet,
     setStyleSheet,
 )
@@ -49,6 +53,29 @@ from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 
 OVERVIEW_ITEM_HEIGHT = 40
 STATUS_BADGE_SIZE = 24
+AUDIO_ID_ROLE = int(Qt.ItemDataRole.UserRole) + 1
+AUDIO_AVAILABLE_ROLE = int(Qt.ItemDataRole.UserRole) + 2
+
+
+@dataclass(frozen=True, slots=True)
+class AudioPreviewNode:
+    """试听树中的通用节点。"""
+
+    label: str
+    children: tuple[AudioPreviewNode, ...] = ()
+    audio_id: str | None = None
+    is_available: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class AudioPreviewStats:
+    """试听树摘要统计。"""
+
+    skin_count: int = 0
+    audio_type_count: int = 0
+    event_count: int = 0
+    audio_id_count: int = 0
+    available_audio_id_count: int = 0
 
 
 def should_display_overview_row(row: dict[str, Any]) -> bool:
@@ -87,6 +114,119 @@ def build_preview_path_text(mapping_path: Path | None) -> str:
     if mapping_path is None:
         return ""
     return str(mapping_path)
+
+
+def create_preview_path_edit(parent: QWidget | None = None) -> LineEdit:
+    """创建跟随 Fluent 主题的预览路径输入框。"""
+    line_edit = LineEdit(parent)
+    line_edit.setReadOnly(True)
+    line_edit.setClearButtonEnabled(False)
+    line_edit.setPlaceholderText("请选择左侧实体以查看当前 Raw 预览占位内容。")
+    return line_edit
+
+
+def collect_available_audio_ids(audio_paths: tuple[Path, ...]) -> set[str]:
+    """递归收集实体输出目录下已存在的音频 ID。"""
+    available_ids: set[str] = set()
+
+    for audio_path in audio_paths:
+        if not audio_path.exists():
+            continue
+
+        for wem_path in audio_path.rglob("*.wem"):
+            available_ids.add(wem_path.stem)
+
+    return available_ids
+
+
+def build_audio_preview_nodes(
+    mapping_data: dict[str, Any] | None,
+    available_audio_ids: set[str],
+) -> tuple[tuple[AudioPreviewNode, ...], AudioPreviewStats]:
+    """按 mapping 原始层级构造试听树节点。
+
+    Args:
+        mapping_data: 当前实体的原始 mapping 数据。
+        available_audio_ids: 当前实体本地已存在的 wem ID 集合。
+
+    Returns:
+        可直接渲染到试听树的节点序列与摘要统计。
+    """
+    skins = mapping_data.get("skins", {}) if isinstance(mapping_data, dict) else {}
+    if not isinstance(skins, dict):
+        return (), AudioPreviewStats()
+
+    skin_nodes: list[AudioPreviewNode] = []
+    skin_count = 0
+    audio_type_count = 0
+    event_count = 0
+    audio_id_count = 0
+    available_audio_id_count = 0
+
+    for skin_id, skin_payload in skins.items():
+        events_payload = skin_payload.get("events", {}) if isinstance(skin_payload, dict) else {}
+        type_nodes: list[AudioPreviewNode] = []
+
+        if isinstance(events_payload, dict):
+            for audio_type_name, event_payload in events_payload.items():
+                if not isinstance(event_payload, dict):
+                    continue
+
+                event_nodes: list[AudioPreviewNode] = []
+                for event_name, audio_ids in event_payload.items():
+                    if not isinstance(audio_ids, list | tuple):
+                        continue
+
+                    id_nodes: list[AudioPreviewNode] = []
+                    for audio_id in audio_ids:
+                        audio_id_text = str(audio_id).strip()
+                        if not audio_id_text:
+                            continue
+
+                        is_available = audio_id_text in available_audio_ids
+                        id_nodes.append(
+                            AudioPreviewNode(
+                                label=audio_id_text,
+                                audio_id=audio_id_text,
+                                is_available=is_available,
+                            )
+                        )
+                        audio_id_count += 1
+                        if is_available:
+                            available_audio_id_count += 1
+
+                    event_nodes.append(AudioPreviewNode(label=str(event_name), children=tuple(id_nodes)))
+                    event_count += 1
+
+                type_nodes.append(AudioPreviewNode(label=str(audio_type_name), children=tuple(event_nodes)))
+                audio_type_count += 1
+
+        skin_nodes.append(
+            AudioPreviewNode(
+                label=str(skin_id),
+                children=(AudioPreviewNode(label="events", children=tuple(type_nodes)),),
+            )
+        )
+        skin_count += 1
+
+    return (
+        tuple(skin_nodes),
+        AudioPreviewStats(
+            skin_count=skin_count,
+            audio_type_count=audio_type_count,
+            event_count=event_count,
+            audio_id_count=audio_id_count,
+            available_audio_id_count=available_audio_id_count,
+        ),
+    )
+
+
+def build_audio_preview_summary_text(stats: AudioPreviewStats) -> str:
+    """构造试听视图顶部摘要文案。"""
+    return (
+        f"皮肤 {stats.skin_count} · 类型 {stats.audio_type_count} · "
+        f"事件 {stats.event_count} · ID {stats.audio_id_count} · 可试听 {stats.available_audio_id_count}"
+    )
 
 
 def _build_status_badge_styles(status: str) -> tuple[str, str]:
@@ -209,6 +349,7 @@ class OverviewPage(QWidget):
         self._current_preview_ids: dict[str, str | None] = {"champions": None, "maps": None}
         self._current_mapping_path: Path | None = None
         self._entity_lists: dict[str, ListWidget] = {}
+        self._audio_preview_placeholder = "请选择左侧实体以查看当前试听视图。"
         self._build_ui()
         self._setup_connections()
 
@@ -271,10 +412,12 @@ class OverviewPage(QWidget):
 
     def _setup_connections(self) -> None:
         self.nav_pivot.currentItemChanged.connect(self._on_nav_changed)
+        self.preview_mode_pivot.currentItemChanged.connect(self._on_preview_mode_changed)
         self.search_input.textChanged.connect(self._on_search_text_changed)
         self.sync_selection_btn.clicked.connect(self._sync_selected_entities)
         self.clear_selection_btn.clicked.connect(self._clear_selected_entities)
         self.reveal_file_btn.clicked.connect(self._reveal_selected_mapping_file)
+        self.audio_preview_tree.itemClicked.connect(self._on_audio_preview_item_clicked)
 
         for entity_type, list_widget in self._entity_lists.items():
             list_widget.currentItemChanged.connect(
@@ -283,6 +426,24 @@ class OverviewPage(QWidget):
             list_widget.itemSelectionChanged.connect(
                 lambda et=entity_type: self._on_entity_selection_changed(et)
             )
+
+    def _on_preview_mode_changed(self, mode_key: str) -> None:
+        """切换右侧 Raw 与试听视图。"""
+        is_audio_mode = mode_key == "audio"
+        self.preview_stack.setCurrentWidget(self.audio_preview_tree if is_audio_mode else self.text_preview)
+        self.audio_preview_summary_card.setVisible(is_audio_mode)
+
+    def _on_audio_preview_item_clicked(self, item: QTreeWidgetItem, column: int) -> None:
+        """处理试听树叶子节点的点击请求。"""
+        if column not in (0, 1):
+            return
+
+        audio_id = item.data(0, AUDIO_ID_ROLE)
+        is_available = bool(item.data(0, AUDIO_AVAILABLE_ROLE))
+        if not audio_id or not is_available:
+            return
+
+        self._handle_audio_preview_request(str(audio_id))
 
     def _current_entity_type(self) -> str:
         return self.nav_pivot.currentRouteKey() or "champions"
@@ -418,9 +579,7 @@ class OverviewPage(QWidget):
         right_layout.addWidget(preview_hint)
 
         right_header = QHBoxLayout()
-        self.preview_path_edit = QLineEdit(right_widget)
-        self.preview_path_edit.setReadOnly(True)
-        self.preview_path_edit.setPlaceholderText("请选择左侧实体以查看当前 Raw 预览占位内容。")
+        self.preview_path_edit = create_preview_path_edit(right_widget)
         self.reveal_file_btn = TransparentToolButton(FIF.LINK, right_widget)
         self.reveal_file_btn.setToolTip("打开文件所在位置")
         self.reveal_file_btn.setFixedSize(32, 32)
@@ -430,6 +589,38 @@ class OverviewPage(QWidget):
         right_header.addWidget(self.reveal_file_btn)
         right_layout.addLayout(right_header)
 
+        self.preview_mode_pivot = SegmentedWidget(right_widget)
+        self.preview_mode_pivot.addItem("raw", "Raw")
+        self.preview_mode_pivot.addItem("audio", "试听视图")
+        self.preview_mode_pivot.setCurrentItem("raw")
+        right_layout.addWidget(self.preview_mode_pivot)
+
+        self.audio_preview_summary_card = QFrame(right_widget)
+        self.audio_preview_summary_card.setObjectName("AudioPreviewSummaryCard")
+        self.audio_preview_summary_card.setStyleSheet(
+            """
+            QFrame#AudioPreviewSummaryCard {
+                background-color: rgba(255, 255, 255, 0.04);
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 10px;
+            }
+            """
+        )
+        summary_layout = QVBoxLayout(self.audio_preview_summary_card)
+        summary_layout.setContentsMargins(12, 10, 12, 10)
+        summary_layout.setSpacing(4)
+        self.audio_preview_summary_label = BodyLabel(
+            "当前试听视图会保留 skins 层级；皮肤名映射后续补充。", self.audio_preview_summary_card
+        )
+        self.audio_preview_summary_label.setWordWrap(True)
+        summary_hint = CaptionLabel("TODO: skin_id -> 皮肤名映射将在后续补充。", self.audio_preview_summary_card)
+        summary_hint.setWordWrap(True)
+        summary_layout.addWidget(self.audio_preview_summary_label)
+        summary_layout.addWidget(summary_hint)
+        self.audio_preview_summary_card.setVisible(False)
+        right_layout.addWidget(self.audio_preview_summary_card)
+
+        self.preview_stack = QStackedWidget(right_widget)
         self.text_preview = PlainTextEdit(right_widget)
         self.text_preview.setReadOnly(True)
         self.text_preview.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
@@ -439,7 +630,22 @@ class OverviewPage(QWidget):
         self.text_preview.verticalScrollBar().setSingleStep(18)
         self.text_preview.horizontalScrollBar().setSingleStep(18)
         self.text_preview.setPlainText("请选择左侧实体以查看当前 Raw 预览占位内容。")
-        right_layout.addWidget(self.text_preview)
+        self.preview_stack.addWidget(self.text_preview)
+
+        self.audio_preview_tree = TreeWidget(right_widget)
+        self.audio_preview_tree.setHeaderHidden(True)
+        self.audio_preview_tree.setColumnCount(2)
+        self.audio_preview_tree.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.audio_preview_tree.setUniformRowHeights(True)
+        self.audio_preview_tree.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.audio_preview_tree.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.audio_preview_tree.verticalScrollBar().setSingleStep(18)
+        self.audio_preview_tree.horizontalScrollBar().setSingleStep(18)
+        self.audio_preview_tree.setColumnWidth(0, 56)
+        self.audio_preview_tree.header().setStretchLastSection(True)
+        self.preview_stack.addWidget(self.audio_preview_tree)
+
+        right_layout.addWidget(self.preview_stack, 1)
 
         self.splitter.addWidget(left_widget)
         self.splitter.addWidget(right_widget)
@@ -627,25 +833,86 @@ class OverviewPage(QWidget):
             self._show_placeholder("当前配置尚未完成初始化，暂时无法读取右侧预览内容。")
             return
 
-        mapping_path, preview_content = loader.load_mapping_preview(entity_type, str(row["id"]))
+        mapping_path, mapping_data, preview_content = loader.load_mapping_preview(entity_type, str(row["id"]))
         if mapping_path is None:
             self._show_placeholder(
                 f"{row['name']} 当前还没有 mapping 文件。后续 Tree 视图会继续承接更多预览能力。"
             )
             return
 
+        available_audio_ids = loader.load_available_audio_ids(entity_type, str(row["id"]))
         self._current_mapping_path = mapping_path
         self.preview_path_edit.setText(build_preview_path_text(mapping_path))
         self.preview_path_edit.setCursorPosition(0)
         self.preview_path_edit.setToolTip(str(mapping_path))
         self.text_preview.setPlainText(preview_content or "{}")
+        self._refresh_audio_preview(mapping_data, available_audio_ids)
         self.reveal_file_btn.setEnabled(True)
+
+    def _refresh_audio_preview(
+        self,
+        mapping_data: dict[str, Any] | None,
+        available_audio_ids: set[str],
+    ) -> None:
+        """根据当前 mapping 数据刷新试听树。"""
+        self.audio_preview_tree.setUpdatesEnabled(False)
+        try:
+            self.audio_preview_tree.clear()
+            nodes, stats = build_audio_preview_nodes(mapping_data, available_audio_ids)
+            self.audio_preview_summary_label.setText(build_audio_preview_summary_text(stats))
+
+            for node in nodes:
+                self._append_audio_preview_node(None, node)
+
+            if nodes:
+                self.audio_preview_tree.expandToDepth(1)
+        finally:
+            self.audio_preview_tree.setUpdatesEnabled(True)
+
+    def _append_audio_preview_node(
+        self,
+        parent_item: QTreeWidgetItem | None,
+        node: AudioPreviewNode,
+    ) -> QTreeWidgetItem:
+        """将试听树节点递归追加到 TreeWidget。"""
+        if node.audio_id is not None:
+            item = QTreeWidgetItem(["▶", node.audio_id])
+            item.setData(0, AUDIO_ID_ROLE, node.audio_id)
+            item.setData(0, AUDIO_AVAILABLE_ROLE, node.is_available)
+            item.setTextAlignment(0, Qt.AlignCenter)
+            item.setToolTip(0, "模拟播放当前音频 ID")
+            item.setToolTip(1, node.audio_id)
+            if not node.is_available:
+                item.setDisabled(True)
+        else:
+            item = QTreeWidgetItem([node.label, ""])
+            item.setFirstColumnSpanned(True)
+
+        if parent_item is None:
+            self.audio_preview_tree.addTopLevelItem(item)
+        else:
+            parent_item.addChild(item)
+
+        if node.audio_id is not None:
+            item.setSizeHint(0, QSize(0, 32))
+            return item
+
+        for child_node in node.children:
+            self._append_audio_preview_node(item, child_node)
+
+        return item
+
+    def _handle_audio_preview_request(self, audio_id: str) -> None:
+        """记录试听树中的模拟播放请求。"""
+        logger.info(f"[试听] 模拟播放音频 ID {audio_id}")
 
     def _show_placeholder(self, message: str) -> None:
         self._current_mapping_path = None
         self.preview_path_edit.clear()
         self.preview_path_edit.setToolTip("")
         self.text_preview.setPlainText(message)
+        self.audio_preview_tree.clear()
+        self.audio_preview_summary_label.setText(self._audio_preview_placeholder)
         self.reveal_file_btn.setEnabled(False)
 
     def _reveal_selected_mapping_file(self) -> None:

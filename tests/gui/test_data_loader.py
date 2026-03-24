@@ -118,6 +118,7 @@ def test_entity_data_loader_load_entities(mock_app_context):
 def test_entity_data_loader_load_mapping_preview(mock_app_context):
     """测试映射预览内容读取"""
     expected_path = Path("/tmp/hashes/14.1.0/champions/1.json")
+    expected_data = {"entityName": "安妮", "events": {"VO": {"Play_VO_Annie_Attack": [1, 2, 3]}}}
 
     with patch("lol_audio_unpack.gui.service.data_loader.DataReader") as mock_reader_cls:
         mock_reader = Mock()
@@ -129,11 +130,43 @@ def test_entity_data_loader_load_mapping_preview(mock_app_context):
             return_value=expected_path,
         ), patch(
             "lol_audio_unpack.gui.service.data_loader.read_data",
-            return_value={"entityName": "安妮", "events": {"VO": {"Play_VO_Annie_Attack": [1, 2, 3]}}},
+            return_value=expected_data,
         ):
             loader = EntityDataLoader(mock_app_context)
-            actual_path, content = loader.load_mapping_preview("champions", "1")
+            actual_path, actual_data, content = loader.load_mapping_preview("champions", "1")
 
     assert actual_path == expected_path
+    assert actual_data == expected_data
     assert '"entityName": "安妮"' in content
     assert '"Play_VO_Annie_Attack"' in content
+
+
+def test_entity_data_loader_load_available_audio_ids(mock_app_context, tmp_path):
+    """测试加载当前实体可试听的本地音频 ID。"""
+    expected_dir = tmp_path / "1·annie·安妮·黑暗之女" / "VO"
+    expected_dir.mkdir(parents=True)
+    (expected_dir / "118669424.wem").write_bytes(b"")
+    (expected_dir / "223585177.wem").write_bytes(b"")
+    (expected_dir / "skip.txt").write_text("skip", encoding="utf-8")
+
+    with patch("lol_audio_unpack.gui.service.data_loader.DataReader") as mock_reader_cls:
+        mock_reader = Mock()
+        mock_reader.version = "14.1.0"
+        mock_reader_cls.return_value = mock_reader
+
+        with patch("lol_audio_unpack.gui.service.data_loader.AudioEntityData.from_champion") as mock_from_champion:
+            mock_entity = Mock()
+            mock_entity.entity_id = "1"
+            mock_entity.entity_name = "安妮"
+            mock_entity.entity_title = "黑暗之女"
+            mock_entity.entity_alias = "annie"
+            mock_from_champion.return_value = mock_entity
+
+            with patch(
+                "lol_audio_unpack.gui.service.data_loader.resolve_entity_audio_paths",
+                return_value=(expected_dir.parent,),
+            ):
+                loader = EntityDataLoader(mock_app_context)
+                available_ids = loader.load_available_audio_ids("champions", "1")
+
+    assert available_ids == {"118669424", "223585177"}
