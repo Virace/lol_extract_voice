@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from PySide6.QtCore import (
     QAbstractAnimation,
     QEasingCurve,
+    QEvent,
     QObject,
     QPropertyAnimation,
     QRect,
@@ -472,6 +473,8 @@ class _LogDrawerBackdrop(QWidget):
 class GlobalLogDrawer(QObject):
     """管理主窗口底部的全局日志抽屉组件。"""
 
+    dev_console_requested = Signal()
+
     def __init__(self, parent: QWidget) -> None:
         """初始化日志抽屉及其内部控件。
 
@@ -501,6 +504,7 @@ class GlobalLogDrawer(QObject):
         self._card.viewLayout.setContentsMargins(5, 5, 5, 5)
         self._card.viewLayout.setSpacing(0)
         self._title = self._card.headerLabel
+        self._title.installEventFilter(self)
         self._follow_scroll_label = CaptionLabel("保持滚动", self._card.headerView)
         self._follow_scroll_label.setObjectName("GlobalLogPanelFollowScrollLabel")
         self._follow_scroll_switch = SwitchButton("开", self._card.headerView, IndicatorPosition.RIGHT)
@@ -558,6 +562,17 @@ class GlobalLogDrawer(QObject):
 
         self._refresh_surface_style()
         self.set_expanded(False, animate=False)
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        """监听日志标题上的隐藏开发控制台触发手势。"""
+        if obj is self._title and event.type() == QEvent.Type.MouseButtonPress:
+            if event.button() == Qt.MouseButton.LeftButton and bool(
+                event.modifiers() & Qt.KeyboardModifier.ControlModifier
+            ):
+                self.dev_console_requested.emit()
+                event.accept()
+                return True
+        return super().eventFilter(obj, event)
 
     @property
     def output_widget(self) -> PlainTextEdit:

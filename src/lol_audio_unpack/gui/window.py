@@ -7,7 +7,7 @@ from pathlib import Path
 from time import perf_counter
 
 from loguru import logger
-from PySide6.QtCore import QEvent, QRect, QSize, QTimer
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QTimer
 from PySide6.QtGui import QIcon, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import QApplication
 from qfluentwidgets import FluentIcon as FIF
@@ -26,6 +26,7 @@ from qfluentwidgets import (
 from lol_audio_unpack import __version__
 from lol_audio_unpack.app_context import create_app_context
 from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled
+from lol_audio_unpack.gui.components.dev_console import DevConsoleWindow
 from lol_audio_unpack.gui.components.log_drawer import (
     GlobalLogDrawer,
     _build_log_panel_host_rect,
@@ -39,6 +40,8 @@ from lol_audio_unpack.gui.view.setting_page import SettingPage
 from lol_audio_unpack.utils.logging import setup_logging
 
 NAV_EXPANDED_WIDTH_THRESHOLD = 100
+DEV_CONSOLE_COMMAND_MIN_PARTS = 2
+DEV_CONSOLE_QUEUE_FILL_PARTS = 3
 
 
 def _log_window_stage(stage: str, startup_begin: float, previous_mark: float) -> float:
@@ -72,6 +75,7 @@ class MainWindow(FluentWindow):
         self._is_loading_shared_data = False
         self._pending_refresh_notice = False
         self._window_material_bootstrapped = False
+        self._dev_console: DevConsoleWindow | None = None
 
         self._initWindow()
         previous_mark = _log_window_stage("窗口属性初始化完成", startup_begin, previous_mark)
@@ -113,6 +117,8 @@ class MainWindow(FluentWindow):
         previous_mark = _log_window_stage("导航初始化完成", startup_begin, previous_mark)
         self._init_global_log_panel()
         previous_mark = _log_window_stage("全局日志面板初始化完成", startup_begin, previous_mark)
+        self._init_dev_console()
+        previous_mark = _log_window_stage("开发控制台初始化完成", startup_begin, previous_mark)
 
         # 连接设置页面和首页
         self._connect_pages()
@@ -214,6 +220,83 @@ class MainWindow(FluentWindow):
         self._global_log_drawer = GlobalLogDrawer(self)
         self._global_log_drawer.set_log_text(self.executionInterface.current_log_text())
         self._global_log_drawer.sync_host_rect(self._current_log_panel_host_rect(), animate=False)
+
+    def _init_dev_console(self) -> None:
+        """初始化隐藏开发控制台并连接日志标题触发入口。"""
+        self._dev_console = DevConsoleWindow(self)
+        self._dev_console.command_submitted.connect(self._handle_dev_console_command)
+        self._global_log_drawer.dev_console_requested.connect(self._show_dev_console)
+
+    def _show_dev_console(self) -> None:
+        """显示隐藏开发控制台。"""
+        if self._dev_console is None:
+            return
+        self._position_dev_console()
+        self._dev_console.show()
+        self._dev_console.raise_()
+        self._dev_console.activateWindow()
+        self._dev_console.focus_command_input()
+
+    def _position_dev_console(self) -> None:
+        """将开发控制台定位到主窗口右下角附近。"""
+        if self._dev_console is None:
+            return
+
+        if self._dev_console.width() <= 0 or self._dev_console.height() <= 0:
+            self._dev_console.resize(self._dev_console.sizeHint())
+
+        offset_x = max(self.width() - self._dev_console.width() - 32, 0)
+        offset_y = max(self.height() - self._dev_console.height() - 48, 0)
+        anchor = self.mapToGlobal(QPoint(offset_x, offset_y))
+        self._dev_console.move(anchor)
+
+    def _handle_dev_console_command(self, command: str) -> None:
+        """执行开发控制台命令并回写输出。"""
+        if self._dev_console is None:
+            return
+
+        self._dev_console.append_output(f"> {command}")
+        try:
+            output_lines = self._execute_dev_console_command(command)
+        except ValueError as exc:
+            self._dev_console.append_output(f"ERROR: {exc}")
+            return
+
+        for line in output_lines:
+            self._dev_console.append_output(line)
+
+    def _execute_dev_console_command(self, command: str) -> tuple[str, ...]:
+        """解析并执行开发控制台命令。"""
+        normalized = command.strip()
+        if not normalized:
+            raise ValueError("空命令，输入 help 查看可用命令。")
+
+        parts = normalized.split()
+        keyword = parts[0].lower()
+        if keyword == "help":
+            return (
+                "可用命令:",
+                "help",
+                "queue fill <n>",
+                "queue clear",
+                "queue inspect",
+            )
+
+        if keyword != "queue" or len(parts) < DEV_CONSOLE_COMMAND_MIN_PARTS:
+            raise ValueError("未知命令，输入 help 查看可用命令。")
+
+        action = parts[1].lower()
+        if action == "fill":
+            if len(parts) != DEV_CONSOLE_QUEUE_FILL_PARTS or not parts[2].isdigit():
+                raise ValueError("queue fill 需要一个正整数参数。")
+            result = self.executionInterface._debug_fill_mock_queue(int(parts[2]))
+            return (result,)
+        if action == "clear":
+            return (self.executionInterface._debug_clear_mock_queue(),)
+        if action == "inspect":
+            return tuple(self.executionInterface._debug_inspect_queue().splitlines())
+
+        raise ValueError("未知 queue 子命令，输入 help 查看可用命令。")
 
     def eventFilter(self, obj, event):
         """在点击导航栏外部区域时自动收起已展开的导航栏。"""

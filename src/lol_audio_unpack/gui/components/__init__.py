@@ -1,5 +1,6 @@
 """GUI 组件导出。"""
 
+from .dev_console import DevConsoleWindow
 from .log_drawer import GlobalLogDrawer
 from .overview_entity_list import (
     OverviewEntityFilterModel,
@@ -17,6 +18,7 @@ from .overview_status_badge import (
 from .preview_tree import PreviewTreeModel, PreviewTreeView
 
 __all__ = [
+    "DevConsoleWindow",
     "GlobalLogDrawer",
     "OverviewEntityFilterModel",
     "OverviewEntityItemDelegate",

@@ -28,6 +28,10 @@ from lol_audio_unpack.gui.components.log_drawer import (
 from lol_audio_unpack.gui.task_models import ExecutionTaskProgress, ExecutionTaskResult
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 
+MAX_TOP_CARD_GAP = 36
+MAX_ACTION_BOTTOM_GAP = 36
+MAX_SUMMARY_TO_BUTTON_GAP = 16
+
 
 def test_execution_page_preloads_buffered_startup_logs() -> None:
     """执行中心初始化时应带上启动期已缓冲的日志。"""
@@ -116,7 +120,14 @@ def test_execution_page_uses_single_task_builder_instead_of_dual_cards() -> None
     assert page.progress_card.geometry().top() == page.task_builder_card.geometry().top()
     width_delta = abs(page.progress_card.width() - page.task_builder_card.width())
     assert width_delta <= max(page.width() // 50, 1)
-    assert page.progress_card.height() == page.task_builder_card.height()
+    queue_bottom_gap = page.progress_card.height() - page.draft_list.geometry().bottom()
+    assert queue_bottom_gap <= MAX_TOP_CARD_GAP
+    buttons_bottom_gap = (
+        page.task_builder_card.height() - page.create_task_btn.parentWidget().geometry().bottom()
+    )
+    assert buttons_bottom_gap <= MAX_ACTION_BOTTOM_GAP
+    summary_to_button_gap = page.create_task_btn.geometry().top() - page.task_builder_summary_label.geometry().bottom()
+    assert summary_to_button_gap <= MAX_SUMMARY_TO_BUTTON_GAP
     assert hasattr(page, "bottom_spacing_widget")
     assert page.bottom_spacing_widget.height() > 0
 

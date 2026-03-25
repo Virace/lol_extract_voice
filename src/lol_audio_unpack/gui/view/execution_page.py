@@ -348,7 +348,6 @@ class ExecutionPage(SmoothScrollArea):
         task_kind_layout.addWidget(self.task_builder_summary_label)
 
         builder_layout.addWidget(target_widget)
-        builder_layout.addStretch(1)
         action_layout.addWidget(task_kind_widget)
 
         builder_button_row = QHBoxLayout()
@@ -382,7 +381,6 @@ class ExecutionPage(SmoothScrollArea):
         progress_layout.addWidget(self.task_progress_note)
         progress_layout.addWidget(self.queue_progress_label)
         progress_layout.addWidget(self.draft_list)
-        progress_layout.addStretch(1)
         top_layout.addWidget(self.progress_card, 1)
         top_layout.addWidget(self.task_builder_card, 1)
         top_widget.resize(top_widget.width(), top_widget.sizeHint().height())
@@ -1328,6 +1326,94 @@ class ExecutionPage(SmoothScrollArea):
             row_height = max(self.fontMetrics().height() + 14, 32)
         frame_height = self.draft_list.frameWidth() * 2
         self.draft_list.setFixedHeight(row_height * QUEUE_VISIBLE_ROW_COUNT + frame_height + 2)
+
+    def _debug_fill_mock_queue(self, count: int) -> str:
+        """填充指定数量的 mock 队列项，方便调试列表布局。"""
+        if count <= 0:
+            raise ValueError("queue fill 需要大于 0 的整数参数。")
+
+        self.draft_list.clear()
+        self._draft_count = count
+        self._active_task_id = None
+        self._active_worker = None
+        self._stage_completion_notifications.clear()
+
+        for task_id in range(1, count + 1):
+            if task_id == 1:
+                status = TASK_STATUS_RUNNING
+                progress_current = 1
+                progress_total = 3
+                progress_message = "Mock 任务运行中"
+            elif task_id % 3 == 0:
+                status = TASK_STATUS_COMPLETED
+                progress_current = 1
+                progress_total = 1
+                progress_message = "Mock 任务已完成"
+            else:
+                status = TASK_STATUS_WAITING
+                progress_current = 0
+                progress_total = 0
+                progress_message = ""
+
+            draft = ExecutionTaskDraft(
+                source="dev_console",
+                source_summary="开发控制台填充的 mock 队列",
+                champion_ids=(task_id,),
+                map_ids=(11,),
+            )
+            summary = f"Mock任务 {task_id} · 列表调试"
+            queued_task = QueuedExecutionTask(
+                task_id=task_id,
+                draft=draft,
+                summary=summary,
+                status=status,
+                progress_current=progress_current,
+                progress_total=progress_total,
+                progress_message=progress_message,
+            )
+            item = QListWidgetItem(
+                _build_queue_item_text(
+                    task_id=queued_task.task_id,
+                    status=queued_task.status,
+                    summary=queued_task.summary,
+                )
+            )
+            item.setData(TASK_ITEM_ROLE, queued_task)
+            item.setToolTip(self._build_task_item_tooltip(queued_task))
+            self.draft_list.addItem(item)
+            if status == TASK_STATUS_RUNNING and self._active_task_id is None:
+                self._active_task_id = task_id
+
+        self._set_task_running_state(self._active_task_id is not None)
+        self._apply_queue_list_height()
+        self._refresh_progress_panel()
+        return f"已填充 {count} 条 mock 队列项。"
+
+    def _debug_clear_mock_queue(self) -> str:
+        """清空当前调试队列并恢复占位状态。"""
+        self._active_task_id = None
+        self._active_worker = None
+        self._set_task_running_state(False)
+        self._stage_completion_notifications.clear()
+        self._set_queue_placeholder()
+        self._refresh_progress_panel()
+        return "已清空当前队列。"
+
+    def _debug_inspect_queue(self) -> str:
+        """返回当前队列列表与卡片尺寸信息。"""
+        counts = self._queue_status_counts()
+        row_height = self.draft_list.sizeHintForRow(0)
+        return "\n".join(
+            [
+                f"queue_count={self._draft_queue_size()}",
+                f"visible_rows={QUEUE_VISIBLE_ROW_COUNT}",
+                f"row_height={row_height}",
+                f"queue_height={self.draft_list.height()}",
+                f"progress_card_height={self.progress_card.height()}",
+                f"builder_card_height={self.task_builder_card.height()}",
+                f"running={counts[TASK_STATUS_RUNNING]} waiting={counts[TASK_STATUS_WAITING]} completed={counts[TASK_STATUS_COMPLETED]}",
+            ]
+        )
 
     def _clear_draft_queue(self) -> None:
         """清空当前任务队列中可直接移除的任务项。"""
