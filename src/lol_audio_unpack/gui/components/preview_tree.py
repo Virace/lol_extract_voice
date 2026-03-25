@@ -10,10 +10,15 @@ from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QStyle, QStyleOptionViewItem, QTreeView
 from qfluentwidgets import (
     CustomStyleSheet,
-    isDarkTheme,
     setCustomStyleSheet,
     setStyleSheet,
     themeColor,
+)
+
+from lol_audio_unpack.gui.common.styles import (
+    build_fluent_tree_shell_theme_pair,
+    resolve_fluent_neutral_surface,
+    resolve_fluent_text_primary_color,
 )
 
 NODE_KIND_ROLE = int(Qt.ItemDataRole.UserRole) + 1
@@ -65,67 +70,22 @@ def _build_preview_tree_branch_styles() -> str:
 def _build_preview_tree_styles() -> tuple[str, str]:
     """构造试听树的亮暗主题样式。"""
     branch_qss = _build_preview_tree_branch_styles()
-    light_qss = f"""
-    QTreeView {{
-        background-color: transparent;
-        border: 1px solid rgba(0, 0, 0, 15);
-        border-radius: 10px;
-        outline: none;
-        padding: 8px 6px;
-        selection-background-color: transparent;
-    }}
-    QTreeView::item {{
-        min-height: {PREVIEW_TREE_ITEM_MIN_HEIGHT}px;
+    item_rules = """
         padding: 4px 8px 4px 0;
         margin: 2px 0;
-        background-color: transparent;
-        color: #242424;
-        border: none;
-        border-radius: 0;
-    }}
-    QTreeView::item:hover {{
-        background-color: transparent;
-    }}
-    QTreeView::item:selected {{
-        background-color: transparent;
-        color: #242424;
-    }}
-    QTreeView::item:selected:active {{
-        background-color: transparent;
-    }}
-    {branch_qss}
+        padding-left: 0;
     """
-    dark_qss = f"""
-    QTreeView {{
-        background-color: transparent;
-        border: 1px solid rgba(255, 255, 255, 21);
-        border-radius: 10px;
-        outline: none;
-        padding: 8px 6px;
-        selection-background-color: transparent;
-    }}
-    QTreeView::item {{
-        min-height: {PREVIEW_TREE_ITEM_MIN_HEIGHT}px;
-        padding: 4px 8px 4px 0;
-        margin: 2px 0;
-        background-color: transparent;
-        color: #f5f5f5;
-        border: none;
-        border-radius: 0;
-    }}
-    QTreeView::item:hover {{
-        background-color: transparent;
-    }}
-    QTreeView::item:selected {{
-        background-color: transparent;
-        color: #f5f5f5;
-    }}
-    QTreeView::item:selected:active {{
-        background-color: transparent;
-    }}
-    {branch_qss}
-    """
-    return light_qss, dark_qss
+    return build_fluent_tree_shell_theme_pair(
+        light_background="transparent",
+        dark_background="transparent",
+        is_border_visible=True,
+        border_radius="10px",
+        padding="8px 6px",
+        item_min_height=PREVIEW_TREE_ITEM_MIN_HEIGHT,
+        item_border_radius=0,
+        extra_item_rules=item_rules,
+        extra_rules=branch_qss,
+    )
 
 
 def inject_preview_tree_style(tree_view: QTreeView) -> None:
@@ -669,7 +629,7 @@ class PreviewTreeView(QTreeView):
         )
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        pen = QPen(QColor("#F5F5F5" if isDarkTheme() else "#242424"), PREVIEW_TREE_BRANCH_ICON_STROKE_WIDTH)
+        pen = QPen(resolve_fluent_text_primary_color(), PREVIEW_TREE_BRANCH_ICON_STROKE_WIDTH)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
@@ -718,9 +678,9 @@ class PreviewTreeView(QTreeView):
         if not is_selected and not is_hovered:
             return None
 
-        if isDarkTheme():
-            return QColor(255, 255, 255, 36 if is_selected else 20)
-        return QColor(0, 0, 0, 26 if is_selected else 15)
+        return resolve_fluent_neutral_surface(
+            "emphasis_selected" if is_selected else "emphasis_hover"
+        )
 
     def __init__(self, parent=None) -> None:
         """初始化树视图。

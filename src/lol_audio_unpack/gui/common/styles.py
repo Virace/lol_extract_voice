@@ -6,6 +6,80 @@
 
 from __future__ import annotations
 
+from typing import Literal, TypeAlias
+
+from PySide6.QtGui import QColor
+from qfluentwidgets import isDarkTheme
+
+RgbaTuple: TypeAlias = tuple[int, int, int, int]
+
+_FLUENT_FRAME_STROKE_PAIR = ("rgba(0, 0, 0, 15)", "rgba(255, 255, 255, 21)")
+_FLUENT_TEXT_PRIMARY_PAIR = ("#242424", "#F5F5F5")
+_FLUENT_NEUTRAL_SURFACE_PAIRS: dict[str, tuple[RgbaTuple, RgbaTuple]] = {
+    "subtle_idle": ((0, 0, 0, 8), (255, 255, 255, 12)),
+    "subtle_hover": ((0, 0, 0, 10), (255, 255, 255, 14)),
+    "subtle_selected": ((0, 0, 0, 18), (255, 255, 255, 22)),
+    "emphasis_hover": ((0, 0, 0, 15), (255, 255, 255, 20)),
+    "emphasis_selected": ((0, 0, 0, 26), (255, 255, 255, 36)),
+}
+
+
+def get_fluent_frame_stroke_pair() -> tuple[str, str]:
+    """返回项目内复用的 Fluent 微弱描边色对。
+
+    Returns:
+        ``(light, dark)`` 亮暗主题边框色。
+    """
+    return _FLUENT_FRAME_STROKE_PAIR
+
+
+def get_fluent_text_primary_pair() -> tuple[str, str]:
+    """返回项目内复用的 Fluent 主文本色对。
+
+    Returns:
+        ``(light, dark)`` 亮暗主题文本色。
+    """
+    return _FLUENT_TEXT_PRIMARY_PAIR
+
+
+def get_fluent_neutral_surface_pair(
+    kind: Literal["subtle_idle", "subtle_hover", "subtle_selected", "emphasis_hover", "emphasis_selected"],
+) -> tuple[RgbaTuple, RgbaTuple]:
+    """返回指定语义下的中性 surface 亮暗色对。
+
+    Args:
+        kind: 语义化 surface 类型。
+
+    Returns:
+        ``(light_rgba, dark_rgba)`` 形式的 RGBA 元组对。
+    """
+    return _FLUENT_NEUTRAL_SURFACE_PAIRS[kind]
+
+
+def resolve_fluent_neutral_surface(
+    kind: Literal["subtle_idle", "subtle_hover", "subtle_selected", "emphasis_hover", "emphasis_selected"],
+) -> QColor:
+    """按当前主题解析指定语义的中性 surface 颜色。
+
+    Args:
+        kind: 语义化 surface 类型。
+
+    Returns:
+        当前亮暗主题下应使用的 ``QColor``。
+    """
+    light_rgba, dark_rgba = get_fluent_neutral_surface_pair(kind)
+    return QColor(*(dark_rgba if isDarkTheme() else light_rgba))
+
+
+def resolve_fluent_text_primary_color() -> QColor:
+    """按当前主题解析主文本色。
+
+    Returns:
+        当前亮暗主题下应使用的主文本 ``QColor``。
+    """
+    light_text, dark_text = get_fluent_text_primary_pair()
+    return QColor(dark_text if isDarkTheme() else light_text)
+
 
 def build_item_view_qss(  # noqa: PLR0913
     *,
@@ -141,3 +215,124 @@ def build_item_view_theme_pair(  # noqa: PLR0913
         **common_kwargs,
     )
     return light_qss, dark_qss
+
+
+def build_fluent_list_shell_theme_pair(  # noqa: PLR0913
+    *,
+    light_background: str = "transparent",
+    dark_background: str = "transparent",
+    light_border: str = "none",
+    dark_border: str = "none",
+    border_radius: str = "0",
+    padding: str = "0 4px",
+    item_min_height: int = 35,
+    item_border_radius: int = 0,
+    extra_item_rules: str = "",
+    extra_rules: str = "",
+) -> tuple[str, str]:
+    """构造参考 QFluentWidgets ListView 默认基线的列表壳层样式。
+
+    Args:
+        light_background: 亮色主题外层背景。
+        dark_background: 暗色主题外层背景。
+        light_border: 亮色主题外层边框。
+        dark_border: 暗色主题外层边框。
+        border_radius: 外层圆角半径。
+        padding: 外层内边距。
+        item_min_height: item 最小高度。
+        item_border_radius: item 圆角半径。
+        extra_item_rules: 追加到 ``QListView::item`` 的额外规则。
+        extra_rules: 追加到 QSS 尾部的额外规则。
+
+    Returns:
+        ``(light_qss, dark_qss)`` 亮暗主题样式对。
+    """
+    light_text, dark_text = get_fluent_text_primary_pair()
+    list_item_rules = """
+        background-color: transparent;
+        border: 0px;
+        padding-left: 11px;
+        padding-right: 11px;
+    """
+    if extra_item_rules:
+        list_item_rules += extra_item_rules
+
+    return build_item_view_theme_pair(
+        view_type="QListView",
+        light_color=light_text,
+        dark_color=dark_text,
+        light_background=light_background,
+        dark_background=dark_background,
+        light_border=light_border,
+        dark_border=dark_border,
+        border_radius=border_radius,
+        padding=padding,
+        item_min_height=item_min_height,
+        item_border_radius=item_border_radius,
+        extra_item_rules=list_item_rules,
+        extra_rules=extra_rules,
+    )
+
+
+def build_fluent_tree_shell_theme_pair(  # noqa: PLR0913
+    *,
+    light_background: str = "transparent",
+    dark_background: str = "transparent",
+    is_border_visible: bool = True,
+    border_radius: str = "5px",
+    padding: str = "0 5px 0 0",
+    item_min_height: int = 32,
+    item_border_radius: int = 5,
+    extra_item_rules: str = "",
+    extra_rules: str = "",
+    include_branch_reset: bool = False,
+    include_header_reset: bool = False,
+) -> tuple[str, str]:
+    """构造参考 QFluentWidgets TreeView 默认基线的树壳层样式。
+
+    Args:
+        light_background: 亮色主题外层背景。
+        dark_background: 暗色主题外层背景。
+        is_border_visible: 是否使用 QFluentWidgets TreeView 的默认细描边。
+        border_radius: 外层圆角半径。
+        padding: 外层内边距。
+        item_min_height: item 最小高度。
+        item_border_radius: item 圆角半径。
+        extra_item_rules: 追加到 ``QTreeView::item`` 的额外规则。
+        extra_rules: 追加到 QSS 尾部的额外规则。
+        include_branch_reset: 是否追加 branch 透明重置。
+        include_header_reset: 是否追加 header 透明重置。
+
+    Returns:
+        ``(light_qss, dark_qss)`` 亮暗主题样式对。
+    """
+    light_text, dark_text = get_fluent_text_primary_pair()
+    light_stroke, dark_stroke = get_fluent_frame_stroke_pair()
+    tree_item_rules = """
+        padding: 4px;
+        margin-top: 2px;
+        margin-bottom: 2px;
+        padding-left: 20px;
+        background-color: transparent;
+        border: none;
+    """
+    if extra_item_rules:
+        tree_item_rules += extra_item_rules
+
+    return build_item_view_theme_pair(
+        view_type="QTreeView",
+        light_color=light_text,
+        dark_color=dark_text,
+        light_background=light_background,
+        dark_background=dark_background,
+        light_border=f"1px solid {light_stroke}" if is_border_visible else "none",
+        dark_border=f"1px solid {dark_stroke}" if is_border_visible else "none",
+        border_radius=border_radius,
+        padding=padding,
+        item_min_height=item_min_height,
+        item_border_radius=item_border_radius,
+        extra_item_rules=tree_item_rules,
+        extra_rules=extra_rules,
+        include_branch_reset=include_branch_reset,
+        include_header_reset=include_header_reset,
+    )

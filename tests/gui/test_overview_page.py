@@ -10,19 +10,24 @@ from PySide6.QtWidgets import QApplication, QSizePolicy, QWidget
 from qfluentwidgets import LineEdit, Theme, setTheme, setThemeColor, themeColor
 from qfluentwidgets import theme as current_theme
 
-from lol_audio_unpack.gui.components.preview_tree import PreviewTreeModel
-from lol_audio_unpack.gui.view.overview_page import (
+from lol_audio_unpack.gui.components.overview_entity_list import (
     OverviewEntityFilterModel,
     OverviewEntityItemDelegate,
     OverviewEntityListModel,
-    OverviewPage,
+    OverviewEntityListView,
     _build_overview_interaction_colors,
+    build_overview_item_text,
+    should_display_overview_row,
+)
+from lol_audio_unpack.gui.components.overview_status_badge import (
     _build_status_badge_styles,
     _create_status_badge,
-    build_overview_item_text,
+)
+from lol_audio_unpack.gui.components.preview_tree import PreviewTreeModel
+from lol_audio_unpack.gui.view.overview_page import (
+    OverviewPage,
     build_preview_path_text,
     create_preview_path_edit,
-    should_display_overview_row,
 )
 
 EXPECTED_ENTITY_ROW_COUNT = 2
@@ -162,6 +167,7 @@ def test_overview_page_entity_list_uses_virtualized_model_view_pipeline() -> Non
     view = page._entity_lists["champions"]
     proxy_model = view.model()
 
+    assert isinstance(view, OverviewEntityListView)
     assert isinstance(view.itemDelegate(), OverviewEntityItemDelegate)
     assert isinstance(proxy_model, OverviewEntityFilterModel)
     assert isinstance(proxy_model.sourceModel(), OverviewEntityListModel)
