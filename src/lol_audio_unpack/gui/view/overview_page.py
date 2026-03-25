@@ -76,7 +76,7 @@ def create_preview_path_edit(parent: QWidget | None = None) -> LineEdit:
     line_edit = LineEdit(parent)
     line_edit.setReadOnly(True)
     line_edit.setClearButtonEnabled(False)
-    line_edit.setPlaceholderText("请选择左侧实体以查看当前 Raw 预览占位内容。")
+    line_edit.setPlaceholderText("请选择左侧实体以查看原始数据。")
     line_edit.setMinimumWidth(0)
     line_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
     return line_edit
@@ -103,7 +103,7 @@ class OverviewPage(QWidget):
         self._current_preview_ids: dict[str, str | None] = {"champions": None, "maps": None}
         self._current_mapping_path: Path | None = None
         self._entity_lists: dict[str, OverviewEntityListView] = {}
-        self._audio_preview_placeholder = "请选择左侧实体以查看当前试听视图。"
+        self._audio_preview_placeholder = "请选择左侧实体以查看事件内容。"
         self._build_ui()
         self._setup_connections()
 
@@ -131,7 +131,7 @@ class OverviewPage(QWidget):
         self._app_context = app_context
         self._loader = None
         if app_context is None:
-            self._show_placeholder("当前配置尚未完成初始化，暂时无法读取右侧预览内容。")
+            self._show_placeholder("当前配置尚未完成初始化，暂时无法读取预览内容。")
             return
 
         current_index = self._current_entity_list().currentIndex()
@@ -168,7 +168,7 @@ class OverviewPage(QWidget):
             del blockers
         self.list_summary_label.setText("等待实体数据加载…")
         self._update_selection_summary()
-        self._show_placeholder("当前暂无可预览的资源内容。")
+        self._show_placeholder("当前暂无可预览的内容。")
 
     def _setup_connections(self) -> None:
         self.nav_pivot.currentItemChanged.connect(self._on_nav_changed)
@@ -299,7 +299,7 @@ class OverviewPage(QWidget):
         right_layout.setSpacing(8)
 
         preview_title = StrongBodyLabel("资源预览", right_widget)
-        preview_hint = CaptionLabel("右侧支持事件树与 Raw 预览；事件树仅展示基础层级结构。", right_widget)
+        preview_hint = CaptionLabel("右侧支持事件树与原始数据预览；事件树当前仅展示基础层级。", right_widget)
         preview_hint.setWordWrap(True)
         right_layout.addWidget(preview_title)
         right_layout.addWidget(preview_hint)
@@ -317,7 +317,7 @@ class OverviewPage(QWidget):
 
         self.preview_mode_pivot = SegmentedWidget(right_widget)
         self.preview_mode_pivot.addItem("audio", "事件")
-        self.preview_mode_pivot.addItem("raw", "Raw")
+        self.preview_mode_pivot.addItem("raw", "原始数据")
         self.preview_mode_pivot.setCurrentItem("audio")
         right_layout.addWidget(self.preview_mode_pivot)
 
@@ -336,13 +336,10 @@ class OverviewPage(QWidget):
         summary_layout.setContentsMargins(12, 10, 12, 10)
         summary_layout.setSpacing(4)
         self.audio_preview_summary_label = BodyLabel(
-            "当前事件视图会保留首层分组；英雄显示 skin_id，地图显示 map 子分组 ID。", self.audio_preview_summary_card
+            "事件树会保留首层分组；英雄显示皮肤名，地图显示 map 子分组 ID。", self.audio_preview_summary_card
         )
         self.audio_preview_summary_label.setWordWrap(True)
-        summary_hint = CaptionLabel("TODO: 首层分组的友好名称映射将在后续补充。", self.audio_preview_summary_card)
-        summary_hint.setWordWrap(True)
         summary_layout.addWidget(self.audio_preview_summary_label)
-        summary_layout.addWidget(summary_hint)
         self.audio_preview_summary_card.setVisible(False)
         right_layout.addWidget(self.audio_preview_summary_card)
 
@@ -355,7 +352,7 @@ class OverviewPage(QWidget):
         self.text_preview.setUndoRedoEnabled(False)
         self.text_preview.verticalScrollBar().setSingleStep(18)
         self.text_preview.horizontalScrollBar().setSingleStep(18)
-        self.text_preview.setPlainText("请选择左侧实体以查看当前 Raw 预览占位内容。")
+        self.text_preview.setPlainText("请选择左侧实体以查看原始数据。")
         self.preview_stack.addWidget(self.text_preview)
 
         self.audio_preview_tree = PreviewTreeView(right_widget)
@@ -451,7 +448,7 @@ class OverviewPage(QWidget):
         if current_preview_id is None:
             list_widget.setCurrentIndex(QModelIndex())
             self._set_splitter_sizes_evenly()
-            self._show_placeholder("请选择左侧实体以查看当前 Raw 预览占位内容。")
+            self._show_placeholder("请选择左侧实体以查看原始数据。")
             self._update_selection_summary()
             return
 
@@ -539,29 +536,33 @@ class OverviewPage(QWidget):
         row = self._resolve_row_payload(item)
         if not row:
             self._current_preview_ids[entity_type] = None
-            self._show_placeholder("请选择左侧实体以查看当前 Raw 预览占位内容。")
+            self._show_placeholder("请选择左侧实体以查看原始数据。")
             return
 
         self._current_preview_ids[entity_type] = str(row["id"])
         loader = self._ensure_loader()
         if loader is None:
-            self._show_placeholder("当前配置尚未完成初始化，暂时无法读取右侧预览内容。")
+            self._show_placeholder("当前配置尚未完成初始化，暂时无法读取预览内容。")
             return
 
         mapping_path, mapping_data, preview_content = loader.load_mapping_preview(entity_type, str(row["id"]))
         if mapping_path is None:
-            self._show_placeholder(
-                f"{row['name']} 当前还没有 mapping 文件。后续 Tree 视图会继续承接更多预览能力。"
-            )
+            self._show_placeholder(f"{row['name']} 当前还没有映射文件。")
             return
 
         available_audio_ids = loader.load_available_audio_ids(entity_type, str(row["id"]))
+        group_label_map = self._build_preview_group_label_map(
+            entity_type,
+            str(row["id"]),
+            mapping_data,
+            loader,
+        )
         self._current_mapping_path = mapping_path
         self.preview_path_edit.setText(build_preview_path_text(mapping_path))
         self.preview_path_edit.setCursorPosition(0)
         self.preview_path_edit.setToolTip(str(mapping_path))
         self.text_preview.setPlainText(preview_content or "{}")
-        self._refresh_audio_preview(mapping_data, available_audio_ids)
+        self._refresh_audio_preview(mapping_data, available_audio_ids, group_label_map)
         self.reveal_file_btn.setEnabled(True)
 
     def _resolve_row_payload(self, item_or_index: Any) -> dict[str, Any] | None:
@@ -581,10 +582,64 @@ class OverviewPage(QWidget):
 
         return dict(row) if isinstance(row, dict) else None
 
+    @staticmethod
+    def _resolve_champion_skin_name(skin: dict[str, Any]) -> str | None:
+        """从英雄皮肤结构中提取中文皮肤名。"""
+        skin_names = skin.get("skinNames")
+        if isinstance(skin_names, dict):
+            zh_name = str(skin_names.get("zh_CN") or "").strip()
+            if zh_name:
+                return zh_name
+
+        for key in ("name", "displayName"):
+            value = str(skin.get(key) or "").strip()
+            if value:
+                return value
+
+        return None
+
+    def _build_preview_group_label_map(
+        self,
+        entity_type: str,
+        entity_id: str,
+        mapping_data: dict[str, Any] | None,
+        loader: EntityDataLoader,
+    ) -> dict[str, str]:
+        """为右侧试听树构造首层分组展示文案映射。"""
+        if entity_type != "champions":
+            return {}
+        if not isinstance(mapping_data, dict) or not isinstance(mapping_data.get("skins"), dict):
+            return {}
+
+        try:
+            champion_id = int(entity_id)
+        except (TypeError, ValueError):
+            return {}
+
+        champion = loader.data_reader.get_champion(champion_id)
+        if not isinstance(champion, dict):
+            return {}
+
+        label_map: dict[str, str] = {}
+        for skin in champion.get("skins", []):
+            if not isinstance(skin, dict):
+                continue
+
+            skin_id = str(skin.get("id") or "").strip()
+            if not skin_id:
+                continue
+
+            skin_name = self._resolve_champion_skin_name(skin)
+            if skin_name:
+                label_map[skin_id] = skin_name
+
+        return label_map
+
     def _refresh_audio_preview(
         self,
         mapping_data: dict[str, Any] | None,
         available_audio_ids: set[str],
+        group_label_map: dict[str, str] | None = None,
     ) -> None:
         """根据当前 mapping 数据刷新试听树。"""
         stats = collect_tree_stats(mapping_data, available_audio_ids)
@@ -592,7 +647,7 @@ class OverviewPage(QWidget):
         model = self.audio_preview_tree.model()
         if isinstance(model, PreviewTreeModel):
             self.audio_preview_tree.collapseAll()
-            model.set_preview_data(mapping_data, available_audio_ids)
+            model.set_preview_data(mapping_data, available_audio_ids, group_label_map)
 
     def _show_placeholder(self, message: str) -> None:
         self._current_mapping_path = None

@@ -253,22 +253,25 @@ class PreviewTreeModel(QAbstractItemModel):
         self,
         mapping_data: dict[str, Any] | None,
         available_audio_ids: set[str],
+        group_label_map: dict[str, str] | None = None,
     ) -> None:
         """替换当前预览树数据。
 
         Args:
             mapping_data: 当前实体的原始 mapping 数据。
             available_audio_ids: 当前实体本地已存在的 wem ID 集合。
+            group_label_map: 可选的首层分组文案映射，仅影响展示标签。
         """
         groups = extract_tree_groups(mapping_data)
         root_nodes: list[_PreviewTreeNode] = []
+        display_label_map = group_label_map or {}
 
         for group_id, group_payload in groups.items():
             if not isinstance(group_payload, dict):
                 continue
             root_nodes.append(
                 _PreviewTreeNode(
-                    label=str(group_id),
+                    label=display_label_map.get(str(group_id), str(group_id)),
                     kind="group",
                     payload=group_payload.get("events", {}),
                 )

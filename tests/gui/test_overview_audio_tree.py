@@ -117,6 +117,20 @@ def test_audio_preview_tree_model_populates_children_on_demand() -> None:
     assert model.data(unavailable_leaf, AUDIO_AVAILABLE_ROLE) is False
 
 
+def test_audio_preview_tree_model_uses_group_label_map_for_root_labels() -> None:
+    """试听树模型应允许首层分组显示更友好的皮肤文案。"""
+    model = PreviewTreeModel()
+    model.set_preview_data(
+        _sample_mapping_data(),
+        {"118669424"},
+        group_label_map={"1000": "基础皮肤"},
+    )
+
+    skin_index = model.index(0, 0)
+
+    assert model.data(skin_index, Qt.DisplayRole) == "基础皮肤"
+
+
 def test_audio_preview_tree_model_populates_map_children_on_demand() -> None:
     """试听树模型应能按需展开地图 mapping 的层级。"""
     model = PreviewTreeModel()

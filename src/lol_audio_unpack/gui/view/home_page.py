@@ -80,10 +80,10 @@ class ClickableCard(CardWidget):
 
     def __init__(self, icon, title: str, content: str, parent=None):
         super().__init__(parent)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedSize(240, 140)
 
         self._raw_path: str = ""  # resolved path for jump; empty = no jump
+        self._jump_enabled = True
 
         self.vBoxLayout = QVBoxLayout(self)
         self.vBoxLayout.setContentsMargins(20, 20, 20, 20)
@@ -119,6 +119,7 @@ class ClickableCard(CardWidget):
         self.vBoxLayout.addSpacing(4)
         self.vBoxLayout.addWidget(self.contentLabel)
         self.vBoxLayout.addStretch(1)
+        self.setJumpEnabled(True)
 
     # ------------------------------------------------------------------
     # Public helpers
@@ -135,12 +136,28 @@ class ClickableCard(CardWidget):
         self.contentLabel.setText(text)
         self.contentLabel.setToolTip(text)
 
+    def isJumpEnabled(self) -> bool:
+        """返回当前卡片是否具备跳转能力。"""
+        return self._jump_enabled
+
+    def setJumpEnabled(self, is_enabled: bool) -> None:
+        """设置当前卡片是否允许跳转，并同步图标与鼠标样式。"""
+        self._jump_enabled = bool(is_enabled)
+        self.linkIcon.setVisible(self._jump_enabled)
+        self.setCursor(
+            Qt.CursorShape.PointingHandCursor
+            if self._jump_enabled
+            else Qt.CursorShape.ArrowCursor
+        )
+
     # ------------------------------------------------------------------
     # Click → open in file manager
     # ------------------------------------------------------------------
 
     def mouseReleaseEvent(self, e):
         super().mouseReleaseEvent(e)
+        if not self._jump_enabled:
+            return
         self._open_in_explorer()
 
     def _open_in_explorer(self) -> None:
@@ -251,15 +268,14 @@ class HomePage(SmoothScrollArea):
         self.overview_flow.setVerticalSpacing(16)
 
         self.version_card = ClickableCard(FIF.CODE, "游戏版本", "读取中…", self)
-        self.version_card.linkIcon.hide()
-        self.version_card.setCursor(Qt.CursorShape.ArrowCursor)
-        self.version_card._raw_path = ""
+        self.version_card.setJumpEnabled(False)
 
         self.game_dir_card = ClickableCard(FIF.FOLDER, "游戏目录", "未设置", self)
         self.output_dir_card = ClickableCard(FIF.DOWNLOAD, "输出目录", r".\output", self)
 
         # Cache-status card (no path jump initially; will be set if found)
         self.cache_card = ClickableCard(FIF.SYNC, "缓存资源", "检查中…", self)
+        self.cache_card.setJumpEnabled(False)
 
         for card in (
             self.version_card,
@@ -302,17 +318,22 @@ class HomePage(SmoothScrollArea):
 
         if cfg.game_path:
             self.game_dir_card.setPath(cfg.game_path)
+            self.game_dir_card.setJumpEnabled(True)
         else:
             self.game_dir_card.setPath("")
             self.game_dir_card.setDisplayText("未设置")
+            self.game_dir_card.setJumpEnabled(False)
 
         output = cfg.output_path or r".\output"
         self.output_dir_card.setPath(output)
+        self.output_dir_card.setJumpEnabled(True)
 
         self.wwiser_card.setPath(cfg.wwiser_path or r".\tools\wwiser\wwiser.pyz")
+        self.wwiser_card.setJumpEnabled(True)
         self.vgmstream_card.setPath(
             cfg.vgmstream_path or r".\tools\vgmstream\vgmstream-cli.exe"
         )
+        self.vgmstream_card.setJumpEnabled(True)
 
     # ------------------------------------------------------------------
     # Background initialisation worker
@@ -389,29 +410,34 @@ class HomePage(SmoothScrollArea):
         if r.version_error:
             self.version_card.setDisplayText(r.version_error)
             self._current_version = ""
+            self.version_card.setJumpEnabled(False)
         else:
             self._current_version = r.version
             self.version_card.setDisplayText(r.version)
+            self.version_card.setJumpEnabled(False)
 
         # — cache card —
         if not r.version:
             # Cannot determine version → cannot check cache
             self.cache_card.setDisplayText("无法获取版本")
-            self.cache_card.linkIcon.hide()
+            self.cache_card.setJumpEnabled(False)
         elif r.cache_found:
             self.cache_card.setPath(r.cache_path)
             self.cache_card.setDisplayText(f"已找到 {r.version}")
+            self.cache_card.setJumpEnabled(True)
         else:
             output_path = self._resolve_output_path()
             audios_dir = output_path / "audios"
             self.cache_card.setPath(str(audios_dir))
             self.cache_card.setDisplayText(f"无 {r.version} 缓存")
+            self.cache_card.setJumpEnabled(True)
 
     def _on_check_failed(self, error: str) -> None:
         """Handle unexpected worker exception."""
         self.version_card.setDisplayText("读取失败")
+        self.version_card.setJumpEnabled(False)
         self.cache_card.setDisplayText("检查失败")
-        self.cache_card.linkIcon.hide()
+        self.cache_card.setJumpEnabled(False)
 
     def set_loading_state(self, message: str, *, active: bool) -> None:
         """更新首页顶部的加载状态条。
@@ -434,9 +460,11 @@ class HomePage(SmoothScrollArea):
     def update_game_dir(self, path: str) -> None:
         if path:
             self.game_dir_card.setPath(path)
+            self.game_dir_card.setJumpEnabled(True)
         else:
             self.game_dir_card.setPath("")
             self.game_dir_card.setDisplayText("未设置")
+            self.game_dir_card.setJumpEnabled(False)
         # Re-run background check with new game path
         self._start_background_check()
 

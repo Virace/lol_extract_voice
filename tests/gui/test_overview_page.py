@@ -7,7 +7,7 @@ from unittest.mock import Mock
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QSizePolicy, QWidget
-from qfluentwidgets import LineEdit, Theme, setTheme, setThemeColor, themeColor
+from qfluentwidgets import CaptionLabel, LineEdit, Theme, setTheme, setThemeColor, themeColor
 from qfluentwidgets import theme as current_theme
 from qfluentwidgets.common.color import FluentSystemColor
 
@@ -184,6 +184,21 @@ def test_create_preview_path_edit_prefers_shrinking_in_splitter() -> None:
     assert widget.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored
 
 
+def test_overview_page_uses_polished_preview_copy() -> None:
+    """总览页右侧预览区文案应避免开发阶段的占位措辞。"""
+    QApplication.instance() or QApplication([])
+    page = OverviewPage()
+    caption_texts = {label.text() for label in page.findChildren(CaptionLabel)}
+
+    assert create_preview_path_edit().placeholderText() == "请选择左侧实体以查看原始数据。"
+    assert page.text_preview.toPlainText() == "请选择左侧实体以查看原始数据。"
+    assert page._audio_preview_placeholder == "请选择左侧实体以查看事件内容。"
+    assert "右侧支持事件树与原始数据预览；事件树当前仅展示基础层级。" in caption_texts
+    assert page.audio_preview_summary_label.text() == (
+        "事件树会保留首层分组；英雄显示皮肤名，地图显示 map 子分组 ID。"
+    )
+
+
 def test_overview_page_entity_list_uses_virtualized_model_view_pipeline() -> None:
     """左侧实体列表应改为 model/view + delegate 的虚拟化结构。"""
     page = OverviewPage()
@@ -313,6 +328,17 @@ def test_overview_page_load_preview_populates_audio_tree_and_summary(tmp_path) -
     page = OverviewPage()
     preview_path = tmp_path / "hashes" / "16.5" / "champions" / "1.yml"
     page._loader = Mock()
+    page._loader.data_reader = Mock()
+    page._loader.data_reader.get_champion.return_value = {
+        "skins": [
+            {
+                "id": 1000,
+                "skinNames": {
+                    "zh_CN": "基础皮肤",
+                },
+            }
+        ]
+    }
     page._loader.load_mapping_preview.return_value = (
         preview_path,
         {
@@ -349,7 +375,7 @@ def test_overview_page_load_preview_populates_audio_tree_and_summary(tmp_path) -
     assert model.rowCount() == 1
 
     skin_index = model.index(0, 0)
-    assert model.data(skin_index, Qt.DisplayRole) == "1000"
+    assert model.data(skin_index, Qt.DisplayRole) == "基础皮肤"
     model.ensure_children_loaded(skin_index)
     type_index = model.index(0, 0, skin_index)
     assert model.data(type_index, Qt.DisplayRole) == "Annie_Base_VO"
