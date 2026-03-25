@@ -1,4 +1,4 @@
-"""测试实体总览试听树的 model 与 view。"""
+"""测试实体总览基础试听树的 model 与 view。"""
 
 from __future__ import annotations
 
@@ -7,19 +7,25 @@ import subprocess
 import sys
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QTreeView
 
-from lol_audio_unpack.gui.view.overview_audio_tree import (
+from lol_audio_unpack.gui.components.preview_tree import (
     AUDIO_AVAILABLE_ROLE,
     AUDIO_ID_ROLE,
-    AudioPreviewTreeModel,
-    AudioPreviewTreeView,
-    build_branch_indicator_center_x,
-    collect_audio_preview_stats,
+    PreviewTreeModel,
+    PreviewTreeView,
+    collect_tree_stats,
 )
 
+EXPECTED_LEAF_AUDIO_ID_COUNT = 2
+EXPECTED_FULL_AUDIO_TYPE_COUNT = 2
+EXPECTED_FULL_EVENT_COUNT = 2
+EXPECTED_FULL_AUDIO_ID_COUNT = 3
+EXPECTED_FULL_AVAILABLE_AUDIO_ID_COUNT = 2
+EXPECTED_ROOT_CHILD_COUNT = 2
 
-def _find_child_index_by_label(model: AudioPreviewTreeModel, parent_index, label: str):
+
+def _find_child_index_by_label(model: PreviewTreeModel, parent_index, label: str):
     """在指定父节点下按显示文案查找子节点索引。"""
     for row in range(model.rowCount(parent_index)):
         index = model.index(row, 0, parent_index)
@@ -47,24 +53,46 @@ def _sample_mapping_data() -> dict:
     }
 
 
+def _sample_map_mapping_data() -> dict:
+    """返回一份地图试听树样例数据。"""
+    return {
+        "map": {
+            "11": {
+                "events": {
+                    "Map11_Music": {
+                        "Play_map_theme": [7654321, 7654322],
+                    }
+                }
+            }
+        }
+    }
+
+
 def test_collect_audio_preview_stats_counts_full_tree() -> None:
     """统计信息应覆盖完整 mapping 树，而不是只统计已展开节点。"""
-    stats = collect_audio_preview_stats(_sample_mapping_data(), {"118669424", "214822182"})
-    expected_audio_type_count = 2
-    expected_event_count = 2
-    expected_audio_id_count = 3
-    expected_available_audio_id_count = 2
+    stats = collect_tree_stats(_sample_mapping_data(), {"118669424", "214822182"})
 
     assert stats.skin_count == 1
-    assert stats.audio_type_count == expected_audio_type_count
-    assert stats.event_count == expected_event_count
-    assert stats.audio_id_count == expected_audio_id_count
-    assert stats.available_audio_id_count == expected_available_audio_id_count
+    assert stats.audio_type_count == EXPECTED_FULL_AUDIO_TYPE_COUNT
+    assert stats.event_count == EXPECTED_FULL_EVENT_COUNT
+    assert stats.audio_id_count == EXPECTED_FULL_AUDIO_ID_COUNT
+    assert stats.available_audio_id_count == EXPECTED_FULL_AVAILABLE_AUDIO_ID_COUNT
+
+
+def test_collect_audio_preview_stats_counts_map_tree() -> None:
+    """地图 mapping 也应统计到试听树摘要里。"""
+    stats = collect_tree_stats(_sample_map_mapping_data(), {"7654321"})
+
+    assert stats.skin_count == 1
+    assert stats.audio_type_count == 1
+    assert stats.event_count == 1
+    assert stats.audio_id_count == EXPECTED_LEAF_AUDIO_ID_COUNT
+    assert stats.available_audio_id_count == 1
 
 
 def test_audio_preview_tree_model_populates_children_on_demand() -> None:
     """试听树模型应只在需要时展开下一层子节点。"""
-    model = AudioPreviewTreeModel()
+    model = PreviewTreeModel()
     model.set_preview_data(_sample_mapping_data(), {"118669424"})
 
     assert model.rowCount() == 1
@@ -89,93 +117,68 @@ def test_audio_preview_tree_model_populates_children_on_demand() -> None:
     assert model.data(unavailable_leaf, AUDIO_AVAILABLE_ROLE) is False
 
 
-def test_audio_preview_tree_view_only_emits_available_audio_id() -> None:
-    """试听树视图只应为可试听叶子节点发出请求。"""
-    app = QApplication.instance() or QApplication([])
-    view = AudioPreviewTreeView()
-    emitted_ids: list[str] = []
-    view.audio_id_requested.connect(emitted_ids.append)
-    view.set_preview_data(_sample_mapping_data(), {"118669424"})
+def test_audio_preview_tree_model_populates_map_children_on_demand() -> None:
+    """试听树模型应能按需展开地图 mapping 的层级。"""
+    model = PreviewTreeModel()
+    model.set_preview_data(_sample_map_mapping_data(), {"7654321"})
 
-    model = view.preview_model
-    skin_index = model.index(0, 0)
-    view.ensure_children_loaded(skin_index)
-    type_index = _find_child_index_by_label(model, skin_index, "Annie_Base_VO")
-    view.ensure_children_loaded(type_index)
-    event_index = _find_child_index_by_label(model, type_index, "Play_vo_Annie_Attack2DGeneral")
-    view.ensure_children_loaded(event_index)
+    root_index = model.index(0, 0)
+    assert model.data(root_index, Qt.DisplayRole) == "11"
 
+    model.ensure_children_loaded(root_index)
+    type_index = _find_child_index_by_label(model, root_index, "Map11_Music")
+    model.ensure_children_loaded(type_index)
+    event_index = _find_child_index_by_label(model, type_index, "Play_map_theme")
+    model.ensure_children_loaded(event_index)
     available_leaf = model.index(0, 0, event_index)
     unavailable_leaf = model.index(1, 0, event_index)
 
-    assert view.try_emit_audio_request(available_leaf) is True
-    assert view.try_emit_audio_request(unavailable_leaf) is False
-    app.processEvents()
+    assert model.data(available_leaf, Qt.DisplayRole) == "7654321"
+    assert model.data(available_leaf, AUDIO_AVAILABLE_ROLE) is True
+    assert model.data(unavailable_leaf, Qt.DisplayRole) == "7654322"
+    assert model.data(unavailable_leaf, AUDIO_AVAILABLE_ROLE) is False
 
-    assert emitted_ids == ["118669424"]
 
-
-def test_audio_preview_tree_view_applies_fluent_tree_theme() -> None:
-    """试听树应接入 Fluent 的 TreeView 样式。"""
+def test_audio_preview_tree_view_uses_custom_preview_tree_styles() -> None:
+    """试听树视图应保持基础 QTreeView 结构并注入自定义样式。"""
     QApplication.instance() or QApplication([])
-    view = AudioPreviewTreeView()
+    view = PreviewTreeView()
 
-    assert "QTreeView" in view.styleSheet()
-    assert "QTreeView::branch:selected" in view.styleSheet()
-
-
-def test_branch_indicator_center_x_increases_with_depth() -> None:
-    """展开箭头的水平位置应随层级递增。"""
-    root_center = build_branch_indicator_center_x(depth=0, indentation=22)
-    child_center = build_branch_indicator_center_x(depth=1, indentation=22)
-    leaf_parent_center = build_branch_indicator_center_x(depth=2, indentation=22)
-
-    assert root_center < child_center < leaf_parent_center
+    assert isinstance(view, QTreeView)
+    assert view.styleSheet() != ""
+    assert hasattr(view, "audio_id_requested") is False
+    assert hasattr(view, "scrollDelegate") is False
+    assert isinstance(view.model(), PreviewTreeModel)
 
 
-def test_audio_preview_tree_view_qtbot_can_expand_and_emit_audio_id(qtbot) -> None:
-    """qtbot 应能驱动试听树展开并点击可试听 ID。"""
-    view = AudioPreviewTreeView()
-    qtbot.addWidget(view)
-    emitted_ids: list[str] = []
-    view.audio_id_requested.connect(emitted_ids.append)
-    view.set_preview_data(_sample_mapping_data(), {"118669424"})
-    view.resize(640, 480)
-    view.show()
-    qtbot.wait(10)
+def test_audio_preview_tree_view_expands_with_basic_model_loading() -> None:
+    """展开信号触发后，基础树视图也应能通过模型补齐下一层数据。"""
+    QApplication.instance() or QApplication([])
+    view = PreviewTreeView()
+    model = view.model()
+    assert isinstance(model, PreviewTreeModel)
 
-    model = view.preview_model
-    skin_index = model.index(0, 0)
-    view.expand(skin_index)
-    view.ensure_children_loaded(skin_index)
+    model.set_preview_data(_sample_mapping_data(), {"118669424"})
+    root_index = model.index(0, 0)
+    assert model.rowCount(root_index) == 0
 
-    type_index = _find_child_index_by_label(model, skin_index, "Annie_Base_VO")
-    view.expand(type_index)
-    view.ensure_children_loaded(type_index)
+    view.expanded.emit(root_index)
 
-    event_index = _find_child_index_by_label(model, type_index, "Play_vo_Annie_Attack2DGeneral")
-    view.expand(event_index)
-    view.ensure_children_loaded(event_index)
-
-    available_leaf = model.index(0, 0, event_index)
-    rect = view.visualRect(available_leaf)
-    qtbot.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
-
-    assert emitted_ids == ["118669424"]
+    assert model.rowCount(root_index) == EXPECTED_ROOT_CHILD_COUNT
 
 
 def test_audio_preview_tree_mouse_expand_subprocess_does_not_crash() -> None:
-    """真实鼠标展开链路不应导致子进程直接崩溃。"""
+    """子进程中的基础试听树展开链路不应直接崩溃。"""
     script = """
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import QPoint, Qt
-from PySide6.QtTest import QTest
 
-from lol_audio_unpack.gui.view.overview_audio_tree import AudioPreviewTreeView
+from lol_audio_unpack.gui.components.preview_tree import PreviewTreeModel, PreviewTreeView
 
 app = QApplication.instance() or QApplication([])
-view = AudioPreviewTreeView()
-view.set_preview_data(
+view = PreviewTreeView()
+model = view.model()
+assert isinstance(model, PreviewTreeModel)
+model.set_preview_data(
     {
         "skins": {
             "1000": {
@@ -192,20 +195,16 @@ view.set_preview_data(
 view.resize(640, 480)
 view.show()
 app.processEvents()
-model = view.preview_model
 
-def click_expander(index):
-    rect = view.visualRect(index)
-    point = QPoint(max(6, rect.x() + 8), rect.center().y())
-    QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier, point)
-    app.processEvents()
-
-skin = model.index(0, 0)
-click_expander(skin)
-audio_type = model.index(0, 0, skin)
-click_expander(audio_type)
+root = model.index(0, 0)
+view.expand(root)
+app.processEvents()
+audio_type = model.index(0, 0, root)
+view.expand(audio_type)
+app.processEvents()
 event = model.index(0, 0, audio_type)
-click_expander(event)
+view.expand(event)
+app.processEvents()
 print("ok", model.rowCount(event))
 """
     completed = subprocess.run(
@@ -217,4 +216,4 @@ print("ok", model.rowCount(event))
     )
 
     assert completed.returncode == 0, completed.stderr or completed.stdout
-    assert "ok" in completed.stdout
+    assert "ok 2" in completed.stdout

@@ -1,15 +1,22 @@
 """测试实体总览页面的显示文案辅助逻辑。"""
 
+from math import dist
 from pathlib import Path
 from unittest.mock import Mock
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QWidget
-from qfluentwidgets import LineEdit, Theme, setTheme
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QApplication, QSizePolicy, QWidget
+from qfluentwidgets import LineEdit, Theme, setTheme, setThemeColor, themeColor
 from qfluentwidgets import theme as current_theme
 
+from lol_audio_unpack.gui.components.preview_tree import PreviewTreeModel
 from lol_audio_unpack.gui.view.overview_page import (
+    OverviewEntityFilterModel,
+    OverviewEntityItemDelegate,
+    OverviewEntityListModel,
     OverviewPage,
+    _build_overview_interaction_colors,
     _build_status_badge_styles,
     _create_status_badge,
     build_overview_item_text,
@@ -17,6 +24,35 @@ from lol_audio_unpack.gui.view.overview_page import (
     create_preview_path_edit,
     should_display_overview_row,
 )
+
+EXPECTED_ENTITY_ROW_COUNT = 2
+BALANCED_SPLITTER_MAX_DELTA = 40
+MIN_TRANSPARENT_STATE_RULES = 2
+INSET_ZEBRA_MIN_DISTANCE = 6
+
+
+def _sample_entity_rows() -> list[dict[str, str]]:
+    """构造总览页实体列表的最小样例数据。"""
+    return [
+        {
+            "id": "1",
+            "name": "安妮",
+            "alias": "Annie",
+            "audio": "已存在",
+            "mapping": "已存在",
+            "mapping_file": "hashes/16.5/champions/1.yml",
+            "entity_type": "champions",
+        },
+        {
+            "id": "2",
+            "name": "奥拉夫",
+            "alias": "Olaf",
+            "audio": "未存在",
+            "mapping": "未存在",
+            "mapping_file": "",
+            "entity_type": "champions",
+        },
+    ]
 
 
 def test_build_overview_item_text_matches_entity_name() -> None:
@@ -78,12 +114,147 @@ def test_create_status_badge_updates_with_theme_switch() -> None:
         setTheme(original_theme)
 
 
+def test_overview_interaction_colors_use_theme_accent_and_neutral_surface() -> None:
+    """列表交互态应使用中性底色，并让左侧 accent 跟随主题色。"""
+    original_theme = current_theme()
+    original_color = QColor(themeColor())
+
+    try:
+        setTheme(Theme.LIGHT)
+        setThemeColor(QColor("#3366FF"))
+        hover_bg, selection_bg, accent = _build_overview_interaction_colors()
+        assert accent.name() == themeColor().name()
+        assert hover_bg.name() != themeColor().name()
+        assert selection_bg.name() != themeColor().name()
+
+        setTheme(Theme.DARK)
+        setThemeColor(QColor("#FF6A3D"))
+        hover_bg, selection_bg, accent = _build_overview_interaction_colors()
+        assert accent.name() == themeColor().name()
+        assert hover_bg.name() != themeColor().name()
+        assert selection_bg.name() != themeColor().name()
+    finally:
+        setTheme(original_theme)
+        setThemeColor(original_color)
+
+
 def test_create_preview_path_edit_uses_fluent_line_edit() -> None:
     """预览路径输入框应使用 Fluent LineEdit 以跟随主题。"""
     widget = create_preview_path_edit()
 
     assert isinstance(widget, LineEdit)
     assert widget.isReadOnly() is True
+
+
+def test_create_preview_path_edit_prefers_shrinking_in_splitter() -> None:
+    """预览路径输入框不应强行撑大右侧面板。"""
+    widget = create_preview_path_edit()
+
+    assert widget.minimumWidth() == 0
+    assert widget.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored
+
+
+def test_overview_page_entity_list_uses_virtualized_model_view_pipeline() -> None:
+    """左侧实体列表应改为 model/view + delegate 的虚拟化结构。"""
+    page = OverviewPage()
+    page.set_entity_data("champions", _sample_entity_rows())
+
+    view = page._entity_lists["champions"]
+    proxy_model = view.model()
+
+    assert isinstance(view.itemDelegate(), OverviewEntityItemDelegate)
+    assert isinstance(proxy_model, OverviewEntityFilterModel)
+    assert isinstance(proxy_model.sourceModel(), OverviewEntityListModel)
+    assert proxy_model.rowCount() == EXPECTED_ENTITY_ROW_COUNT
+    assert view.indexWidget(proxy_model.index(0, 0)) is None
+    assert hasattr(view, "scrollDelegate")
+
+
+def test_overview_page_entity_list_applies_theme_styles() -> None:
+    """左侧实体列表应有和 Fluent 页面一致的主题样式。"""
+    page = OverviewPage()
+    style_sheet = page._entity_lists["champions"].styleSheet()
+
+    assert "QListView" in style_sheet
+    assert "QListView::item:hover" in style_sheet
+    assert "QListView::item:selected" in style_sheet
+    assert style_sheet.count("background-color: transparent;") >= MIN_TRANSPARENT_STATE_RULES
+
+
+def test_overview_page_entity_list_uses_inset_zebra_surface_for_idle_rows(qtbot) -> None:
+    """普通斑马行应只在内层交互区域着色，而不是整块方角灰底贴边。"""
+    app = QApplication.instance() or QApplication([])
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    page.resize(640, 520)
+    page.set_entity_data("champions", _sample_entity_rows())
+    page.show()
+    app.processEvents()
+
+    view = page._entity_lists["champions"]
+    index = view.model().index(1, 0)
+    row_rect = view.visualRect(index)
+    image = view.viewport().grab().toImage()
+    dpr = image.devicePixelRatio()
+    outer_x = round((row_rect.left() + 1) * dpr)
+    inner_x = round((row_rect.left() + 12) * dpr)
+    sample_y = round(row_rect.center().y() * dpr)
+
+    outer_pixel = image.pixelColor(outer_x, sample_y)
+    inner_pixel = image.pixelColor(inner_x, sample_y)
+    outer_rgba = (outer_pixel.red(), outer_pixel.green(), outer_pixel.blue(), outer_pixel.alpha())
+    inner_rgba = (inner_pixel.red(), inner_pixel.green(), inner_pixel.blue(), inner_pixel.alpha())
+
+    assert view.alternatingRowColors() is False
+    assert dist(outer_rgba, inner_rgba) >= INSET_ZEBRA_MIN_DISTANCE
+
+
+def test_overview_page_search_filters_proxy_row_count() -> None:
+    """搜索框应通过代理模型收窄当前可见行数，而不是仅隐藏旧 item。"""
+    app = QApplication.instance() or QApplication([])
+    page = OverviewPage()
+    page.nav_pivot.setCurrentItem("maps")
+    page.set_entity_data(
+        "maps",
+        [
+            {
+                "id": "11",
+                "name": "召唤师峡谷",
+                "alias": "Map11",
+                "audio": "已存在",
+                "mapping": "已存在",
+                "mapping_file": "hashes/16.5/maps/11.yml",
+                "entity_type": "maps",
+            },
+            {
+                "id": "12",
+                "name": "嚎哭深渊",
+                "alias": "Map12",
+                "audio": "未存在",
+                "mapping": "已存在",
+                "mapping_file": "hashes/16.5/maps/12.yml",
+                "entity_type": "maps",
+            },
+        ],
+    )
+
+    page.search_input.setText("嚎哭")
+    app.processEvents()
+
+    assert page._entity_lists["maps"].model().rowCount() == 1
+
+
+def test_overview_page_splitter_defaults_to_balanced_ratio(qtbot) -> None:
+    """未选择实体时左右面板应接近 50/50。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    page.resize(1200, 800)
+    page.show()
+    qtbot.wait(10)
+
+    left_size, right_size = page.splitter.sizes()
+
+    assert abs(left_size - right_size) <= BALANCED_SPLITTER_MAX_DELTA
 
 
 def test_overview_page_load_preview_populates_audio_tree_and_summary(tmp_path) -> None:
@@ -120,31 +291,100 @@ def test_overview_page_load_preview_populates_audio_tree_and_summary(tmp_path) -
     assert isinstance(page.preview_path_edit, LineEdit)
     assert page.preview_path_edit.text() == str(preview_path)
     assert page.text_preview.toPlainText() == "raw-preview"
-    assert page.audio_preview_summary_label.text() == "皮肤 1 · 类型 1 · 事件 1 · ID 2 · 可试听 1"
-    model = page.audio_preview_tree.preview_model
+    assert page.audio_preview_summary_label.text() == "分组 1 · 类型 1 · 事件 1 · ID 2 · 可试听 1"
+    model = page.audio_preview_tree.model()
+    assert isinstance(model, PreviewTreeModel)
+    assert page.audio_preview_tree.styleSheet() != ""
+    assert hasattr(page.audio_preview_tree, "audio_id_requested") is False
     assert model.rowCount() == 1
 
     skin_index = model.index(0, 0)
     assert model.data(skin_index, Qt.DisplayRole) == "1000"
-    page.audio_preview_tree.ensure_children_loaded(skin_index)
+    model.ensure_children_loaded(skin_index)
     type_index = model.index(0, 0, skin_index)
     assert model.data(type_index, Qt.DisplayRole) == "Annie_Base_VO"
-    page.audio_preview_tree.ensure_children_loaded(type_index)
+    model.ensure_children_loaded(type_index)
     event_index = model.index(0, 0, type_index)
     assert model.data(event_index, Qt.DisplayRole) == "Play_vo_Annie_Attack2DGeneral"
-    page.audio_preview_tree.ensure_children_loaded(event_index)
+    model.ensure_children_loaded(event_index)
     id_index = model.index(0, 0, event_index)
     unavailable_index = model.index(1, 0, event_index)
     assert model.data(id_index, Qt.DisplayRole) == "118669424"
     assert model.data(unavailable_index, Qt.DisplayRole) == "223585177"
 
 
-def test_overview_page_audio_leaf_click_only_triggers_for_enabled_leaf(tmp_path) -> None:
-    """试听树点击只应对可试听叶子项生效。"""
+def test_overview_page_audio_preview_tree_uses_custom_preview_tree_styles() -> None:
+    """总览页右侧应挂载保持自定义样式的试听树控件。"""
     page = OverviewPage()
-    triggered_ids: list[str] = []
-    preview_path = tmp_path / "hashes" / "16.5" / "champions" / "1.yml"
-    page._handle_audio_preview_request = triggered_ids.append
+
+    assert isinstance(page.audio_preview_tree.model(), PreviewTreeModel)
+    assert page.audio_preview_tree.styleSheet() != ""
+    assert hasattr(page.audio_preview_tree, "audio_id_requested") is False
+
+
+def test_overview_page_load_map_preview_populates_audio_tree_and_summary(tmp_path) -> None:
+    """地图预览应能像英雄一样驱动 Raw、试听树与摘要。"""
+    app = QApplication.instance() or QApplication([])
+    page = OverviewPage()
+    preview_path = tmp_path / "hashes" / "16.5" / "maps" / "11.yml"
+    page._loader = Mock()
+    page._loader.load_mapping_preview.return_value = (
+        preview_path,
+        {
+            "map": {
+                "11": {
+                    "events": {
+                        "Map11_Music": {
+                            "Play_map_theme": [7654321, 7654322],
+                        }
+                    }
+                }
+            }
+        },
+        "map-raw-preview",
+    )
+    page._loader.load_available_audio_ids.return_value = {"7654321"}
+    item = Mock()
+    item.data.return_value = {
+        "id": "11",
+        "name": "召唤师峡谷",
+    }
+
+    page._load_preview_for_item("maps", item)
+    app.processEvents()
+
+    assert page.preview_path_edit.text() == str(preview_path)
+    assert page.text_preview.toPlainText() == "map-raw-preview"
+    assert page.audio_preview_summary_label.text() == "分组 1 · 类型 1 · 事件 1 · ID 2 · 可试听 1"
+
+    model = page.audio_preview_tree.model()
+    assert isinstance(model, PreviewTreeModel)
+    root_index = model.index(0, 0)
+    assert model.data(root_index, Qt.DisplayRole) == "11"
+    model.ensure_children_loaded(root_index)
+    type_index = model.index(0, 0, root_index)
+    assert model.data(type_index, Qt.DisplayRole) == "Map11_Music"
+    model.ensure_children_loaded(type_index)
+    event_index = model.index(0, 0, type_index)
+    assert model.data(event_index, Qt.DisplayRole) == "Play_map_theme"
+    model.ensure_children_loaded(event_index)
+    available_index = model.index(0, 0, event_index)
+    unavailable_index = model.index(1, 0, event_index)
+
+    assert model.data(available_index, Qt.DisplayRole) == "7654321"
+    assert model.data(unavailable_index, Qt.DisplayRole) == "7654322"
+
+
+def test_overview_page_preview_load_keeps_left_list_without_horizontal_scroll(qtbot, tmp_path) -> None:
+    """载入右侧预览后，左侧列表仍不应出现水平滚动条。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    page.resize(1200, 800)
+    page.set_entity_data("champions", _sample_entity_rows())
+    page.show()
+    qtbot.wait(10)
+
+    preview_path = tmp_path / "hashes" / "16.5" / "champions" / "1.msgpack"
     page._loader = Mock()
     page._loader.load_mapping_preview.return_value = (
         preview_path,
@@ -159,27 +399,17 @@ def test_overview_page_audio_leaf_click_only_triggers_for_enabled_leaf(tmp_path)
                 }
             }
         },
-        "raw-preview",
+        "{\n  \"metadata\": \"" + ("x" * 4000) + "\"\n}",
     )
     page._loader.load_available_audio_ids.return_value = {"118669424"}
-    item = Mock()
-    item.data.return_value = {
-        "id": "1",
-        "name": "安妮",
-    }
 
-    page._load_preview_for_item("champions", item)
+    index = page._entity_lists["champions"].model().index(0, 0)
+    page._load_preview_for_item("champions", index)
+    qtbot.wait(10)
 
-    model = page.audio_preview_tree.preview_model
-    skin_index = model.index(0, 0)
-    page.audio_preview_tree.ensure_children_loaded(skin_index)
-    type_index = model.index(0, 0, skin_index)
-    page.audio_preview_tree.ensure_children_loaded(type_index)
-    event_index = model.index(0, 0, type_index)
-    page.audio_preview_tree.ensure_children_loaded(event_index)
-    available_index = model.index(0, 0, event_index)
-    unavailable_index = model.index(1, 0, event_index)
+    view = page._entity_lists["champions"]
+    left_size, right_size = page.splitter.sizes()
 
-    assert page.audio_preview_tree.try_emit_audio_request(available_index) is True
-    assert page.audio_preview_tree.try_emit_audio_request(unavailable_index) is False
-    assert triggered_ids == ["118669424"]
+    assert hasattr(view, "scrollDelegate")
+    assert view.horizontalScrollBar().maximum() == 0
+    assert abs(left_size - right_size) <= BALANCED_SPLITTER_MAX_DELTA

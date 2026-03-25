@@ -7,18 +7,33 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from loguru import logger
-from PySide6.QtCore import QSignalBlocker, QSize, Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices, QTextOption
+from PySide6.QtCore import (
+    QAbstractListModel,
+    QItemSelectionModel,
+    QModelIndex,
+    QRect,
+    QSignalBlocker,
+    QSize,
+    QSortFilterProxyModel,
+    Qt,
+    QUrl,
+    Signal,
+)
+from PySide6.QtGui import QColor, QDesktopServices, QFontMetrics, QPainter, QPalette, QTextOption
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QListWidgetItem,
+    QListView,
     QPlainTextEdit,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
     QVBoxLayout,
     QWidget,
 )
@@ -29,7 +44,6 @@ from qfluentwidgets import (
     InfoBar,
     InfoBarPosition,
     LineEdit,
-    ListWidget,
     PlainTextEdit,
     PrimaryPushButton,
     PushButton,
@@ -38,23 +52,58 @@ from qfluentwidgets import (
     StrongBodyLabel,
     SubtitleLabel,
     TransparentToolButton,
+    isDarkTheme,
+    qconfig,
     setCustomStyleSheet,
     setStyleSheet,
+    themeColor,
 )
 from qfluentwidgets import (
     FluentIcon as FIF,
 )
+from qfluentwidgets.components.widgets.scroll_bar import SmoothScrollDelegate
 
 from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled
-from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
-from lol_audio_unpack.gui.view.overview_audio_tree import (
-    AudioPreviewTreeView,
-    build_audio_preview_summary_text,
-    collect_audio_preview_stats,
+from lol_audio_unpack.gui.common.styles import build_item_view_theme_pair
+from lol_audio_unpack.gui.components.preview_tree import (
+    PreviewTreeModel,
+    PreviewTreeView,
+    build_tree_summary_text,
+    collect_tree_stats,
 )
+from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 
 OVERVIEW_ITEM_HEIGHT = 40
 STATUS_BADGE_SIZE = 24
+DARK_THEME_LIGHTNESS_THRESHOLD = 128
+EMPTY_MODEL_INDEX = QModelIndex()
+OVERVIEW_INTERACTION_RADIUS = 4
+OVERVIEW_IDLE_LIGHT_SURFACE_RGBA = (0, 0, 0, 8)
+OVERVIEW_IDLE_DARK_SURFACE_RGBA = (255, 255, 255, 12)
+OVERVIEW_HOVER_LIGHT_SURFACE_RGBA = (0, 0, 0, 10)
+OVERVIEW_HOVER_DARK_SURFACE_RGBA = (255, 255, 255, 14)
+OVERVIEW_SELECTION_LIGHT_SURFACE_RGBA = (0, 0, 0, 18)
+OVERVIEW_SELECTION_DARK_SURFACE_RGBA = (255, 255, 255, 22)
+OVERVIEW_INTERACTION_HORIZONTAL_MARGIN = 4
+OVERVIEW_INTERACTION_VERTICAL_MARGIN = 2
+OVERVIEW_SELECTION_ACCENT_WIDTH = 3
+OVERVIEW_SELECTION_ACCENT_TOP_MARGIN = 7
+OVERVIEW_SELECTION_ACCENT_BOTTOM_MARGIN = 6
+OVERVIEW_TEXT_LEFT_PADDING = 18
+OVERVIEW_TEXT_RIGHT_PADDING = 12
+STATUS_AVAILABLE_LIGHT_BACKGROUND = "#0F7B0F"
+STATUS_AVAILABLE_DARK_BACKGROUND = "#6CCB5F"
+STATUS_MISSING_LIGHT_BACKGROUND = "#9D5D00"
+STATUS_MISSING_DARK_BACKGROUND = "#FFF4CE"
+STATUS_LIGHT_FOREGROUND = "#FFFFFF"
+STATUS_DARK_FOREGROUND = "#111111"
+OVERVIEW_ROW_ROLE = int(Qt.ItemDataRole.UserRole) + 11
+OVERVIEW_ENTITY_ID_ROLE = int(Qt.ItemDataRole.UserRole) + 12
+OVERVIEW_ALIAS_ROLE = int(Qt.ItemDataRole.UserRole) + 13
+OVERVIEW_AUDIO_STATUS_ROLE = int(Qt.ItemDataRole.UserRole) + 14
+OVERVIEW_MAPPING_STATUS_ROLE = int(Qt.ItemDataRole.UserRole) + 15
+OVERVIEW_TOOLTIP_ROLE = int(Qt.ItemDataRole.UserRole) + 16
+OVERVIEW_SEARCH_TEXT_ROLE = int(Qt.ItemDataRole.UserRole) + 17
 
 
 def should_display_overview_row(row: dict[str, Any]) -> bool:
@@ -101,6 +150,8 @@ def create_preview_path_edit(parent: QWidget | None = None) -> LineEdit:
     line_edit.setReadOnly(True)
     line_edit.setClearButtonEnabled(False)
     line_edit.setPlaceholderText("请选择左侧实体以查看当前 Raw 预览占位内容。")
+    line_edit.setMinimumWidth(0)
+    line_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
     return line_edit
 
 
@@ -127,13 +178,13 @@ def _build_status_badge_styles(status: str) -> tuple[str, str]:
 
     if status == "已存在":
         return (
-            build_style("#0F7B0F", "#FFFFFF"),
-            build_style("#6CCB5F", "#111111"),
+            build_style(STATUS_AVAILABLE_LIGHT_BACKGROUND, STATUS_LIGHT_FOREGROUND),
+            build_style(STATUS_AVAILABLE_DARK_BACKGROUND, STATUS_DARK_FOREGROUND),
         )
 
     return (
-        build_style("#9D5D00", "#FFFFFF"),
-        build_style("#FFF4CE", "#111111"),
+        build_style(STATUS_MISSING_LIGHT_BACKGROUND, STATUS_LIGHT_FOREGROUND),
+        build_style(STATUS_MISSING_DARK_BACKGROUND, STATUS_DARK_FOREGROUND),
     )
 
 
@@ -187,6 +238,230 @@ class OverviewListItemWidget(QFrame):
         root_layout.addWidget(badge_container, 0, Qt.AlignVCenter)
 
 
+class OverviewEntityListModel(QAbstractListModel):
+    """承载实体总览左侧列表数据的轻量模型。"""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._rows: list[dict[str, Any]] = []
+
+    def rowCount(self, parent: QModelIndex = EMPTY_MODEL_INDEX) -> int:
+        """返回当前列表可展示的实体数量。"""
+        if parent.isValid():
+            return 0
+        return len(self._rows)
+
+    def data(self, index: QModelIndex, role: int = int(Qt.ItemDataRole.DisplayRole)) -> Any:
+        """按角色返回当前实体行数据。"""
+        if not index.isValid() or not 0 <= index.row() < len(self._rows):
+            return None
+
+        row = self._rows[index.row()]
+        value: Any = None
+        if role == Qt.ItemDataRole.DisplayRole:
+            value = build_overview_item_text(row)
+        elif role in (Qt.ItemDataRole.ToolTipRole, OVERVIEW_TOOLTIP_ROLE):
+            value = _build_overview_item_tooltip(row)
+        elif role == Qt.ItemDataRole.SizeHintRole:
+            value = QSize(0, OVERVIEW_ITEM_HEIGHT)
+        elif role in (Qt.ItemDataRole.UserRole, OVERVIEW_ROW_ROLE):
+            value = dict(row)
+        elif role == OVERVIEW_ENTITY_ID_ROLE:
+            value = str(row.get("id", "")).strip()
+        elif role == OVERVIEW_ALIAS_ROLE:
+            value = str(row.get("alias", "")).strip()
+        elif role == OVERVIEW_AUDIO_STATUS_ROLE:
+            value = str(row.get("audio", "未存在"))
+        elif role == OVERVIEW_MAPPING_STATUS_ROLE:
+            value = str(row.get("mapping", "未存在"))
+        elif role == OVERVIEW_SEARCH_TEXT_ROLE:
+            value = " ".join(
+                (
+                    str(row.get("id", "")),
+                    str(row.get("name", "")),
+                    str(row.get("alias", "")),
+                )
+            ).lower()
+        return value
+
+    def set_rows(self, rows: list[dict[str, Any]]) -> None:
+        """整体替换当前实体行数据。"""
+        filtered_rows = [dict(row) for row in rows if should_display_overview_row(row)]
+        self.beginResetModel()
+        self._rows = filtered_rows
+        self.endResetModel()
+
+    def entity_ids(self) -> set[str]:
+        """返回当前 source model 中存在的实体 ID 集合。"""
+        return {str(row.get("id", "")).strip() for row in self._rows if str(row.get("id", "")).strip()}
+
+
+class OverviewEntityFilterModel(QSortFilterProxyModel):
+    """按搜索关键字过滤实体列表的代理模型。"""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._keyword = ""
+        self.setDynamicSortFilter(True)
+
+    def set_keyword(self, keyword: str) -> None:
+        """更新当前过滤关键字。"""
+        normalized = keyword.lower().strip()
+        if normalized == self._keyword:
+            return
+        self._keyword = normalized
+        self.beginFilterChange()
+        self.endFilterChange(QSortFilterProxyModel.Direction.Rows)
+
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+        """判断 source model 中的某一行是否应保留在当前结果里。"""
+        if not self._keyword:
+            return True
+
+        model = self.sourceModel()
+        if model is None:
+            return False
+
+        index = model.index(source_row, 0, source_parent)
+        haystack = str(model.data(index, OVERVIEW_SEARCH_TEXT_ROLE) or "")
+        return self._keyword in haystack
+
+
+class OverviewEntityItemDelegate(QStyledItemDelegate):
+    """直接绘制实体条目，避免为每一行创建独立 QWidget。"""
+
+    def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex) -> QSize:
+        """返回稳定的总览行高。"""
+        return QSize(0, OVERVIEW_ITEM_HEIGHT)
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
+        """绘制实体标题与两枚状态徽章。"""
+        painter.save()
+
+        is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        is_hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        style_option = QStyleOptionViewItem(option)
+        self.initStyleOption(style_option, index)
+        style_option.text = ""
+        style_option.features &= ~QStyleOptionViewItem.ViewItemFeature.Alternate
+        if is_selected or is_hovered:
+            style_option.state &= ~QStyle.StateFlag.State_Selected
+            style_option.state &= ~QStyle.StateFlag.State_MouseOver
+        style = style_option.widget.style() if style_option.widget is not None else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, style_option, painter, style_option.widget)
+
+        interaction_rect = option.rect.adjusted(
+            OVERVIEW_INTERACTION_HORIZONTAL_MARGIN,
+            OVERVIEW_INTERACTION_VERTICAL_MARGIN,
+            -OVERVIEW_INTERACTION_HORIZONTAL_MARGIN,
+            -OVERVIEW_INTERACTION_VERTICAL_MARGIN,
+        )
+        content_rect = QRect(
+            interaction_rect.left() + OVERVIEW_TEXT_LEFT_PADDING,
+            interaction_rect.top(),
+            max(0, interaction_rect.width() - OVERVIEW_TEXT_LEFT_PADDING - OVERVIEW_TEXT_RIGHT_PADDING),
+            interaction_rect.height(),
+        )
+        if is_selected:
+            hover_background, selection_background, selection_accent = _build_overview_interaction_colors()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(selection_background)
+            painter.drawRoundedRect(interaction_rect, OVERVIEW_INTERACTION_RADIUS, OVERVIEW_INTERACTION_RADIUS)
+            accent_rect = QRect(
+                interaction_rect.left(),
+                interaction_rect.top() + OVERVIEW_SELECTION_ACCENT_TOP_MARGIN,
+                OVERVIEW_SELECTION_ACCENT_WIDTH,
+                max(
+                    0,
+                    interaction_rect.height()
+                    - OVERVIEW_SELECTION_ACCENT_TOP_MARGIN
+                    - OVERVIEW_SELECTION_ACCENT_BOTTOM_MARGIN,
+                ),
+            )
+            painter.setBrush(selection_accent)
+            painter.drawRoundedRect(
+                accent_rect,
+                OVERVIEW_SELECTION_ACCENT_WIDTH / 2,
+                OVERVIEW_SELECTION_ACCENT_WIDTH / 2,
+            )
+        elif is_hovered:
+            hover_background, _selection_background, _selection_accent = _build_overview_interaction_colors()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(hover_background)
+            painter.drawRoundedRect(interaction_rect, OVERVIEW_INTERACTION_RADIUS, OVERVIEW_INTERACTION_RADIUS)
+        elif index.row() % 2 == 1:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(_build_overview_idle_background())
+            painter.drawRoundedRect(interaction_rect, OVERVIEW_INTERACTION_RADIUS, OVERVIEW_INTERACTION_RADIUS)
+
+        badge_spacing = 8
+        badge_width = STATUS_BADGE_SIZE
+        badge_count = 2
+        badges_total_width = badge_count * badge_width + (badge_count - 1) * badge_spacing
+        title_rect = QRect(
+            content_rect.left(),
+            content_rect.top(),
+            max(
+                0,
+                content_rect.right() - badges_total_width - badge_spacing - content_rect.left(),
+            ),
+            content_rect.height(),
+        )
+
+        display_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
+        metrics = QFontMetrics(style_option.font)
+        elided_text = metrics.elidedText(display_text, Qt.TextElideMode.ElideRight, title_rect.width())
+        painter.setPen(style_option.palette.color(QPalette.ColorRole.Text))
+        painter.drawText(title_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided_text)
+
+        badge_top = interaction_rect.center().y() - STATUS_BADGE_SIZE // 2
+        badge_left = interaction_rect.right() - badges_total_width - OVERVIEW_TEXT_RIGHT_PADDING + 1
+        badges = (
+            ("A", str(index.data(OVERVIEW_AUDIO_STATUS_ROLE) or "未存在")),
+            ("M", str(index.data(OVERVIEW_MAPPING_STATUS_ROLE) or "未存在")),
+        )
+        for badge_label, badge_status in badges:
+            badge_rect = QRect(badge_left, badge_top, STATUS_BADGE_SIZE, STATUS_BADGE_SIZE)
+            self._paint_status_badge(
+                painter,
+                badge_rect,
+                badge_label,
+                badge_status,
+                palette=style_option.palette,
+            )
+            badge_left += badge_width + badge_spacing
+
+        painter.restore()
+
+    def _paint_status_badge(
+        self,
+        painter: QPainter,
+        rect: QRect,
+        badge_label: str,
+        badge_status: str,
+        *,
+        palette,
+    ) -> None:
+        """绘制单个圆形状态徽章。"""
+        is_dark = palette.color(QPalette.ColorRole.Base).lightness() < DARK_THEME_LIGHTNESS_THRESHOLD
+        if badge_status == "已存在":
+            background = QColor(STATUS_AVAILABLE_DARK_BACKGROUND if is_dark else STATUS_AVAILABLE_LIGHT_BACKGROUND)
+            foreground = QColor(STATUS_DARK_FOREGROUND if is_dark else STATUS_LIGHT_FOREGROUND)
+        else:
+            background = QColor(STATUS_MISSING_DARK_BACKGROUND if is_dark else STATUS_MISSING_LIGHT_BACKGROUND)
+            foreground = QColor(STATUS_DARK_FOREGROUND if is_dark else STATUS_LIGHT_FOREGROUND)
+
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(background)
+        painter.drawRoundedRect(rect, STATUS_BADGE_SIZE / 2, STATUS_BADGE_SIZE / 2)
+        painter.setPen(foreground)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, badge_label)
+
+
 def _build_overview_item_tooltip(row: dict[str, Any]) -> str:
     """构造总览页条目的提示信息。"""
     entity_id = str(row.get("id", "")).strip()
@@ -201,6 +476,39 @@ def _build_overview_item_tooltip(row: dict[str, Any]) -> str:
         f"映射: {mapping_status}\n"
         f"文件: {mapping_path}"
     )
+
+
+def _build_overview_list_styles() -> tuple[str, str]:
+    """构造实体列表在亮暗主题下的统一样式。"""
+    return build_item_view_theme_pair(
+        view_type="QListView",
+        light_background="rgba(255, 255, 255, 0.92)",
+        dark_background="rgba(28, 28, 30, 0.94)",
+        light_border="1px solid rgba(0, 0, 0, 0.10)",
+        dark_border="1px solid rgba(255, 255, 255, 0.10)",
+        border_radius="10px",
+        item_min_height=40,
+        item_border_radius=8,
+    )
+
+
+def _build_overview_idle_background() -> QColor:
+    """构造总览列表非选中斑马行的中性底色。"""
+    if isDarkTheme():
+        return QColor(*OVERVIEW_IDLE_DARK_SURFACE_RGBA)
+    return QColor(*OVERVIEW_IDLE_LIGHT_SURFACE_RGBA)
+
+
+def _build_overview_interaction_colors() -> tuple[QColor, QColor, QColor]:
+    """构造总览列表 hover/selected 的中性底色与主题 accent。"""
+    if isDarkTheme():
+        hover_background = QColor(*OVERVIEW_HOVER_DARK_SURFACE_RGBA)
+        selection_background = QColor(*OVERVIEW_SELECTION_DARK_SURFACE_RGBA)
+    else:
+        hover_background = QColor(*OVERVIEW_HOVER_LIGHT_SURFACE_RGBA)
+        selection_background = QColor(*OVERVIEW_SELECTION_LIGHT_SURFACE_RGBA)
+
+    return hover_background, selection_background, QColor(themeColor())
 
 
 class OverviewPage(QWidget):
@@ -223,7 +531,9 @@ class OverviewPage(QWidget):
         self._selected_entity_ids: dict[str, set[str]] = {"champions": set(), "maps": set()}
         self._current_preview_ids: dict[str, str | None] = {"champions": None, "maps": None}
         self._current_mapping_path: Path | None = None
-        self._entity_lists: dict[str, ListWidget] = {}
+        self._entity_lists: dict[str, QListView] = {}
+        self._entity_models: dict[str, OverviewEntityListModel] = {}
+        self._entity_proxies: dict[str, OverviewEntityFilterModel] = {}
         self._audio_preview_placeholder = "请选择左侧实体以查看当前试听视图。"
         self._build_ui()
         self._setup_connections()
@@ -231,6 +541,8 @@ class OverviewPage(QWidget):
     def showEvent(self, event):
         """页面首次展示时同步当前缓存。"""
         super().showEvent(event)
+        if self._current_preview_ids[self._current_entity_type()] is None:
+            self._set_splitter_sizes_evenly()
         self._sync_current_list_view()
 
     def set_gui_config(self, cfg) -> None:
@@ -253,9 +565,9 @@ class OverviewPage(QWidget):
             self._show_placeholder("当前配置尚未完成初始化，暂时无法读取右侧预览内容。")
             return
 
-        current_item = self._current_entity_list().currentItem()
-        if current_item is not None:
-            self._load_preview_for_item(self._current_entity_type(), current_item)
+        current_index = self._current_entity_list().currentIndex()
+        if current_index.isValid():
+            self._load_preview_for_item(self._current_entity_type(), current_index)
 
     def set_entity_data(self, entity_type: str, data: list[dict[str, Any]]) -> None:
         """更新页面缓存的实体数据。"""
@@ -275,12 +587,16 @@ class OverviewPage(QWidget):
         self._selected_entity_ids = {"champions": set(), "maps": set()}
         self._current_preview_ids = {"champions": None, "maps": None}
         self._current_mapping_path = None
-        for list_widget in self._entity_lists.values():
-            blocker = QSignalBlocker(list_widget)
-            list_widget.clear()
-            list_widget.clearSelection()
-            list_widget.setCurrentRow(-1)
-            del blocker
+        for entity_type, list_widget in self._entity_lists.items():
+            selection_model = list_widget.selectionModel()
+            blockers = [QSignalBlocker(list_widget)]
+            if selection_model is not None:
+                blockers.append(QSignalBlocker(selection_model))
+                selection_model.clearSelection()
+                selection_model.setCurrentIndex(QModelIndex(), QItemSelectionModel.SelectionFlag.NoUpdate)
+            self._entity_models[entity_type].set_rows([])
+            list_widget.setCurrentIndex(QModelIndex())
+            del blockers
         self.list_summary_label.setText("等待实体数据加载…")
         self._update_selection_summary()
         self._show_placeholder("当前暂无可预览的资源内容。")
@@ -292,15 +608,27 @@ class OverviewPage(QWidget):
         self.sync_selection_btn.clicked.connect(self._sync_selected_entities)
         self.clear_selection_btn.clicked.connect(self._clear_selected_entities)
         self.reveal_file_btn.clicked.connect(self._reveal_selected_mapping_file)
-        self.audio_preview_tree.audio_id_requested.connect(self._handle_audio_preview_request)
+        qconfig.themeChanged.connect(lambda _theme: self._refresh_entity_list_theme())
+        qconfig.themeColorChanged.connect(lambda _color: self._refresh_entity_list_theme())
 
         for entity_type, list_widget in self._entity_lists.items():
-            list_widget.currentItemChanged.connect(
+            selection_model = list_widget.selectionModel()
+            if selection_model is None:
+                continue
+            selection_model.currentChanged.connect(
                 lambda current, previous, et=entity_type: self._on_current_item_changed(et, current, previous)
             )
-            list_widget.itemSelectionChanged.connect(
-                lambda et=entity_type: self._on_entity_selection_changed(et)
+            selection_model.selectionChanged.connect(
+                lambda _selected, _deselected, et=entity_type: self._on_entity_selection_changed(et)
             )
+
+    def _refresh_entity_list_theme(self) -> None:
+        """在主题或主题色变化后刷新列表绘制。"""
+        for list_widget in self._entity_lists.values():
+            try:
+                list_widget.viewport().update()
+            except RuntimeError:
+                continue
 
     def _on_preview_mode_changed(self, mode_key: str) -> None:
         """切换右侧 Raw 与试听视图。"""
@@ -311,7 +639,7 @@ class OverviewPage(QWidget):
     def _current_entity_type(self) -> str:
         return self.nav_pivot.currentRouteKey() or "champions"
 
-    def _current_entity_list(self) -> ListWidget:
+    def _current_entity_list(self) -> QListView:
         return self._entity_lists[self._current_entity_type()]
 
     def _ensure_loader(self) -> EntityDataLoader | None:
@@ -320,19 +648,14 @@ class OverviewPage(QWidget):
         return self._loader
 
     def _iter_visible_rows(self, entity_type: str) -> list[dict[str, Any]]:
-        keyword = self.search_input.text().lower().strip()
+        """返回当前过滤条件下仍可见的实体行。"""
+        proxy_model = self._entity_proxies[entity_type]
         rows: list[dict[str, Any]] = []
-        for row in self._cached_data.get(entity_type, []):
-            if not should_display_overview_row(row):
-                continue
-            haystacks = (
-                str(row.get("id", "")),
-                str(row.get("name", "")),
-                str(row.get("alias", "")),
-            )
-            if keyword and not any(keyword in value.lower() for value in haystacks):
-                continue
-            rows.append(row)
+        for row_index in range(proxy_model.rowCount()):
+            index = proxy_model.index(row_index, 0)
+            row = index.data(OVERVIEW_ROW_ROLE)
+            if isinstance(row, dict):
+                rows.append(row)
         return rows
 
     def _build_ui(self) -> None:
@@ -362,6 +685,7 @@ class OverviewPage(QWidget):
 
         self.splitter = QSplitter(Qt.Horizontal, self)
         self.splitter.setObjectName("OverviewSplitter")
+        self.splitter.setChildrenCollapsible(False)
         self.splitter.setStyleSheet(
             """
             QSplitter#OverviewSplitter::handle {
@@ -380,6 +704,7 @@ class OverviewPage(QWidget):
         )
 
         left_widget = QWidget(self.splitter)
+        left_widget.setMinimumWidth(0)
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 12, 0)
         left_layout.setSpacing(10)
@@ -393,14 +718,31 @@ class OverviewPage(QWidget):
 
         self.list_stack = QStackedWidget(left_widget)
         for entity_type in ("champions", "maps"):
-            list_widget = ListWidget(self.list_stack)
-            list_widget.setAlternatingRowColors(True)
-            list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
+            list_widget = QListView(self.list_stack)
+            list_widget.setAlternatingRowColors(False)
+            list_widget.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+            list_widget.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+            list_widget.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
             list_widget.setUniformItemSizes(True)
             list_widget.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
             list_widget.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+            list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             list_widget.verticalScrollBar().setSingleStep(18)
+            list_widget.setSpacing(2)
+            list_widget.setItemDelegate(OverviewEntityItemDelegate(list_widget))
+            list_widget.scrollDelegate = SmoothScrollDelegate(list_widget, True)
+            light_qss, dark_qss = _build_overview_list_styles()
+            setCustomStyleSheet(list_widget, light_qss, dark_qss)
+            setStyleSheet(list_widget, CustomStyleSheet(list_widget))
+
+            source_model = OverviewEntityListModel(list_widget)
+            proxy_model = OverviewEntityFilterModel(list_widget)
+            proxy_model.setSourceModel(source_model)
+            list_widget.setModel(proxy_model)
+
             self._entity_lists[entity_type] = list_widget
+            self._entity_models[entity_type] = source_model
+            self._entity_proxies[entity_type] = proxy_model
             self.list_stack.addWidget(list_widget)
         left_layout.addWidget(self.list_stack, 1)
 
@@ -431,12 +773,13 @@ class OverviewPage(QWidget):
         left_layout.addWidget(selection_bar)
 
         right_widget = QWidget(self.splitter)
+        right_widget.setMinimumWidth(0)
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(12, 0, 0, 0)
         right_layout.setSpacing(8)
 
         preview_title = StrongBodyLabel("资源预览", right_widget)
-        preview_hint = CaptionLabel("当前先保留 Raw 预览壳；Tree 视图与音频点击播放将在后续接入。", right_widget)
+        preview_hint = CaptionLabel("右侧支持 Raw 与试听树预览；试听树仅展示基础层级结构。", right_widget)
         preview_hint.setWordWrap(True)
         right_layout.addWidget(preview_title)
         right_layout.addWidget(preview_hint)
@@ -473,10 +816,10 @@ class OverviewPage(QWidget):
         summary_layout.setContentsMargins(12, 10, 12, 10)
         summary_layout.setSpacing(4)
         self.audio_preview_summary_label = BodyLabel(
-            "当前试听视图会保留 skins 层级；皮肤名映射后续补充。", self.audio_preview_summary_card
+            "当前试听视图会保留首层分组；英雄显示 skin_id，地图显示 map 子分组 ID。", self.audio_preview_summary_card
         )
         self.audio_preview_summary_label.setWordWrap(True)
-        summary_hint = CaptionLabel("TODO: skin_id -> 皮肤名映射将在后续补充。", self.audio_preview_summary_card)
+        summary_hint = CaptionLabel("TODO: 首层分组的友好名称映射将在后续补充。", self.audio_preview_summary_card)
         summary_hint.setWordWrap(True)
         summary_layout.addWidget(self.audio_preview_summary_label)
         summary_layout.addWidget(summary_hint)
@@ -495,64 +838,94 @@ class OverviewPage(QWidget):
         self.text_preview.setPlainText("请选择左侧实体以查看当前 Raw 预览占位内容。")
         self.preview_stack.addWidget(self.text_preview)
 
-        self.audio_preview_tree = AudioPreviewTreeView(right_widget)
+        self.audio_preview_tree = PreviewTreeView(right_widget)
         self.preview_stack.addWidget(self.audio_preview_tree)
 
         right_layout.addWidget(self.preview_stack, 1)
 
         self.splitter.addWidget(left_widget)
         self.splitter.addWidget(right_widget)
-        self.splitter.setSizes([360, 660])
+        self.splitter.setStretchFactor(0, 1)
+        self.splitter.setStretchFactor(1, 1)
+        self.splitter.setSizes([1, 1])
 
         root_layout.addWidget(self.splitter, 1)
         self._update_selection_summary()
         self.set_smooth_scroll_enabled(False)
 
     def _rebuild_entity_list(self, entity_type: str) -> None:
-        """仅在数据刷新时重建指定实体类型的列表。"""
-        list_widget = self._entity_lists[entity_type]
-        selected_ids = self._selected_entity_ids.get(entity_type, set())
-        current_preview_id = self._current_preview_ids.get(entity_type)
-
-        blocker = QSignalBlocker(list_widget)
-        list_widget.clear()
-        for row in self._cached_data.get(entity_type, []):
-            if not should_display_overview_row(row):
-                continue
-            item = QListWidgetItem()
-            item.setData(Qt.UserRole, dict(row))
-            item.setToolTip(_build_overview_item_tooltip(row))
-            item.setSizeHint(QSize(0, OVERVIEW_ITEM_HEIGHT))
-            list_widget.addItem(item)
-            list_widget.setItemWidget(item, OverviewListItemWidget(row, list_widget))
-            if str(row["id"]) in selected_ids:
-                item.setSelected(True)
-            if current_preview_id is not None and str(row["id"]) == current_preview_id:
-                list_widget.setCurrentItem(item)
-        if current_preview_id is None:
-            list_widget.setCurrentRow(-1)
-        del blocker
+        """刷新指定实体类型的 source model，并恢复选择状态。"""
+        self._entity_models[entity_type].set_rows(self._cached_data.get(entity_type, []))
+        self._prune_entity_state(entity_type)
+        self._restore_list_state(entity_type)
 
     def _apply_filter_to_current_list(self) -> int:
-        """对当前列表应用搜索过滤，仅隐藏或显示现有项。"""
-        keyword = self.search_input.text().lower().strip()
-        visible_count = 0
-        list_widget = self._current_entity_list()
-        for row_index in range(list_widget.count()):
-            item = list_widget.item(row_index)
-            row = item.data(Qt.UserRole)
-            if not row:
-                continue
-            haystacks = (
-                str(row.get("id", "")),
-                str(row.get("name", "")),
-                str(row.get("alias", "")),
+        """对当前列表应用代理过滤，并返回过滤后的可见行数。"""
+        entity_type = self._current_entity_type()
+        list_widget = self._entity_lists[entity_type]
+        proxy_model = self._entity_proxies[entity_type]
+        selection_model = list_widget.selectionModel()
+        blockers = [QSignalBlocker(list_widget)]
+        if selection_model is not None:
+            blockers.append(QSignalBlocker(selection_model))
+        proxy_model.set_keyword(self.search_input.text())
+        self._restore_list_state(entity_type)
+        del blockers
+        return proxy_model.rowCount()
+
+    def _prune_entity_state(self, entity_type: str) -> None:
+        """移除已经不在当前 source model 中的选择与预览状态。"""
+        available_ids = self._entity_models[entity_type].entity_ids()
+        self._selected_entity_ids[entity_type] &= available_ids
+        current_preview_id = self._current_preview_ids.get(entity_type)
+        if current_preview_id is not None and current_preview_id not in available_ids:
+            self._current_preview_ids[entity_type] = None
+
+    def _find_proxy_index_by_entity_id(self, entity_type: str, entity_id: str | None) -> QModelIndex:
+        """在当前代理模型里按实体 ID 查找对应索引。"""
+        if not entity_id:
+            return QModelIndex()
+
+        proxy_model = self._entity_proxies[entity_type]
+        for row_index in range(proxy_model.rowCount()):
+            index = proxy_model.index(row_index, 0)
+            if str(index.data(OVERVIEW_ENTITY_ID_ROLE) or "") == str(entity_id):
+                return index
+        return QModelIndex()
+
+    def _restore_list_state(self, entity_type: str) -> None:
+        """将页面层维护的选择和当前项同步回代理视图。"""
+        list_widget = self._entity_lists[entity_type]
+        selection_model = list_widget.selectionModel()
+        if selection_model is None:
+            return
+
+        blockers = [QSignalBlocker(list_widget), QSignalBlocker(selection_model)]
+        selection_model.clearSelection()
+        selected_ids = self._selected_entity_ids.get(entity_type, set())
+        for entity_id in selected_ids:
+            index = self._find_proxy_index_by_entity_id(entity_type, entity_id)
+            if index.isValid():
+                selection_model.select(
+                    index,
+                    QItemSelectionModel.SelectionFlag.Select
+                    | QItemSelectionModel.SelectionFlag.Rows,
+                )
+
+        current_index = self._find_proxy_index_by_entity_id(
+            entity_type,
+            self._current_preview_ids.get(entity_type),
+        )
+        if current_index.isValid():
+            selection_model.setCurrentIndex(
+                current_index,
+                QItemSelectionModel.SelectionFlag.Current,
             )
-            is_visible = not keyword or any(keyword in value.lower() for value in haystacks)
-            item.setHidden(not is_visible)
-            if is_visible:
-                visible_count += 1
-        return visible_count
+            list_widget.scrollTo(current_index, QListView.ScrollHint.EnsureVisible)
+        else:
+            selection_model.setCurrentIndex(QModelIndex(), QItemSelectionModel.SelectionFlag.NoUpdate)
+            list_widget.setCurrentIndex(QModelIndex())
+        del blockers
 
     def _sync_current_list_view(self) -> None:
         """同步当前 tab 的列表显示状态，不重建已有缓存。"""
@@ -565,12 +938,14 @@ class OverviewPage(QWidget):
 
         if not source_rows:
             self.list_summary_label.setText("等待实体数据加载…")
+            self._set_splitter_sizes_evenly()
             self._show_placeholder("当前实体数据尚未加载完成。")
             self._update_selection_summary()
             return
 
         if visible_count == 0:
             self.list_summary_label.setText("当前筛选结果为空。")
+            self._set_splitter_sizes_evenly()
             self._show_placeholder("未找到匹配的实体，请调整筛选条件。")
             self._update_selection_summary()
             return
@@ -578,30 +953,22 @@ class OverviewPage(QWidget):
         self.list_summary_label.setText(f"共 {len(source_rows)} 个实体，当前显示 {visible_count} 个。")
 
         if current_preview_id is None:
-            list_widget.setCurrentRow(-1)
+            list_widget.setCurrentIndex(QModelIndex())
+            self._set_splitter_sizes_evenly()
             self._show_placeholder("请选择左侧实体以查看当前 Raw 预览占位内容。")
             self._update_selection_summary()
             return
 
-        target_item = None
-        for row_index in range(list_widget.count()):
-            item = list_widget.item(row_index)
-            row = item.data(Qt.UserRole)
-            if not row or item.isHidden():
-                continue
-            if str(row["id"]) == current_preview_id:
-                target_item = item
-                break
-
-        if target_item is None:
+        target_index = self._find_proxy_index_by_entity_id(entity_type, current_preview_id)
+        if not target_index.isValid():
             self._show_placeholder("当前筛选结果中不包含已选实体。")
             self._update_selection_summary()
             return
 
-        if list_widget.currentItem() is not target_item:
-            list_widget.setCurrentItem(target_item)
+        if list_widget.currentIndex() != target_index:
+            list_widget.setCurrentIndex(target_index)
         else:
-            self._load_preview_for_item(entity_type, target_item)
+            self._load_preview_for_item(entity_type, target_index)
         self._update_selection_summary()
 
     def _update_selection_summary(self) -> None:
@@ -646,10 +1013,14 @@ class OverviewPage(QWidget):
         self._selected_entity_ids[entity_type] = set()
         self._current_preview_ids[entity_type] = None
         list_widget = self._current_entity_list()
-        blocker = QSignalBlocker(list_widget)
-        list_widget.clearSelection()
-        list_widget.setCurrentRow(-1)
-        del blocker
+        selection_model = list_widget.selectionModel()
+        blockers = [QSignalBlocker(list_widget)]
+        if selection_model is not None:
+            blockers.append(QSignalBlocker(selection_model))
+            selection_model.clearSelection()
+            selection_model.setCurrentIndex(QModelIndex(), QItemSelectionModel.SelectionFlag.NoUpdate)
+        list_widget.setCurrentIndex(QModelIndex())
+        del blockers
         self._sync_current_list_view()
 
     def _on_nav_changed(self, _key: str) -> None:
@@ -665,16 +1036,19 @@ class OverviewPage(QWidget):
 
     def _on_entity_selection_changed(self, entity_type: str) -> None:
         list_widget = self._entity_lists[entity_type]
+        selection_model = list_widget.selectionModel()
+        if selection_model is None:
+            return
         selected_ids = {
-            str(item.data(Qt.UserRole)["id"])
-            for item in list_widget.selectedItems()
-            if item.data(Qt.UserRole)
+            str(index.data(OVERVIEW_ENTITY_ID_ROLE))
+            for index in selection_model.selectedRows()
+            if str(index.data(OVERVIEW_ENTITY_ID_ROLE) or "")
         }
         self._selected_entity_ids[entity_type] = selected_ids
         self._update_selection_summary()
 
     def _load_preview_for_item(self, entity_type: str, item) -> None:
-        row = item.data(Qt.UserRole) if item is not None else None
+        row = self._resolve_row_payload(item)
         if not row:
             self._current_preview_ids[entity_type] = None
             self._show_placeholder("请选择左侧实体以查看当前 Raw 预览占位内容。")
@@ -702,28 +1076,56 @@ class OverviewPage(QWidget):
         self._refresh_audio_preview(mapping_data, available_audio_ids)
         self.reveal_file_btn.setEnabled(True)
 
+    def _resolve_row_payload(self, item_or_index: Any) -> dict[str, Any] | None:
+        """从旧 item 或新模型索引中解析出统一的行数据。"""
+        row: Any = None
+        if item_or_index is None:
+            return None
+
+        if isinstance(item_or_index, QModelIndex):
+            if item_or_index.isValid():
+                row = item_or_index.data(OVERVIEW_ROW_ROLE)
+        elif hasattr(item_or_index, "isValid") and callable(item_or_index.isValid):
+            if item_or_index.isValid():
+                row = item_or_index.data(OVERVIEW_ROW_ROLE)
+        elif hasattr(item_or_index, "data"):
+            row = item_or_index.data(Qt.ItemDataRole.UserRole)
+
+        return dict(row) if isinstance(row, dict) else None
+
     def _refresh_audio_preview(
         self,
         mapping_data: dict[str, Any] | None,
         available_audio_ids: set[str],
     ) -> None:
         """根据当前 mapping 数据刷新试听树。"""
-        stats = collect_audio_preview_stats(mapping_data, available_audio_ids)
-        self.audio_preview_summary_label.setText(build_audio_preview_summary_text(stats))
-        self.audio_preview_tree.set_preview_data(mapping_data, available_audio_ids)
-
-    def _handle_audio_preview_request(self, audio_id: str) -> None:
-        """记录试听树中的模拟播放请求。"""
-        logger.info(f"[试听] 模拟播放音频 ID {audio_id}")
+        stats = collect_tree_stats(mapping_data, available_audio_ids)
+        self.audio_preview_summary_label.setText(build_tree_summary_text(stats))
+        model = self.audio_preview_tree.model()
+        if isinstance(model, PreviewTreeModel):
+            self.audio_preview_tree.collapseAll()
+            model.set_preview_data(mapping_data, available_audio_ids)
 
     def _show_placeholder(self, message: str) -> None:
         self._current_mapping_path = None
         self.preview_path_edit.clear()
         self.preview_path_edit.setToolTip("")
         self.text_preview.setPlainText(message)
-        self.audio_preview_tree.clear_preview()
+        model = self.audio_preview_tree.model()
+        if isinstance(model, PreviewTreeModel):
+            self.audio_preview_tree.collapseAll()
+            model.clear_preview()
         self.audio_preview_summary_label.setText(self._audio_preview_placeholder)
         self.reveal_file_btn.setEnabled(False)
+
+    def _set_splitter_sizes_evenly(self) -> None:
+        """在页面宽度已知时将左右面板恢复到 50/50。"""
+        total_width = self.splitter.width()
+        if total_width <= 0:
+            return
+
+        half_width = total_width // 2
+        self.splitter.setSizes([half_width, total_width - half_width])
 
     def _reveal_selected_mapping_file(self) -> None:
         if self._current_mapping_path is None:
