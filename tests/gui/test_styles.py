@@ -50,6 +50,8 @@ def test_build_fluent_list_shell_theme_pair_uses_audited_list_view_shell_baselin
     assert "padding-right: 11px;" in light_qss
     assert "min-height: 35px;" in light_qss
     assert "border: none;" in dark_qss
+    assert "background-color: transparent;" in light_qss
+    assert "background-color: transparent;" in dark_qss
 
 
 def test_build_fluent_tree_shell_theme_pair_uses_audited_tree_view_border_tokens() -> None:

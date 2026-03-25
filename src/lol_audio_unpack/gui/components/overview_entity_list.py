@@ -20,7 +20,6 @@ from qfluentwidgets.components.widgets.scroll_bar import SmoothScrollDelegate
 
 from lol_audio_unpack.gui.common.styles import (
     build_fluent_list_shell_theme_pair,
-    get_fluent_frame_stroke_pair,
     resolve_fluent_neutral_surface,
 )
 from lol_audio_unpack.gui.components.overview_status_badge import STATUS_BADGE_SIZE, paint_status_badge
@@ -93,13 +92,7 @@ def _build_overview_item_tooltip(row: dict[str, Any]) -> str:
 
 def _build_overview_list_styles() -> tuple[str, str]:
     """构造实体列表在亮暗主题下的统一样式。"""
-    light_stroke, dark_stroke = get_fluent_frame_stroke_pair()
     return build_fluent_list_shell_theme_pair(
-        light_background="rgba(255, 255, 255, 0.92)",
-        dark_background="rgba(28, 28, 30, 0.94)",
-        light_border=f"1px solid {light_stroke}",
-        dark_border=f"1px solid {dark_stroke}",
-        border_radius="10px",
         item_min_height=40,
         item_border_radius=8,
     )

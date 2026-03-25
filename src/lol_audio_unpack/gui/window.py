@@ -112,6 +112,9 @@ class MainWindow(FluentWindow):
         self.addSubInterface(self.homeInterface, FIF.HOME, "主页")
         self.addSubInterface(self.overviewInterface, FIF.DOCUMENT, "实体总览")
         self.addSubInterface(self.executionInterface, FIF.DOWNLOAD, "执行中心")
+        
+        self.navigationInterface.addSeparator()
+
         self.navigationInterface.addItem(
             routeKey="refreshSharedData",
             icon=FIF.SYNC,
@@ -119,9 +122,6 @@ class MainWindow(FluentWindow):
             onClick=self._refresh_shared_output_data,
             selectable=False,
         )
-
-        # add separator
-        self.navigationInterface.addSeparator()
 
         # add custom widget to bottom
         self.navigationInterface.addItem(

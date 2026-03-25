@@ -416,7 +416,7 @@ class ExecutionPage(SmoothScrollArea):
 
         lower_widget = QWidget(self.view)
         lower_layout = QHBoxLayout(lower_widget)
-        lower_layout.setContentsMargins(0, 0, 0, 0)
+        lower_layout.setContentsMargins(0, 0, 0, 12)
         lower_layout.setSpacing(12)
 
         self.draft_card = CardWidget(self.view)

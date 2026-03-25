@@ -34,6 +34,7 @@ from qfluentwidgets import (
     isDarkTheme,
     qconfig,
 )
+from shiboken6 import isValid
 
 from lol_audio_unpack.gui.common import GUI_LOG_MAX_LINES
 from lol_audio_unpack.gui.common.loguru_palette import (
@@ -735,6 +736,19 @@ class GlobalLogDrawer(QObject):
 
     def _refresh_surface_style(self) -> None:
         """按当前主题刷新抽屉外壳、标题条和把手样式。"""
+        if not all(
+            isValid(widget)
+            for widget in (
+                self._card,
+                self._title,
+                self._follow_scroll_label,
+                self._output,
+                self._backdrop,
+                self._toggle_btn,
+            )
+        ):
+            return
+
         if isDarkTheme():
             card_border = "rgba(255, 255, 255, 41)"
             card_background = "rgb(28, 31, 38)"

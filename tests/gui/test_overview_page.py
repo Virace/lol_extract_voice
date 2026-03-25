@@ -9,6 +9,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QSizePolicy, QWidget
 from qfluentwidgets import LineEdit, Theme, setTheme, setThemeColor, themeColor
 from qfluentwidgets import theme as current_theme
+from qfluentwidgets.common.color import FluentSystemColor
 
 from lol_audio_unpack.gui.components.overview_entity_list import (
     OverviewEntityFilterModel,
@@ -92,9 +93,9 @@ def test_build_status_badge_styles_switches_foreground_with_theme() -> None:
     """状态徽章应为亮暗主题分别生成不同前景色与底色。"""
     light_qss, dark_qss = _build_status_badge_styles("已存在")
 
-    assert "background-color: #0F7B0F;" in light_qss
+    assert FluentSystemColor.SUCCESS_FOREGROUND.color(Theme.LIGHT).name() in light_qss.lower()
     assert "color: #FFFFFF;" in light_qss
-    assert "background-color: #6CCB5F;" in dark_qss
+    assert FluentSystemColor.SUCCESS_FOREGROUND.color(Theme.DARK).name() in dark_qss.lower()
     assert "color: #111111;" in dark_qss
 
 
@@ -107,14 +108,38 @@ def test_create_status_badge_updates_with_theme_switch() -> None:
     try:
         setTheme(Theme.LIGHT)
         badge = _create_status_badge("audio", "已存在", parent)
-        assert "background-color: #0F7B0F;" in badge.styleSheet()
+        assert FluentSystemColor.SUCCESS_FOREGROUND.color(Theme.LIGHT).name() in badge.styleSheet().lower()
         assert "color: #FFFFFF;" in badge.styleSheet()
 
         setTheme(Theme.DARK)
         app.processEvents()
 
-        assert "background-color: #6CCB5F;" in badge.styleSheet()
+        assert FluentSystemColor.SUCCESS_FOREGROUND.color(Theme.DARK).name() in badge.styleSheet().lower()
         assert "color: #111111;" in badge.styleSheet()
+    finally:
+        setTheme(original_theme)
+
+
+def test_create_status_badge_uses_fluent_system_colors() -> None:
+    """状态徽章颜色应和 qfluentwidgets 的系统语义色保持一致。"""
+    app = QApplication.instance() or QApplication([])
+    original_theme = current_theme()
+    parent = QWidget()
+
+    try:
+        setTheme(Theme.LIGHT)
+        success_badge = _create_status_badge("audio", "已存在", parent)
+        caution_badge = _create_status_badge("mapping", "未存在", parent)
+        app.processEvents()
+
+        assert FluentSystemColor.SUCCESS_FOREGROUND.color(Theme.LIGHT).name() in success_badge.styleSheet().lower()
+        assert FluentSystemColor.CAUTION_FOREGROUND.color(Theme.LIGHT).name() in caution_badge.styleSheet().lower()
+
+        setTheme(Theme.DARK)
+        app.processEvents()
+
+        assert FluentSystemColor.SUCCESS_FOREGROUND.color(Theme.DARK).name() in success_badge.styleSheet().lower()
+        assert FluentSystemColor.CAUTION_FOREGROUND.color(Theme.DARK).name() in caution_badge.styleSheet().lower()
     finally:
         setTheme(original_theme)
 
@@ -185,6 +210,7 @@ def test_overview_page_entity_list_applies_theme_styles() -> None:
     assert "QListView::item:hover" in style_sheet
     assert "QListView::item:selected" in style_sheet
     assert style_sheet.count("background-color: transparent;") >= MIN_TRANSPARENT_STATE_RULES
+    assert "border: none;" in style_sheet
 
 
 def test_overview_page_entity_list_uses_inset_zebra_surface_for_idle_rows(qtbot) -> None:
@@ -261,6 +287,24 @@ def test_overview_page_splitter_defaults_to_balanced_ratio(qtbot) -> None:
     left_size, right_size = page.splitter.sizes()
 
     assert abs(left_size - right_size) <= BALANCED_SPLITTER_MAX_DELTA
+
+
+def test_overview_page_defaults_preview_mode_to_event_tab() -> None:
+    """右侧切换条应把事件视图放在前面，并默认选中事件。"""
+    page = OverviewPage()
+
+    assert page.preview_mode_pivot.currentRouteKey() == "audio"
+    assert page.preview_mode_pivot.currentItem().text() == "事件"
+
+
+def test_overview_page_header_and_splitter_use_single_line_and_locked_handle() -> None:
+    """副标题应保持单行，左右区域中间句柄默认不允许拖动。"""
+    page = OverviewPage()
+
+    assert page.subtitle_label.wordWrap() is False
+    assert page.subtitle_label.text() == "统一查看实体状态、筛选与选择，并同步到执行中心。"
+    assert page.splitter.handleWidth() == 0
+    assert page.splitter.handle(1).isEnabled() is False
 
 
 def test_overview_page_load_preview_populates_audio_tree_and_summary(tmp_path) -> None:

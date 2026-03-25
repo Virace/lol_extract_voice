@@ -223,13 +223,13 @@ class OverviewPage(QWidget):
 
         header_layout = QHBoxLayout()
         title_label = SubtitleLabel("实体总览", self)
-        subtitle_label = CaptionLabel("统一查看实体状态、筛选与选择，并把当前选择同步到执行中心。", self)
-        subtitle_label.setWordWrap(True)
+        self.subtitle_label = CaptionLabel("统一查看实体状态、筛选与选择，并同步到执行中心。", self)
+        self.subtitle_label.setWordWrap(False)
 
         title_column = QVBoxLayout()
         title_column.setSpacing(2)
         title_column.addWidget(title_label)
-        title_column.addWidget(subtitle_label)
+        title_column.addWidget(self.subtitle_label)
 
         header_layout.addLayout(title_column)
         header_layout.addStretch(1)
@@ -244,22 +244,7 @@ class OverviewPage(QWidget):
         self.splitter = QSplitter(Qt.Horizontal, self)
         self.splitter.setObjectName("OverviewSplitter")
         self.splitter.setChildrenCollapsible(False)
-        self.splitter.setStyleSheet(
-            """
-            QSplitter#OverviewSplitter::handle {
-                background-color: rgba(255, 255, 255, 0.08);
-                margin: 8px 4px;
-                border-radius: 2px;
-                width: 6px;
-            }
-            QSplitter#OverviewSplitter::handle:hover {
-                background-color: rgba(255, 255, 255, 0.15);
-            }
-            QSplitter#OverviewSplitter::handle:pressed {
-                background-color: rgba(255, 255, 255, 0.2);
-            }
-            """
-        )
+        self.splitter.setHandleWidth(0)
 
         left_widget = QWidget(self.splitter)
         left_widget.setMinimumWidth(0)
@@ -314,7 +299,7 @@ class OverviewPage(QWidget):
         right_layout.setSpacing(8)
 
         preview_title = StrongBodyLabel("资源预览", right_widget)
-        preview_hint = CaptionLabel("右侧支持 Raw 与试听树预览；试听树仅展示基础层级结构。", right_widget)
+        preview_hint = CaptionLabel("右侧支持事件树与 Raw 预览；事件树仅展示基础层级结构。", right_widget)
         preview_hint.setWordWrap(True)
         right_layout.addWidget(preview_title)
         right_layout.addWidget(preview_hint)
@@ -331,9 +316,9 @@ class OverviewPage(QWidget):
         right_layout.addLayout(right_header)
 
         self.preview_mode_pivot = SegmentedWidget(right_widget)
+        self.preview_mode_pivot.addItem("audio", "事件")
         self.preview_mode_pivot.addItem("raw", "Raw")
-        self.preview_mode_pivot.addItem("audio", "试听视图")
-        self.preview_mode_pivot.setCurrentItem("raw")
+        self.preview_mode_pivot.setCurrentItem("audio")
         right_layout.addWidget(self.preview_mode_pivot)
 
         self.audio_preview_summary_card = QFrame(right_widget)
@@ -351,7 +336,7 @@ class OverviewPage(QWidget):
         summary_layout.setContentsMargins(12, 10, 12, 10)
         summary_layout.setSpacing(4)
         self.audio_preview_summary_label = BodyLabel(
-            "当前试听视图会保留首层分组；英雄显示 skin_id，地图显示 map 子分组 ID。", self.audio_preview_summary_card
+            "当前事件视图会保留首层分组；英雄显示 skin_id，地图显示 map 子分组 ID。", self.audio_preview_summary_card
         )
         self.audio_preview_summary_label.setWordWrap(True)
         summary_hint = CaptionLabel("TODO: 首层分组的友好名称映射将在后续补充。", self.audio_preview_summary_card)
@@ -375,11 +360,16 @@ class OverviewPage(QWidget):
 
         self.audio_preview_tree = PreviewTreeView(right_widget)
         self.preview_stack.addWidget(self.audio_preview_tree)
+        self.preview_stack.setCurrentWidget(self.audio_preview_tree)
+        self.audio_preview_summary_card.setVisible(True)
 
         right_layout.addWidget(self.preview_stack, 1)
 
         self.splitter.addWidget(left_widget)
         self.splitter.addWidget(right_widget)
+        splitter_handle = self.splitter.handle(1)
+        splitter_handle.setEnabled(False)
+        splitter_handle.hide()
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([1, 1])
@@ -653,3 +643,4 @@ class OverviewPage(QWidget):
         for list_widget in self._entity_lists.values():
             apply_smooth_scroll_enabled(list_widget, enabled)
         apply_smooth_scroll_enabled(self.text_preview, enabled)
+        apply_smooth_scroll_enabled(self.audio_preview_tree, enabled)

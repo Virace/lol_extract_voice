@@ -9,7 +9,8 @@ from __future__ import annotations
 from typing import Literal, TypeAlias
 
 from PySide6.QtGui import QColor
-from qfluentwidgets import isDarkTheme
+from qfluentwidgets import Theme, isDarkTheme
+from qfluentwidgets.common.color import FluentSystemColor
 
 RgbaTuple: TypeAlias = tuple[int, int, int, int]
 
@@ -22,6 +23,7 @@ _FLUENT_NEUTRAL_SURFACE_PAIRS: dict[str, tuple[RgbaTuple, RgbaTuple]] = {
     "emphasis_hover": ((0, 0, 0, 15), (255, 255, 255, 20)),
     "emphasis_selected": ((0, 0, 0, 26), (255, 255, 255, 36)),
 }
+_FLUENT_STATUS_TEXT_PAIR = ("#FFFFFF", "#111111")
 
 
 def get_fluent_frame_stroke_pair() -> tuple[str, str]:
@@ -79,6 +81,43 @@ def resolve_fluent_text_primary_color() -> QColor:
     """
     light_text, dark_text = get_fluent_text_primary_pair()
     return QColor(dark_text if isDarkTheme() else light_text)
+
+
+def get_fluent_status_badge_color_pair(status: str) -> tuple[tuple[str, str], tuple[str, str]]:
+    """返回状态徽章的背景色对与文字色对。
+
+    Args:
+        status: 当前状态文案。
+
+    Returns:
+        ``((background_light, background_dark), (foreground_light, foreground_dark))``。
+    """
+    if status == "已存在":
+        background_pair = (
+            FluentSystemColor.SUCCESS_FOREGROUND.color(Theme.LIGHT).name(),
+            FluentSystemColor.SUCCESS_FOREGROUND.color(Theme.DARK).name(),
+        )
+    else:
+        background_pair = (
+            FluentSystemColor.CAUTION_FOREGROUND.color(Theme.LIGHT).name(),
+            FluentSystemColor.CAUTION_FOREGROUND.color(Theme.DARK).name(),
+        )
+    return background_pair, _FLUENT_STATUS_TEXT_PAIR
+
+
+def resolve_fluent_status_badge_colors(status: str) -> tuple[QColor, QColor]:
+    """按当前主题解析状态徽章底色和文字色。
+
+    Args:
+        status: 当前状态文案。
+
+    Returns:
+        ``(background, foreground)`` 颜色对。
+    """
+    background_pair, foreground_pair = get_fluent_status_badge_color_pair(status)
+    background = background_pair[1] if isDarkTheme() else background_pair[0]
+    foreground = foreground_pair[1] if isDarkTheme() else foreground_pair[0]
+    return QColor(background), QColor(foreground)
 
 
 def build_item_view_qss(  # noqa: PLR0913

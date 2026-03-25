@@ -7,14 +7,9 @@ from PySide6.QtGui import QColor, QPainter, QPalette
 from PySide6.QtWidgets import QLabel, QWidget
 from qfluentwidgets import CustomStyleSheet, setCustomStyleSheet, setStyleSheet
 
+from lol_audio_unpack.gui.common.styles import get_fluent_status_badge_color_pair, resolve_fluent_status_badge_colors
+
 STATUS_BADGE_SIZE = 24
-DARK_THEME_LIGHTNESS_THRESHOLD = 128
-STATUS_AVAILABLE_LIGHT_BACKGROUND = "#0F7B0F"
-STATUS_AVAILABLE_DARK_BACKGROUND = "#6CCB5F"
-STATUS_MISSING_LIGHT_BACKGROUND = "#9D5D00"
-STATUS_MISSING_DARK_BACKGROUND = "#FFF4CE"
-STATUS_LIGHT_FOREGROUND = "#FFFFFF"
-STATUS_DARK_FOREGROUND = "#111111"
 
 
 def _build_status_badge_styles(status: str) -> tuple[str, str]:
@@ -38,15 +33,10 @@ def _build_status_badge_styles(status: str) -> tuple[str, str]:
         }}
         """
 
-    if status == "已存在":
-        return (
-            build_style(STATUS_AVAILABLE_LIGHT_BACKGROUND, STATUS_LIGHT_FOREGROUND),
-            build_style(STATUS_AVAILABLE_DARK_BACKGROUND, STATUS_DARK_FOREGROUND),
-        )
-
+    background_pair, foreground_pair = get_fluent_status_badge_color_pair(status)
     return (
-        build_style(STATUS_MISSING_LIGHT_BACKGROUND, STATUS_LIGHT_FOREGROUND),
-        build_style(STATUS_MISSING_DARK_BACKGROUND, STATUS_DARK_FOREGROUND),
+        build_style(background_pair[0], foreground_pair[0]),
+        build_style(background_pair[1], foreground_pair[1]),
     )
 
 
@@ -84,14 +74,8 @@ def resolve_status_badge_colors(status: str, palette: QPalette) -> tuple[QColor,
     Returns:
         ``(background, foreground)`` 颜色对。
     """
-    is_dark = palette.color(QPalette.ColorRole.Base).lightness() < DARK_THEME_LIGHTNESS_THRESHOLD
-    if status == "已存在":
-        background = QColor(STATUS_AVAILABLE_DARK_BACKGROUND if is_dark else STATUS_AVAILABLE_LIGHT_BACKGROUND)
-        foreground = QColor(STATUS_DARK_FOREGROUND if is_dark else STATUS_LIGHT_FOREGROUND)
-    else:
-        background = QColor(STATUS_MISSING_DARK_BACKGROUND if is_dark else STATUS_MISSING_LIGHT_BACKGROUND)
-        foreground = QColor(STATUS_DARK_FOREGROUND if is_dark else STATUS_LIGHT_FOREGROUND)
-    return background, foreground
+    _ = palette
+    return resolve_fluent_status_badge_colors(status)
 
 
 def paint_status_badge(

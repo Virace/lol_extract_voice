@@ -111,6 +111,21 @@ def test_execution_page_uses_single_task_builder_instead_of_dual_cards() -> None
     app.processEvents()
 
 
+def test_execution_page_task_queue_keeps_bottom_outer_margin() -> None:
+    """任务队列区域底部应保留额外留白，避免直接贴到窗口底边。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    app.processEvents()
+
+    lower_layout = page.draft_card.parentWidget().layout()
+
+    assert lower_layout is not None
+    assert lower_layout.contentsMargins().bottom() > 0
+
+    page.deleteLater()
+    app.processEvents()
+
+
 def test_execution_page_can_copy_full_cli_command() -> None:
     """复制按钮应输出与当前配置一致的 CLI 命令。"""
     app = QApplication.instance() or QApplication([])

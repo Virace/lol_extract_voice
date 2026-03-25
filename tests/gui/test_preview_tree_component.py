@@ -39,7 +39,10 @@ def test_preview_tree_view_uses_preview_tree_model() -> None:
 
     assert isinstance(view.model(), PreviewTreeModel)
     assert view.styleSheet() != ""
+    assert "border: 1px solid" not in view.styleSheet()
     assert hasattr(view, "audio_id_requested") is False
+    assert hasattr(view, "scrollDelegate")
+    assert view.isAnimated() is True
 
 
 def test_preview_tree_nodes_do_not_expose_native_tooltips() -> None:

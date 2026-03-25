@@ -147,7 +147,8 @@ def test_audio_preview_tree_view_uses_custom_preview_tree_styles() -> None:
     assert isinstance(view, QTreeView)
     assert view.styleSheet() != ""
     assert hasattr(view, "audio_id_requested") is False
-    assert hasattr(view, "scrollDelegate") is False
+    assert hasattr(view, "scrollDelegate")
+    assert view.isAnimated() is True
     assert isinstance(view.model(), PreviewTreeModel)
 
 

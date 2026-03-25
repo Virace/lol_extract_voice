@@ -14,6 +14,7 @@ from qfluentwidgets import (
     setStyleSheet,
     themeColor,
 )
+from qfluentwidgets.components.widgets.scroll_bar import SmoothScrollDelegate
 
 from lol_audio_unpack.gui.common.styles import (
     build_fluent_tree_shell_theme_pair,
@@ -78,7 +79,7 @@ def _build_preview_tree_styles() -> tuple[str, str]:
     return build_fluent_tree_shell_theme_pair(
         light_background="transparent",
         dark_background="transparent",
-        is_border_visible=True,
+        is_border_visible=False,
         border_radius="10px",
         padding="8px 6px",
         item_min_height=PREVIEW_TREE_ITEM_MIN_HEIGHT,
@@ -694,8 +695,14 @@ class PreviewTreeView(QTreeView):
         self.setModel(model)
         self.setHeaderHidden(True)
         self.setIndentation(PREVIEW_TREE_INDENTATION)
+        self.setAnimated(True)
         self.setMouseTracking(True)
         self.viewport().setMouseTracking(True)
+        self.setVerticalScrollMode(QTreeView.ScrollMode.ScrollPerPixel)
+        self.setHorizontalScrollMode(QTreeView.ScrollMode.ScrollPerPixel)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.verticalScrollBar().setSingleStep(18)
+        self.scrollDelegate = SmoothScrollDelegate(self, True)
         inject_preview_tree_style(self)
         self.expanded.connect(model.ensure_children_loaded)
 
