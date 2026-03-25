@@ -96,8 +96,9 @@ def main() -> None:
     window = MainWindow()
     remove_startup_log_buffer()
     previous_mark = _log_startup_stage("MainWindow 构建完成", startup_begin, previous_mark)
-    window.show()
-    previous_mark = _log_startup_stage("主窗口 show() 完成", startup_begin, previous_mark)
+    if not window.isVisible():
+        window.show()
+    previous_mark = _log_startup_stage("主窗口可见状态确认完成", startup_begin, previous_mark)
     sys.exit(app.exec())
 
 

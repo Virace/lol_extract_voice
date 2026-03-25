@@ -89,9 +89,12 @@ def test_execution_page_uses_single_task_builder_instead_of_dual_cards() -> None
     """执行中心应收敛成单任务入口，并用复选项组合执行步骤。"""
     app = QApplication.instance() or QApplication([])
     page = ExecutionPage()
+    page.resize(1130, 800)
+    page.show()
     app.processEvents()
 
     assert hasattr(page, "task_builder_card")
+    assert hasattr(page, "progress_card")
     assert hasattr(page, "create_task_btn")
     assert hasattr(page, "extract_task_cb")
     assert hasattr(page, "mapping_task_cb")
@@ -106,21 +109,33 @@ def test_execution_page_uses_single_task_builder_instead_of_dual_cards() -> None
     assert not hasattr(page, "use_synced_selection_cb")
     assert page.copy_cli_btn.text() == "复制 CLI 命令"
     assert page.task_builder_summary_label.text() == "当前会创建：音频解包 + 事件映射。"
+    assert page.target_summary_value.text() == "全部英雄+地图"
+    assert type(page.target_title_label) is type(page.task_kind_title_label)
+    assert type(page.target_summary_value) is type(page.task_builder_summary_label)
+    assert page.progress_card.geometry().left() < page.task_builder_card.geometry().left()
+    assert page.progress_card.geometry().top() == page.task_builder_card.geometry().top()
+    width_delta = abs(page.progress_card.width() - page.task_builder_card.width())
+    assert width_delta <= max(page.width() // 50, 1)
+    assert page.progress_card.height() == page.task_builder_card.height()
+    assert hasattr(page, "bottom_spacing_widget")
+    assert page.bottom_spacing_widget.height() > 0
 
     page.deleteLater()
     app.processEvents()
 
 
 def test_execution_page_task_queue_keeps_bottom_outer_margin() -> None:
-    """任务队列区域底部应保留额外留白，避免直接贴到窗口底边。"""
+    """任务队列列表并入进度卡片后仍应保持固定高度。"""
     app = QApplication.instance() or QApplication([])
     page = ExecutionPage()
     app.processEvents()
 
-    lower_layout = page.draft_card.parentWidget().layout()
-
-    assert lower_layout is not None
-    assert lower_layout.contentsMargins().bottom() > 0
+    assert page.draft_list.minimumHeight() > 0
+    assert page.draft_list.minimumHeight() == page.draft_list.maximumHeight()
+    row_height = page.draft_list.sizeHintForRow(0)
+    assert row_height > 0
+    expected_height = row_height * 3 + page.draft_list.frameWidth() * 2 + 2
+    assert page.draft_list.height() == expected_height
 
     page.deleteLater()
     app.processEvents()
@@ -176,8 +191,7 @@ def test_execution_page_can_merge_synced_selection_with_manual_input() -> None:
 
     assert page.champion_ids_input.text() == "1,103,222"
     assert page.map_ids_input.text() == "11,12"
-    assert page.selection_source_value.text() == "实体总览同步"
-    assert "已与当前输入合并" in page.selection_source_hint.text()
+    assert page.target_summary_value.text() == "目标：英雄 3 个，地图 2 个"
 
     page.deleteLater()
     app.processEvents()
@@ -204,7 +218,7 @@ def test_execution_page_can_cancel_synced_selection_when_conflict_exists() -> No
 
     assert page.champion_ids_input.text() == "1,103"
     assert page.map_ids_input.text() == "11"
-    assert page.selection_source_value.text() == "手动输入"
+    assert page.target_summary_value.text() == "目标：英雄 2 个，地图 1 个"
     assert "[同步] 已取消从实体总览同步选择。" in page.current_log_text()
 
     page.deleteLater()
@@ -248,11 +262,10 @@ def test_execution_page_builds_task_model_from_checkbox_selection(monkeypatch) -
     assert "目标：英雄 2 个，地图 1 个" in row_text
     assert "任务队列：1 条" in page.queue_progress_label.text()
     assert "运行中 1" in page.queue_progress_label.text()
-    assert "音频解包 + 事件映射" in page.recent_task_label.text()
     assert "任务已加入队列" in page.task_status_label.text()
     assert page.champion_ids_input.text() == ""
     assert page.map_ids_input.text() == ""
-    assert page.selection_source_value.text() == "默认范围"
+    assert page.target_summary_value.text() == "全部英雄+地图"
     assert page.force_update_cb.isChecked() is False
     assert page.integrate_data_cb.isChecked() is False
     assert page.bp_voice_cb.isChecked() is True
@@ -262,8 +275,8 @@ def test_execution_page_builds_task_model_from_checkbox_selection(monkeypatch) -
     app.processEvents()
 
 
-def test_execution_page_can_cancel_waiting_task_without_touching_running_task(monkeypatch) -> None:
-    """当前仅支持取消等待中的任务，不应伪装成已中断运行中任务。"""
+def test_execution_page_can_remove_waiting_task_without_touching_running_task(monkeypatch) -> None:
+    """右键菜单删除等待中的任务时，不应影响已经运行中的任务。"""
     app = QApplication.instance() or QApplication([])
     page = ExecutionPage()
     page.attach_runtime_log_sink()
@@ -279,14 +292,14 @@ def test_execution_page_can_cancel_waiting_task_without_touching_running_task(mo
     assert "[运行中]" in first_item.text()
     assert "[等待中]" in second_item.text()
 
-    page._cancel_task_item(second_item)
+    page._remove_task_item(second_item)
     app.processEvents()
 
+    assert page.draft_list.count() == 1
     assert "[运行中]" in first_item.text()
-    assert "[已取消]" in second_item.text()
     assert "运行中 1" in page.queue_progress_label.text()
-    assert "已取消 1" in page.queue_progress_label.text()
-    assert "[队列] 已取消任务：" in page.current_log_text()
+    assert "等待中 0" in page.queue_progress_label.text()
+    assert "[队列] 已移出任务：" in page.current_log_text()
 
     page.deleteLater()
     app.processEvents()
@@ -319,7 +332,7 @@ def test_execution_page_renders_stage_progress_details(monkeypatch) -> None:
     app.processEvents()
 
     assert page.task_status_label.text() == "当前阶段：音频解包 · 英雄"
-    assert page.task_progress_note.text() == "当前进度：1/2 · Annie 解包完成"
+    assert page.task_progress_note.text() == "音频解包 · 英雄 · 1/2 · Annie 解包完成"
     expected_total = 2
     assert page.task_progress_bar.maximum() == expected_total
     assert page.task_progress_bar.value() == 1
@@ -450,6 +463,23 @@ def test_global_log_drawer_keeps_appending_while_collapsed() -> None:
     assert "[测试] 抽屉隐藏中持续渲染" in output
     assert output.endswith("[测试] 多日志批量追加完成")
     assert scrollbar.value() == scrollbar.maximum()
+    host.deleteLater()
+    app.processEvents()
+
+
+def test_global_log_drawer_created_after_host_show_keeps_toggle_visible() -> None:
+    """宿主已显示后再创建抽屉时，折叠态入口按钮也应立即可见。"""
+    app = QApplication.instance() or QApplication([])
+    host = QWidget()
+    host.resize(1130, 800)
+    host.show()
+    drawer = GlobalLogDrawer(host)
+    drawer.sync_host_rect(_build_log_panel_host_rect(host.size(), navigation_width=48), animate=False)
+    drawer.set_expanded(False, animate=False)
+    app.processEvents()
+
+    assert drawer._toggle_btn.isVisible()
+
     host.deleteLater()
     app.processEvents()
 

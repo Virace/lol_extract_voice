@@ -97,7 +97,7 @@ def _parse_csv_int_ids(text: str, *, label: str) -> tuple[int, ...] | None:
 def _build_target_summary(champion_ids: tuple[str, ...], map_ids: tuple[str, ...]) -> str:
     """构造当前目标范围摘要。"""
     if not champion_ids and not map_ids:
-        return "目标：默认全部实体"
+        return "全部英雄+地图"
     return f"目标：英雄 {len(champion_ids)} 个，地图 {len(map_ids)} 个"
 
 
@@ -111,6 +111,7 @@ def _build_task_scope_summary(*, include_extract: bool, include_mapping: bool) -
     return " + ".join(parts) if parts else "未选择执行内容"
 
 TASK_ITEM_ROLE = int(Qt.ItemDataRole.UserRole)
+QUEUE_VISIBLE_ROW_COUNT = 3
 
 
 def _build_queue_item_text(*, task_id: int, status: str, summary: str) -> str:
@@ -193,7 +194,7 @@ class AdvancedInputCard(ExpandGroupSettingCard):
         self.vo_filter.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         self.max_workers_combo = ComboBox()
-        self.max_workers_combo.addItems(["1", "2", "4", "8", "16"])
+        self.max_workers_combo.addItems(["1", "2", "4", "8", "16", "32", "64"])
         self.max_workers_combo.setCurrentText("4")
         self.max_workers_combo.setMinimumWidth(120)
         self.max_workers_combo.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
@@ -206,7 +207,7 @@ class AdvancedInputCard(ExpandGroupSettingCard):
         self._add_row("英雄 ID", "按 CLI 风格输入，使用逗号分隔", self.champion_ids_input)
         self._add_row("地图 ID", "按 CLI 风格输入，使用逗号分隔", self.map_ids_input)
         self._add_row("音频范围", "执行中心里保留与 CLI 对齐的过滤方式", self.vo_filter)
-        self._add_row("并发数", "设置批量任务使用的最大线程数", self.max_workers_combo)
+        self._add_row("并发数", "设置批量任务使用的最大线程数；一般不建议超过 CPU 线程数", self.max_workers_combo)
         self._add_row("附加 BP 语音", "保留现有解包参数入口", self.bp_voice_cb)
         self._add_row("强制更新数据", "执行前先刷新 update 数据，适合本地缓存需要重建时使用", self.force_update_cb)
         self._add_row("生成整合数据文件", "对应 CLI 参数 --integrate-data，仅在映射任务中生效", self.integrate_data_cb)
@@ -270,7 +271,6 @@ class ExecutionPage(SmoothScrollArea):
         self._runtime_log_relay.message_received.connect(self._queue_runtime_log_line)
         self._runtime_log_sink_id: int | None = None
         self._synced_selection: dict[str, Any] = self._build_empty_synced_selection()
-        self._last_draft_summary = "暂无队列任务。"
         self._active_task_id: int | None = None
         self._active_worker: TaskWorker | None = None
         self._stage_completion_notifications: set[tuple[int, str]] = set()
@@ -303,55 +303,37 @@ class ExecutionPage(SmoothScrollArea):
         # Keep task creation in one compact card so the page stays focused on queue management.
         self.task_builder_card = CardWidget(self.view)
         builder_layout = QVBoxLayout(self.task_builder_card)
-        builder_layout.setContentsMargins(18, 16, 18, 16)
+        builder_layout.setContentsMargins(18, 16, 18, 18)
         builder_layout.setSpacing(12)
         builder_title = StrongBodyLabel("创建任务", self.task_builder_card)
-        builder_hint = CaptionLabel("确认当前目标和执行内容后，可以直接创建任务或复制 CLI 命令。", self.task_builder_card)
+        builder_hint = CaptionLabel("确认当前目标后创建任务，或复制当前配置对应的 CLI 命令。", self.task_builder_card)
         builder_hint.setWordWrap(True)
         builder_layout.addWidget(builder_title)
         builder_layout.addWidget(builder_hint)
 
-        context_widget = QWidget(self.task_builder_card)
-        context_layout = QHBoxLayout(context_widget)
-        context_layout.setContentsMargins(0, 0, 0, 0)
-        context_layout.setSpacing(12)
-
-        source_widget = QWidget(context_widget)
-        source_layout = QVBoxLayout(source_widget)
-        source_layout.setContentsMargins(0, 0, 0, 0)
-        source_layout.setSpacing(4)
-        source_title = CaptionLabel("选择来源", source_widget)
-        self.selection_source_value = BodyLabel("默认范围", source_widget)
-        self.selection_source_hint = CaptionLabel("尚未从实体总览同步选择。", source_widget)
-        self.selection_source_hint.setWordWrap(True)
-        source_layout.addWidget(source_title)
-        source_layout.addWidget(self.selection_source_value)
-        source_layout.addWidget(self.selection_source_hint)
-
-        target_widget = QWidget(context_widget)
+        target_widget = QWidget(self.task_builder_card)
         target_layout = QVBoxLayout(target_widget)
         target_layout.setContentsMargins(0, 0, 0, 0)
-        target_layout.setSpacing(4)
-        target_title = CaptionLabel("当前目标", target_widget)
-        self.target_summary_value = BodyLabel("目标：默认全部实体", target_widget)
-        target_hint = CaptionLabel("支持总览同步选择，也支持在高级输入里手动输入 ID。", target_widget)
-        target_hint.setWordWrap(True)
-        target_layout.addWidget(target_title)
+        target_layout.setSpacing(6)
+        self.target_title_label = BodyLabel("当前目标", target_widget)
+        self.target_summary_value = StrongBodyLabel("全部英雄+地图", target_widget)
+        self.target_summary_value.setWordWrap(True)
+        target_layout.addWidget(self.target_title_label)
         target_layout.addWidget(self.target_summary_value)
-        target_layout.addWidget(target_hint)
 
-        context_layout.addWidget(source_widget, 1)
-        context_layout.addWidget(target_widget, 1)
-        builder_layout.addWidget(context_widget)
+        action_widget = QWidget(self.task_builder_card)
+        action_layout = QVBoxLayout(action_widget)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setSpacing(10)
 
-        task_kind_widget = QWidget(self.task_builder_card)
+        task_kind_widget = QWidget(action_widget)
         task_kind_layout = QVBoxLayout(task_kind_widget)
         task_kind_layout.setContentsMargins(0, 0, 0, 0)
-        task_kind_layout.setSpacing(8)
-        task_kind_title = BodyLabel("执行内容", task_kind_widget)
+        task_kind_layout.setSpacing(6)
+        self.task_kind_title_label = BodyLabel("执行内容", task_kind_widget)
         task_kind_row = QHBoxLayout()
         task_kind_row.setContentsMargins(0, 0, 0, 0)
-        task_kind_row.setSpacing(16)
+        task_kind_row.setSpacing(12)
         self.extract_task_cb = CheckBox("音频解包")
         self.extract_task_cb.setChecked(True)
         self.mapping_task_cb = CheckBox("事件映射")
@@ -359,48 +341,50 @@ class ExecutionPage(SmoothScrollArea):
         task_kind_row.addWidget(self.extract_task_cb)
         task_kind_row.addWidget(self.mapping_task_cb)
         task_kind_row.addStretch(1)
-        self.task_builder_summary_label = BodyLabel("当前会创建：音频解包 + 事件映射。", task_kind_widget)
-        task_kind_layout.addWidget(task_kind_title)
+        self.task_builder_summary_label = StrongBodyLabel("当前会创建：音频解包 + 事件映射。", task_kind_widget)
+        self.task_builder_summary_label.setWordWrap(True)
+        task_kind_layout.addWidget(self.task_kind_title_label)
         task_kind_layout.addLayout(task_kind_row)
         task_kind_layout.addWidget(self.task_builder_summary_label)
-        builder_layout.addWidget(task_kind_widget)
+
+        builder_layout.addWidget(target_widget)
+        builder_layout.addStretch(1)
+        action_layout.addWidget(task_kind_widget)
 
         builder_button_row = QHBoxLayout()
         builder_button_row.setContentsMargins(0, 0, 0, 0)
         builder_button_row.setSpacing(8)
         self.create_task_btn = PrimaryPushButton("创建任务", self.task_builder_card)
         self.copy_cli_btn = PushButton("复制 CLI 命令", self.task_builder_card)
+        builder_button_row.addStretch(1)
         builder_button_row.addWidget(self.create_task_btn)
         builder_button_row.addWidget(self.copy_cli_btn)
-        builder_button_row.addStretch(1)
-        builder_layout.addLayout(builder_button_row)
-        top_layout.addWidget(self.task_builder_card, 2)
+        action_layout.addLayout(builder_button_row)
+
+        builder_layout.addWidget(action_widget)
 
         self.progress_card = CardWidget(self.view)
         progress_layout = QVBoxLayout(self.progress_card)
         progress_layout.setContentsMargins(18, 16, 18, 16)
         progress_layout.setSpacing(10)
         progress_title = StrongBodyLabel("任务进度", self.progress_card)
-        progress_hint = CaptionLabel("这里会显示当前阶段、实体进度和最近一条任务。", self.progress_card)
-        progress_hint.setWordWrap(True)
         self.task_status_label = CaptionLabel("状态：界面已就绪，等待创建第一条任务。", self.progress_card)
+        self.task_status_label.hide()
         self.task_progress_bar = ProgressBar(self.progress_card)
         self.task_progress_bar.setRange(0, 1)
         self.task_progress_bar.setValue(0)
         self.task_progress_note = BodyLabel("当前进度：暂无运行中的任务。", self.progress_card)
         self.queue_progress_label = CaptionLabel("任务队列：0 条", self.progress_card)
-        self.recent_task_label = CaptionLabel("最近任务：暂无队列任务。", self.progress_card)
-        self.recent_task_label.setWordWrap(True)
+        self.draft_list = ListWidget(self.progress_card)
+        self.draft_list.setAlternatingRowColors(True)
         progress_layout.addWidget(progress_title)
-        progress_layout.addWidget(progress_hint)
-        progress_layout.addWidget(self.task_status_label)
         progress_layout.addWidget(self.task_progress_bar)
         progress_layout.addWidget(self.task_progress_note)
         progress_layout.addWidget(self.queue_progress_label)
-        progress_layout.addWidget(self.recent_task_label)
+        progress_layout.addWidget(self.draft_list)
         progress_layout.addStretch(1)
         top_layout.addWidget(self.progress_card, 1)
-
+        top_layout.addWidget(self.task_builder_card, 1)
         top_widget.resize(top_widget.width(), top_widget.sizeHint().height())
         self.expandLayout.addWidget(top_widget)
 
@@ -413,40 +397,13 @@ class ExecutionPage(SmoothScrollArea):
         self.force_update_cb = self.advanced_card.force_update_cb
         self.integrate_data_cb = self.advanced_card.integrate_data_cb
         self.expandLayout.addWidget(self.advanced_card)
-
-        lower_widget = QWidget(self.view)
-        lower_layout = QHBoxLayout(lower_widget)
-        lower_layout.setContentsMargins(0, 0, 0, 12)
-        lower_layout.setSpacing(12)
-
-        self.draft_card = CardWidget(self.view)
-        draft_layout = QVBoxLayout(self.draft_card)
-        draft_layout.setContentsMargins(18, 16, 18, 16)
-        draft_layout.setSpacing(10)
-        draft_header = QHBoxLayout()
-        draft_title = StrongBodyLabel("任务队列 / 进度列表", self.draft_card)
-        self.clear_drafts_btn = PushButton("清空队列", self.draft_card)
-        draft_header.addWidget(draft_title)
-        draft_header.addStretch(1)
-        draft_header.addWidget(self.clear_drafts_btn)
-        draft_layout.addLayout(draft_header)
-
-        draft_hint = CaptionLabel("右键等待中的任务可取消；运行中任务暂不支持中断。", self.draft_card)
-        draft_hint.setWordWrap(True)
-        draft_layout.addWidget(draft_hint)
-
-        self.draft_list = ListWidget(self.draft_card)
-        self.draft_list.setAlternatingRowColors(True)
-        draft_layout.addWidget(self.draft_list, 1)
-
+        self.bottom_spacing_widget = QWidget(self.view)
+        self.bottom_spacing_widget.setFixedHeight(20)
+        self.expandLayout.addWidget(self.bottom_spacing_widget)
         self._set_queue_placeholder()
-        lower_layout.addWidget(self.draft_card, 1)
-
-        lower_widget.resize(lower_widget.width(), lower_widget.sizeHint().height())
-        self.expandLayout.addWidget(lower_widget)
+        self._apply_queue_list_height()
 
     def _setup_connections(self) -> None:
-        self.clear_drafts_btn.clicked.connect(self._clear_draft_queue)
         self.create_task_btn.clicked.connect(self._queue_task_draft)
         self.copy_cli_btn.clicked.connect(self._copy_cli_command)
         self.champion_ids_input.textChanged.connect(self._refresh_task_builder_state)
@@ -583,7 +540,7 @@ class ExecutionPage(SmoothScrollArea):
         app_context_overrides = tuple((self.gui_config.to_app_context_overrides() if self.gui_config else {}).items())
         return ExecutionTaskDraft(
             source=self._current_selection_source(),
-            source_summary=self.selection_source_hint.text(),
+            source_summary=self.target_summary_value.text(),
             champion_ids=champion_ids,
             map_ids=map_ids,
             run_update=self.force_update_cb.isChecked(),
@@ -757,20 +714,6 @@ class ExecutionPage(SmoothScrollArea):
         task_scope_summary = self._selected_task_scope_summary()
         self.target_summary_value.setText(_build_target_summary(champion_ids, map_ids))
 
-        if (
-            self._synced_selection["source"] != "未同步"
-            and champion_ids == tuple(self._synced_selection["champion_ids"])
-            and map_ids == tuple(self._synced_selection["map_ids"])
-        ):
-            self.selection_source_value.setText("实体总览同步")
-            self.selection_source_hint.setText(self._synced_selection["summary"])
-        elif champion_ids or map_ids:
-            self.selection_source_value.setText("手动输入")
-            self.selection_source_hint.setText("当前目标来自执行中心里的 ID 输入框。")
-        else:
-            self.selection_source_value.setText("默认范围")
-            self.selection_source_hint.setText("尚未填写 ID，后续将按默认实体范围执行。")
-
         if task_scope_summary == "未选择执行内容":
             self.task_builder_summary_label.setText("请至少勾选一个执行步骤后再创建任务。")
         else:
@@ -930,7 +873,6 @@ class ExecutionPage(SmoothScrollArea):
                 )
                 self._active_task_id = updated_payload.task_id
                 self._set_task_running_state(True)
-                self._last_draft_summary = item.text()
                 self._log_gui_event("info", f"[队列] 已自动开始任务：{updated_payload.summary}")
                 self._refresh_progress_panel(
                     status_text="状态：任务启动中。",
@@ -1046,7 +988,6 @@ class ExecutionPage(SmoothScrollArea):
             result_summary=task_result.summary,
             error_message="",
         )
-        self._last_draft_summary = item.text()
         self._active_task_id = None
         self._active_worker = None
         self._stage_completion_notifications = {
@@ -1092,7 +1033,6 @@ class ExecutionPage(SmoothScrollArea):
             progress_detail=failed_progress_detail,
             error_message=error,
         )
-        self._last_draft_summary = item.text()
         self._active_task_id = None
         self._active_worker = None
         self._stage_completion_notifications = {
@@ -1118,31 +1058,36 @@ class ExecutionPage(SmoothScrollArea):
             position=InfoBarPosition.TOP,
         )
 
-    def _cancel_task_item(self, item: QListWidgetItem) -> None:
-        """取消指定任务项，并在需要时启动下一个等待任务。"""
+    def _remove_task_item(self, item: QListWidgetItem) -> None:
+        """从队列中移除指定任务项。"""
         payload = item.data(TASK_ITEM_ROLE)
         if not isinstance(payload, QueuedExecutionTask):
             return
 
         current_status = payload.status
-        if current_status == TASK_STATUS_CANCELLED:
-            return
-
-        if current_status != TASK_STATUS_WAITING:
+        if current_status == TASK_STATUS_RUNNING:
             InfoBar.warning(
-                "暂不支持取消",
-                "当前仅支持取消等待中的任务，运行中的真实任务暂不支持中断。",
+                "暂不支持移除",
+                "运行中的真实任务暂不支持直接移出队列，请等待任务结束后再处理。",
                 parent=self._feedback_parent(),
                 position=InfoBarPosition.TOP,
             )
             return
 
-        self._update_queue_item(item, status=TASK_STATUS_CANCELLED, finished_at=datetime.now())
-        self._last_draft_summary = item.text()
-        self._log_gui_event("info", f"[队列] 已取消任务：{payload.summary}")
+        row = self.draft_list.row(item)
+        if row < 0:
+            return
+
+        self.draft_list.takeItem(row)
+        if self._draft_queue_size() == 0:
+            self._set_queue_placeholder()
+        else:
+            self._apply_queue_list_height()
+
+        self._log_gui_event("info", f"[队列] 已移出任务：{payload.summary}")
         self._refresh_progress_panel()
-        InfoBar.info(
-            "任务已取消",
+        InfoBar.success(
+            "已移出队列",
             payload.summary or item.text(),
             parent=self._feedback_parent(),
             position=InfoBarPosition.TOP,
@@ -1151,22 +1096,44 @@ class ExecutionPage(SmoothScrollArea):
     def _open_task_queue_context_menu(self, pos) -> None:
         """打开任务队列右键菜单。"""
         item = self.draft_list.itemAt(pos)
-        if item is None or item.flags() == Qt.NoItemFlags:
+        has_real_tasks = self._draft_queue_size() > 0
+        if item is not None and item.flags() == Qt.NoItemFlags:
+            item = None
+        if item is None and not has_real_tasks:
             return
 
-        payload = item.data(TASK_ITEM_ROLE)
-        if not isinstance(payload, QueuedExecutionTask):
-            return
-
-        status = payload.status
-        if status in {TASK_STATUS_CANCELLED, TASK_STATUS_RUNNING, TASK_STATUS_COMPLETED, TASK_STATUS_FAILED}:
+        payload = item.data(TASK_ITEM_ROLE) if item is not None else None
+        if item is not None and not isinstance(payload, QueuedExecutionTask):
             return
 
         menu = QMenu(self.draft_list)
-        cancel_action = menu.addAction("取消排队任务")
+        counts = self._queue_status_counts()
+        has_removable_tasks = (
+            counts[TASK_STATUS_WAITING]
+            + counts[TASK_STATUS_COMPLETED]
+            + counts[TASK_STATUS_FAILED]
+            + counts[TASK_STATUS_CANCELLED]
+        ) > 0
+        remove_action = None
+        if isinstance(payload, QueuedExecutionTask):
+            if payload.status == TASK_STATUS_RUNNING:
+                remove_action = menu.addAction("运行中的任务暂不支持移除")
+                remove_action.setEnabled(False)
+            else:
+                remove_action = menu.addAction("删除该任务")
+
+        clear_action = None
+        if has_real_tasks and has_removable_tasks:
+            clear_text = "清空全部非运行中任务" if self._find_running_task_item() is not None else "清空全部队列"
+            if remove_action is not None:
+                menu.addSeparator()
+            clear_action = menu.addAction(clear_text)
+
         selected_action = menu.exec(self.draft_list.viewport().mapToGlobal(pos))
-        if selected_action == cancel_action:
-            self._cancel_task_item(item)
+        if selected_action == remove_action and item is not None:
+            self._remove_task_item(item)
+        if selected_action == clear_action:
+            self._clear_draft_queue()
 
     def _refresh_progress_panel(
         self,
@@ -1219,29 +1186,35 @@ class ExecutionPage(SmoothScrollArea):
         if note_text is None:
             if isinstance(running_task, QueuedExecutionTask):
                 if running_progress is not None and running_progress.total > 0:
+                    stage_summary = running_progress.stage_label
+                    if running_progress.entity_scope_label:
+                        stage_summary = f"{stage_summary} · {running_progress.entity_scope_label}"
                     note_text = (
-                        f"当前进度：{progress_value}/{progress_bar_total} · "
+                        f"{stage_summary} · {progress_value}/{progress_bar_total} · "
                         f"{running_progress.message or '后台任务执行中。'}"
                     )
                 elif running_progress is not None:
-                    note_text = f"当前进度：准备中 · {running_progress.message or '后台任务执行中。'}"
+                    stage_summary = running_progress.stage_label
+                    if running_progress.entity_scope_label:
+                        stage_summary = f"{stage_summary} · {running_progress.entity_scope_label}"
+                    note_text = f"{stage_summary} · 准备中 · {running_progress.message or '后台任务执行中。'}"
                 elif running_task.progress_total > 0:
                     note_text = (
                         f"当前进度：{progress_value}/{progress_bar_total} · "
                         f"{running_task.progress_message or '后台任务执行中。'}"
                     )
                 else:
-                    note_text = f"当前进度：准备中 · {running_task.progress_message or '后台任务执行中。'}"
+                    note_text = f"准备中 · {running_task.progress_message or '后台任务执行中。'}"
             elif draft_count == 0:
-                note_text = "0% · 当前还没有待执行任务。"
+                note_text = "界面已就绪，等待创建第一条任务。"
             elif counts[TASK_STATUS_COMPLETED] > 0 and counts[TASK_STATUS_RUNNING] == 0 and counts[TASK_STATUS_WAITING] == 0:
                 progress_bar_total = 100
                 progress_value = 100
                 note_text = "100% · 队列中的可执行任务已完成。"
             elif counts[TASK_STATUS_FAILED] > 0 and counts[TASK_STATUS_RUNNING] == 0:
-                note_text = "0% · 请查看日志抽屉和错误提示定位失败原因。"
+                note_text = "执行失败，请查看日志抽屉和错误提示定位失败原因。"
             else:
-                note_text = "0% · 当前显示任务队列状态。"
+                note_text = "当前显示任务队列状态。"
 
         self.task_progress_bar.setRange(0, progress_bar_total)
         self.task_progress_bar.setValue(progress_value)
@@ -1252,7 +1225,6 @@ class ExecutionPage(SmoothScrollArea):
             f"{draft_count} 条 · 运行中 {counts[TASK_STATUS_RUNNING]} · 等待中 {counts[TASK_STATUS_WAITING]} "
             f"· 已完成 {counts[TASK_STATUS_COMPLETED]} · 失败 {counts[TASK_STATUS_FAILED]} · 已取消 {counts[TASK_STATUS_CANCELLED]}"
         )
-        self.recent_task_label.setText(f"最近任务：{self._last_draft_summary}")
 
     def _copy_cli_command(self) -> None:
         """复制当前配置对应的 CLI 命令。"""
@@ -1321,7 +1293,7 @@ class ExecutionPage(SmoothScrollArea):
         item.setData(TASK_ITEM_ROLE, queued_task)
         item.setToolTip(self._build_task_item_tooltip(queued_task))
         self.draft_list.addItem(item)
-        self._last_draft_summary = item.text()
+        self._apply_queue_list_height()
         self._log_gui_event("info", f"[队列] {row_text}")
         started_item = self._start_next_waiting_task()
         if started_item is None:
@@ -1347,9 +1319,18 @@ class ExecutionPage(SmoothScrollArea):
         placeholder_item = QListWidgetItem("当前任务队列为空。")
         placeholder_item.setFlags(Qt.NoItemFlags)
         self.draft_list.addItem(placeholder_item)
+        self._apply_queue_list_height()
+
+    def _apply_queue_list_height(self) -> None:
+        """按默认可见行数收敛任务队列列表高度。"""
+        row_height = self.draft_list.sizeHintForRow(0)
+        if row_height <= 0:
+            row_height = max(self.fontMetrics().height() + 14, 32)
+        frame_height = self.draft_list.frameWidth() * 2
+        self.draft_list.setFixedHeight(row_height * QUEUE_VISIBLE_ROW_COUNT + frame_height + 2)
 
     def _clear_draft_queue(self) -> None:
-        """清空当前任务队列。"""
+        """清空当前任务队列中可直接移除的任务项。"""
         running_item = self._find_running_task_item()
         if running_item is not None:
             removed_count = 0
@@ -1370,11 +1351,11 @@ class ExecutionPage(SmoothScrollArea):
                 )
             else:
                 self._log_gui_event("info", f"[队列] 已清空 {removed_count} 条非运行中任务。")
+                self._apply_queue_list_height()
                 self._refresh_progress_panel()
             return
 
         self._set_queue_placeholder()
-        self._last_draft_summary = "暂无队列任务。"
         self._refresh_progress_panel()
         self._log_gui_event("info", "[队列] 已清空当前任务队列。")
 

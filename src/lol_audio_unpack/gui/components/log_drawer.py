@@ -696,6 +696,10 @@ class GlobalLogDrawer(QObject):
         self._hover_animation.stop()
         self._toggle_btn.set_arrow_progress(target_arrow_progress)
         self._sync_backdrop_visibility(expanded=expanded)
+        # When the drawer is created after the host window is already visible,
+        # child widgets need an explicit show() to participate in the current frame.
+        self._card.show()
+        self._toggle_btn.show()
         self._backdrop.raise_()
         self._card.raise_()
         self._toggle_btn.raise_()

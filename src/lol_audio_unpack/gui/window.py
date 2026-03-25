@@ -68,12 +68,33 @@ class MainWindow(FluentWindow):
         qconfig.themeChanged.connect(lambda _theme: self._try_enable_window_material())
         previous_mark = _log_window_stage("主题变更信号连接完成", startup_begin, previous_mark)
 
-        # create splash screen
+        self._data_app_context = None
+        self._is_loading_shared_data = False
+        self._pending_refresh_notice = False
+        self._window_material_bootstrapped = False
+
+        self._initWindow()
+        previous_mark = _log_window_stage("窗口属性初始化完成", startup_begin, previous_mark)
+
+        # create splash screen after the shell has a real icon and size
         self.splashScreen = SplashScreen(self.windowIcon(), self)
         self.splashScreen.setIconSize(QSize(106, 106))
         self.splashScreen.raise_()
         previous_mark = _log_window_stage("SplashScreen 初始化完成", startup_begin, previous_mark)
 
+        self.show()
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+        previous_mark = _log_window_stage("主窗口预显示完成", startup_begin, previous_mark)
+
+        previous_mark = self._bootstrap_after_show(startup_begin, previous_mark)
+
+        self.splashScreen.finish()
+        _log_window_stage("SplashScreen 结束", startup_begin, previous_mark)
+
+    def _bootstrap_after_show(self, startup_begin: float, previous_mark: float) -> float:
+        """在主窗口显示后继续构建子页面与启动链。"""
         # create sub interface — SettingPage first so cfg is ready
         self.settingInterface = SettingPage(self)
         previous_mark = _log_window_stage("SettingPage 初始化完成", startup_begin, previous_mark)
@@ -87,32 +108,24 @@ class MainWindow(FluentWindow):
         previous_mark = _log_window_stage("OverviewPage 初始化完成", startup_begin, previous_mark)
         self.aboutInterface = AboutPage(self)
         previous_mark = _log_window_stage("AboutPage 初始化完成", startup_begin, previous_mark)
-        self._data_app_context = None
-        self._is_loading_shared_data = False
-        self._pending_refresh_notice = False
-        self._window_material_bootstrapped = False
 
         self._initNavigation()
         previous_mark = _log_window_stage("导航初始化完成", startup_begin, previous_mark)
-        self._initWindow()
-        previous_mark = _log_window_stage("窗口属性初始化完成", startup_begin, previous_mark)
         self._init_global_log_panel()
         previous_mark = _log_window_stage("全局日志面板初始化完成", startup_begin, previous_mark)
 
         # 连接设置页面和首页
         self._connect_pages()
         previous_mark = _log_window_stage("页面连接与首轮数据加载触发完成", startup_begin, previous_mark)
-
-        self.splashScreen.finish()
-        _log_window_stage("SplashScreen 结束", startup_begin, previous_mark)
+        return previous_mark
 
     def _initNavigation(self):
         """初始化主窗口导航项。"""
         # add sub interface top
         self.addSubInterface(self.homeInterface, FIF.HOME, "主页")
-        self.addSubInterface(self.overviewInterface, FIF.DOCUMENT, "实体总览")
         self.addSubInterface(self.executionInterface, FIF.DOWNLOAD, "执行中心")
-        
+        self.addSubInterface(self.overviewInterface, FIF.DOCUMENT, "实体总览")
+
         self.navigationInterface.addSeparator()
 
         self.navigationInterface.addItem(

@@ -9,6 +9,7 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QApplication
 from qfluentwidgets import Theme, qconfig, setTheme, setThemeColor
 
+import lol_audio_unpack.gui.window as window_module
 from lol_audio_unpack.gui.components.preview_tree import PreviewTreeModel
 from lol_audio_unpack.gui.window import MainWindow
 
@@ -48,6 +49,33 @@ def _attach_preview_loader(window: MainWindow, tmp_path: Path) -> None:
     )
     loader.load_available_audio_ids.return_value = {"1"}
     window.overviewInterface._loader = loader
+
+
+def test_main_window_shows_before_bootstrap_and_finishes_splash(monkeypatch) -> None:
+    """主窗口应先显示宿主，再继续启动链并结束启动页。"""
+    app = QApplication.instance() or QApplication([])
+    call_order: list[str] = []
+
+    monkeypatch.setattr(MainWindow, "show", lambda self: call_order.append("show"))
+    monkeypatch.setattr(
+        MainWindow,
+        "_bootstrap_after_show",
+        lambda self, startup_begin, previous_mark: call_order.append("bootstrap") or previous_mark,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        window_module.SplashScreen,
+        "finish",
+        lambda self: call_order.append("finish"),
+    )
+
+    window = MainWindow()
+    app.processEvents()
+
+    assert call_order == ["show", "bootstrap", "finish"]
+
+    window.deleteLater()
+    app.processEvents()
 
 
 def test_main_window_overview_preview_tree_can_expand_with_custom_preview_tree(

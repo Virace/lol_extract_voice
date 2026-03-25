@@ -27,5 +27,6 @@ def start_gui_app(argv: Sequence[str] | None = None) -> int:
     setTheme(Theme.DARK)
 
     window = MainWindow()
-    window.show()
+    if not window.isVisible():
+        window.show()
     return app.exec()
