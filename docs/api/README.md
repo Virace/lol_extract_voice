@@ -41,6 +41,7 @@
 ## 3. 延伸文档
 
 - [Remote 模式（运行与接入）](./remote_mode.md)
+- [基准测试与性能参考](./benchmarking_and_performance.md)
 
 ## 4. 目录输出约定
 
