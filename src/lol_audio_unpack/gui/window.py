@@ -7,7 +7,7 @@ from pathlib import Path
 from time import perf_counter
 
 from loguru import logger
-from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QTimer
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QThreadPool, QTimer
 from PySide6.QtGui import QIcon, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import QApplication
 from qfluentwidgets import FluentIcon as FIF
@@ -24,7 +24,8 @@ from qfluentwidgets import (
 )
 
 from lol_audio_unpack import __version__
-from lol_audio_unpack.app_context import create_app_context
+from lol_audio_unpack.app_context import OperationOptions, create_app_context
+from lol_audio_unpack.facade import LolAudioUnpackApp
 from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled
 from lol_audio_unpack.gui.components.dev_console import DevConsoleWindow
 from lol_audio_unpack.gui.components.log_drawer import (
@@ -37,6 +38,7 @@ from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 from lol_audio_unpack.gui.view.home_page import HomePage
 from lol_audio_unpack.gui.view.overview_page import OverviewPage
 from lol_audio_unpack.gui.view.setting_page import SettingPage
+from lol_audio_unpack.gui.workers import TaskWorker
 from lol_audio_unpack.utils.logging import setup_logging
 
 NAV_EXPANDED_WIDTH_THRESHOLD = 100
@@ -56,6 +58,13 @@ def _log_window_stage(stage: str, startup_begin: float, previous_mark: float) ->
     return current_mark
 
 
+def _prepare_shared_entity_data(cli_overrides: dict[str, str | bool]) -> None:
+    """为实体列表准备后端共享数据。"""
+    app_context = create_app_context(cli_overrides=cli_overrides)
+    app = LolAudioUnpackApp(app_context)
+    app.update(OperationOptions(), target="all")
+
+
 class MainWindow(FluentWindow):
     """应用主窗口。"""
 
@@ -73,9 +82,18 @@ class MainWindow(FluentWindow):
 
         self._data_app_context = None
         self._is_loading_shared_data = False
+        self._is_preparing_shared_data = False
         self._pending_refresh_notice = False
+        self._pending_runtime_entity_refresh = False
+        self._allow_auto_prepare_on_shared_reload = True
+        self._shared_data_auto_prepare_attempted = False
+        self._shared_data_prepare_worker: TaskWorker | None = None
         self._window_material_bootstrapped = False
         self._dev_console: DevConsoleWindow | None = None
+        self._runtime_entity_refresh_timer = QTimer(self)
+        self._runtime_entity_refresh_timer.setSingleShot(True)
+        self._runtime_entity_refresh_timer.setInterval(900)
+        self._runtime_entity_refresh_timer.timeout.connect(self._flush_pending_runtime_entity_refresh)
 
         self._initWindow()
         previous_mark = _log_window_stage("窗口属性初始化完成", startup_begin, previous_mark)
@@ -344,9 +362,10 @@ class MainWindow(FluentWindow):
         self.overviewInterface.set_gui_config(cfg)
         self.overviewInterface.selection_sync_requested.connect(self._sync_selection_to_execution_center)
         self.executionInterface.refresh_requested.connect(self._refresh_shared_output_data)
-        self.executionInterface.task_running_changed.connect(self._on_unpack_task_running_changed)
+        self.executionInterface.task_queue_busy_changed.connect(self._on_task_queue_busy_changed)
         self.executionInterface.log_lines_appended.connect(self._append_global_log_lines)
         self.executionInterface.attach_runtime_log_sink()
+        self.settingInterface.entity_data_config_changed.connect(self._schedule_runtime_entity_refresh)
         self.settingInterface.smooth_scroll_changed.connect(self._apply_smooth_scroll_setting)
         self.settingInterface.log_drawer_auto_collapse_changed.connect(
             self._apply_log_drawer_auto_collapse_setting
@@ -359,10 +378,6 @@ class MainWindow(FluentWindow):
 
         if cfg.output_path:
             logger.info(f"日志系统已重定向到输出目录: {log_dir}")
-
-        # 配置变更时重新加载数据
-        si.game_path_changed.connect(lambda: self._reload_unpack_data(cfg))
-        si.output_path_changed.connect(lambda: self._reload_unpack_data(cfg))
 
         # 首页初始化完成后加载数据
         logger.info("准备加载初始数据...")
@@ -433,6 +448,16 @@ class MainWindow(FluentWindow):
     def _on_data_load_error(self, error):
         """数据加载失败"""
         self._is_loading_shared_data = False
+        if (
+            self._allow_auto_prepare_on_shared_reload
+            and not self._shared_data_auto_prepare_attempted
+            and self._should_auto_prepare_shared_data(str(error))
+        ):
+            self._shared_data_auto_prepare_attempted = True
+            logger.info("共享数据缺失或版本不兼容，转入后台数据准备流程")
+            self.homeInterface.set_loading_state("正在刷新基础数据…", active=True)
+            self._start_shared_data_prepare(self.settingInterface.config)
+            return
         self.homeInterface.set_loading_state(f"加载失败: {error}", active=False)
         if self._pending_refresh_notice:
             self._show_refresh_infobar(
@@ -441,6 +466,7 @@ class MainWindow(FluentWindow):
                 level="error",
             )
             self._pending_refresh_notice = False
+        self._flush_pending_runtime_entity_refresh()
 
     def _finish_data_loading(self):
         """完成数据加载"""
@@ -453,10 +479,15 @@ class MainWindow(FluentWindow):
                 level="success",
             )
             self._pending_refresh_notice = False
+        self._flush_pending_runtime_entity_refresh()
 
-    def _on_unpack_task_running_changed(self, running: bool) -> None:
-        """同步解包任务运行态到共享配置页面。"""
-        self.settingInterface.setEnabled(not running)
+    def _on_task_queue_busy_changed(self, busy: bool) -> None:
+        """在任务队列忙碌状态变化时同步设置页锁定与延迟刷新。"""
+        self.settingInterface.set_runtime_config_locked(busy)
+        if busy:
+            self._runtime_entity_refresh_timer.stop()
+            return
+        self._flush_pending_runtime_entity_refresh()
 
     def _append_global_log_lines(self, lines: tuple[str, ...]) -> None:
         """向主窗口级日志抽屉增量追加一批日志。"""
@@ -484,23 +515,22 @@ class MainWindow(FluentWindow):
 
     def _refresh_shared_output_data(self):
         """刷新解包页与事件映射页共用的本地输出数据。"""
-        if self.executionInterface.is_task_running():
-            logger.info("执行中心任务进行中，忽略共享刷新请求")
+        if self.executionInterface.has_incomplete_tasks():
+            logger.info("执行中心仍有未完成任务，忽略共享刷新请求")
             InfoBar.warning(
-                title="任务进行中",
-                content="请等待当前任务结束后再刷新列表数据。",
+                title="队列未清空",
+                content="请等待当前任务队列全部结束后再刷新列表数据。",
                 isClosable=True,
                 position=InfoBarPosition.TOP,
                 duration=2500,
                 parent=self,
             )
             return
-        if self._is_loading_shared_data:
+        if self._is_loading_shared_data or self._is_preparing_shared_data:
             logger.info("共享数据仍在加载中，忽略重复刷新请求")
             return
 
-        self._pending_refresh_notice = True
-        self._reload_unpack_data(self.settingInterface.config)
+        self._request_shared_data_reload(show_notice=True, allow_auto_prepare=True)
 
     def _show_refresh_infobar(self, *, title: str, content: str, level: str) -> None:
         """在共享刷新完成后展示 InfoBar 通知。"""
@@ -537,6 +567,87 @@ class MainWindow(FluentWindow):
         self.overviewInterface.set_app_context(None)
         self.homeInterface.set_loading_state("正在重新加载数据…", active=True)
         self._load_initial_data(cfg)
+
+    def _schedule_runtime_entity_refresh(self) -> None:
+        """为运行时配置变更安排一次共享实体数据刷新。"""
+        self._pending_runtime_entity_refresh = True
+        if self.executionInterface.has_incomplete_tasks():
+            logger.info("任务队列未清空，延后处理运行时配置对应的实体数据刷新")
+            return
+        if self._is_loading_shared_data or self._is_preparing_shared_data:
+            logger.info("共享数据刷新仍在进行中，保留待处理的运行时配置刷新")
+            return
+        self._runtime_entity_refresh_timer.start()
+
+    def _flush_pending_runtime_entity_refresh(self) -> None:
+        """在合适时机执行因运行时配置变更而待处理的实体数据刷新。"""
+        if not self._pending_runtime_entity_refresh:
+            return
+        if self.executionInterface.has_incomplete_tasks():
+            return
+        if self._is_loading_shared_data or self._is_preparing_shared_data:
+            return
+        self._pending_runtime_entity_refresh = False
+        self._request_shared_data_reload(show_notice=False, allow_auto_prepare=True)
+
+    def _request_shared_data_reload(self, *, show_notice: bool, allow_auto_prepare: bool) -> None:
+        """启动一次共享实体数据刷新流程。"""
+        self._pending_refresh_notice = show_notice
+        self._allow_auto_prepare_on_shared_reload = allow_auto_prepare
+        self._shared_data_auto_prepare_attempted = False
+        self._reload_unpack_data(self.settingInterface.config)
+
+    def _should_auto_prepare_shared_data(self, error: str) -> bool:
+        """判断当前共享数据加载错误是否适合自动补一次后端更新。"""
+        normalized = str(error)
+        return (
+            "请先运行更新程序" in normalized
+            or "请立即运行数据更新程序" in normalized
+            or "核心数据文件" in normalized
+            or "数据版本与游戏版本严重不匹配" in normalized
+        )
+
+    def _start_shared_data_prepare(self, cfg) -> None:
+        """在后台线程中补齐共享实体数据所需的后端更新。"""
+        if self._shared_data_prepare_worker is not None:
+            return
+
+        overrides = dict(cfg.to_app_context_overrides())
+
+        def run_prepare() -> None:
+            _prepare_shared_entity_data(overrides)
+
+        worker = TaskWorker(run_prepare)
+        worker.signals.started.connect(self._on_shared_data_prepare_started)
+        worker.signals.finished.connect(lambda _result, current_cfg=cfg: self._on_shared_data_prepare_finished(current_cfg))
+        worker.signals.failed.connect(self._on_shared_data_prepare_failed)
+        self._shared_data_prepare_worker = worker
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_shared_data_prepare_started(self) -> None:
+        """同步后台共享数据准备开始时的界面状态。"""
+        self._is_preparing_shared_data = True
+        self.homeInterface.set_loading_state("正在刷新基础数据…", active=True)
+
+    def _on_shared_data_prepare_finished(self, cfg) -> None:
+        """在后台数据准备结束后重新加载共享实体数据。"""
+        self._is_preparing_shared_data = False
+        self._shared_data_prepare_worker = None
+        self._reload_unpack_data(cfg)
+
+    def _on_shared_data_prepare_failed(self, error: str) -> None:
+        """处理后台共享数据准备失败后的界面状态。"""
+        self._is_preparing_shared_data = False
+        self._shared_data_prepare_worker = None
+        self.homeInterface.set_loading_state(f"加载失败: {error}", active=False)
+        if self._pending_refresh_notice:
+            self._show_refresh_infobar(
+                title="刷新失败",
+                content=error,
+                level="error",
+            )
+            self._pending_refresh_notice = False
+        self._flush_pending_runtime_entity_refresh()
 
     def _inject_mock_data(self):
         mock_rows = [

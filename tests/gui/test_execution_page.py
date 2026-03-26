@@ -457,6 +457,45 @@ def test_execution_page_marks_task_completed_after_worker_finishes(monkeypatch) 
     app.processEvents()
 
 
+def test_execution_page_only_requests_refresh_after_queue_drains(monkeypatch) -> None:
+    """存在后续待执行任务时，不应提前触发共享数据刷新请求。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    refresh_events: list[bool] = []
+    page.refresh_requested.connect(lambda: refresh_events.append(True))
+    monkeypatch.setattr(page, "_start_task_worker", lambda task: None)
+    app.processEvents()
+
+    page._queue_task_draft()
+    page._queue_task_draft()
+    app.processEvents()
+
+    first_item = page.draft_list.item(0)
+    second_item = page.draft_list.item(1)
+    first_payload = first_item.data(execution_page_module.TASK_ITEM_ROLE)
+    second_payload = second_item.data(execution_page_module.TASK_ITEM_ROLE)
+    result = ExecutionTaskResult(
+        completed_steps=("音频解包",),
+        summary="已完成：音频解包（0.8s）",
+        duration_seconds=0.8,
+    )
+
+    page._on_task_finished(first_payload.task_id, result)
+    app.processEvents()
+
+    assert refresh_events == []
+    assert "[已完成]" in first_item.text()
+    assert "[运行中]" in second_item.text()
+
+    page._on_task_finished(second_payload.task_id, result)
+    app.processEvents()
+
+    assert refresh_events == [True]
+
+    page.deleteLater()
+    app.processEvents()
+
+
 def test_global_log_drawer_keeps_appending_while_collapsed() -> None:
     """日志抽屉在隐藏状态下也应持续追加文本并保持滚动到底部。"""
     app = QApplication.instance() or QApplication([])

@@ -239,6 +239,7 @@ class ExecutionPage(SmoothScrollArea):
 
     refresh_requested = Signal()
     task_running_changed = Signal(bool)
+    task_queue_busy_changed = Signal(bool)
     log_lines_appended = Signal(object)
 
     def __init__(self, parent=None):
@@ -254,6 +255,7 @@ class ExecutionPage(SmoothScrollArea):
         self._cached_data: dict[str, list[dict[str, Any]]] = {"champions": [], "maps": []}
         self._draft_count = 0
         self._is_task_running = False
+        self._is_task_queue_busy = False
         self._log_lines: deque[str] = deque(
             [
                 "执行中心日志会同步到主窗口底部日志面板。",
@@ -501,6 +503,17 @@ class ExecutionPage(SmoothScrollArea):
         """返回当前是否存在正在执行的任务。"""
         return self._is_task_running
 
+    def has_incomplete_tasks(self) -> bool:
+        """返回队列中是否仍存在等待或运行中的任务。"""
+        for index in range(self.draft_list.count()):
+            item = self.draft_list.item(index)
+            payload = item.data(TASK_ITEM_ROLE)
+            if not isinstance(payload, QueuedExecutionTask):
+                continue
+            if payload.status in {TASK_STATUS_WAITING, TASK_STATUS_RUNNING}:
+                return True
+        return False
+
     def _create_app_context(self, extra_overrides: dict[str, str | bool] | None = None) -> AppContext:
         """从 GUI 配置创建 ``AppContext``。"""
         cli_overrides = self.gui_config.to_app_context_overrides()
@@ -566,6 +579,17 @@ class ExecutionPage(SmoothScrollArea):
             return
         self._is_task_running = running
         self.task_running_changed.emit(running)
+
+    def _set_task_queue_busy_state(self, busy: bool) -> None:
+        """同步任务队列忙碌状态并向主窗口发出状态信号。"""
+        if self._is_task_queue_busy == busy:
+            return
+        self._is_task_queue_busy = busy
+        self.task_queue_busy_changed.emit(busy)
+
+    def _sync_task_queue_busy_state(self) -> None:
+        """根据当前队列内容重新计算忙碌状态。"""
+        self._set_task_queue_busy_state(self.has_incomplete_tasks())
 
     def _find_task_item_by_id(self, task_id: int) -> QListWidgetItem | None:
         """按任务编号查找对应的列表项。"""
@@ -871,6 +895,7 @@ class ExecutionPage(SmoothScrollArea):
                 )
                 self._active_task_id = updated_payload.task_id
                 self._set_task_running_state(True)
+                self._sync_task_queue_busy_state()
                 self._log_gui_event("info", f"[队列] 已自动开始任务：{updated_payload.summary}")
                 self._refresh_progress_panel(
                     status_text="状态：任务启动中。",
@@ -880,6 +905,7 @@ class ExecutionPage(SmoothScrollArea):
                 )
                 self._start_task_worker(updated_payload)
                 return item
+        self._sync_task_queue_busy_state()
         return None
 
     def _start_task_worker(self, task: QueuedExecutionTask) -> None:
@@ -993,6 +1019,7 @@ class ExecutionPage(SmoothScrollArea):
         }
         self._set_task_running_state(False)
         next_item = self._start_next_waiting_task()
+        self._sync_task_queue_busy_state()
         if next_item is None:
             self._refresh_progress_panel(
                 status_text="状态：最近任务已完成。",
@@ -1039,6 +1066,7 @@ class ExecutionPage(SmoothScrollArea):
         self._set_task_running_state(False)
         logger.error(f"[队列] 任务 #{task_id} 执行失败：{error}")
         next_item = self._start_next_waiting_task()
+        self._sync_task_queue_busy_state()
         if next_item is None:
             self._refresh_progress_panel(
                 status_text="状态：最近任务执行失败。",
@@ -1083,6 +1111,7 @@ class ExecutionPage(SmoothScrollArea):
             self._apply_queue_list_height()
 
         self._log_gui_event("info", f"[队列] 已移出任务：{payload.summary}")
+        self._sync_task_queue_busy_state()
         self._refresh_progress_panel()
         InfoBar.success(
             "已移出队列",
@@ -1294,6 +1323,7 @@ class ExecutionPage(SmoothScrollArea):
         self._apply_queue_list_height()
         self._log_gui_event("info", f"[队列] {row_text}")
         started_item = self._start_next_waiting_task()
+        self._sync_task_queue_busy_state()
         if started_item is None:
             self._refresh_progress_panel(
                 status_text="状态：新任务已加入等待队列。",
@@ -1385,6 +1415,7 @@ class ExecutionPage(SmoothScrollArea):
                 self._active_task_id = task_id
 
         self._set_task_running_state(self._active_task_id is not None)
+        self._sync_task_queue_busy_state()
         self._apply_queue_list_height()
         self._refresh_progress_panel()
         return f"已填充 {count} 条 mock 队列项。"
@@ -1396,6 +1427,7 @@ class ExecutionPage(SmoothScrollArea):
         self._set_task_running_state(False)
         self._stage_completion_notifications.clear()
         self._set_queue_placeholder()
+        self._sync_task_queue_busy_state()
         self._refresh_progress_panel()
         return "已清空当前队列。"
 
@@ -1438,10 +1470,12 @@ class ExecutionPage(SmoothScrollArea):
             else:
                 self._log_gui_event("info", f"[队列] 已清空 {removed_count} 条非运行中任务。")
                 self._apply_queue_list_height()
+                self._sync_task_queue_busy_state()
                 self._refresh_progress_panel()
             return
 
         self._set_queue_placeholder()
+        self._sync_task_queue_busy_state()
         self._refresh_progress_panel()
         self._log_gui_event("info", "[队列] 已清空当前任务队列。")
 

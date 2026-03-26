@@ -310,6 +310,7 @@ class SettingPage(SmoothScrollArea):
     output_path_changed = Signal(str)
     wwiser_path_changed = Signal(str)
     vgmstream_path_changed = Signal(str)
+    entity_data_config_changed = Signal()
     smooth_scroll_changed = Signal(bool, bool)
     log_drawer_auto_collapse_changed = Signal(bool)
 
@@ -325,6 +326,7 @@ class SettingPage(SmoothScrollArea):
         self.setWidget(self.view)
         self.setWidgetResizable(True)
         self.setStyleSheet("QScrollArea {border: none; background: transparent;}")
+        self._runtime_config_locked = False
         previous_mark = _log_setting_stage("滚动容器与视图初始化完成", startup_begin, previous_mark)
 
         # 配置对象：先建好再构建 UI，确保 load() 后可立即应用
@@ -341,6 +343,7 @@ class SettingPage(SmoothScrollArea):
 
         # 初始化时根据当前模式刷新动态显隐
         self._on_source_mode_changed(self.sourceModeCard.displayValue())
+        self.set_runtime_config_locked(False)
         _log_setting_stage("_on_source_mode_changed 完成", startup_begin, previous_mark)
 
     # ------------------------------------------------------------------
@@ -569,7 +572,7 @@ class SettingPage(SmoothScrollArea):
         )
         self.logDrawerAutoCollapseCard.setValue(cfg.log_drawer_auto_collapse_enabled)
 
-    def _save_config(self) -> None:
+    def _save_config(self, *_args, emit_entity_data_change: bool = True) -> None:
         """将各控件当前值写入 GuiConfig 并持久化。"""
         cfg = self._cfg
 
@@ -586,6 +589,8 @@ class SettingPage(SmoothScrollArea):
         cfg.log_drawer_auto_collapse_enabled = self.logDrawerAutoCollapseCard.isChecked()
 
         cfg.save()
+        if emit_entity_data_change:
+            self.entity_data_config_changed.emit()
 
     def _save_theme_config(self) -> None:
         """保存主题配置到 GuiConfig。"""
@@ -646,6 +651,7 @@ class SettingPage(SmoothScrollArea):
             self._cfg.save()
             self._apply_path_label(self.gamePathCard, path)
             self.game_path_changed.emit(path)
+            self.entity_data_config_changed.emit()
 
     def _pick_output_path(self) -> None:
         """弹出文件夹选择对话框，更新解包输出目录。"""
@@ -659,6 +665,7 @@ class SettingPage(SmoothScrollArea):
             self._cfg.save()
             self._apply_path_label(self.outputPathCard, path, r".\output")
             self.output_path_changed.emit(path)
+            self.entity_data_config_changed.emit()
 
     def _pick_wwiser(self) -> None:
         """弹出文件选择对话框，更新 wwiser.py 路径。"""
@@ -694,6 +701,7 @@ class SettingPage(SmoothScrollArea):
         is_local = (label == "本地模式")
         self.localGroup.setVisible(is_local)
         self.remoteGroup.setVisible(not is_local)
+        self.set_runtime_config_locked(self._runtime_config_locked)
 
     # ------------------------------------------------------------------
     # 辅助
@@ -723,9 +731,22 @@ class SettingPage(SmoothScrollArea):
         else:
             card.setContent("当前: 未设置")
 
+    def set_runtime_config_locked(self, locked: bool) -> None:
+        """按分层策略锁定或解锁后端上下文相关配置。"""
+        self._runtime_config_locked = locked
+        enabled = not locked
+        self.sourceModeGroup.setEnabled(enabled)
+        self.localGroup.setEnabled(enabled)
+        self.remoteGroup.setEnabled(enabled)
+        self.baseGroup.setEnabled(enabled)
+        self.wwiserCard.setEnabled(enabled)
+        self.vgmstreamCard.setEnabled(True)
+        self.toolsGroup.setEnabled(True)
+        self.personalGroup.setEnabled(True)
+
     def _on_smooth_scroll_changed(self, _checked: bool) -> None:
         """保存并广播平滑滚动配置。"""
-        self._save_config()
+        self._save_config(emit_entity_data_change=False)
         page_enabled = self.smoothScrollCard.pageScrollEnabled()
         widget_enabled = self.smoothScrollCard.widgetScrollEnabled()
         apply_smooth_scroll_enabled(self, page_enabled)
@@ -733,7 +754,7 @@ class SettingPage(SmoothScrollArea):
 
     def _on_log_drawer_auto_collapse_changed(self, _checked: bool) -> None:
         """保存并广播日志抽屉点击外部自动收起配置。"""
-        self._save_config()
+        self._save_config(emit_entity_data_change=False)
         self.log_drawer_auto_collapse_changed.emit(self.logDrawerAutoCollapseCard.isChecked())
 
     # ------------------------------------------------------------------
