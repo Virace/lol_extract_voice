@@ -231,18 +231,18 @@ def test_entity_data_loader_load_available_audio_ids(mock_app_context, tmp_path)
     assert available_ids == {"118669424", "223585177"}
 
 
-def test_data_load_worker_logs_scan_summary_instead_of_load_success(mock_app_context) -> None:
-    """后台扫描完成日志应描述为扫描结果，而不是数据刷新成功。"""
+def test_data_load_worker_logs_scan_summary_in_debug_level(mock_app_context) -> None:
+    """后台扫描完成后应以 debug 记录扫描摘要。"""
     with patch("lol_audio_unpack.gui.service.worker.EntityDataLoader") as mock_loader_cls:
         mock_loader = Mock()
         mock_loader.load_entities.return_value = [{"id": "1"}, {"id": "103"}]
         mock_loader_cls.return_value = mock_loader
 
-        with patch.object(logger, "info") as mock_info:
+        with patch.object(logger, "debug") as mock_debug:
             worker = DataLoadWorker(mock_app_context, "maps")
             worker.run()
 
-    mock_info.assert_any_call("maps 实体扫描完成，共识别 2 条记录")
+    mock_debug.assert_any_call("maps 实体状态扫描完成，整理出 2 个列表项")
 
 
 def test_data_load_worker_emits_error_without_finished_when_loader_init_fails(mock_app_context) -> None:

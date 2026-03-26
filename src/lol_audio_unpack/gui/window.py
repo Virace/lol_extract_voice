@@ -9,7 +9,7 @@ from time import perf_counter
 from loguru import logger
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QThreadPool, QTimer
 from PySide6.QtGui import QCloseEvent, QIcon, QResizeEvent, QShowEvent
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QMessageBox
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets import (
     FluentWindow,
@@ -26,7 +26,7 @@ from qfluentwidgets import (
 from lol_audio_unpack import __version__
 from lol_audio_unpack.app_context import OperationOptions, create_app_context
 from lol_audio_unpack.facade import LolAudioUnpackApp
-from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled
+from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled, show_feedback_infobar
 from lol_audio_unpack.gui.components.dev_console import DevConsoleWindow
 from lol_audio_unpack.gui.components.log_drawer import (
     GlobalLogDrawer,
@@ -126,6 +126,7 @@ class MainWindow(FluentWindow):
         self._shared_entity_reader_signature: tuple[str | bool, ...] | None = None
         self._shared_entity_scan_signature: tuple[str | bool, ...] | None = None
         self._window_material_bootstrapped = False
+        self._last_window_material_logged_state: bool | None = None
         self._dev_console: DevConsoleWindow | None = None
         self._app_event_filter_host = QApplication.instance()
         self._app_event_filter_installed = False
@@ -234,7 +235,10 @@ class MainWindow(FluentWindow):
         """从 ``QApplication`` 解除当前主窗口注册的全局 event filter。"""
         if not self._app_event_filter_installed or self._app_event_filter_host is None:
             return
-        self._app_event_filter_host.removeEventFilter(self)
+        try:
+            self._app_event_filter_host.removeEventFilter(self)
+        except RuntimeError:
+            return
         self._app_event_filter_installed = False
 
     def _try_enable_window_material(self) -> None:
@@ -253,7 +257,9 @@ class MainWindow(FluentWindow):
             logger.debug(f"启用 Mica Alt 材质失败: {exc}")
             return
 
-        logger.debug(f"主窗口已启用 Mica Alt 材质效果: dark={is_dark_mode}")
+        if self._last_window_material_logged_state != is_dark_mode:
+            logger.trace("主窗口已应用 Mica Alt 材质效果")
+            self._last_window_material_logged_state = is_dark_mode
 
     def _schedule_window_material_refresh(self, *, delay_ms: int = 0) -> None:
         """安排下一轮窗口材质刷新。"""
@@ -415,6 +421,7 @@ class MainWindow(FluentWindow):
         self.settingInterface.log_drawer_auto_collapse_changed.connect(
             self._apply_log_drawer_auto_collapse_setting
         )
+        self.settingInterface.log_levels_changed.connect(self._reconfigure_runtime_logging)
         self._apply_smooth_scroll_setting(
             cfg.page_smooth_scroll_enabled,
             cfg.widget_smooth_scroll_enabled,
@@ -426,13 +433,13 @@ class MainWindow(FluentWindow):
         self._shared_entity_scan_signature = _build_shared_entity_scan_signature(cfg)
 
         # 首页初始化完成后加载数据
-        logger.info("准备加载初始数据...")
+        logger.debug("准备触发首轮共享实体数据加载")
         hi.set_loading_state("正在加载实体数据…", active=True)
         self._load_initial_data(cfg)
 
     def _load_initial_data(self, cfg):
         """程序启动时加载实体数据"""
-        logger.info("开始加载初始数据...")
+        logger.info("开始加载共享实体数据")
         self._is_loading_shared_data = True
 
         try:
@@ -440,7 +447,7 @@ class MainWindow(FluentWindow):
             self._data_app_context = create_app_context(cli_overrides=cfg.to_app_context_overrides())
             self.overviewInterface.set_app_context(self._data_app_context)
             self.executionInterface.clear_entity_data()
-            logger.info("AppContext 创建成功")
+            logger.debug("共享数据 AppContext 创建成功")
         except Exception as e:
             self._is_loading_shared_data = False
             self._data_app_context = None
@@ -458,7 +465,7 @@ class MainWindow(FluentWindow):
                 self._pending_refresh_notice = False
             return
 
-        logger.info("启动 champions 数据加载线程")
+        logger.debug("准备启动 champions 实体状态扫描线程")
         self._champions_worker = DataLoadWorker(self._data_app_context, "champions")
         self._champions_worker.finished.connect(self._on_champions_loaded)
         self._champions_worker.error.connect(self._on_data_load_error)
@@ -466,7 +473,7 @@ class MainWindow(FluentWindow):
 
     def _on_champions_loaded(self, data):
         """Champions 数据加载完成"""
-        logger.info(f"champions 实体扫描结果已同步，共 {len(data)} 条")
+        logger.info(f"champions 实体列表已刷新，当前展示 {len(data)} 项")
 
         self.executionInterface.set_entity_data("champions", data)
         self.overviewInterface.set_entity_data("champions", data)
@@ -477,7 +484,7 @@ class MainWindow(FluentWindow):
             self._finish_data_loading()
             return
 
-        logger.info("启动 maps 数据加载")
+        logger.debug("准备启动 maps 实体状态扫描线程")
         self._maps_worker = DataLoadWorker(self._data_app_context, "maps")
         self._maps_worker.finished.connect(self._on_maps_loaded)
         self._maps_worker.error.connect(self._on_data_load_error)
@@ -485,7 +492,7 @@ class MainWindow(FluentWindow):
 
     def _on_maps_loaded(self, data):
         """Maps 数据加载完成"""
-        logger.info(f"maps 实体扫描结果已同步，共 {len(data)} 条")
+        logger.info(f"maps 实体列表已刷新，当前展示 {len(data)} 项")
 
         self.executionInterface.set_entity_data("maps", data)
         self.overviewInterface.set_entity_data("maps", data)
@@ -546,15 +553,16 @@ class MainWindow(FluentWindow):
             log_dir = Path(cfg.output_path) / "logs"
         setup_logging(
             dev_mode=True,
-            log_level="INFO",
+            log_level=cfg.console_log_level,
+            file_log_level=cfg.file_log_level,
             log_file_path=log_dir,
             show_function_info=True,
         )
-        self.executionInterface.attach_runtime_log_sink()
+        self.executionInterface.attach_runtime_log_sink(cfg.console_log_level)
         if log_dir is not None:
-            logger.info(f"日志系统已重定向到输出目录: {log_dir}")
+            logger.debug(f"日志系统已重定向到输出目录: {log_dir}")
         else:
-            logger.info("日志系统已切换为仅控制台输出。")
+            logger.debug("日志系统已切换为仅控制台输出。")
 
     def _apply_log_drawer_auto_collapse_setting(self, enabled: bool) -> None:
         """应用日志抽屉点击外部自动收起设置。"""
@@ -580,36 +588,31 @@ class MainWindow(FluentWindow):
         """刷新解包页与事件映射页共用的本地输出数据。"""
         self._reconfigure_runtime_logging(self.settingInterface.config)
         if self.executionInterface.has_incomplete_tasks():
-            logger.info("执行中心仍有未完成任务，忽略共享刷新请求")
-            InfoBar.warning(
+            logger.debug("执行中心仍有未完成任务，忽略共享刷新请求")
+            show_feedback_infobar(
                 title="队列未清空",
                 content="请等待当前任务队列全部结束后再刷新列表数据。",
-                isClosable=True,
-                position=InfoBarPosition.TOP,
-                duration=2500,
                 parent=self,
+                level="warning",
+                position=InfoBarPosition.TOP,
             )
             return
         if self._is_loading_shared_data or self._is_preparing_shared_data:
-            logger.info("共享数据仍在加载中，忽略重复刷新请求")
+            logger.debug("共享数据仍在加载中，忽略重复刷新请求")
             return
 
-        self._pending_refresh_notice = True
-        self._allow_auto_prepare_on_shared_reload = True
-        self._shared_data_auto_prepare_attempted = False
+        logger.info("开始刷新共享实体数据")
         _reset_data_reader_singleton()
-        self._start_shared_data_prepare(self.settingInterface.config)
+        self._request_shared_data_reload(show_notice=True, allow_auto_prepare=True)
 
     def _show_refresh_infobar(self, *, title: str, content: str, level: str) -> None:
         """在共享刷新完成后展示 InfoBar 通知。"""
-        factory = InfoBar.success if level == "success" else InfoBar.error
-        factory(
+        show_feedback_infobar(
             title=title,
             content=content,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=2500,
             parent=self,
+            level=level,
+            position=InfoBarPosition.TOP,
         )
 
     def _sync_selection_to_execution_center(self, payload) -> None:
@@ -618,13 +621,12 @@ class MainWindow(FluentWindow):
         if summary is None:
             return
 
-        InfoBar.success(
+        show_feedback_infobar(
             title="已同步到执行中心",
             content=summary,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=2500,
             parent=self,
+            level="success",
+            position=InfoBarPosition.TOP,
         )
 
     def _reload_unpack_data(self, cfg):
@@ -665,10 +667,10 @@ class MainWindow(FluentWindow):
     def _schedule_runtime_entity_refresh(self) -> None:
         """为运行时配置变更安排一次共享实体数据刷新。"""
         if self.executionInterface.has_incomplete_tasks():
-            logger.info("任务队列未清空，延后处理运行时配置对应的实体数据刷新")
+            logger.debug("任务队列未清空，延后处理运行时配置对应的实体数据刷新")
             return
         if self._is_loading_shared_data or self._is_preparing_shared_data:
-            logger.info("共享数据刷新仍在进行中，保留待处理的运行时配置刷新")
+            logger.debug("共享数据刷新仍在进行中，保留待处理的运行时配置刷新")
             return
         self._runtime_entity_refresh_timer.start()
 

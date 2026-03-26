@@ -45,11 +45,14 @@ def _log_startup_stage(stage: str, startup_begin: float, previous_mark: float) -
 def main() -> None:
     startup_begin = perf_counter()
     previous_mark = startup_begin
+    cfg = GuiConfig()
+    cfg.load()
     logger.enable("lol_audio_unpack")
     # 显式启用项目命名空间日志，并初始化基础日志系统到当前目录下的 .logs 文件夹
     setup_logging(
         dev_mode=True,
-        log_level="DEBUG",
+        log_level=cfg.console_log_level,
+        file_log_level=cfg.file_log_level,
         log_file_path=Path.cwd() / ".logs",
         show_function_info=True,
     )
@@ -77,9 +80,7 @@ def main() -> None:
     app.setFont(font)
     previous_mark = _log_startup_stage("应用字体配置完成", startup_begin, previous_mark)
 
-    # 从 GuiConfig 加载并应用主题配置
-    cfg = GuiConfig()
-    cfg.load()
+    # 从 GuiConfig 应用主题配置
     previous_mark = _log_startup_stage("GuiConfig 加载完成", startup_begin, previous_mark)
 
     theme_map = {"Light": Theme.LIGHT, "Dark": Theme.DARK, "Auto": Theme.AUTO}

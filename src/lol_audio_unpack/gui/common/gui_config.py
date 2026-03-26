@@ -69,6 +69,8 @@ class GuiConfig:
         self._page_smooth_scroll_enabled: bool = False
         self._widget_smooth_scroll_enabled: bool = False
         self._log_drawer_auto_collapse_enabled: bool = True
+        self._console_log_level: str = "INFO"
+        self._file_log_level: str = "DEBUG"
 
     def load(self) -> None:
         """从 .lol.env 和 QSettings 加载配置。"""
@@ -128,6 +130,8 @@ class GuiConfig:
         self._log_drawer_auto_collapse_enabled = self._to_bool(
             self._qs.value("log_drawer_auto_collapse_enabled", True)
         )
+        self._console_log_level = str(self._qs.value("console_log_level", "INFO") or "INFO").upper()
+        self._file_log_level = str(self._qs.value("file_log_level", "DEBUG") or "DEBUG").upper()
 
     def save(self) -> None:
         """保存配置到 .lol.env。"""
@@ -156,6 +160,8 @@ class GuiConfig:
         self._qs.setValue("page_smooth_scroll_enabled", self._page_smooth_scroll_enabled)
         self._qs.setValue("widget_smooth_scroll_enabled", self._widget_smooth_scroll_enabled)
         self._qs.setValue("log_drawer_auto_collapse_enabled", self._log_drawer_auto_collapse_enabled)
+        self._qs.setValue("console_log_level", self._console_log_level)
+        self._qs.setValue("file_log_level", self._file_log_level)
         self._qs.setValue("smooth_scroll_enabled", self.smooth_scroll_enabled)
 
     def to_app_context_overrides(self) -> dict[str, str | bool]:
@@ -354,6 +360,24 @@ class GuiConfig:
     @log_drawer_auto_collapse_enabled.setter
     def log_drawer_auto_collapse_enabled(self, v: bool) -> None:
         self._log_drawer_auto_collapse_enabled = bool(v)
+
+    @property
+    def console_log_level(self) -> str:
+        """控制台与窗口日志级别。"""
+        return self._console_log_level
+
+    @console_log_level.setter
+    def console_log_level(self, v: str) -> None:
+        self._console_log_level = str(v).upper()
+
+    @property
+    def file_log_level(self) -> str:
+        """文件日志级别。"""
+        return self._file_log_level
+
+    @file_log_level.setter
+    def file_log_level(self, v: str) -> None:
+        self._file_log_level = str(v).upper()
 
     # ------------------------------------------------------------------
     # Helpers

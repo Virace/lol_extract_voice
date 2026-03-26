@@ -169,3 +169,24 @@ def test_gui_config_persists_log_drawer_auto_collapse_flag(monkeypatch, tmp_path
     reloaded_cfg.load()
 
     assert reloaded_cfg.log_drawer_auto_collapse_enabled is False
+
+
+def test_gui_config_persists_log_levels(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _use_fake_qsettings(monkeypatch)
+    monkeypatch.setattr(gui_config_module, "set_key", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gui_config_module, "unset_key", lambda *_args, **_kwargs: None)
+
+    cfg = GuiConfig()
+    cfg.console_log_level = "DEBUG"
+    cfg.file_log_level = "TRACE"
+    cfg.save()
+
+    assert FakeQSettings._store["console_log_level"] == "DEBUG"
+    assert FakeQSettings._store["file_log_level"] == "TRACE"
+
+    reloaded_cfg = GuiConfig()
+    reloaded_cfg.load()
+
+    assert reloaded_cfg.console_log_level == "DEBUG"
+    assert reloaded_cfg.file_log_level == "TRACE"

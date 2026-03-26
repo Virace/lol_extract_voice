@@ -24,7 +24,6 @@ from qfluentwidgets import (
     CardWidget,
     CheckBox,
     ComboBox,
-    ExpandGroupSettingCard,
     ExpandLayout,
     InfoBar,
     InfoBarPosition,
@@ -42,11 +41,13 @@ from qfluentwidgets import (
 from qfluentwidgets import FluentIcon as FIF
 
 from lol_audio_unpack.app_context import create_app_context
+from lol_audio_unpack.gui.components.accordion_setting_card import FormAccordionCard
 from lol_audio_unpack.gui.common import (
     GUI_LOG_FORMAT,
     GUI_LOG_MAX_LINES,
     apply_smooth_scroll_enabled,
     get_buffered_log_lines,
+    show_feedback_infobar,
 )
 from lol_audio_unpack.gui.service.task_runner import run_execution_task
 from lol_audio_unpack.gui.task_models import (
@@ -160,7 +161,7 @@ class _GuiLogTextRelay(QObject):
         """兼容 file-like sink 所需的空刷新接口。"""
 
 
-class AdvancedInputCard(ExpandGroupSettingCard):
+class AdvancedInputCard(FormAccordionCard):
     """执行中心的高级输入折叠卡。"""
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -170,8 +171,6 @@ class AdvancedInputCard(ExpandGroupSettingCard):
             "贴近 CLI 的自定义参数入口，用于补充或覆盖从实体总览同步进来的默认选择。",
             parent,
         )
-        self.viewLayout.setContentsMargins(0, 0, 0, 0)
-        self.viewLayout.setSpacing(0)
         self.setExpand(True)
 
         self.champion_ids_input = LineEdit()
@@ -204,34 +203,13 @@ class AdvancedInputCard(ExpandGroupSettingCard):
         self.force_update_cb = CheckBox("启用")
         self.integrate_data_cb = CheckBox("启用")
 
-        self._add_row("英雄 ID", "按 CLI 风格输入，使用逗号分隔", self.champion_ids_input)
-        self._add_row("地图 ID", "按 CLI 风格输入，使用逗号分隔", self.map_ids_input)
-        self._add_row("音频范围", "执行中心里保留与 CLI 对齐的过滤方式", self.vo_filter)
-        self._add_row("并发数", "设置批量任务使用的最大线程数；一般不建议超过 CPU 线程数", self.max_workers_combo)
-        self._add_row("附加 BP 语音", "保留现有解包参数入口", self.bp_voice_cb)
-        self._add_row("强制更新数据", "执行前先刷新 update 数据，适合本地缓存需要重建时使用", self.force_update_cb)
-        self._add_row("生成整合数据文件", "对应 CLI 参数 --integrate-data，仅在映射任务中生效", self.integrate_data_cb)
-
-    def _add_row(self, label_text: str, key_text: str, widget: QWidget) -> None:
-        """添加一行设置项。"""
-        row = QWidget()
-
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(48, 12, 48, 12)
-        layout.setSpacing(16)
-
-        label_column = QVBoxLayout()
-        label_column.setSpacing(2)
-        label_column.addWidget(BodyLabel(label_text))
-        key_label = CaptionLabel(key_text)
-        key_label.setObjectName("keyLabel")
-        key_label.setWordWrap(False)
-        label_column.addWidget(key_label)
-
-        layout.addLayout(label_column, 1)
-        layout.addWidget(widget, 1, Qt.AlignRight | Qt.AlignVCenter)
-
-        self.addGroupWidget(row)
+        self.add_form_row("英雄 ID", "按 CLI 风格输入，使用逗号分隔", self.champion_ids_input)
+        self.add_form_row("地图 ID", "按 CLI 风格输入，使用逗号分隔", self.map_ids_input)
+        self.add_form_row("音频范围", "执行中心里保留与 CLI 对齐的过滤方式", self.vo_filter)
+        self.add_form_row("并发数", "设置批量任务使用的最大线程数；一般不建议超过 CPU 线程数", self.max_workers_combo)
+        self.add_form_row("附加 BP 语音", "保留现有解包参数入口", self.bp_voice_cb)
+        self.add_form_row("强制更新数据", "执行前先刷新 update 数据，适合本地缓存需要重建时使用", self.force_update_cb)
+        self.add_form_row("生成整合数据文件", "对应 CLI 参数 --integrate-data，仅在映射任务中生效", self.integrate_data_cb)
 
 
 class ExecutionPage(SmoothScrollArea):
@@ -435,14 +413,14 @@ class ExecutionPage(SmoothScrollArea):
         """清空当前已加载实体目录摘要。"""
         self._cached_data = {"champions": [], "maps": []}
 
-    def attach_runtime_log_sink(self) -> None:
+    def attach_runtime_log_sink(self, level: str = "INFO") -> None:
         """重新挂载 GUI 运行时日志 sink。"""
         self._detach_runtime_log_sink()
         # 独立实例化执行中心时，也要确保项目命名空间日志不会被静默丢弃。
         logger.enable("lol_audio_unpack")
         self._runtime_log_sink_id = logger.add(
             self._runtime_log_relay,
-            level="INFO",
+            level=level.upper(),
             colorize=False,
             enqueue=False,
             format=GUI_LOG_FORMAT,
@@ -967,10 +945,11 @@ class ExecutionPage(SmoothScrollArea):
                         content = f"{content} 正在继续事件映射。"
                 else:
                     content = f"任务 #{task_id} 已结束音频解包阶段。"
-                InfoBar.info(
-                    "音频解包阶段已结束",
-                    content,
+                show_feedback_infobar(
+                    title="音频解包阶段已结束",
+                    content=content,
                     parent=self._feedback_parent(),
+                    level="info",
                     position=InfoBarPosition.TOP,
                 )
         if self._active_task_id == task_id:
@@ -1077,10 +1056,11 @@ class ExecutionPage(SmoothScrollArea):
             self.refresh_requested.emit()
         else:
             self._refresh_progress_panel()
-        InfoBar.error(
-            "任务执行失败",
-            error,
+        show_feedback_infobar(
+            title="任务执行失败",
+            content=error,
             parent=self._feedback_parent(),
+            level="error",
             position=InfoBarPosition.TOP,
         )
 
@@ -1092,10 +1072,11 @@ class ExecutionPage(SmoothScrollArea):
 
         current_status = payload.status
         if current_status == TASK_STATUS_RUNNING:
-            InfoBar.warning(
-                "暂不支持移除",
-                "运行中的真实任务暂不支持直接移出队列，请等待任务结束后再处理。",
+            show_feedback_infobar(
+                title="暂不支持移除",
+                content="运行中的真实任务暂不支持直接移出队列，请等待任务结束后再处理。",
                 parent=self._feedback_parent(),
+                level="warning",
                 position=InfoBarPosition.TOP,
             )
             return
@@ -1113,10 +1094,11 @@ class ExecutionPage(SmoothScrollArea):
         self._log_gui_event("info", f"[队列] 已移出任务：{payload.summary}")
         self._sync_task_queue_busy_state()
         self._refresh_progress_panel()
-        InfoBar.success(
-            "已移出队列",
-            payload.summary or item.text(),
+        show_feedback_infobar(
+            title="已移出队列",
+            content=payload.summary or item.text(),
             parent=self._feedback_parent(),
+            level="success",
             position=InfoBarPosition.TOP,
         )
 
@@ -1258,20 +1240,22 @@ class ExecutionPage(SmoothScrollArea):
         command_text = self._build_cli_command_text()
         if command_text is None:
             self._log_gui_event("warning", "[CLI] 未勾选任何执行步骤，无法复制命令。")
-            InfoBar.warning(
-                "无法复制 CLI 命令",
-                "请至少勾选音频解包或事件映射中的一个步骤。",
+            show_feedback_infobar(
+                title="无法复制 CLI 命令",
+                content="请至少勾选音频解包或事件映射中的一个步骤。",
                 parent=self._feedback_parent(),
+                level="warning",
                 position=InfoBarPosition.TOP,
             )
             return
 
         QGuiApplication.clipboard().setText(command_text)
         self._log_gui_event("info", f"[CLI] 已复制命令：{command_text}")
-        InfoBar.success(
-            "已复制 CLI 命令",
-            command_text,
+        show_feedback_infobar(
+            title="已复制 CLI 命令",
+            content=command_text,
             parent=self._feedback_parent(),
+            level="success",
             position=InfoBarPosition.TOP,
         )
 
@@ -1280,10 +1264,11 @@ class ExecutionPage(SmoothScrollArea):
         task_scope_summary = self._selected_task_scope_summary()
         if task_scope_summary == "未选择执行内容":
             self._log_gui_event("warning", "[队列] 未勾选任何执行步骤，已阻止创建任务。")
-            InfoBar.warning(
-                "无法创建任务",
-                "请至少勾选音频解包或事件映射中的一个步骤。",
+            show_feedback_infobar(
+                title="无法创建任务",
+                content="请至少勾选音频解包或事件映射中的一个步骤。",
                 parent=self._feedback_parent(),
+                level="warning",
                 position=InfoBarPosition.TOP,
             )
             return
@@ -1292,10 +1277,11 @@ class ExecutionPage(SmoothScrollArea):
             draft = self._build_task_draft()
         except ValueError as exc:
             self._log_gui_event("warning", f"[队列] {exc}")
-            InfoBar.warning(
-                "无法创建任务",
-                str(exc),
+            show_feedback_infobar(
+                title="无法创建任务",
+                content=str(exc),
                 parent=self._feedback_parent(),
+                level="warning",
                 position=InfoBarPosition.TOP,
             )
             return
@@ -1333,10 +1319,11 @@ class ExecutionPage(SmoothScrollArea):
             self._refresh_progress_panel(status_text="状态：任务已加入队列。")
         else:
             self._refresh_progress_panel()
-        InfoBar.success(
-            "已加入任务队列",
-            row_text,
+        show_feedback_infobar(
+            title="已加入任务队列",
+            content=row_text,
             parent=self._feedback_parent(),
+            level="success",
             position=InfoBarPosition.TOP,
         )
         self._reset_custom_inputs_to_defaults()
@@ -1461,10 +1448,11 @@ class ExecutionPage(SmoothScrollArea):
 
             if removed_count == 0:
                 self._log_gui_event("warning", "[队列] 当前存在运行中的任务，暂不支持直接清空。")
-                InfoBar.warning(
-                    "暂无法清空",
-                    "运行中的真实任务暂不支持直接移出队列，请等待任务结束后再清空。",
+                show_feedback_infobar(
+                    title="暂无法清空",
+                    content="运行中的真实任务暂不支持直接移出队列，请等待任务结束后再清空。",
                     parent=self._feedback_parent(),
+                    level="warning",
                     position=InfoBarPosition.TOP,
                 )
             else:

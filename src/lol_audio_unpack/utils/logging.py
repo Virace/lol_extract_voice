@@ -40,6 +40,7 @@ class LoggingConfiguration:
         *,
         dev_mode: bool = False,
         log_level: str = "INFO",
+        file_log_level: str = "DEBUG",
         log_file_path: Path | str | None = None,
         show_function_info: bool = True,
     ) -> None:
@@ -48,6 +49,7 @@ class LoggingConfiguration:
 
         :param dev_mode: 是否为开发模式（影响diagnose参数）
         :param log_level: 控制台日志级别
+        :param file_log_level: 文件日志级别
         :param log_file_path: 日志文件路径，None表示不记录文件日志
         :param show_function_info: 是否显示函数名、行号等信息
         """
@@ -89,7 +91,7 @@ class LoggingConfiguration:
 
             LoggingConfiguration._add_handler_with_enqueue_fallback(
                 log_path / "{time:YYYY-MM-DD_HH-mm-ss}.log",
-                level="DEBUG",  # 文件日志通常记录更详细的信息
+                level=file_log_level.upper(),
                 format=file_format,
                 rotation="100 MB",  # 当文件达到100MB时轮转
                 retention=10,  # 保留最近10份日志文件

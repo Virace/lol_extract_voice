@@ -5,10 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import Mock
 
+from loguru import logger
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QApplication
 from qfluentwidgets import Theme, qconfig, setTheme, setThemeColor
 
+import lol_audio_unpack.gui.__main__ as gui_main_module
 import lol_audio_unpack.gui.view.execution_page as execution_page_module
 import lol_audio_unpack.gui.window as window_module
 from lol_audio_unpack.gui.components.preview_tree import PreviewTreeModel
@@ -357,18 +359,20 @@ def test_main_window_game_path_change_resets_reader_and_allows_auto_prepare(monk
 
 
 def test_main_window_manual_refresh_materializes_current_shared_data(monkeypatch) -> None:
-    """手动刷新数据时，应按当前配置执行后端数据准备并落盘。"""
+    """手动刷新数据时，应先尝试重载当前输出目录，再按需自动准备。"""
     app = QApplication.instance() or QApplication([])
 
     monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
     window = MainWindow()
-    prepare_calls: list[object] = []
+    reload_calls: list[tuple[bool, bool]] = []
     reset_calls: list[bool] = []
 
-    def capture_prepare_request(cfg) -> None:
-        prepare_calls.append(cfg)
-
-    monkeypatch.setattr(window, "_start_shared_data_prepare", capture_prepare_request, raising=False)
+    monkeypatch.setattr(
+        window,
+        "_request_shared_data_reload",
+        lambda *, show_notice, allow_auto_prepare: reload_calls.append((show_notice, allow_auto_prepare)),
+        raising=False,
+    )
     monkeypatch.setattr(window_module, "_reset_data_reader_singleton", lambda: reset_calls.append(True))
     app.processEvents()
 
@@ -376,10 +380,62 @@ def test_main_window_manual_refresh_materializes_current_shared_data(monkeypatch
     window._refresh_shared_output_data()
     app.processEvents()
 
-    assert prepare_calls == [window.settingInterface.config]
+    assert reload_calls == [(True, True)]
     assert reset_calls == [True]
 
     _dispose_main_window(window, app)
+
+
+def test_main_window_manual_refresh_logs_user_visible_info(monkeypatch) -> None:
+    """手动刷新数据时，应保留一条用户可见的 info 级进度日志。"""
+    app = QApplication.instance() or QApplication([])
+
+    monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
+    window = MainWindow()
+    info_messages: list[str] = []
+
+    def capture_info(message: str) -> None:
+        info_messages.append(message)
+
+    monkeypatch.setattr(window, "_request_shared_data_reload", lambda **_kwargs: None, raising=False)
+    monkeypatch.setattr(window_module, "_reset_data_reader_singleton", lambda: None)
+    monkeypatch.setattr(logger, "info", capture_info)
+    app.processEvents()
+
+    window._refresh_shared_output_data()
+    app.processEvents()
+
+    assert info_messages == ["开始刷新共享实体数据"]
+
+    _dispose_main_window(window, app)
+
+
+def test_main_window_window_material_success_logs_trace_once_per_state(monkeypatch) -> None:
+    """重复应用相同 Mica 状态时，不应重复输出成功日志。"""
+    app = QApplication.instance() or QApplication([])
+
+    monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
+    monkeypatch.setattr(window_module.sys, "platform", "win32")
+    window = MainWindow()
+    trace_messages: list[str] = []
+
+    def capture_trace(message: str) -> None:
+        trace_messages.append(message)
+
+    try:
+        monkeypatch.setattr(window, "isVisible", lambda: True, raising=False)
+        monkeypatch.setattr(window.windowEffect, "setMicaEffect", lambda *args, **kwargs: None, raising=False)
+        monkeypatch.setattr(window_module.logger, "trace", capture_trace, raising=False)
+        window._last_window_material_logged_state = None
+        app.processEvents()
+
+        window._try_enable_window_material()
+        window._try_enable_window_material()
+        app.processEvents()
+
+        assert trace_messages == ["主窗口已应用 Mica Alt 材质效果"]
+    finally:
+        _dispose_main_window(window, app)
 
 
 def test_main_window_output_path_change_reconfigures_logging(monkeypatch) -> None:
@@ -401,6 +457,114 @@ def test_main_window_output_path_change_reconfigures_logging(monkeypatch) -> Non
     app.processEvents()
 
     assert reconfigure_calls == [window.settingInterface.config]
+
+    _dispose_main_window(window, app)
+
+
+def test_main_window_champions_loaded_logs_info_with_clear_wording(monkeypatch) -> None:
+    """英雄列表刷新完成后，应输出清晰的 info 级摘要日志。"""
+    app = QApplication.instance() or QApplication([])
+
+    monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
+    window = MainWindow()
+    info_messages: list[str] = []
+
+    def capture_info(message: str) -> None:
+        info_messages.append(message)
+
+    monkeypatch.setattr(window_module.DataLoadWorker, "start", lambda self: None)
+    monkeypatch.setattr(logger, "info", capture_info)
+    window._data_app_context = Mock()
+    app.processEvents()
+
+    window._on_champions_loaded([{"id": "1"}, {"id": "2"}])
+    app.processEvents()
+
+    assert "champions 实体列表已刷新，当前展示 2 项" in info_messages
+
+    _dispose_main_window(window, app)
+
+
+def test_gui_main_uses_info_console_log_level(monkeypatch) -> None:
+    """GUI 入口默认应以 INFO 作为控制台和窗口日志级别。"""
+    setup_calls: list[dict[str, object]] = []
+
+    class FakeApp:
+        def __init__(self, _argv):
+            pass
+
+        @staticmethod
+        def setHighDpiScaleFactorRoundingPolicy(_policy) -> None:
+            return None
+
+        @staticmethod
+        def setAttribute(_attr) -> None:
+            return None
+
+        def setFont(self, _font) -> None:
+            return None
+
+        def exec(self) -> int:
+            return 0
+
+    class FakeConfig:
+        theme_mode = "Light"
+        theme_color = "#2E75FF"
+        console_log_level = "INFO"
+        file_log_level = "DEBUG"
+
+        def load(self) -> None:
+            return None
+
+    class FakeWindow:
+        def isVisible(self) -> bool:
+            return True
+
+    monkeypatch.setattr(gui_main_module, "setup_logging", lambda **kwargs: setup_calls.append(kwargs))
+    monkeypatch.setattr(gui_main_module, "install_startup_log_buffer", lambda: None)
+    monkeypatch.setattr(gui_main_module, "remove_startup_log_buffer", lambda: None)
+    monkeypatch.setattr(gui_main_module.logger, "enable", lambda _name: None)
+    monkeypatch.setattr(gui_main_module.logger, "info", lambda _message: None)
+    monkeypatch.setattr(gui_main_module, "QApplication", FakeApp)
+    monkeypatch.setattr(gui_main_module, "GuiConfig", FakeConfig)
+    monkeypatch.setattr(gui_main_module, "MainWindow", FakeWindow)
+    monkeypatch.setattr(gui_main_module, "setTheme", lambda _theme: None)
+    monkeypatch.setattr(gui_main_module, "setThemeColor", lambda _color: None)
+    monkeypatch.setattr(gui_main_module.qconfig, "set", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gui_main_module.sys, "exit", lambda code: (_ for _ in ()).throw(SystemExit(code)))
+
+    try:
+        gui_main_module.main()
+    except SystemExit as exc:
+        assert exc.code == 0
+
+    assert setup_calls
+    assert setup_calls[0]["log_level"] == "INFO"
+    assert setup_calls[0]["file_log_level"] == "DEBUG"
+
+
+def test_main_window_reconfigure_runtime_logging_uses_configured_levels(monkeypatch) -> None:
+    """运行时日志重挂应使用设置页中的控制台和文件级别。"""
+    app = QApplication.instance() or QApplication([])
+
+    monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
+    window = MainWindow()
+    setup_calls: list[dict[str, object]] = []
+    sink_levels: list[str] = []
+
+    monkeypatch.setattr(window_module, "setup_logging", lambda **kwargs: setup_calls.append(kwargs))
+    monkeypatch.setattr(window.executionInterface, "attach_runtime_log_sink", lambda level="INFO": sink_levels.append(level))
+    app.processEvents()
+
+    window.settingInterface.config.console_log_level = "DEBUG"
+    window.settingInterface.config.file_log_level = "TRACE"
+    window._reconfigure_runtime_logging(window.settingInterface.config)
+    app.processEvents()
+
+    assert setup_calls
+    assert setup_calls[-1]["log_level"] == "DEBUG"
+    assert setup_calls[-1]["file_log_level"] == "TRACE"
+    assert sink_levels[-1] == "DEBUG"
 
     _dispose_main_window(window, app)
 

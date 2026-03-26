@@ -116,6 +116,11 @@ class OverviewPage(QWidget):
             self._set_splitter_sizes_evenly()
         self._sync_current_list_view()
 
+    def resizeEvent(self, event) -> None:
+        """窗口尺寸变化时，重新收敛左右面板宽度。"""
+        super().resizeEvent(event)
+        self._set_splitter_sizes_evenly()
+
     def set_gui_config(self, cfg) -> None:
         """注入 GUI 配置。"""
         self.gui_config = cfg
@@ -289,7 +294,7 @@ class OverviewPage(QWidget):
 
         self.selection_status_label = BodyLabel("尚未选中实体。", self.selection_bar)
         self.clear_selection_btn = PushButton("清空选择", self.selection_bar)
-        self.sync_selection_btn = PrimaryPushButton("同步到执行中心", self.selection_bar)
+        self.sync_selection_btn = PrimaryPushButton("同步到任务", self.selection_bar)
         self.clear_selection_btn.setEnabled(False)
         self.sync_selection_btn.setEnabled(False)
 
@@ -468,7 +473,7 @@ class OverviewPage(QWidget):
         map_count = len(self._selected_entity_ids["maps"])
         total_count = champion_count + map_count
         if total_count == 0:
-            self.selection_status_label.setText("尚未选中实体，可使用 Ctrl / Shift 多选。")
+            self.selection_status_label.setText("尚未选中实体。")
         else:
             self.selection_status_label.setText(
                 f"已选中 英雄 {champion_count} 个，地图 {map_count} 个。"
@@ -661,13 +666,19 @@ class OverviewPage(QWidget):
         self.reveal_file_btn.setEnabled(False)
 
     def _set_splitter_sizes_evenly(self) -> None:
-        """在页面宽度已知时将左右面板恢复到 50/50。"""
+        """在页面宽度已知时将左右面板收敛到更适合缩放的宽度比例。"""
         total_width = self.splitter.width()
         if total_width <= 0:
             return
 
-        half_width = total_width // 2
-        self.splitter.setSizes([half_width, total_width - half_width])
+        left_min_width = 280
+        right_min_width = 190
+        left_preferred_width = min(max(int(total_width * 0.54), left_min_width), 580)
+        max_left_width = max(total_width - right_min_width, left_min_width)
+        left_width = min(left_preferred_width, max_left_width)
+        left_width = max(left_width, min(left_min_width, total_width))
+        right_width = max(total_width - left_width, 0)
+        self.splitter.setSizes([left_width, right_width])
 
     def _reveal_selected_mapping_file(self) -> None:
         if self._current_mapping_path is None:

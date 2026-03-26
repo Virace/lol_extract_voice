@@ -1,5 +1,6 @@
 """GUI 组件导出。"""
 
+from .accordion_setting_card import FormAccordionCard
 from .dev_console import DevConsoleWindow
 from .log_drawer import GlobalLogDrawer
 from .overview_entity_list import (
@@ -18,6 +19,7 @@ from .overview_status_badge import (
 from .preview_tree import PreviewTreeModel, PreviewTreeView
 
 __all__ = [
+    "FormAccordionCard",
     "DevConsoleWindow",
     "GlobalLogDrawer",
     "OverviewEntityFilterModel",

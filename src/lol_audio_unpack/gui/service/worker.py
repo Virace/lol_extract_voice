@@ -39,7 +39,7 @@ class DataLoadWorker(QThread):
             loader = EntityDataLoader(self.app_context)
             logger.debug("EntityDataLoader 初始化成功")
             data = loader.load_entities(self.entity_type)
-            logger.info(f"{self.entity_type} 实体扫描完成，共识别 {len(data)} 条记录")
+            logger.debug(f"{self.entity_type} 实体状态扫描完成，整理出 {len(data)} 个列表项")
             self.finished.emit(data)
             logger.debug(f"finished 信号已发送: {self.entity_type}")
         except Exception as e:

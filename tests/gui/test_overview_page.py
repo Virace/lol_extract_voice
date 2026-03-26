@@ -36,7 +36,9 @@ from lol_audio_unpack.gui.view.overview_page import (
 )
 
 EXPECTED_ENTITY_ROW_COUNT = 2
-BALANCED_SPLITTER_MAX_DELTA = 40
+OVERVIEW_LEFT_PANEL_MIN_WIDTH = 280
+OVERVIEW_RIGHT_PANEL_MIN_WIDTH = 190
+OVERVIEW_BALANCED_SPLITTER_MAX_DELTA = 80
 MIN_TRANSPARENT_STATE_RULES = 2
 INSET_ZEBRA_MIN_DISTANCE = 6
 
@@ -329,8 +331,8 @@ def test_overview_page_search_filters_proxy_row_count() -> None:
     assert page._entity_lists["maps"].model().rowCount() == 1
 
 
-def test_overview_page_splitter_defaults_to_balanced_ratio(qtbot) -> None:
-    """未选择实体时左右面板应接近 50/50。"""
+def test_overview_page_splitter_defaults_to_adaptive_ratio(qtbot) -> None:
+    """未选择实体时左右面板应接近均衡，同时保持最小可用宽度。"""
     page = OverviewPage()
     qtbot.addWidget(page)
     page.resize(1200, 800)
@@ -339,7 +341,9 @@ def test_overview_page_splitter_defaults_to_balanced_ratio(qtbot) -> None:
 
     left_size, right_size = page.splitter.sizes()
 
-    assert abs(left_size - right_size) <= BALANCED_SPLITTER_MAX_DELTA
+    assert abs(left_size - right_size) <= OVERVIEW_BALANCED_SPLITTER_MAX_DELTA
+    assert left_size >= OVERVIEW_LEFT_PANEL_MIN_WIDTH
+    assert right_size >= OVERVIEW_RIGHT_PANEL_MIN_WIDTH
 
 
 def test_overview_page_defaults_preview_mode_to_event_tab() -> None:
@@ -358,6 +362,32 @@ def test_overview_page_header_and_splitter_use_single_line_and_locked_handle() -
     assert page.subtitle_label.text() == "统一查看实体状态、筛选与选择，并同步到执行中心。"
     assert page.splitter.handleWidth() == 0
     assert page.splitter.handle(1).isEnabled() is False
+    assert page.sync_selection_btn.text() == "同步到任务"
+
+
+def test_overview_page_splitter_shrinks_with_window_width(qtbot) -> None:
+    """窗口缩小时左侧列表宽度也应跟着收缩，而不是保持过宽。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    page.resize(1200, 800)
+    page.show()
+    qtbot.wait(10)
+
+    initial_left, _initial_right = page.splitter.sizes()
+    page.resize(760, 800)
+    qtbot.wait(10)
+    shrunk_left, shrunk_right = page.splitter.sizes()
+
+    assert shrunk_left < initial_left
+    assert shrunk_left >= OVERVIEW_LEFT_PANEL_MIN_WIDTH
+    assert shrunk_right >= OVERVIEW_RIGHT_PANEL_MIN_WIDTH
+
+
+def test_overview_page_empty_selection_uses_shorter_status_text() -> None:
+    """未选择实体时底部提示应保持简短，不额外占用宽度。"""
+    page = OverviewPage()
+
+    assert page.selection_status_label.text() == "尚未选中实体。"
 
 
 def test_overview_page_load_preview_populates_audio_tree_and_summary(tmp_path) -> None:
@@ -526,4 +556,5 @@ def test_overview_page_preview_load_keeps_left_list_without_horizontal_scroll(qt
 
     assert hasattr(view, "scrollDelegate")
     assert view.horizontalScrollBar().maximum() == 0
-    assert abs(left_size - right_size) <= BALANCED_SPLITTER_MAX_DELTA
+    assert left_size >= OVERVIEW_LEFT_PANEL_MIN_WIDTH
+    assert right_size >= OVERVIEW_RIGHT_PANEL_MIN_WIDTH

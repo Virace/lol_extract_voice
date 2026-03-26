@@ -2,7 +2,7 @@
 
 from loguru import logger
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QLabel, QWidget
 
 import lol_audio_unpack.gui.view.execution_page as execution_page_module
 from lol_audio_unpack.gui.common import (
@@ -452,6 +452,26 @@ def test_execution_page_marks_task_completed_after_worker_finishes(monkeypatch) 
     assert "已完成 1" in page.queue_progress_label.text()
     assert page.task_progress_note.text().startswith("100%")
     assert refresh_events == [True]
+
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_execution_page_advanced_input_captions_reuse_non_wrapping_subtitle_style() -> None:
+    """高级输入手风琴内的副标题应复用不自动换行的设置卡副标题样式。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    app.processEvents()
+
+    target_labels = [
+        label
+        for label in page.advanced_card.findChildren(QLabel)
+        if "CLI 风格输入" in label.text() or "保留现有解包参数入口" in label.text()
+    ]
+
+    assert target_labels
+    assert all(label.wordWrap() is False for label in target_labels)
+    assert all(label.objectName() == "contentLabel" for label in target_labels)
 
     page.deleteLater()
     app.processEvents()

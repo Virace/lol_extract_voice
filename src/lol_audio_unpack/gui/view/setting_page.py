@@ -5,16 +5,14 @@ from time import perf_counter
 from loguru import logger
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFileDialog, QWidget
 from qfluentwidgets import (
-    BodyLabel,
-    CaptionLabel,
     ComboBox,
     CustomColorSettingCard,
-    ExpandGroupSettingCard,
     ExpandLayout,
     IndicatorPosition,
     LineEdit,
+    MessageBox,
     OptionsSettingCard,
     PushSettingCard,
     SettingCard,
@@ -31,6 +29,7 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
+from lol_audio_unpack.gui.components.accordion_setting_card import FormAccordionCard
 from lol_audio_unpack.gui.common import GuiConfig, apply_smooth_scroll_enabled
 
 
@@ -94,6 +93,27 @@ class ComboRowSettingCard(SettingCard):
         return self.comboBox.currentText()
 
 
+class ComboRowBinding:
+    """轻量级的组合行绑定，提供与 ``ComboRowSettingCard`` 接近的值接口。"""
+
+    def __init__(self, combo_box: ComboBox, label_map: dict[str, str] | None = None) -> None:
+        self.comboBox = combo_box
+        self._label_map = label_map or {}
+
+    def value(self) -> str:
+        """返回当前选项对应的实际值。"""
+        label = self.comboBox.currentText()
+        return self._label_map.get(label, label)
+
+    def setValue(self, text: str) -> None:
+        """按实际值或显示文字定位选项。"""
+        reverse = {v: k for k, v in self._label_map.items()}
+        label = reverse.get(text, text)
+        idx = self.comboBox.findText(label)
+        if idx >= 0:
+            self.comboBox.setCurrentIndex(idx)
+
+
 # ---------------------------------------------------------------------------
 # 辅助：右侧嵌入 LineEdit 的 SettingCard
 # ---------------------------------------------------------------------------
@@ -152,7 +172,7 @@ class LocalizedSwitchSettingCard(SwitchSettingCard):
 # 固定快照可折叠卡（ExpandGroupSettingCard 子类）
 # ---------------------------------------------------------------------------
 
-class FixedSnapshotCard(ExpandGroupSettingCard):
+class FixedSnapshotCard(FormAccordionCard):
     """
     可折叠的固定快照配置组。
     展开后显示版本号、LCU URL、Game URL 三个输入行。
@@ -166,10 +186,6 @@ class FixedSnapshotCard(ExpandGroupSettingCard):
             "锁定指定版本的远端快照；三项必须同时填写，留空则自动获取最新",
             parent,
         )
-
-        # 内部调整：去掉多余的内边距让行高一致
-        self.viewLayout.setContentsMargins(0, 0, 0, 0)
-        self.viewLayout.setSpacing(0)
 
         # 三个输入控件
         self.versionEdit = LineEdit()
@@ -187,30 +203,9 @@ class FixedSnapshotCard(ExpandGroupSettingCard):
         self.gameUrlEdit.setFixedWidth(360)
         self.gameUrlEdit.setClearButtonEnabled(True)
 
-        self._add_row("版本号", "REMOTE_VERSION", self.versionEdit)
-        self._add_row("LCU Manifest URL", "REMOTE_LCU_MANIFEST_URL", self.lcuUrlEdit)
-        self._add_row("Game Manifest URL", "REMOTE_GAME_MANIFEST_URL", self.gameUrlEdit)
-
-    def _add_row(self, label_text: str, key_text: str, widget: QWidget):
-        """添加 label + 右侧输入控件的行。"""
-        row = QWidget()
-        row.setFixedHeight(68)
-
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(48, 12, 48, 12)
-
-        v = QVBoxLayout()
-        v.setSpacing(2)
-        v.addWidget(BodyLabel(label_text))
-        key_label = CaptionLabel(key_text)
-        key_label.setObjectName("keyLabel")
-        v.addWidget(key_label)
-
-        layout.addLayout(v)
-        layout.addStretch(1)
-        layout.addWidget(widget)
-
-        self.addGroupWidget(row)
+        self.add_form_row("版本号", "REMOTE_VERSION", self.versionEdit)
+        self.add_form_row("LCU Manifest URL", "REMOTE_LCU_MANIFEST_URL", self.lcuUrlEdit)
+        self.add_form_row("Game Manifest URL", "REMOTE_GAME_MANIFEST_URL", self.gameUrlEdit)
 
     # 值读写
 
@@ -233,7 +228,7 @@ class FixedSnapshotCard(ExpandGroupSettingCard):
         self.gameUrlEdit.setText(game_url)
 
 
-class SmoothScrollSettingCard(ExpandGroupSettingCard):
+class SmoothScrollSettingCard(FormAccordionCard):
     """可折叠的平滑滚动配置组。"""
 
     def __init__(self, parent=None):
@@ -243,9 +238,6 @@ class SmoothScrollSettingCard(ExpandGroupSettingCard):
             "数据量过多时开启平滑滚动可能会卡顿；页面滚动和列表/表格等控件可分别控制。",
             parent,
         )
-
-        self.viewLayout.setContentsMargins(0, 0, 0, 0)
-        self.viewLayout.setSpacing(0)
 
         self.pageSwitchButton = self._add_switch_row(
             "页面级滚动",
@@ -258,30 +250,11 @@ class SmoothScrollSettingCard(ExpandGroupSettingCard):
 
     def _add_switch_row(self, title: str, content: str) -> SwitchButton:
         """添加一行带中文开关按钮的说明项。"""
-        row = QWidget()
-        row.setMinimumHeight(76)
-
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(48, 12, 48, 12)
-        layout.setSpacing(16)
-
-        text_layout = QVBoxLayout()
-        text_layout.setSpacing(2)
-        text_layout.addWidget(BodyLabel(title))
-        content_label = CaptionLabel(content)
-        content_label.setWordWrap(True)
-        text_layout.addWidget(content_label)
-
-        layout.addLayout(text_layout)
-        layout.addStretch(1)
-
-        switch_button = SwitchButton("关", row, IndicatorPosition.RIGHT)
+        switch_button = SwitchButton("关", self, IndicatorPosition.RIGHT)
         switch_button.setOnText("开")
         switch_button.setOffText("关")
         switch_button.setText("关")
-        layout.addWidget(switch_button, 0, Qt.AlignRight | Qt.AlignVCenter)
-
-        self.addGroupWidget(row)
+        self.add_form_row(title, content, switch_button)
         return switch_button
 
     def pageScrollEnabled(self) -> bool:
@@ -296,6 +269,57 @@ class SmoothScrollSettingCard(ExpandGroupSettingCard):
         """同步两项平滑滚动开关状态。"""
         self.pageSwitchButton.setChecked(page_enabled)
         self.widgetSwitchButton.setChecked(widget_enabled)
+
+
+class LogLevelSettingCard(FormAccordionCard):
+    """可折叠的日志等级配置组。"""
+
+    def __init__(self, parent=None):
+        super().__init__(
+            FIF.INFO,
+            "日志等级",
+            "分别控制控制台/窗口与文件日志的详细程度；高频控制台日志可能影响窗口流畅度。",
+            parent,
+        )
+
+        items = ["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR"]
+        self.consoleLevelCard = self._add_combo_row(
+            "控制台与窗口日志等级",
+            "影响 shell 输出和窗口内全局日志面板的展示级别。",
+            items,
+        )
+        self.fileLevelCard = self._add_combo_row(
+            "文件日志等级",
+            "影响输出目录 logs 下文件日志的详细程度。",
+            items,
+        )
+
+    def _add_combo_row(
+        self,
+        title: str,
+        content: str,
+        items: list[str],
+        label_map: dict[str, str] | None = None,
+    ) -> ComboRowBinding:
+        """添加一行带下拉框的日志等级设置项。"""
+        combo_box = ComboBox(self)
+        combo_box.addItems(items)
+        combo_box.setFixedWidth(180)
+        self.add_form_row(title, content, combo_box)
+        return ComboRowBinding(combo_box, label_map)
+
+    def consoleValue(self) -> str:
+        """返回当前控制台日志等级。"""
+        return self.consoleLevelCard.value()
+
+    def fileValue(self) -> str:
+        """返回当前文件日志等级。"""
+        return self.fileLevelCard.value()
+
+    def setValues(self, *, console_level: str, file_level: str) -> None:
+        """同步两项日志等级。"""
+        self.consoleLevelCard.setValue(console_level)
+        self.fileLevelCard.setValue(file_level)
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +337,7 @@ class SettingPage(SmoothScrollArea):
     entity_data_config_changed = Signal()
     smooth_scroll_changed = Signal(bool, bool)
     log_drawer_auto_collapse_changed = Signal(bool)
+    log_levels_changed = Signal(object)
 
     def __init__(self, parent=None):
         startup_begin = perf_counter()
@@ -530,7 +555,11 @@ class SettingPage(SmoothScrollArea):
             "开启后日志抽屉展开时会显示全局蒙版，并在点击内容区其他位置时自动收起。",
             parent=self.personalGroup,
         )
+        self.logLevelCard = LogLevelSettingCard(self.personalGroup)
+        self.consoleLogLevelCard = self.logLevelCard.consoleLevelCard
+        self.fileLogLevelCard = self.logLevelCard.fileLevelCard
         self.personalGroup.addSettingCard(self.logDrawerAutoCollapseCard)
+        self.personalGroup.addSettingCard(self.logLevelCard)
         self.expandLayout.addWidget(self.personalGroup)
 
     # ------------------------------------------------------------------
@@ -571,6 +600,10 @@ class SettingPage(SmoothScrollArea):
             widget_enabled=cfg.widget_smooth_scroll_enabled,
         )
         self.logDrawerAutoCollapseCard.setValue(cfg.log_drawer_auto_collapse_enabled)
+        self.logLevelCard.setValues(
+            console_level=cfg.console_log_level,
+            file_level=cfg.file_log_level,
+        )
 
     def _save_config(self, *_args, emit_entity_data_change: bool = True) -> None:
         """将各控件当前值写入 GuiConfig 并持久化。"""
@@ -587,6 +620,8 @@ class SettingPage(SmoothScrollArea):
         cfg.page_smooth_scroll_enabled = self.smoothScrollCard.pageScrollEnabled()
         cfg.widget_smooth_scroll_enabled = self.smoothScrollCard.widgetScrollEnabled()
         cfg.log_drawer_auto_collapse_enabled = self.logDrawerAutoCollapseCard.isChecked()
+        cfg.console_log_level = self.logLevelCard.consoleValue()
+        cfg.file_log_level = self.logLevelCard.fileValue()
 
         cfg.save()
         if emit_entity_data_change:
@@ -630,6 +665,8 @@ class SettingPage(SmoothScrollArea):
         self.smoothScrollCard.pageSwitchButton.checkedChanged.connect(self._on_smooth_scroll_changed)
         self.smoothScrollCard.widgetSwitchButton.checkedChanged.connect(self._on_smooth_scroll_changed)
         self.logDrawerAutoCollapseCard.checkedChanged.connect(self._on_log_drawer_auto_collapse_changed)
+        self.consoleLogLevelCard.comboBox.currentTextChanged.connect(self._on_console_log_level_changed)
+        self.fileLogLevelCard.comboBox.currentTextChanged.connect(self._on_file_log_level_changed)
 
         # 个性化 — 主题变更时保存
         qconfig.themeChanged.connect(self._save_theme_config)
@@ -756,6 +793,26 @@ class SettingPage(SmoothScrollArea):
         """保存并广播日志抽屉点击外部自动收起配置。"""
         self._save_config(emit_entity_data_change=False)
         self.log_drawer_auto_collapse_changed.emit(self.logDrawerAutoCollapseCard.isChecked())
+
+    def _on_console_log_level_changed(self, _value: str) -> None:
+        """保存控制台日志等级，并在高频级别下提醒用户。"""
+        self._save_config(emit_entity_data_change=False)
+        if self.consoleLogLevelCard.value() in {"DEBUG", "TRACE"}:
+            dialog = MessageBox(
+                "高频日志提示",
+                "将控制台日志设置为 DEBUG 或 TRACE 可能影响窗口流畅度。\n"
+                "如果窗口卡死，可以手动修改配置文件，或直接删除配置文件让程序自动重建后恢复默认值。",
+                self.window() or self,
+            )
+            dialog.hideCancelButton()
+            dialog.yesButton.setText("我知道了")
+            dialog.exec()
+        self.log_levels_changed.emit(self._cfg)
+
+    def _on_file_log_level_changed(self, _value: str) -> None:
+        """保存文件日志等级并广播配置变更。"""
+        self._save_config(emit_entity_data_change=False)
+        self.log_levels_changed.emit(self._cfg)
 
     # ------------------------------------------------------------------
     # 公共值读取（供其他页面或 Worker 调用）
