@@ -117,8 +117,6 @@ class MainWindow(FluentWindow):
         previous_mark = _log_window_stage("导航初始化完成", startup_begin, previous_mark)
         self._init_global_log_panel()
         previous_mark = _log_window_stage("全局日志面板初始化完成", startup_begin, previous_mark)
-        self._init_dev_console()
-        previous_mark = _log_window_stage("开发控制台初始化完成", startup_begin, previous_mark)
 
         # 连接设置页面和首页
         self._connect_pages()
@@ -219,16 +217,20 @@ class MainWindow(FluentWindow):
         """初始化主窗口底部的全局日志抽屉。"""
         self._global_log_drawer = GlobalLogDrawer(self)
         self._global_log_drawer.set_log_text(self.executionInterface.current_log_text())
+        self._global_log_drawer.dev_console_requested.connect(self._show_dev_console)
         self._global_log_drawer.sync_host_rect(self._current_log_panel_host_rect(), animate=False)
 
     def _init_dev_console(self) -> None:
-        """初始化隐藏开发控制台并连接日志标题触发入口。"""
+        """按需初始化隐藏开发控制台并连接日志标题触发入口。"""
+        if self._dev_console is not None:
+            return
+
         self._dev_console = DevConsoleWindow(self)
         self._dev_console.command_submitted.connect(self._handle_dev_console_command)
-        self._global_log_drawer.dev_console_requested.connect(self._show_dev_console)
 
     def _show_dev_console(self) -> None:
         """显示隐藏开发控制台。"""
+        self._init_dev_console()
         if self._dev_console is None:
             return
         self._position_dev_console()

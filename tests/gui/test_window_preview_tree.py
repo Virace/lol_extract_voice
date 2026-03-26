@@ -78,6 +78,23 @@ def test_main_window_shows_before_bootstrap_and_finishes_splash(monkeypatch) -> 
     app.processEvents()
 
 
+def test_main_window_does_not_initialize_dev_console_until_triggered(monkeypatch) -> None:
+    """主窗口启动时不应立即创建开发控制台，但应保留调试命令入口。"""
+    app = QApplication.instance() or QApplication([])
+
+    monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
+    window = MainWindow()
+    app.processEvents()
+
+    assert getattr(window, "_dev_console", None) is None
+    assert hasattr(window.executionInterface, "_debug_fill_mock_queue")
+    assert hasattr(window.executionInterface, "_debug_clear_mock_queue")
+    assert hasattr(window.executionInterface, "_debug_inspect_queue")
+
+    window.deleteLater()
+    app.processEvents()
+
+
 def test_main_window_overview_preview_tree_can_expand_with_custom_preview_tree(
     qtbot, monkeypatch, tmp_path
 ) -> None:

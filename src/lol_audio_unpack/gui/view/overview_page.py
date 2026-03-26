@@ -39,6 +39,7 @@ from qfluentwidgets import (
     SegmentedWidget,
     StrongBodyLabel,
     SubtitleLabel,
+    Theme,
     TransparentToolButton,
     qconfig,
 )
@@ -47,6 +48,7 @@ from qfluentwidgets import (
 )
 
 from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled
+from lol_audio_unpack.gui.common.styles import build_fluent_panel_frame_theme_pair
 from lol_audio_unpack.gui.components.overview_entity_list import OVERVIEW_ROW_ROLE, OverviewEntityListView
 from lol_audio_unpack.gui.components.preview_tree import (
     PreviewTreeModel,
@@ -177,8 +179,8 @@ class OverviewPage(QWidget):
         self.sync_selection_btn.clicked.connect(self._sync_selected_entities)
         self.clear_selection_btn.clicked.connect(self._clear_selected_entities)
         self.reveal_file_btn.clicked.connect(self._reveal_selected_mapping_file)
-        qconfig.themeChanged.connect(lambda _theme: self._refresh_entity_list_theme())
-        qconfig.themeColorChanged.connect(lambda _color: self._refresh_entity_list_theme())
+        qconfig.themeChanged.connect(self._refresh_theme_styles)
+        qconfig.themeColorChanged.connect(self._refresh_theme_styles)
 
         for entity_type, list_widget in self._entity_lists.items():
             selection_model = list_widget.selectionModel()
@@ -198,6 +200,19 @@ class OverviewPage(QWidget):
                 list_widget.refresh_theme()
             except RuntimeError:
                 continue
+
+    def _refresh_panel_shell_theme(self) -> None:
+        """刷新总览页轻量信息壳层的主题样式。"""
+        light_qss, dark_qss = build_fluent_panel_frame_theme_pair("QFrame#OverviewSelectionBar")
+        self.selection_bar.setStyleSheet(dark_qss if qconfig.theme == Theme.DARK else light_qss)
+
+        light_qss, dark_qss = build_fluent_panel_frame_theme_pair("QFrame#AudioPreviewSummaryCard")
+        self.audio_preview_summary_card.setStyleSheet(dark_qss if qconfig.theme == Theme.DARK else light_qss)
+
+    def _refresh_theme_styles(self, *_args: object) -> None:
+        """统一刷新总览页当前主题相关样式。"""
+        self._refresh_entity_list_theme()
+        self._refresh_panel_shell_theme()
 
     def _on_preview_mode_changed(self, mode_key: str) -> None:
         """切换右侧 Raw 与试听视图。"""
@@ -266,31 +281,22 @@ class OverviewPage(QWidget):
             self.list_stack.addWidget(list_widget)
         left_layout.addWidget(self.list_stack, 1)
 
-        selection_bar = QFrame(left_widget)
-        selection_bar.setObjectName("OverviewSelectionBar")
-        selection_bar.setStyleSheet(
-            """
-            QFrame#OverviewSelectionBar {
-                background-color: rgba(255, 255, 255, 0.04);
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 10px;
-            }
-            """
-        )
-        selection_layout = QHBoxLayout(selection_bar)
+        self.selection_bar = QFrame(left_widget)
+        self.selection_bar.setObjectName("OverviewSelectionBar")
+        selection_layout = QHBoxLayout(self.selection_bar)
         selection_layout.setContentsMargins(12, 10, 12, 10)
         selection_layout.setSpacing(10)
 
-        self.selection_status_label = BodyLabel("尚未选中实体。", selection_bar)
-        self.clear_selection_btn = PushButton("清空选择", selection_bar)
-        self.sync_selection_btn = PrimaryPushButton("同步到执行中心", selection_bar)
+        self.selection_status_label = BodyLabel("尚未选中实体。", self.selection_bar)
+        self.clear_selection_btn = PushButton("清空选择", self.selection_bar)
+        self.sync_selection_btn = PrimaryPushButton("同步到执行中心", self.selection_bar)
         self.clear_selection_btn.setEnabled(False)
         self.sync_selection_btn.setEnabled(False)
 
         selection_layout.addWidget(self.selection_status_label, 1)
         selection_layout.addWidget(self.clear_selection_btn)
         selection_layout.addWidget(self.sync_selection_btn)
-        left_layout.addWidget(selection_bar)
+        left_layout.addWidget(self.selection_bar)
 
         right_widget = QWidget(self.splitter)
         right_widget.setMinimumWidth(0)
@@ -323,15 +329,6 @@ class OverviewPage(QWidget):
 
         self.audio_preview_summary_card = QFrame(right_widget)
         self.audio_preview_summary_card.setObjectName("AudioPreviewSummaryCard")
-        self.audio_preview_summary_card.setStyleSheet(
-            """
-            QFrame#AudioPreviewSummaryCard {
-                background-color: rgba(255, 255, 255, 0.04);
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 10px;
-            }
-            """
-        )
         summary_layout = QVBoxLayout(self.audio_preview_summary_card)
         summary_layout.setContentsMargins(12, 10, 12, 10)
         summary_layout.setSpacing(4)
@@ -359,6 +356,7 @@ class OverviewPage(QWidget):
         self.preview_stack.addWidget(self.audio_preview_tree)
         self.preview_stack.setCurrentWidget(self.audio_preview_tree)
         self.audio_preview_summary_card.setVisible(True)
+        # TODO: 后续若要接入试听，再单独评估 vgmstream 播放链路；当前事件树仅负责事件浏览。
 
         right_layout.addWidget(self.preview_stack, 1)
 
@@ -374,6 +372,7 @@ class OverviewPage(QWidget):
         root_layout.addWidget(self.splitter, 1)
         self._update_selection_summary()
         self.set_smooth_scroll_enabled(False)
+        self._refresh_panel_shell_theme()
 
     def _rebuild_entity_list(self, entity_type: str) -> None:
         """刷新指定实体类型的 source model，并恢复选择状态。"""

@@ -26,6 +26,11 @@ _FLUENT_NEUTRAL_SURFACE_PAIRS: dict[str, tuple[RgbaTuple, RgbaTuple]] = {
 _FLUENT_STATUS_TEXT_PAIR = ("#FFFFFF", "#111111")
 
 
+def _rgba_text(rgba: RgbaTuple) -> str:
+    """将 RGBA 元组格式化为 QSS 可直接使用的 rgba 文本。"""
+    return f"rgba({rgba[0]}, {rgba[1]}, {rgba[2]}, {rgba[3]})"
+
+
 def get_fluent_frame_stroke_pair() -> tuple[str, str]:
     """返回项目内复用的 Fluent 微弱描边色对。
 
@@ -81,6 +86,46 @@ def resolve_fluent_text_primary_color() -> QColor:
     """
     light_text, dark_text = get_fluent_text_primary_pair()
     return QColor(dark_text if isDarkTheme() else light_text)
+
+
+def build_fluent_panel_frame_theme_pair(
+    selector: str,
+    *,
+    background_kind: Literal["subtle_idle", "subtle_hover", "subtle_selected", "emphasis_hover", "emphasis_selected"] = "subtle_idle",
+    border_radius: int = 10,
+    extra_rules: str = "",
+) -> tuple[str, str]:
+    """构造轻量信息面板的亮暗主题 QSS。
+
+    Args:
+        selector: 目标控件选择器，例如 ``"QFrame#OverviewSelectionBar"``。
+        background_kind: 面板背景使用的中性 surface 语义。
+        border_radius: 面板圆角半径。
+        extra_rules: 追加到 QSS 末尾的额外规则。
+
+    Returns:
+        ``(light_qss, dark_qss)`` 亮暗主题样式对。
+    """
+    light_background_rgba, dark_background_rgba = get_fluent_neutral_surface_pair(background_kind)
+    light_border, dark_border = get_fluent_frame_stroke_pair()
+    light_qss = f"""
+    {selector} {{
+        background-color: {_rgba_text(light_background_rgba)};
+        border: 1px solid {light_border};
+        border-radius: {border_radius}px;
+    }}
+    """
+    dark_qss = f"""
+    {selector} {{
+        background-color: {_rgba_text(dark_background_rgba)};
+        border: 1px solid {dark_border};
+        border-radius: {border_radius}px;
+    }}
+    """
+    if extra_rules:
+        light_qss = f"{light_qss}\n{extra_rules}"
+        dark_qss = f"{dark_qss}\n{extra_rules}"
+    return light_qss, dark_qss
 
 
 def get_fluent_status_badge_color_pair(status: str) -> tuple[tuple[str, str], tuple[str, str]]:

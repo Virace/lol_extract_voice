@@ -11,6 +11,10 @@ from qfluentwidgets import CaptionLabel, LineEdit, Theme, setTheme, setThemeColo
 from qfluentwidgets import theme as current_theme
 from qfluentwidgets.common.color import FluentSystemColor
 
+from lol_audio_unpack.gui.common.styles import (
+    get_fluent_frame_stroke_pair,
+    get_fluent_neutral_surface_pair,
+)
 from lol_audio_unpack.gui.components.overview_entity_list import (
     OverviewEntityFilterModel,
     OverviewEntityItemDelegate,
@@ -35,6 +39,11 @@ EXPECTED_ENTITY_ROW_COUNT = 2
 BALANCED_SPLITTER_MAX_DELTA = 40
 MIN_TRANSPARENT_STATE_RULES = 2
 INSET_ZEBRA_MIN_DISTANCE = 6
+
+
+def _rgba_text(rgba: tuple[int, int, int, int]) -> str:
+    """把 token tuple 转成 QSS 中的 rgba 文本。"""
+    return f"rgba({rgba[0]}, {rgba[1]}, {rgba[2]}, {rgba[3]})"
 
 
 def _sample_entity_rows() -> list[dict[str, str]]:
@@ -226,6 +235,35 @@ def test_overview_page_entity_list_applies_theme_styles() -> None:
     assert "QListView::item:selected" in style_sheet
     assert style_sheet.count("background-color: transparent;") >= MIN_TRANSPARENT_STATE_RULES
     assert "border: none;" in style_sheet
+
+
+def test_overview_page_selection_cards_follow_theme_tokens() -> None:
+    """总览页选择条与摘要卡片应随主题切换到对应的中性 surface 与描边 token。"""
+    app = QApplication.instance() or QApplication([])
+    original_theme = current_theme()
+    selection_bar_background = get_fluent_neutral_surface_pair("subtle_idle")
+    selection_bar_border = get_fluent_frame_stroke_pair()
+
+    try:
+        page = OverviewPage()
+        selection_bar = page.findChild(QWidget, "OverviewSelectionBar")
+        assert selection_bar is not None
+
+        setTheme(Theme.LIGHT)
+        app.processEvents()
+        assert _rgba_text(selection_bar_background[0]) in selection_bar.styleSheet()
+        assert selection_bar_border[0] in selection_bar.styleSheet()
+        assert _rgba_text(selection_bar_background[0]) in page.audio_preview_summary_card.styleSheet()
+        assert selection_bar_border[0] in page.audio_preview_summary_card.styleSheet()
+
+        setTheme(Theme.DARK)
+        app.processEvents()
+        assert _rgba_text(selection_bar_background[1]) in selection_bar.styleSheet()
+        assert selection_bar_border[1] in selection_bar.styleSheet()
+        assert _rgba_text(selection_bar_background[1]) in page.audio_preview_summary_card.styleSheet()
+        assert selection_bar_border[1] in page.audio_preview_summary_card.styleSheet()
+    finally:
+        setTheme(original_theme)
 
 
 def test_overview_page_entity_list_uses_inset_zebra_surface_for_idle_rows(qtbot) -> None:

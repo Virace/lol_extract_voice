@@ -11,12 +11,14 @@ from lol_audio_unpack.gui.window import MainWindow
 MOCK_QUEUE_COUNT = 5
 
 
-def test_main_window_ctrl_click_log_title_opens_dev_console(qtbot, monkeypatch) -> None:
-    """按住 Ctrl 点击日志详情标题后应打开隐藏开发控制台。"""
+def test_main_window_ctrl_click_log_title_lazy_loads_dev_console(qtbot, monkeypatch) -> None:
+    """按住 Ctrl 点击日志详情标题后应懒加载并打开开发控制台。"""
     app = QApplication.instance() or QApplication([])
     monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
     window = MainWindow()
     qtbot.addWidget(window)
+    assert window._dev_console is None
+
     window._global_log_drawer.set_expanded(True, animate=False)
     app.processEvents()
 
@@ -33,6 +35,8 @@ def test_dev_console_queue_commands_can_fill_and_inspect_execution_queue(qtbot, 
     monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
     window = MainWindow()
     qtbot.addWidget(window)
+    assert window._dev_console is None
+
     window._show_dev_console()
     app.processEvents()
 
