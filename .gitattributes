@@ -1,0 +1,18 @@
+# 使用仓库内显式规则管理跨平台换行，避免依赖本机 core.autocrlf 猜测。
+* text=auto
+
+# 源码、配置与文档统一保存为 LF，减少 Windows / WSL / Linux 间的假脏状态。
+*.py text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.txt text eol=lf
+*.ini text eol=lf
+*.cfg text eol=lf
+*.sh text eol=lf
+
+# Windows 命令脚本保留 CRLF，避免在原生命令解释器下出现兼容性问题。
+*.bat text eol=crlf
+*.cmd text eol=crlf
