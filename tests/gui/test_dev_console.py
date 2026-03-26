@@ -11,6 +11,12 @@ from lol_audio_unpack.gui.window import MainWindow
 MOCK_QUEUE_COUNT = 5
 
 
+def _dispose_main_window(window: MainWindow, app: QApplication) -> None:
+    """以可预测的顺序关闭主窗口，避免遗留 QApplication 级状态。"""
+    window.close()
+    app.processEvents()
+
+
 def test_main_window_ctrl_click_log_title_lazy_loads_dev_console(qtbot, monkeypatch) -> None:
     """按住 Ctrl 点击日志详情标题后应懒加载并打开开发控制台。"""
     app = QApplication.instance() or QApplication([])
@@ -27,6 +33,7 @@ def test_main_window_ctrl_click_log_title_lazy_loads_dev_console(qtbot, monkeypa
 
     assert window._dev_console is not None
     assert window._dev_console.isVisible()
+    _dispose_main_window(window, app)
 
 
 def test_dev_console_queue_commands_can_fill_and_inspect_execution_queue(qtbot, monkeypatch) -> None:
@@ -57,3 +64,4 @@ def test_dev_console_queue_commands_can_fill_and_inspect_execution_queue(qtbot, 
     assert f"queue_count={MOCK_QUEUE_COUNT}" in output_text
     assert "visible_rows=3" in output_text
     assert "queue_height=" in output_text
+    _dispose_main_window(window, app)

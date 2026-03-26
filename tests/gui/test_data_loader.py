@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from loguru import logger
 
 from lol_audio_unpack.gui.service.data_loader import (
     EntityDataLoader,
@@ -11,6 +12,9 @@ from lol_audio_unpack.gui.service.data_loader import (
     resolve_entity_audio_paths,
     resolve_mapping_file_path,
 )
+from lol_audio_unpack.gui.service.worker import DataLoadWorker
+from lol_audio_unpack.manager.data_reader import DataReader
+from lol_audio_unpack.utils.common import Singleton
 
 
 @pytest.fixture
@@ -21,9 +25,11 @@ def mock_app_context(tmp_path):
     ctx.paths.audio_path = str(root_path / "audios")
     ctx.paths.hash_path = root_path / "hashes"
     ctx.paths.output_path = str(root_path / "output")
+    ctx.paths.manifest_path = root_path / "manifest"
     ctx.config.group_by_type = False
     ctx.config.include_types = ["VO", "SFX", "MUSIC"]
     ctx.config.dev_mode = False
+    ctx.config.game_path = root_path / "game"
     return ctx
 
 
@@ -116,6 +122,58 @@ def test_entity_data_loader_load_entities(mock_app_context):
                 assert data[0]["mapping_file"] == ""
 
 
+def test_entity_data_loader_raises_when_shared_data_init_fails(mock_app_context):
+    """共享数据初始化失败时，不应静默回退为空列表。"""
+    with patch("lol_audio_unpack.gui.service.data_loader.DataReader") as mock_reader_cls:
+        mock_reader = Mock()
+        mock_reader.version = "14.1.0"
+        mock_reader_cls.return_value = mock_reader
+
+        with patch(
+            "lol_audio_unpack.gui.service.data_loader.get_default_visible_champions",
+            side_effect=FileNotFoundError("核心数据文件 (data.yml/json/msgpack) 不存在，请先运行更新程序。"),
+        ):
+            loader = EntityDataLoader(mock_app_context)
+
+            with pytest.raises(FileNotFoundError, match="核心数据文件"):
+                loader.load_entities("champions")
+
+
+def test_data_reader_init_reraises_missing_shared_data(mock_app_context):
+    """缺少核心共享数据时，DataReader 构造应继续向上抛出异常。"""
+    Singleton._instances.pop(DataReader, None)
+
+    try:
+        with patch("lol_audio_unpack.manager.data_reader.resolve_context_version", return_value="16.5"), patch(
+            "lol_audio_unpack.manager.data_reader.read_data",
+            return_value=None,
+        ):
+            with pytest.raises(FileNotFoundError, match="核心数据文件"):
+                DataReader(mock_app_context)
+    finally:
+        Singleton._instances.pop(DataReader, None)
+
+
+def test_data_reader_init_does_not_log_expected_missing_shared_data_error(mock_app_context):
+    """缺少核心共享数据时，不应额外产出 error 级异常栈日志。"""
+    error_messages: list[str] = []
+    sink_id = logger.add(lambda message: error_messages.append(message.record["message"]), level="ERROR")
+    Singleton._instances.pop(DataReader, None)
+
+    try:
+        with patch("lol_audio_unpack.manager.data_reader.resolve_context_version", return_value="16.5"), patch(
+            "lol_audio_unpack.manager.data_reader.read_data",
+            return_value=None,
+        ):
+            with pytest.raises(FileNotFoundError, match="核心数据文件"):
+                DataReader(mock_app_context)
+    finally:
+        logger.remove(sink_id)
+        Singleton._instances.pop(DataReader, None)
+
+    assert error_messages == []
+
+
 def test_entity_data_loader_load_mapping_preview(mock_app_context):
     """测试映射预览内容读取"""
     expected_data = {"entityName": "安妮", "events": {"VO": {"Play_VO_Annie_Attack": [1, 2, 3]}}}
@@ -171,3 +229,40 @@ def test_entity_data_loader_load_available_audio_ids(mock_app_context, tmp_path)
                 available_ids = loader.load_available_audio_ids("champions", "1")
 
     assert available_ids == {"118669424", "223585177"}
+
+
+def test_data_load_worker_logs_scan_summary_instead_of_load_success(mock_app_context) -> None:
+    """后台扫描完成日志应描述为扫描结果，而不是数据刷新成功。"""
+    with patch("lol_audio_unpack.gui.service.worker.EntityDataLoader") as mock_loader_cls:
+        mock_loader = Mock()
+        mock_loader.load_entities.return_value = [{"id": "1"}, {"id": "103"}]
+        mock_loader_cls.return_value = mock_loader
+
+        with patch.object(logger, "info") as mock_info:
+            worker = DataLoadWorker(mock_app_context, "maps")
+            worker.run()
+
+    mock_info.assert_any_call("maps 实体扫描完成，共识别 2 条记录")
+
+
+def test_data_load_worker_emits_error_without_finished_when_loader_init_fails(mock_app_context) -> None:
+    """共享数据读取器初始化失败时，工作线程应仅上报 error。"""
+    error_messages: list[str] = []
+    finished_payloads: list[list[dict]] = []
+
+    with patch(
+        "lol_audio_unpack.gui.service.worker.EntityDataLoader",
+        side_effect=FileNotFoundError("核心数据文件 (data.yml/json/msgpack) 不存在，请先运行更新程序。"),
+    ), patch.object(logger, "info") as mock_info, patch.object(logger, "error") as mock_error:
+        worker = DataLoadWorker(mock_app_context, "champions")
+        worker.error.connect(error_messages.append)
+        worker.finished.connect(finished_payloads.append)
+
+        worker.run()
+
+    assert error_messages == ["核心数据文件 (data.yml/json/msgpack) 不存在，请先运行更新程序。"]
+    assert finished_payloads == []
+    mock_error.assert_not_called()
+    mock_info.assert_any_call(
+        "champions 共享实体数据暂不可用，交由后续流程决定是否自动准备: 核心数据文件 (data.yml/json/msgpack) 不存在，请先运行更新程序。"
+    )

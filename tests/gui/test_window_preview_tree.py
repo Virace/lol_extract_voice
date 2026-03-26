@@ -53,6 +53,12 @@ def _attach_preview_loader(window: MainWindow, tmp_path: Path) -> None:
     window.overviewInterface._loader = loader
 
 
+def _dispose_main_window(window: MainWindow, app: QApplication) -> None:
+    """以可预测的顺序关闭主窗口，避免遗留 QApplication 级状态。"""
+    window.close()
+    app.processEvents()
+
+
 def test_main_window_shows_before_bootstrap_and_finishes_splash(monkeypatch) -> None:
     """主窗口应先显示宿主，再继续启动链并结束启动页。"""
     app = QApplication.instance() or QApplication([])
@@ -76,8 +82,7 @@ def test_main_window_shows_before_bootstrap_and_finishes_splash(monkeypatch) -> 
 
     assert call_order == ["show", "bootstrap", "finish"]
 
-    window.deleteLater()
-    app.processEvents()
+    _dispose_main_window(window, app)
 
 
 def test_main_window_does_not_initialize_dev_console_until_triggered(monkeypatch) -> None:
@@ -93,8 +98,7 @@ def test_main_window_does_not_initialize_dev_console_until_triggered(monkeypatch
     assert hasattr(window.executionInterface, "_debug_clear_mock_queue")
     assert hasattr(window.executionInterface, "_debug_inspect_queue")
 
-    window.deleteLater()
-    app.processEvents()
+    _dispose_main_window(window, app)
 
 
 def test_main_window_overview_preview_tree_can_expand_with_custom_preview_tree(
@@ -137,6 +141,7 @@ def test_main_window_overview_preview_tree_can_expand_with_custom_preview_tree(
         setTheme(original_theme)
         setThemeColor(original_color)
         app.processEvents()
+        _dispose_main_window(window, app)
 
 
 def test_main_window_only_locks_runtime_config_while_queue_not_empty(monkeypatch) -> None:
@@ -189,8 +194,28 @@ def test_main_window_only_locks_runtime_config_while_queue_not_empty(monkeypatch
     assert settings.themeCard.isEnabled() is True
     assert settings.logDrawerAutoCollapseCard.isEnabled() is True
 
-    window.deleteLater()
+    _dispose_main_window(window, app)
+
+
+def test_main_window_unregisters_global_event_filter_before_delete(monkeypatch) -> None:
+    """主窗口销毁前应从 QApplication 移除全局 event filter。"""
+    app = QApplication.instance() or QApplication([])
+    removed_filters: list[object] = []
+
+    monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
+    monkeypatch.setattr(
+        QApplication,
+        "removeEventFilter",
+        lambda self, obj: removed_filters.append(obj),
+        raising=False,
+    )
+
+    window = MainWindow()
     app.processEvents()
+    _dispose_main_window(window, app)
+
+    assert removed_filters
+    assert removed_filters[0] is window
 
 
 def test_main_window_auto_prepares_shared_data_after_missing_data_error(monkeypatch) -> None:
@@ -219,5 +244,186 @@ def test_main_window_auto_prepares_shared_data_after_missing_data_error(monkeypa
 
     assert prepare_calls == [window.settingInterface.config]
 
-    window.deleteLater()
+    _dispose_main_window(window, app)
+
+
+def test_prepare_shared_entity_data_disables_terminal_progress(monkeypatch) -> None:
+    """GUI 共享数据准备应显式禁用终端进度条输出。"""
+    fake_context = Mock(runtime_cache={})
+    update_targets: list[str] = []
+
+    class FakeApp:
+        def __init__(self, ctx):
+            self.ctx = ctx
+
+        def update(self, _opts, *, target):
+            update_targets.append(target)
+
+    monkeypatch.setattr(window_module, "create_app_context", lambda **_kwargs: fake_context)
+    monkeypatch.setattr(window_module, "LolAudioUnpackApp", FakeApp)
+
+    window_module._prepare_shared_entity_data({"OUTPUT_PATH": r".\temp"})
+
+    assert fake_context.runtime_cache["disable_terminal_progress"] is True
+    assert update_targets == ["all"]
+
+
+def test_main_window_startup_auto_prepares_shared_data_when_manifest_is_missing(monkeypatch) -> None:
+    """程序启动阶段若共享数据缺失，应直接转入后台数据准备。"""
+    app = QApplication.instance() or QApplication([])
+    prepare_calls: list[object] = []
+
+    monkeypatch.setattr(window_module, "create_app_context", lambda **_kwargs: Mock())
+    monkeypatch.setattr(
+        window_module.DataLoadWorker,
+        "start",
+        lambda self: self.error.emit("核心数据文件 (data.yml/json/msgpack) 不存在，请先运行更新程序。"),
+    )
+    monkeypatch.setattr(
+        MainWindow,
+        "_start_shared_data_prepare",
+        lambda self, cfg: prepare_calls.append(cfg),
+        raising=False,
+    )
+
+    window = MainWindow()
     app.processEvents()
+
+    assert prepare_calls == [window.settingInterface.config]
+
+    _dispose_main_window(window, app)
+
+
+def test_main_window_output_path_change_keeps_reader_cache_without_auto_prepare(monkeypatch) -> None:
+    """仅更改输出目录时，应复用现有 reader 缓存且不自动补 update。"""
+    app = QApplication.instance() or QApplication([])
+
+    monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
+    window = MainWindow()
+    captured_reload_flags: list[tuple[bool, bool]] = []
+    reset_calls: list[bool] = []
+
+    monkeypatch.setattr(
+        window,
+        "_request_shared_data_reload",
+        lambda *, show_notice, allow_auto_prepare: captured_reload_flags.append((show_notice, allow_auto_prepare)),
+        raising=False,
+    )
+    monkeypatch.setattr(window_module, "_reset_data_reader_singleton", lambda: reset_calls.append(True))
+    app.processEvents()
+
+    cfg = window.settingInterface.config
+    cfg.output_path = r".\new-output"
+    window._on_entity_data_config_changed()
+    app.processEvents()
+    window._flush_pending_runtime_entity_refresh()
+    app.processEvents()
+
+    assert captured_reload_flags == [(False, False)]
+    assert reset_calls == []
+
+    _dispose_main_window(window, app)
+
+
+def test_main_window_game_path_change_resets_reader_and_allows_auto_prepare(monkeypatch) -> None:
+    """更改游戏目录时，应重置 reader 缓存并允许自动补 update。"""
+    app = QApplication.instance() or QApplication([])
+
+    monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
+    window = MainWindow()
+    captured_reload_flags: list[tuple[bool, bool]] = []
+    reset_calls: list[bool] = []
+
+    monkeypatch.setattr(
+        window,
+        "_request_shared_data_reload",
+        lambda *, show_notice, allow_auto_prepare: captured_reload_flags.append((show_notice, allow_auto_prepare)),
+        raising=False,
+    )
+    monkeypatch.setattr(window_module, "_reset_data_reader_singleton", lambda: reset_calls.append(True))
+    app.processEvents()
+
+    cfg = window.settingInterface.config
+    cfg.game_path = r".\another-game"
+    window._on_entity_data_config_changed()
+    app.processEvents()
+    window._flush_pending_runtime_entity_refresh()
+    app.processEvents()
+
+    assert captured_reload_flags == [(False, True)]
+    assert reset_calls == [True]
+
+    _dispose_main_window(window, app)
+
+
+def test_main_window_manual_refresh_materializes_current_shared_data(monkeypatch) -> None:
+    """手动刷新数据时，应按当前配置执行后端数据准备并落盘。"""
+    app = QApplication.instance() or QApplication([])
+
+    monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
+    window = MainWindow()
+    prepare_calls: list[object] = []
+    reset_calls: list[bool] = []
+
+    def capture_prepare_request(cfg) -> None:
+        prepare_calls.append(cfg)
+
+    monkeypatch.setattr(window, "_start_shared_data_prepare", capture_prepare_request, raising=False)
+    monkeypatch.setattr(window_module, "_reset_data_reader_singleton", lambda: reset_calls.append(True))
+    app.processEvents()
+
+    window.settingInterface.config.output_path = r".\manual-refresh-output"
+    window._refresh_shared_output_data()
+    app.processEvents()
+
+    assert prepare_calls == [window.settingInterface.config]
+    assert reset_calls == [True]
+
+    _dispose_main_window(window, app)
+
+
+def test_main_window_output_path_change_reconfigures_logging(monkeypatch) -> None:
+    """更改输出目录时，应立即将日志目标切换到新的输出目录。"""
+    app = QApplication.instance() or QApplication([])
+
+    monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
+    window = MainWindow()
+    reconfigure_calls: list[object] = []
+
+    def capture_reconfigure_request(cfg) -> None:
+        reconfigure_calls.append(cfg)
+
+    monkeypatch.setattr(window, "_reconfigure_runtime_logging", capture_reconfigure_request, raising=False)
+    app.processEvents()
+
+    window.settingInterface.config.output_path = r".\reconfigured-output"
+    window._on_entity_data_config_changed()
+    app.processEvents()
+
+    assert reconfigure_calls == [window.settingInterface.config]
+
+    _dispose_main_window(window, app)
+
+
+def test_main_window_prepare_failure_does_not_restart_pending_refresh(monkeypatch) -> None:
+    """共享数据准备失败后，不应立刻再次触发下一轮实体扫描。"""
+    app = QApplication.instance() or QApplication([])
+
+    monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
+    window = MainWindow()
+    flush_calls: list[bool] = []
+
+    monkeypatch.setattr(
+        window,
+        "_flush_pending_runtime_entity_refresh",
+        lambda: flush_calls.append(True),
+        raising=False,
+    )
+    app.processEvents()
+
+    window._on_shared_data_prepare_failed("更新失败")
+    app.processEvents()
+
+    assert flush_calls == []
+
+    _dispose_main_window(window, app)

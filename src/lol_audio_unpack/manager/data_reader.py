@@ -1,12 +1,4 @@
-# 🐍 In the face of ambiguity, refuse the temptation to guess.
-# 🐼 面对不确定性，拒绝妄加猜测
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2025/7/30 7:41
-# @Update  : 2025/8/3 15:22
-# @Detail  : 数据读取器
+"""共享数据读取器。"""
 
 from __future__ import annotations
 
@@ -75,8 +67,6 @@ class DataReader(metaclass=Singleton):
     AUDIO_TYPE_SFX = "SFX"
     AUDIO_TYPE_MUSIC = "MUSIC"
 
-    @logger.catch
-    @performance_monitor(level="DEBUG")
     def __init__(self, ctx: AppContext):
         """
         初始化数据读取器

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -76,6 +77,37 @@ class BinUpdater:
     def _is_dev_mode(self) -> bool:
         """返回当前运行是否为开发模式。"""
         return bool(self.ctx.config.dev_mode)
+
+    def _should_use_terminal_progress(self) -> bool:
+        """判断当前运行是否适合输出终端进度条。"""
+        if self.ctx.runtime_cache.get("disable_terminal_progress", False):
+            return False
+
+        stream = getattr(sys, "stdout", None)
+        if stream is None or getattr(stream, "closed", False):
+            return False
+
+        isatty = getattr(stream, "isatty", None)
+        if not callable(isatty):
+            return False
+
+        try:
+            return bool(isatty())
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _build_progress_iterator(
+        self,
+        iterable: Any,
+        *,
+        title: str,
+    ) -> tuple[Any, Any | None]:
+        """根据当前运行环境返回可选的终端进度迭代器。"""
+        if not self._should_use_terminal_progress():
+            return iterable, None
+
+        progress = alive_it(iterable, title=title)
+        return progress, progress
 
     @logger.catch
     @performance_monitor(level="INFO")
@@ -277,10 +309,14 @@ class BinUpdater:
         champions = data.get("champions", {})
         sorted_champion_ids = sorted(champions.keys(), key=int)
 
-        champion_bar = alive_it(sorted_champion_ids, title="英雄音频数据处理")
-        for champion_id in champion_bar:
+        champion_iter, champion_bar = self._build_progress_iterator(
+            sorted_champion_ids,
+            title="英雄音频数据处理",
+        )
+        for champion_id in champion_iter:
             champion_data = champions[champion_id]
-            champion_bar.text(f"处理英雄 {champion_id}")
+            if champion_bar is not None:
+                champion_bar.text(f"处理英雄 {champion_id}")
             self._process_champion_skins(champion_data, champion_id)
 
         logger.success("英雄Banks数据更新完成")
@@ -322,9 +358,13 @@ class BinUpdater:
                 if self._is_dev_mode():
                     raise
 
-        map_bar = alive_it(maps.items(), title="地图音频与事件数据处理")
-        for map_id, map_data in map_bar:
-            map_bar.text(f"处理地图 {map_id}")
+        map_iter, map_bar = self._build_progress_iterator(
+            maps.items(),
+            title="地图音频与事件数据处理",
+        )
+        for map_id, map_data in map_iter:
+            if map_bar is not None:
+                map_bar.text(f"处理地图 {map_id}")
             self._process_single_map(map_id, map_data, common_event_sources, common_banks_set)
 
         logger.success("地图Banks数据更新完成")

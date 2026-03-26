@@ -157,7 +157,7 @@ class EntityDataLoader:
         except Exception as e:
             logger.warning(f"Error initializing data for {entity_type}: {e}")
             logger.debug(traceback.format_exc())
-            return []
+            raise
 
         result = []
         for entity_dict in raw_data:

@@ -287,3 +287,31 @@ def test_process_single_map_records_note_when_common_dedup_removes_all_events(tm
     summary = get_or_create_run_summary(updater.ctx.runtime_cache)
     assert any("地图 33 (Map33) 的事件在与 地图 0 的公共事件去重后为空" in note for note in summary.stages["update"].notes)
     assert any("category=AMB_SFX" in detail for detail in summary.stages["update"].debug_details)
+
+
+def test_update_champions_skips_terminal_progress_when_disabled_in_runtime_cache(tmp_path, monkeypatch):
+    """验证禁用终端进度时不会调用 ``alive_it``。"""
+    updater = m_bin_updater.BinUpdater.__new__(m_bin_updater.BinUpdater)
+    updater.ctx = SimpleNamespace(
+        config=SimpleNamespace(game_path=tmp_path, dev_mode=False),
+        runtime_cache={"disable_terminal_progress": True},
+        paths=SimpleNamespace(),
+    )
+    updater.champion_banks_dir = tmp_path / "banks" / "champions"
+    updater.champion_events_dir = tmp_path / "events" / "champions"
+    processed_ids: list[str] = []
+
+    monkeypatch.setattr(
+        m_bin_updater,
+        "alive_it",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected alive_it call")),
+    )
+    monkeypatch.setattr(
+        updater,
+        "_process_champion_skins",
+        lambda _champion_data, champion_id: processed_ids.append(champion_id),
+    )
+
+    updater._update_champions({"champions": {"2": {}, "1": {}}})
+
+    assert processed_ids == ["1", "2"]
