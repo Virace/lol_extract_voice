@@ -26,7 +26,11 @@ from qfluentwidgets import (
 from lol_audio_unpack import __version__
 from lol_audio_unpack.app_context import OperationOptions, create_app_context
 from lol_audio_unpack.facade import LolAudioUnpackApp
-from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled, show_feedback_infobar
+from lol_audio_unpack.gui.common import (
+    apply_smooth_scroll_enabled,
+    load_app_icon,
+    show_feedback_infobar,
+)
 from lol_audio_unpack.gui.components.dev_console import DevConsoleWindow
 from lol_audio_unpack.gui.components.log_drawer import (
     GlobalLogDrawer,
@@ -218,7 +222,7 @@ class MainWindow(FluentWindow):
         """设置主窗口尺寸、标题与基础事件过滤器。"""
         self.resize(1130, 800)
         self.setMinimumWidth(860)
-        self.setWindowIcon(QIcon(":/app_icon.png"))  # Placeholder for icon
+        self.setWindowIcon(load_app_icon())
         self.setWindowTitle(f"Lol Audio Unpack  {__version__}")
 
         # Calculate screen center

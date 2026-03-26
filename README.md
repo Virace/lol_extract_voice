@@ -1,8 +1,17 @@
-# lol_audio_unpack
-![](https://img.shields.io/badge/python-%3E%3D3.10-blue)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Virace/lol_extract_voice)
+<p align="center">
+  <img src="./src/lol_audio_unpack/gui/assets/app_icon.svg" alt="Lol Audio Unpack logo" width="160">
+</p>
 
-一个极简、高效的英雄联盟音频提取工具。
+<h1 align="center">Lol Audio Unpack</h1>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/python-%3E%3D3.10-blue" alt="Python >= 3.10">
+  <a href="https://deepwiki.com/Virace/lol_extract_voice">
+    <img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki">
+  </a>
+</p>
+
+<p align="center">一个极简、高效的英雄联盟音频提取工具。</p>
 
 ---
 

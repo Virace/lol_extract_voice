@@ -103,6 +103,41 @@ def test_main_window_does_not_initialize_dev_console_until_triggered(monkeypatch
     _dispose_main_window(window, app)
 
 
+def test_main_window_uses_real_app_icon_for_window_and_splash(monkeypatch) -> None:
+    """主窗口与启动页都应使用当前资源目录中的应用图标。"""
+    app = QApplication.instance() or QApplication([])
+    captured: dict[str, object] = {}
+
+    class FakeSplashScreen:
+        """捕获启动页传入的图标，避免依赖真实闪屏绘制。"""
+
+        def __init__(self, icon, parent) -> None:
+            captured["icon"] = icon
+            captured["parent"] = parent
+
+        def setIconSize(self, _size) -> None:
+            return None
+
+        def raise_(self) -> None:
+            return None
+
+        def finish(self) -> None:
+            return None
+
+    monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
+    monkeypatch.setattr(window_module, "SplashScreen", FakeSplashScreen)
+
+    window = MainWindow()
+    app.processEvents()
+
+    assert window.windowIcon().isNull() is False
+    assert captured["icon"].isNull() is False
+    assert captured["icon"].cacheKey() == window.windowIcon().cacheKey()
+    assert captured["parent"] is window
+
+    _dispose_main_window(window, app)
+
+
 def test_main_window_overview_preview_tree_can_expand_with_custom_preview_tree(
     qtbot, monkeypatch, tmp_path
 ) -> None:
