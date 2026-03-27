@@ -68,7 +68,9 @@ def _log_window_stage(stage: str, startup_begin: float, previous_mark: float) ->
 
 def _prepare_shared_entity_data(cli_overrides: dict[str, str | bool]) -> None:
     """为实体列表准备后端共享数据。"""
-    app_context = create_app_context(cli_overrides=cli_overrides)
+    prepare_overrides = dict(cli_overrides)
+    prepare_overrides["WITH_BP_VO"] = True
+    app_context = create_app_context(cli_overrides=prepare_overrides)
     app_context.runtime_cache["disable_terminal_progress"] = True
     app = LolAudioUnpackApp(app_context)
     app.update(OperationOptions(), target="all")

@@ -60,17 +60,24 @@ def _resolve_task_scope(task: QueuedExecutionTask) -> tuple[str, bool, bool]:
     return "all", include_champions, include_maps
 
 
-def _build_runtime_overrides(task: QueuedExecutionTask) -> dict[str, str | bool]:
+def _build_runtime_overrides(
+    task: QueuedExecutionTask,
+    *,
+    force_bp_vo: bool = False,
+) -> dict[str, str | bool]:
     """合并运行任务所需的上下文覆盖配置。
 
     Args:
         task: 已入队任务。
+        force_bp_vo: 是否在当前阶段强制准备 BP 语音资源。
 
     Returns:
         可直接传给 ``create_app_context`` 的配置映射。
     """
     overrides = task.draft.context_input.to_cli_overrides()
     overrides.update(task.draft.task_params.to_runtime_overrides())
+    if force_bp_vo:
+        overrides["WITH_BP_VO"] = True
     return overrides
 
 
@@ -122,9 +129,6 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
         Exception: 将真实后端异常继续上抛给上层 worker。
     """
     started_at = perf_counter()
-    overrides = _build_runtime_overrides(task)
-    app_context = create_app_context(cli_overrides=overrides)
-    app = LolAudioUnpackApp(app_context)
     task_params = task.draft.task_params
     options = task_params.to_operation_options()
     target, include_champions, include_maps = _resolve_task_scope(task)
@@ -134,6 +138,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     )
     steps = task_params.selected_steps()
     completed_steps: list[str] = []
+    runtime_app: LolAudioUnpackApp | None = None
 
     try:
         for step_name in steps:
@@ -149,7 +154,12 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     total=1,
                     message="正在更新基础数据…",
                 )
-                app.update(options, target=target)
+                update_app = LolAudioUnpackApp(
+                    create_app_context(
+                        cli_overrides=_build_runtime_overrides(task, force_bp_vo=True),
+                    )
+                )
+                update_app.update(options, target=target)
                 _emit_stage_progress(
                     signals,
                     stage_key=stage_key,
@@ -176,13 +186,20 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                         message=message,
                     )
 
+                if runtime_app is None:
+                    runtime_app = LolAudioUnpackApp(
+                        create_app_context(
+                            cli_overrides=_build_runtime_overrides(task),
+                        )
+                    )
+
                 _emit_stage_progress(
                     signals,
                     stage_key=stage_key,
                     entity_scope_label=task_scope_label,
                     message="正在准备解包任务…",
                 )
-                app.extract(
+                runtime_app.extract(
                     options,
                     include_champions=include_champions,
                     include_maps=include_maps,
@@ -219,13 +236,20 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                         message=message,
                     )
 
+                if runtime_app is None:
+                    runtime_app = LolAudioUnpackApp(
+                        create_app_context(
+                            cli_overrides=_build_runtime_overrides(task),
+                        )
+                    )
+
                 _emit_stage_progress(
                     signals,
                     stage_key=stage_key,
                     entity_scope_label=task_scope_label,
                     message="正在准备事件映射任务…",
                 )
-                app.mapping(
+                runtime_app.mapping(
                     options,
                     include_champions=include_champions,
                     include_maps=include_maps,

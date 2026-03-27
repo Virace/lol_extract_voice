@@ -315,6 +315,7 @@ def test_prepare_shared_entity_data_disables_terminal_progress(monkeypatch) -> N
     """GUI 共享数据准备应显式禁用终端进度条输出。"""
     fake_context = Mock(runtime_cache={})
     update_targets: list[str] = []
+    create_overrides: list[dict[str, object]] = []
 
     class FakeApp:
         def __init__(self, ctx):
@@ -323,13 +324,18 @@ def test_prepare_shared_entity_data_disables_terminal_progress(monkeypatch) -> N
         def update(self, _opts, *, target):
             update_targets.append(target)
 
-    monkeypatch.setattr(window_module, "create_app_context", lambda **_kwargs: fake_context)
+    def fake_create_app_context(*, cli_overrides):
+        create_overrides.append(dict(cli_overrides))
+        return fake_context
+
+    monkeypatch.setattr(window_module, "create_app_context", fake_create_app_context)
     monkeypatch.setattr(window_module, "LolAudioUnpackApp", FakeApp)
 
     window_module._prepare_shared_entity_data({"OUTPUT_PATH": r".\temp"})
 
     assert fake_context.runtime_cache["disable_terminal_progress"] is True
     assert update_targets == ["all"]
+    assert create_overrides == [{"OUTPUT_PATH": r".\temp", "WITH_BP_VO": True}]
 
 
 def test_main_window_startup_auto_prepares_shared_data_when_manifest_is_missing(monkeypatch) -> None:

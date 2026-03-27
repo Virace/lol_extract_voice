@@ -244,8 +244,12 @@ class AdvancedInputCard(FormAccordionCard):
         self.add_form_row("音频范围", "执行中心里保留与 CLI 对齐的过滤方式", self.vo_filter)
         self.add_form_row("并发数", "设置批量任务使用的最大线程数；一般不建议超过 CPU 线程数", self.max_workers_combo)
         self.add_form_row("附加 BP 语音", "保留现有解包参数入口", self.bp_voice_cb)
-        self.add_form_row("强制更新数据", "执行前先刷新 update 数据，适合本地缓存需要重建时使用", self.force_update_cb)
-        self.add_form_row("生成整合数据文件", "对应 CLI 参数 --integrate-data，仅在映射任务中生效", self.integrate_data_cb)
+        self.add_form_row("强制刷新缓存", "执行前强制刷新当前任务依赖的缓存，适合本地缓存需要重建时使用", self.force_update_cb)
+        self.add_form_row(
+            "生成整合数据文件",
+            "对应 CLI 参数 --integrate-data，仅在映射任务中生效；勾选后会生成包含完整实体信息、banks 和 mapping 的整合文件",
+            self.integrate_data_cb,
+        )
 
 
 class ExecutionPage(SmoothScrollArea):
@@ -824,7 +828,7 @@ class ExecutionPage(SmoothScrollArea):
             f"{task_scope_summary} · {draft_summary} · "
             f"VO={state.vo_filter_key} · "
             f"BP={state.with_bp_vo} · "
-            f"更新={state.force_update} · "
+            f"刷新缓存={state.force_update} · "
             f"整合={state.integrate_data} · "
             f"并发={state.max_workers_text}"
         )

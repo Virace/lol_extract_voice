@@ -33,7 +33,7 @@ class _FakeSignals:
 
 def test_run_execution_task_executes_backend_steps_in_order(monkeypatch, tmp_path) -> None:
     """运行器应按 update -> extract -> mapping 顺序调用后端门面。"""
-    captured_overrides: dict[str, str | bool] = {}
+    captured_overrides: list[dict[str, str | bool]] = []
     calls: list[tuple[object, ...]] = []
     sample_game_path = str(tmp_path / "game-root")
     sample_output_path = str(tmp_path / "output-root")
@@ -72,7 +72,7 @@ def test_run_execution_task_executes_backend_steps_in_order(monkeypatch, tmp_pat
                 progress_callback("map", 1, 1, "召唤师峡谷 映射完成")
 
     def fake_create_app_context(*, cli_overrides):
-        captured_overrides.update(cli_overrides)
+        captured_overrides.append(dict(cli_overrides))
         return {"cli_overrides": dict(cli_overrides)}
 
     monkeypatch.setattr(task_runner_module, "create_app_context", fake_create_app_context)
@@ -104,13 +104,24 @@ def test_run_execution_task_executes_backend_steps_in_order(monkeypatch, tmp_pat
 
     result = run_execution_task(task, signals)
 
-    assert captured_overrides["GAME_PATH"] == sample_game_path
-    assert captured_overrides["OUTPUT_PATH"] == sample_output_path
-    assert captured_overrides["WITH_BP_VO"] is False
-    assert captured_overrides["EXCLUDE_TYPE"] == "SFX,MUSIC"
+    assert captured_overrides == [
+        {
+            "GAME_PATH": sample_game_path,
+            "OUTPUT_PATH": sample_output_path,
+            "WITH_BP_VO": True,
+            "EXCLUDE_TYPE": "SFX,MUSIC",
+        },
+        {
+            "GAME_PATH": sample_game_path,
+            "OUTPUT_PATH": sample_output_path,
+            "WITH_BP_VO": False,
+            "EXCLUDE_TYPE": "SFX,MUSIC",
+        },
+    ]
     assert calls == [
-        ("init", {"cli_overrides": dict(captured_overrides)}),
+        ("init", {"cli_overrides": dict(captured_overrides[0])}),
         ("update", "all", 8, True, (1, 103), (11,)),
+        ("init", {"cli_overrides": dict(captured_overrides[1])}),
         ("extract", True, True, True),
         ("mapping", True, True, True),
     ]

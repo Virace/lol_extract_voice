@@ -437,6 +437,7 @@ def test_execution_page_apply_task_form_state_drives_cli_and_draft() -> None:
         exclude_types=(),
         integrate_data=True,
     )
+    assert "刷新缓存=True" in page._current_task_config_summary()  # type: ignore[attr-defined]
     assert page._build_cli_command_text() == (
         "uv run unpack "
         "--update-champions 1,103 --update-maps 11 --force "
