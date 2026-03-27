@@ -26,6 +26,7 @@ from qfluentwidgets import FluentIcon as FIF
 from lol_audio_unpack.gui.common import GuiConfig
 from lol_audio_unpack.gui.workers import TaskWorker
 from lol_audio_unpack.manager.utils import get_game_version
+from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths, get_default_output_root
 
 # ---------------------------------------------------------------------------
 # Worker result dataclass
@@ -341,9 +342,10 @@ class HomePage(SmoothScrollArea):
 
     def _resolve_output_path(self) -> Path:
         """Return the absolute output directory path."""
-        raw = self._cfg.output_path or r".\output"
+        runtime_paths = detect_runtime_paths()
+        raw = self._cfg.output_path or str(get_default_output_root(runtime_paths))
         p = Path(raw).expanduser()
-        return p if p.is_absolute() else Path.cwd() / p
+        return p if p.is_absolute() else runtime_paths.launch_root / p
 
     @staticmethod
     def _check_audio_cache(output_path: Path, major_minor: str) -> tuple[bool, str]:

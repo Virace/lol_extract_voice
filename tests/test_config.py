@@ -3,7 +3,9 @@ from pathlib import Path
 
 import pytest
 
+import lol_audio_unpack.utils.config as config_module
 from lol_audio_unpack.utils.config import Config, ConfigValidationError
+from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
 
 pytestmark = pytest.mark.unit
 
@@ -111,6 +113,39 @@ def test_config_system_env_overrides_dotenv(tmp_path, monkeypatch):
     assert cfg.OUTPUT_PATH == output_env
     assert cfg.sources["GAME_PATH"] == "env"
     assert cfg.sources["OUTPUT_PATH"] == "env"
+
+
+def test_config_uses_runtime_defaults_when_env_path_and_output_path_missing(tmp_path, monkeypatch):
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    game_path = tmp_path / "game"
+    (runtime_root / ".lol.env").write_text(
+        "\n".join(
+            [
+                f'LOL_GAME_PATH="{game_path}"',
+                'LOL_GAME_REGION="zh_CN"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("LOL_GAME_PATH", raising=False)
+    monkeypatch.delenv("LOL_OUTPUT_PATH", raising=False)
+    monkeypatch.setattr(
+        config_module,
+        "detect_runtime_paths",
+        lambda: detect_runtime_paths(
+            is_frozen=False,
+            cwd=runtime_root,
+            executable=tmp_path / "python" / "python.exe",
+        ),
+    )
+
+    cfg = Config(force_reload=True, dev_mode=False)
+
+    assert cfg.GAME_PATH == game_path
+    assert cfg.OUTPUT_PATH == runtime_root / "output"
+    assert cfg.sources["OUTPUT_PATH"] == "runtime"
 
 
 def test_config_unknown_lol_keys_are_ignored(tmp_path, monkeypatch):

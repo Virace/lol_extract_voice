@@ -7,6 +7,7 @@ from lol_audio_unpack.manager.data_reader import DataReader
 from lol_audio_unpack.utils.common import Singleton
 from lol_audio_unpack.utils.config import Config
 from lol_audio_unpack.utils.config import config as config_proxy
+from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
 
 
 @pytest.fixture(autouse=True)
@@ -20,7 +21,15 @@ def _reset_config_state(monkeypatch, tmp_path):
     isolated_work_dir.mkdir(parents=True, exist_ok=True)
 
     # 强制把默认配置目录切换到临时目录，避免读取项目根目录 .lol.env*
-    monkeypatch.setattr(config_module, "WORK_DIR", isolated_work_dir)
+    monkeypatch.setattr(
+        config_module,
+        "detect_runtime_paths",
+        lambda: detect_runtime_paths(
+            is_frozen=False,
+            cwd=isolated_work_dir,
+            executable=isolated_work_dir / "python.exe",
+        ),
+    )
 
     Config.reset_instance()
     Singleton._instances.pop(DataReader, None)

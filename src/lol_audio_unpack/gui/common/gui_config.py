@@ -18,11 +18,12 @@ Key design decisions
 from __future__ import annotations
 
 import os
-import sys
 from pathlib import Path
 
 from dotenv import dotenv_values, set_key, unset_key
 from PySide6.QtCore import QSettings
+
+from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
 
 # ---------------------------------------------------------------------------
 # Sentinel
@@ -35,13 +36,8 @@ class GuiConfig:
     """Configuration manager for GUI, sharing CLI config via .lol.env."""
 
     def __init__(self, dev_mode: bool = False) -> None:
-        # 确定配置文件路径
-        if getattr(sys, 'frozen', False):
-            # 打包模式：程序所在目录
-            self._env_dir = Path(sys.executable).parent
-        else:
-            # 开发模式：cwd
-            self._env_dir = Path.cwd()
+        # 共享 runtime 层负责决定默认配置目录，GUI 仅消费结果。
+        self._env_dir = detect_runtime_paths().config_root
 
         self._dev_mode = dev_mode
         self._env_file = self._env_dir / (".lol.env.dev" if dev_mode else ".lol.env")

@@ -13,6 +13,7 @@ from lol_audio_unpack.app_context import (
     create_app_context,
     initialize_context_from_env,
 )
+from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
 
 pytestmark = pytest.mark.unit
 
@@ -74,6 +75,109 @@ def test_create_app_context_applies_cli_overrides(tmp_path: Path) -> None:
     assert app_context.config.group_by_type is True
     assert app_context.config.exclude_types == ("VO",)
     assert set(app_context.config.include_types) == {"SFX", "MUSIC"}
+
+
+def test_create_app_context_uses_runtime_defaults_when_env_path_and_output_path_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    game_path = tmp_path / "game"
+    (runtime_root / ".lol.env").write_text(
+        "\n".join(
+            [
+                f'LOL_GAME_PATH="{game_path}"',
+                'LOL_GAME_REGION="zh_CN"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("LOL_GAME_PATH", raising=False)
+    monkeypatch.delenv("LOL_OUTPUT_PATH", raising=False)
+    monkeypatch.setattr(
+        app_context_module,
+        "detect_runtime_paths",
+        lambda: detect_runtime_paths(
+            is_frozen=False,
+            cwd=runtime_root,
+            executable=tmp_path / "python" / "python.exe",
+        ),
+    )
+
+    app_context = create_app_context()
+
+    assert app_context.config.game_path == game_path
+    assert app_context.config.output_path == runtime_root / "output"
+    assert app_context.paths.log_path == runtime_root / "output" / "logs"
+
+
+def test_create_app_context_ignores_blank_output_override_from_gui(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    game_path = tmp_path / "game"
+    monkeypatch.delenv("LOL_GAME_PATH", raising=False)
+    monkeypatch.delenv("LOL_OUTPUT_PATH", raising=False)
+    monkeypatch.setattr(
+        app_context_module,
+        "detect_runtime_paths",
+        lambda: detect_runtime_paths(
+            is_frozen=False,
+            cwd=runtime_root,
+            executable=tmp_path / "python" / "python.exe",
+        ),
+    )
+
+    app_context = create_app_context(
+        cli_overrides={
+            "SOURCE_MODE": "local_path",
+            "GAME_PATH": str(game_path),
+            "OUTPUT_PATH": "",
+        }
+    )
+
+    assert app_context.config.game_path == game_path
+    assert app_context.config.output_path == runtime_root / "output"
+
+
+def test_create_app_context_ignores_blank_output_from_env_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    game_path = tmp_path / "game"
+    (runtime_root / ".lol.env").write_text(
+        "\n".join(
+            [
+                f'LOL_GAME_PATH="{game_path}"',
+                "LOL_OUTPUT_PATH=''",
+                'LOL_GAME_REGION="zh_CN"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("LOL_GAME_PATH", raising=False)
+    monkeypatch.delenv("LOL_OUTPUT_PATH", raising=False)
+    monkeypatch.setattr(
+        app_context_module,
+        "detect_runtime_paths",
+        lambda: detect_runtime_paths(
+            is_frozen=False,
+            cwd=runtime_root,
+            executable=tmp_path / "python" / "python.exe",
+        ),
+    )
+
+    app_context = create_app_context()
+
+    assert app_context.config.game_path == game_path
+    assert app_context.config.output_path == runtime_root / "output"
 
 
 def test_create_app_context_builds_remote_snapshot_config(tmp_path: Path) -> None:

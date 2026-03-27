@@ -1,25 +1,8 @@
-# 🐍 If the implementation is hard to explain, it's a bad idea.
-# 🐼 很难解释的，必然是坏方法
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2022/8/26 14:00
-# @Update  : 2025/8/7 6:23
-# @Detail  : config.py
+"""提供兼容旧链路的全局配置访问。
 
-
-"""
-配置管理模块 - 提供全局配置访问
-
-使用方法:
-    from lol_audio_unpack.utils.config import config
-
-    # 获取配置
-    game_path = config.get("GAME_PATH")
-
-    # 设置配置
-    config.set("DEBUG", 10)
+该模块主要服务于仍在使用 ``Config`` 单例的旧代码路径。目录相关的默认值
+会优先复用共享 runtime 层的决策结果，从而让源码运行与冻结运行保持一致
+的默认目录语义。
 """
 
 import inspect
@@ -33,10 +16,8 @@ from typing import Any
 from loguru import logger
 
 from lol_audio_unpack.utils.common import Singleton
+from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths, get_default_output_root
 from lol_audio_unpack.utils.type_hints import StrPath
-
-# 当前工作目录（通常是项目的根目录）
-WORK_DIR = Path(os.getcwd())
 
 
 class ConfigValidationError(ValueError):
@@ -117,24 +98,26 @@ class Config(metaclass=Singleton):
         self.settings: dict[str, Any] = {}  # 保存配置值
         self.sources: dict[str, str] = {}  # 记录配置来源
         self.dev_mode = dev_mode  # 是否处于开发环境
-        self.using_work_dir = False  # 是否使用工作目录作为默认路径
+        self.using_work_dir = False  # 是否使用默认运行时根目录作为配置目录
+        self._runtime_paths = detect_runtime_paths()
 
         logger.debug(
             f"初始化Config实例: env_path={env_path}, env_prefix={env_prefix}, "
             f"force_reload={force_reload}, dev_mode={dev_mode}"
         )
 
-        # 如果未指定env_path，则使用当前工作目录
+        # 如果未指定env_path，则使用共享 runtime 层给出的默认配置目录
         if env_path is None:
-            env_path = WORK_DIR
+            env_path = self._resolve_default_env_path()
             self.using_work_dir = True
-            logger.debug(f"未指定env_path，使用当前工作目录: {env_path}")
+            logger.debug(f"未指定env_path，使用默认运行时配置目录: {env_path}")
 
         # 加载环境变量文件
         self._load_env_file(env_path, dev_mode)
 
         # 加载所有配置
         self._load_configs(cli_overrides=cli_overrides)
+        self._apply_runtime_defaults()
 
         # 生成派生路径
         self._generate_paths()
@@ -153,7 +136,7 @@ class Config(metaclass=Singleton):
         ]
 
         if self.using_work_dir:
-            info.append("Using working directory as default")
+            info.append("Using default runtime root")
 
         return ", ".join(info) + ")"
 
@@ -189,11 +172,13 @@ class Config(metaclass=Singleton):
         self.sources.clear()
         logger.debug(f"已清除 {prev_count} 项配置设置")
 
-        # 如果未指定env_path，则使用当前工作目录
+        self._runtime_paths = detect_runtime_paths()
+
+        # 如果未指定env_path，则使用共享 runtime 层给出的默认配置目录
         if env_path is None:
-            env_path = WORK_DIR
+            env_path = self._resolve_default_env_path()
             self.using_work_dir = True
-            logger.debug(f"未指定env_path，使用当前工作目录: {env_path}")
+            logger.debug(f"未指定env_path，使用默认运行时配置目录: {env_path}")
         else:
             self.using_work_dir = False
 
@@ -202,6 +187,7 @@ class Config(metaclass=Singleton):
 
         # 重新加载所有配置
         self._load_configs(cli_overrides=cli_overrides)
+        self._apply_runtime_defaults()
 
         # 生成派生路径
         self._generate_paths()
@@ -212,6 +198,29 @@ class Config(metaclass=Singleton):
         self._derived_variables()
 
         logger.debug(f"配置重新加载完成，共 {len(self.settings)} 项")
+
+    def _resolve_default_env_path(self) -> Path:
+        """返回共享 runtime 层提供的默认配置目录。
+
+        Returns:
+            Path: 默认配置目录。
+        """
+
+        return self._runtime_paths.config_root
+
+    def _apply_runtime_defaults(self) -> None:
+        """补齐依赖 runtime 决策的默认配置。
+
+        Returns:
+            None
+        """
+
+        if "OUTPUT_PATH" in self.settings:
+            return
+
+        default_output_path = get_default_output_root(self._runtime_paths)
+        logger.debug(f"使用 runtime 默认输出目录: {default_output_path}")
+        self._set_value("OUTPUT_PATH", default_output_path, "runtime")
 
     def _load_env_file(self, env_path: StrPath, dev_mode: bool = False):
         """

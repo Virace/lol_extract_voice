@@ -12,6 +12,7 @@ from typing import Any
 from loguru import logger
 from riotmanifest import LeagueManifestError, LeagueManifestResolver
 
+from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths, get_default_output_root
 from lol_audio_unpack.utils.type_hints import StrPath
 from lol_audio_unpack.utils.versioning import normalize_patch_version
 
@@ -262,7 +263,7 @@ def _build_remote_snapshot_config(
 def _resolve_env_dir(env_path: StrPath | None) -> Path:
     """解析环境文件目录。"""
     if env_path is None:
-        return Path.cwd()
+        return detect_runtime_paths().config_root
     return Path(env_path)
 
 
@@ -308,6 +309,9 @@ def _load_prefixed_env_from_file(env_file: Path, env_prefix: str) -> dict[str, s
         if key not in SUPPORTED_KEYS:
             logger.warning(f"忽略未知配置项: {env_name}")
             continue
+        if not env_value.strip():
+            logger.debug(f"忽略空白环境文件配置项: {env_name}")
+            continue
         settings[key] = env_value
     return settings
 
@@ -323,6 +327,9 @@ def _load_prefixed_env_from_system(env_prefix: str) -> dict[str, str]:
         if key not in SUPPORTED_KEYS:
             logger.warning(f"忽略未知配置项: {env_name}")
             continue
+        if not str(env_value).strip():
+            logger.debug(f"忽略空白系统环境配置项: {env_name}")
+            continue
         settings[key] = env_value
     return settings
 
@@ -336,6 +343,7 @@ def _build_raw_settings(
 ) -> dict[str, Any]:
     """按优先级合并原始配置。"""
     merged: dict[str, Any] = dict(DEFAULT_VALUES)
+    merged["OUTPUT_PATH"] = get_default_output_root(detect_runtime_paths())
 
     env_dir = _resolve_env_dir(env_path)
     env_file = _select_env_file(env_dir, dev_mode=dev_mode)
@@ -346,6 +354,12 @@ def _build_raw_settings(
         for key, value in cli_overrides.items():
             if key not in SUPPORTED_KEYS:
                 logger.warning(f"忽略未知CLI配置项: {key}")
+                continue
+            if value is None:
+                logger.debug(f"忽略空的CLI配置项: {key}=None")
+                continue
+            if isinstance(value, str) and not value.strip():
+                logger.debug(f"忽略空白CLI配置项: {key}")
                 continue
             merged[key] = value
 

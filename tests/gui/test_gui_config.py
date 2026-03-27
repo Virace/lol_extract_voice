@@ -4,6 +4,7 @@ from pathlib import Path
 
 from lol_audio_unpack.gui.common import gui_config as gui_config_module
 from lol_audio_unpack.gui.common.gui_config import GuiConfig
+from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
 
 
 class FakeQSettings:
@@ -118,6 +119,25 @@ def test_gui_config_save_keeps_vgmstream_in_qsettings_only(monkeypatch, tmp_path
     assert f"LOL_OUTPUT_PATH='{sample_output_path}'" in env_text
     assert "LOL_VGMSTREAM_PATH" not in env_text
     assert FakeQSettings._store["vgmstream_path"] == sample_vgmstream_path
+
+
+def test_gui_config_uses_runtime_config_root(monkeypatch, tmp_path):
+    _use_fake_qsettings(monkeypatch)
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        gui_config_module,
+        "detect_runtime_paths",
+        lambda: detect_runtime_paths(
+            is_frozen=True,
+            cwd=tmp_path / "shortcut-workdir",
+            executable=runtime_root / "LolAudioUnpack.exe",
+        ),
+    )
+
+    cfg = GuiConfig()
+
+    assert cfg._env_file == runtime_root / ".lol.env"
 
 
 def test_gui_config_loads_legacy_smooth_scroll_into_split_flags(monkeypatch, tmp_path):
