@@ -101,6 +101,25 @@ def test_setting_page_file_log_level_does_not_show_warning(monkeypatch, tmp_path
         app.processEvents()
 
 
+def test_setting_page_emits_shared_context_input_changed_after_runtime_save(monkeypatch, tmp_path: Path) -> None:
+    """保存共享运行配置后应发出更明确的共享上下文变更信号。"""
+    monkeypatch.chdir(tmp_path)
+    _use_fake_qsettings(monkeypatch)
+    app = QApplication.instance() or QApplication([])
+    page = SettingPage()
+    changed_events: list[bool] = []
+
+    try:
+        page.shared_context_input_changed.connect(lambda: changed_events.append(True))
+        page._save_config()
+        app.processEvents()
+
+        assert changed_events == [True]
+    finally:
+        page.deleteLater()
+        app.processEvents()
+
+
 def test_log_level_setting_card_captions_reuse_non_wrapping_subtitle_style() -> None:
     """日志等级手风琴内的说明文字应复用不自动换行的副标题样式。"""
     card = LogLevelSettingCard()

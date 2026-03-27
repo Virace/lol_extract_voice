@@ -5,7 +5,9 @@ from __future__ import annotations
 import lol_audio_unpack.gui.service.task_runner as task_runner_module
 from lol_audio_unpack.gui.service.task_runner import run_execution_task
 from lol_audio_unpack.gui.task_models import (
+    AppContextInputSnapshot,
     ExecutionTaskDraft,
+    ExecutionTaskParamsSnapshot,
     ExecutionTaskProgress,
     QueuedExecutionTask,
 )
@@ -82,16 +84,20 @@ def test_run_execution_task_executes_backend_steps_in_order(monkeypatch, tmp_pat
         draft=ExecutionTaskDraft(
             source="manual_input",
             source_summary="当前目标来自执行中心里的 ID 输入框。",
-            champion_ids=(1, 103),
-            map_ids=(11,),
-            run_update=True,
-            run_extract=True,
-            run_mapping=True,
-            max_workers=8,
-            with_bp_vo=False,
-            exclude_types=("SFX", "MUSIC"),
-            integrate_data=True,
-            app_context_overrides=(("GAME_PATH", sample_game_path), ("OUTPUT_PATH", sample_output_path)),
+            context_input=AppContextInputSnapshot(
+                overrides=(("GAME_PATH", sample_game_path), ("OUTPUT_PATH", sample_output_path)),
+            ),
+            task_params=ExecutionTaskParamsSnapshot(
+                champion_ids=(1, 103),
+                map_ids=(11,),
+                run_update=True,
+                run_extract=True,
+                run_mapping=True,
+                max_workers=8,
+                with_bp_vo=False,
+                exclude_types=("SFX", "MUSIC"),
+                integrate_data=True,
+            ),
         ),
     )
     signals = _FakeSignals()

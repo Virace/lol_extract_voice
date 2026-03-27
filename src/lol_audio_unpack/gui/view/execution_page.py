@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from loguru import logger
 from PySide6.QtCore import QObject, Qt, QThreadPool, QTimer, Signal
@@ -40,8 +40,6 @@ from qfluentwidgets import (
 )
 from qfluentwidgets import FluentIcon as FIF
 
-from lol_audio_unpack.app_context import create_app_context
-from lol_audio_unpack.gui.components.accordion_setting_card import FormAccordionCard
 from lol_audio_unpack.gui.common import (
     GUI_LOG_FORMAT,
     GUI_LOG_MAX_LINES,
@@ -49,6 +47,7 @@ from lol_audio_unpack.gui.common import (
     get_buffered_log_lines,
     show_feedback_infobar,
 )
+from lol_audio_unpack.gui.components.accordion_setting_card import FormAccordionCard
 from lol_audio_unpack.gui.service.task_runner import run_execution_task
 from lol_audio_unpack.gui.task_models import (
     TASK_STATUS_CANCELLED,
@@ -56,15 +55,15 @@ from lol_audio_unpack.gui.task_models import (
     TASK_STATUS_FAILED,
     TASK_STATUS_RUNNING,
     TASK_STATUS_WAITING,
+    AppContextInputSnapshot,
     ExecutionTaskDraft,
+    ExecutionTaskParamsSnapshot,
     ExecutionTaskProgress,
     ExecutionTaskResult,
+    OutputStateRefreshRequest,
     QueuedExecutionTask,
 )
 from lol_audio_unpack.gui.workers import TaskWorker
-
-if TYPE_CHECKING:
-    from lol_audio_unpack.app_context import AppContext
 
 
 def _parse_csv_ids(text: str) -> tuple[str, ...]:
@@ -113,6 +112,43 @@ def _build_task_scope_summary(*, include_extract: bool, include_mapping: bool) -
 
 TASK_ITEM_ROLE = int(Qt.ItemDataRole.UserRole)
 QUEUE_VISIBLE_ROW_COUNT = 3
+
+
+@dataclass(slots=True, frozen=True)
+class _ExecutionTaskFormDefaults:
+    """执行页内部维护的任务表单默认值。"""
+
+    vo_filter_key: str = "VO"
+    max_workers_text: str = "4"
+    with_bp_vo: bool = True
+    force_update: bool = False
+    integrate_data: bool = False
+
+
+@dataclass(slots=True, frozen=True)
+class _ExecutionTaskFormState:
+    """执行页当前任务表单的统一状态快照。"""
+
+    champion_ids: tuple[str, ...] = ()
+    map_ids: tuple[str, ...] = ()
+    include_extract: bool = True
+    include_mapping: bool = True
+    vo_filter_key: str = "VO"
+    max_workers_text: str = "4"
+    with_bp_vo: bool = True
+    force_update: bool = False
+    integrate_data: bool = False
+
+    def target_summary(self) -> str:
+        """返回当前目标范围摘要。"""
+        return _build_target_summary(self.champion_ids, self.map_ids)
+
+    def task_scope_summary(self) -> str:
+        """返回当前勾选的任务步骤摘要。"""
+        return _build_task_scope_summary(
+            include_extract=self.include_extract,
+            include_mapping=self.include_mapping,
+        )
 
 
 def _build_queue_item_text(*, task_id: int, status: str, summary: str) -> str:
@@ -215,7 +251,7 @@ class AdvancedInputCard(FormAccordionCard):
 class ExecutionPage(SmoothScrollArea):
     """执行中心页面。"""
 
-    refresh_requested = Signal()
+    output_state_refresh_requested = Signal(object)
     task_running_changed = Signal(bool)
     task_queue_busy_changed = Signal(bool)
     log_lines_appended = Signal(object)
@@ -230,6 +266,8 @@ class ExecutionPage(SmoothScrollArea):
         self.setWidgetResizable(True)
         self.setStyleSheet("QScrollArea {border: none; background: transparent;}")
         self.gui_config = None
+        self._task_form_defaults = _ExecutionTaskFormDefaults()
+        self._task_form_state = _ExecutionTaskFormState()
         self._cached_data: dict[str, list[dict[str, Any]]] = {"champions": [], "maps": []}
         self._draft_count = 0
         self._is_task_running = False
@@ -256,6 +294,8 @@ class ExecutionPage(SmoothScrollArea):
         self._stage_completion_notifications: set[tuple[int, str]] = set()
         self.destroyed.connect(self._detach_runtime_log_sink)
         self._build_ui()
+        self._apply_task_form_defaults()
+        self._sync_task_form_state_from_widgets()
         self._setup_connections()
 
     def _build_ui(self) -> None:
@@ -384,10 +424,15 @@ class ExecutionPage(SmoothScrollArea):
     def _setup_connections(self) -> None:
         self.create_task_btn.clicked.connect(self._queue_task_draft)
         self.copy_cli_btn.clicked.connect(self._copy_cli_command)
-        self.champion_ids_input.textChanged.connect(self._refresh_task_builder_state)
-        self.map_ids_input.textChanged.connect(self._refresh_task_builder_state)
-        self.extract_task_cb.stateChanged.connect(self._refresh_task_builder_state)
-        self.mapping_task_cb.stateChanged.connect(self._refresh_task_builder_state)
+        self.champion_ids_input.textChanged.connect(self._sync_task_form_state_from_widgets)
+        self.map_ids_input.textChanged.connect(self._sync_task_form_state_from_widgets)
+        self.extract_task_cb.stateChanged.connect(self._sync_task_form_state_from_widgets)
+        self.mapping_task_cb.stateChanged.connect(self._sync_task_form_state_from_widgets)
+        self.vo_filter.currentItemChanged.connect(self._sync_task_form_state_from_widgets)
+        self.max_workers_combo.currentTextChanged.connect(self._sync_task_form_state_from_widgets)
+        self.bp_voice_cb.stateChanged.connect(self._sync_task_form_state_from_widgets)
+        self.force_update_cb.stateChanged.connect(self._sync_task_form_state_from_widgets)
+        self.integrate_data_cb.stateChanged.connect(self._sync_task_form_state_from_widgets)
         self.draft_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.draft_list.customContextMenuRequested.connect(self._open_task_queue_context_menu)
         self._refresh_task_builder_state()
@@ -396,7 +441,8 @@ class ExecutionPage(SmoothScrollArea):
     def set_gui_config(self, cfg) -> None:
         """注入 GUI 配置并刷新默认值。"""
         self.gui_config = cfg
-        self._sync_runtime_controls_from_context()
+        self._sync_task_form_state_from_widgets()
+        self._refresh_task_builder_state()
         fallback_enabled = bool(getattr(cfg, "smooth_scroll_enabled", False))
         self.set_smooth_scroll_enabled(
             page_enabled=bool(getattr(cfg, "page_smooth_scroll_enabled", fallback_enabled)),
@@ -408,6 +454,30 @@ class ExecutionPage(SmoothScrollArea):
         if entity_type not in self._cached_data:
             return
         self._cached_data[entity_type] = data
+
+    def update_entity_rows(self, entity_type: str, rows: list[dict[str, Any]]) -> None:
+        """按实体 ID 增量更新页面缓存中的摘要行。"""
+        if entity_type not in self._cached_data or not rows:
+            return
+
+        row_by_id = {str(row["id"]): row for row in rows}
+        merged_rows: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
+        for row in self._cached_data[entity_type]:
+            entity_id = str(row.get("id", ""))
+            if entity_id in row_by_id:
+                merged_rows.append(row_by_id[entity_id])
+                seen_ids.add(entity_id)
+            else:
+                merged_rows.append(row)
+
+        for row in rows:
+            entity_id = str(row["id"])
+            if entity_id not in seen_ids:
+                merged_rows.append(row)
+
+        self._cached_data[entity_type] = merged_rows
 
     def clear_entity_data(self) -> None:
         """清空当前已加载实体目录摘要。"""
@@ -492,13 +562,6 @@ class ExecutionPage(SmoothScrollArea):
                 return True
         return False
 
-    def _create_app_context(self, extra_overrides: dict[str, str | bool] | None = None) -> AppContext:
-        """从 GUI 配置创建 ``AppContext``。"""
-        cli_overrides = self.gui_config.to_app_context_overrides()
-        if extra_overrides:
-            cli_overrides.update(extra_overrides)
-        return create_app_context(cli_overrides=cli_overrides)
-
     def _build_empty_synced_selection(self) -> dict[str, Any]:
         """返回空的总览同步状态。"""
         return {
@@ -507,6 +570,36 @@ class ExecutionPage(SmoothScrollArea):
             "map_ids": (),
             "summary": "尚未从实体总览同步选择。",
         }
+
+    def _build_output_state_refresh_request(
+        self,
+        task: QueuedExecutionTask,
+        task_result: ExecutionTaskResult,
+    ) -> OutputStateRefreshRequest:
+        """根据任务快照和执行结果推导输出状态刷新范围。"""
+        completed_steps = set(task_result.completed_steps)
+        if not ({"音频解包", "事件映射"} & completed_steps):
+            return OutputStateRefreshRequest(requires_full_refresh=True)
+
+        task_params = task.draft.task_params
+        champion_ids = (
+            tuple(str(entity_id) for entity_id in task_params.champion_ids)
+            if task_params.champion_ids is not None
+            else ()
+        )
+        map_ids = (
+            tuple(str(entity_id) for entity_id in task_params.map_ids)
+            if task_params.map_ids is not None
+            else ()
+        )
+
+        if not champion_ids and not map_ids:
+            return OutputStateRefreshRequest(requires_full_refresh=True)
+
+        return OutputStateRefreshRequest(
+            champion_ids=champion_ids,
+            map_ids=map_ids,
+        )
 
     def _current_selection_source(self) -> str:
         """返回当前任务输入的来源标识。"""
@@ -523,23 +616,29 @@ class ExecutionPage(SmoothScrollArea):
 
     def _build_task_draft(self) -> ExecutionTaskDraft:
         """根据当前界面状态创建任务草稿快照。"""
-        champion_ids = _parse_csv_int_ids(self.champion_ids_input.text(), label="英雄 ID")
-        map_ids = _parse_csv_int_ids(self.map_ids_input.text(), label="地图 ID")
-        exclude_types = ("SFX", "MUSIC") if self.vo_filter.currentRouteKey() == "VO" else ()
-        app_context_overrides = tuple((self.gui_config.to_app_context_overrides() if self.gui_config else {}).items())
+        state = self._task_form_state
+        champion_ids = _parse_csv_int_ids(",".join(state.champion_ids), label="英雄 ID")
+        map_ids = _parse_csv_int_ids(",".join(state.map_ids), label="地图 ID")
+        exclude_types = ("SFX", "MUSIC") if state.vo_filter_key == "VO" else ()
         return ExecutionTaskDraft(
             source=self._current_selection_source(),
-            source_summary=self.target_summary_value.text(),
-            champion_ids=champion_ids,
-            map_ids=map_ids,
-            run_update=self.force_update_cb.isChecked(),
-            run_extract=self.extract_task_cb.isChecked(),
-            run_mapping=self.mapping_task_cb.isChecked(),
-            max_workers=int(self.max_workers_combo.currentText()),
-            with_bp_vo=self.bp_voice_cb.isChecked(),
-            exclude_types=exclude_types,
-            integrate_data=self.integrate_data_cb.isChecked(),
-            app_context_overrides=app_context_overrides,
+            source_summary=state.target_summary(),
+            context_input=(
+                self.gui_config.to_app_context_input_snapshot()
+                if self.gui_config
+                else AppContextInputSnapshot()
+            ),
+            task_params=ExecutionTaskParamsSnapshot(
+                champion_ids=champion_ids,
+                map_ids=map_ids,
+                run_update=state.force_update,
+                run_extract=state.include_extract,
+                run_mapping=state.include_mapping,
+                max_workers=int(state.max_workers_text),
+                with_bp_vo=state.with_bp_vo,
+                exclude_types=exclude_types,
+                integrate_data=state.integrate_data,
+            ),
         )
 
     def _build_task_item_tooltip(self, task: QueuedExecutionTask) -> str:
@@ -645,33 +744,55 @@ class ExecutionPage(SmoothScrollArea):
         dialog.exec()
         return str(result["choice"])
 
-    def _sync_runtime_controls_from_context(self) -> None:
-        """使用当前上下文同步运行期控件默认值。"""
-        if self.gui_config is None:
-            return
+    def _apply_task_form_defaults(self) -> None:
+        """将执行页维护的默认值应用到任务表单控件。"""
+        defaults = self._task_form_defaults
+        self.vo_filter.setCurrentItem(defaults.vo_filter_key)
+        self.max_workers_combo.setCurrentText(defaults.max_workers_text)
+        self.bp_voice_cb.setChecked(defaults.with_bp_vo)
+        self.force_update_cb.setChecked(defaults.force_update)
+        self.integrate_data_cb.setChecked(defaults.integrate_data)
 
-        try:
-            app_context = self._create_app_context()
-        except Exception as exc:  # noqa: BLE001
-            logger.debug(f"同步执行中心默认参数失败: {exc}")
-            return
+    def _build_task_form_state_from_widgets(self) -> _ExecutionTaskFormState:
+        """从当前控件值提取一份任务表单状态快照。"""
+        return _ExecutionTaskFormState(
+            champion_ids=_parse_csv_ids(self.champion_ids_input.text()),
+            map_ids=_parse_csv_ids(self.map_ids_input.text()),
+            include_extract=self.extract_task_cb.isChecked(),
+            include_mapping=self.mapping_task_cb.isChecked(),
+            vo_filter_key=self.vo_filter.currentRouteKey() or self._task_form_defaults.vo_filter_key,
+            max_workers_text=self.max_workers_combo.currentText(),
+            with_bp_vo=self.bp_voice_cb.isChecked(),
+            force_update=self.force_update_cb.isChecked(),
+            integrate_data=self.integrate_data_cb.isChecked(),
+        )
 
-        self.bp_voice_cb.setChecked(self.bp_voice_cb.isChecked() or bool(app_context.config.with_bp_vo))
-        self.vo_filter.setCurrentItem("VO" if tuple(app_context.config.include_types) == ("VO",) else "ALL")
+    def _sync_task_form_state_from_widgets(self, *_args) -> None:
+        """将当前控件值同步到执行页维护的任务表单状态。"""
+        self._task_form_state = self._build_task_form_state_from_widgets()
+        self._refresh_task_builder_state()
+
+    def _apply_task_form_state(self) -> None:
+        """将当前任务表单状态反向应用到控件。"""
+        state = self._task_form_state
+        self.champion_ids_input.setText(",".join(state.champion_ids))
+        self.map_ids_input.setText(",".join(state.map_ids))
+        self.extract_task_cb.setChecked(state.include_extract)
+        self.mapping_task_cb.setChecked(state.include_mapping)
+        self.vo_filter.setCurrentItem(state.vo_filter_key)
+        self.max_workers_combo.setCurrentText(state.max_workers_text)
+        self.bp_voice_cb.setChecked(state.with_bp_vo)
+        self.force_update_cb.setChecked(state.force_update)
+        self.integrate_data_cb.setChecked(state.integrate_data)
         self._refresh_task_builder_state()
 
     def _current_target_ids(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """根据当前输入框返回准备中的英雄 / 地图 ID。"""
-        champion_ids = _parse_csv_ids(self.champion_ids_input.text())
-        map_ids = _parse_csv_ids(self.map_ids_input.text())
-        return champion_ids, map_ids
+        return self._task_form_state.champion_ids, self._task_form_state.map_ids
 
     def _selected_task_scope_summary(self) -> str:
         """返回当前复选项对应的执行步骤摘要。"""
-        return _build_task_scope_summary(
-            include_extract=self.extract_task_cb.isChecked(),
-            include_mapping=self.mapping_task_cb.isChecked(),
-        )
+        return self._task_form_state.task_scope_summary()
 
     def _append_target_operation_args(
         self,
@@ -696,23 +817,23 @@ class ExecutionPage(SmoothScrollArea):
 
     def _current_task_config_summary(self) -> str:
         """构造当前任务配置摘要。"""
-        champion_ids, map_ids = self._current_target_ids()
-        draft_summary = _build_target_summary(champion_ids, map_ids)
-        task_scope_summary = self._selected_task_scope_summary()
+        state = self._task_form_state
+        draft_summary = state.target_summary()
+        task_scope_summary = state.task_scope_summary()
         return (
             f"{task_scope_summary} · {draft_summary} · "
-            f"VO={self.vo_filter.currentRouteKey() or 'VO'} · "
-            f"BP={self.bp_voice_cb.isChecked()} · "
-            f"更新={self.force_update_cb.isChecked()} · "
-            f"整合={self.integrate_data_cb.isChecked()} · "
-            f"并发={self.max_workers_combo.currentText()}"
+            f"VO={state.vo_filter_key} · "
+            f"BP={state.with_bp_vo} · "
+            f"更新={state.force_update} · "
+            f"整合={state.integrate_data} · "
+            f"并发={state.max_workers_text}"
         )
 
     def _refresh_task_builder_state(self) -> None:
         """同步任务创建区和进度区中的摘要文案。"""
-        champion_ids, map_ids = self._current_target_ids()
-        task_scope_summary = self._selected_task_scope_summary()
-        self.target_summary_value.setText(_build_target_summary(champion_ids, map_ids))
+        state = self._task_form_state
+        task_scope_summary = state.task_scope_summary()
+        self.target_summary_value.setText(state.target_summary())
 
         if task_scope_summary == "未选择执行内容":
             self.task_builder_summary_label.setText("请至少勾选一个执行步骤后再创建任务。")
@@ -721,13 +842,14 @@ class ExecutionPage(SmoothScrollArea):
 
     def _build_cli_command_text(self) -> str | None:
         """根据当前勾选参数构造可复制的 CLI 命令。"""
-        if self._selected_task_scope_summary() == "未选择执行内容":
+        state = self._task_form_state
+        if state.task_scope_summary() == "未选择执行内容":
             return None
 
-        champion_ids, map_ids = self._current_target_ids()
+        champion_ids, map_ids = state.champion_ids, state.map_ids
         args = ["uv", "run", "unpack"]
 
-        if self.force_update_cb.isChecked():
+        if state.force_update:
             self._append_target_operation_args(
                 args,
                 operation_name="update",
@@ -736,7 +858,7 @@ class ExecutionPage(SmoothScrollArea):
             )
             args.append("--force")
 
-        if self.extract_task_cb.isChecked():
+        if state.include_extract:
             self._append_target_operation_args(
                 args,
                 operation_name="extract",
@@ -744,7 +866,7 @@ class ExecutionPage(SmoothScrollArea):
                 map_ids=map_ids,
             )
 
-        if self.mapping_task_cb.isChecked():
+        if state.include_mapping:
             self._append_target_operation_args(
                 args,
                 operation_name="mapping",
@@ -752,26 +874,32 @@ class ExecutionPage(SmoothScrollArea):
                 map_ids=map_ids,
             )
 
-        args.extend(["--max-workers", self.max_workers_combo.currentText()])
-        args.append("--with-bp-vo" if self.bp_voice_cb.isChecked() else "--no-with-bp-vo")
-        if self.vo_filter.currentRouteKey() == "VO":
+        args.extend(["--max-workers", state.max_workers_text])
+        args.append("--with-bp-vo" if state.with_bp_vo else "--no-with-bp-vo")
+        if state.vo_filter_key == "VO":
             args.extend(["--exclude-type", "SFX,MUSIC"])
-        if self.mapping_task_cb.isChecked() and self.integrate_data_cb.isChecked():
+        if state.include_mapping and state.integrate_data:
             args.append("--integrate-data")
 
         return " ".join(_quote_cli_arg(arg) for arg in args)
 
     def _reset_custom_inputs_to_defaults(self) -> None:
         """将自定义输入区恢复到默认状态。"""
+        current_state = self._task_form_state
+        defaults = self._task_form_defaults
         self._synced_selection = self._build_empty_synced_selection()
-        self.champion_ids_input.clear()
-        self.map_ids_input.clear()
-        self.vo_filter.setCurrentItem("VO")
-        self.max_workers_combo.setCurrentText("4")
-        self.bp_voice_cb.setChecked(True)
-        self.force_update_cb.setChecked(False)
-        self.integrate_data_cb.setChecked(False)
-        self._refresh_task_builder_state()
+        self._task_form_state = _ExecutionTaskFormState(
+            champion_ids=(),
+            map_ids=(),
+            include_extract=current_state.include_extract,
+            include_mapping=current_state.include_mapping,
+            vo_filter_key=defaults.vo_filter_key,
+            max_workers_text=defaults.max_workers_text,
+            with_bp_vo=defaults.with_bp_vo,
+            force_update=defaults.force_update,
+            integrate_data=defaults.integrate_data,
+        )
+        self._apply_task_form_state()
 
     def _draft_queue_size(self) -> int:
         """返回当前任务队列中的真实任务数。"""
@@ -941,7 +1069,7 @@ class ExecutionPage(SmoothScrollArea):
                 payload = item.data(TASK_ITEM_ROLE)
                 if isinstance(payload, QueuedExecutionTask):
                     content = f"任务 #{task_id} 已结束音频解包阶段。"
-                    if payload.draft.run_mapping:
+                    if payload.draft.task_params.run_mapping:
                         content = f"{content} 正在继续事件映射。"
                 else:
                     content = f"任务 #{task_id} 已结束音频解包阶段。"
@@ -1000,13 +1128,14 @@ class ExecutionPage(SmoothScrollArea):
         next_item = self._start_next_waiting_task()
         self._sync_task_queue_busy_state()
         if next_item is None:
+            refresh_request = self._build_output_state_refresh_request(updated_payload, task_result)
             self._refresh_progress_panel(
                 status_text="状态：最近任务已完成。",
                 note_text=f"100% · {updated_payload.result_summary or task_result.summary}",
                 progress_current=1,
                 progress_total=1,
             )
-            self.refresh_requested.emit()
+            self.output_state_refresh_requested.emit(refresh_request)
         else:
             self._refresh_progress_panel()
 
@@ -1047,13 +1176,18 @@ class ExecutionPage(SmoothScrollArea):
         next_item = self._start_next_waiting_task()
         self._sync_task_queue_busy_state()
         if next_item is None:
+            refresh_request = self._build_output_state_refresh_request(updated_payload, ExecutionTaskResult(
+                completed_steps=(),
+                summary=error,
+                duration_seconds=0.0,
+            ))
             self._refresh_progress_panel(
                 status_text="状态：最近任务执行失败。",
                 note_text=f"当前进度：{progress_current}/{progress_total} · {updated_payload.error_message or error}",
                 progress_current=progress_current,
                 progress_total=progress_total,
             )
-            self.refresh_requested.emit()
+            self.output_state_refresh_requested.emit(refresh_request)
         else:
             self._refresh_progress_panel()
         show_feedback_infobar(
@@ -1375,8 +1509,10 @@ class ExecutionPage(SmoothScrollArea):
             draft = ExecutionTaskDraft(
                 source="dev_console",
                 source_summary="开发控制台填充的 mock 队列",
-                champion_ids=(task_id,),
-                map_ids=(11,),
+                task_params=ExecutionTaskParamsSnapshot(
+                    champion_ids=(task_id,),
+                    map_ids=(11,),
+                ),
             )
             summary = f"Mock任务 {task_id} · 列表调试"
             queued_task = QueuedExecutionTask(

@@ -1,5 +1,7 @@
 """测试执行中心日志面板同步逻辑。"""
 
+from types import SimpleNamespace
+
 from loguru import logger
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
@@ -25,7 +27,13 @@ from lol_audio_unpack.gui.components.log_drawer import (
     _build_log_panel_toggle_rect,
     _resolve_log_panel_height,
 )
-from lol_audio_unpack.gui.task_models import ExecutionTaskProgress, ExecutionTaskResult
+from lol_audio_unpack.gui.task_models import (
+    AppContextInputSnapshot,
+    ExecutionTaskParamsSnapshot,
+    ExecutionTaskProgress,
+    ExecutionTaskResult,
+    OutputStateRefreshRequest,
+)
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 
 MAX_TOP_CARD_GAP = 36
@@ -259,13 +267,18 @@ def test_execution_page_builds_task_model_from_checkbox_selection(monkeypatch) -
 
     assert len(started_tasks) == 1
     queued_task = started_tasks[0]
-    assert queued_task.draft.champion_ids == (1, 103)
-    assert queued_task.draft.map_ids == (11,)
-    assert queued_task.draft.run_update is True
-    assert queued_task.draft.run_extract is True
-    assert queued_task.draft.run_mapping is True
-    assert queued_task.draft.with_bp_vo is False
-    assert queued_task.draft.integrate_data is True
+    assert queued_task.draft.context_input == AppContextInputSnapshot()
+    assert queued_task.draft.task_params == ExecutionTaskParamsSnapshot(
+        champion_ids=(1, 103),
+        map_ids=(11,),
+        run_update=True,
+        run_extract=True,
+        run_mapping=True,
+        max_workers=4,
+        with_bp_vo=False,
+        exclude_types=("SFX", "MUSIC"),
+        integrate_data=True,
+    )
     assert page.draft_list.count() == 1
     row_text = page.draft_list.item(0).text()
     assert "[运行中]" in row_text
@@ -281,6 +294,181 @@ def test_execution_page_builds_task_model_from_checkbox_selection(monkeypatch) -
     assert page.integrate_data_cb.isChecked() is False
     assert page.bp_voice_cb.isChecked() is True
     assert "[队列] #1" in page.current_log_text()
+
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_execution_page_set_gui_config_does_not_rebuild_task_form_from_app_context(monkeypatch) -> None:
+    """注入 GUI 配置时不应再为了任务表单默认值创建临时 AppContext。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    create_calls: list[bool] = []
+
+    monkeypatch.setattr(
+        page,
+        "_create_app_context",
+        lambda *args, **kwargs: create_calls.append(True),
+        raising=False,
+    )
+    page.bp_voice_cb.setChecked(False)
+    page.vo_filter.setCurrentItem("ALL")
+
+    page.set_gui_config(
+        SimpleNamespace(
+            smooth_scroll_enabled=False,
+            page_smooth_scroll_enabled=False,
+            widget_smooth_scroll_enabled=False,
+        )
+    )
+    app.processEvents()
+
+    assert create_calls == []
+    assert page.bp_voice_cb.isChecked() is False
+    assert page.vo_filter.currentRouteKey() == "ALL"
+
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_execution_page_reset_custom_inputs_uses_page_local_defaults() -> None:
+    """重置自定义输入时应统一回到执行页维护的本地默认值。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    page._task_form_defaults = execution_page_module._ExecutionTaskFormDefaults(  # type: ignore[attr-defined]
+        vo_filter_key="ALL",
+        max_workers_text="8",
+        with_bp_vo=False,
+        force_update=True,
+        integrate_data=True,
+    )
+    page.champion_ids_input.setText("1,103")
+    page.map_ids_input.setText("11")
+    page.vo_filter.setCurrentItem("VO")
+    page.max_workers_combo.setCurrentText("1")
+    page.bp_voice_cb.setChecked(True)
+    page.force_update_cb.setChecked(False)
+    page.integrate_data_cb.setChecked(False)
+    app.processEvents()
+
+    page._reset_custom_inputs_to_defaults()
+    app.processEvents()
+
+    assert page.champion_ids_input.text() == ""
+    assert page.map_ids_input.text() == ""
+    assert page.vo_filter.currentRouteKey() == "ALL"
+    assert page.max_workers_combo.currentText() == "8"
+    assert page.bp_voice_cb.isChecked() is False
+    assert page.force_update_cb.isChecked() is True
+    assert page.integrate_data_cb.isChecked() is True
+
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_execution_page_syncs_task_form_state_from_widgets() -> None:
+    """执行页控件变化后应同步到统一的任务表单状态对象。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    page.champion_ids_input.setText("1,103")
+    page.map_ids_input.setText("11")
+    page.extract_task_cb.setChecked(False)
+    page.mapping_task_cb.setChecked(True)
+    page.vo_filter.setCurrentItem("ALL")
+    page.max_workers_combo.setCurrentText("8")
+    page.bp_voice_cb.setChecked(False)
+    page.force_update_cb.setChecked(True)
+    page.integrate_data_cb.setChecked(True)
+    app.processEvents()
+
+    assert page._task_form_state == execution_page_module._ExecutionTaskFormState(  # type: ignore[attr-defined]
+        champion_ids=("1", "103"),
+        map_ids=("11",),
+        include_extract=False,
+        include_mapping=True,
+        vo_filter_key="ALL",
+        max_workers_text="8",
+        with_bp_vo=False,
+        force_update=True,
+        integrate_data=True,
+    )
+
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_execution_page_apply_task_form_state_drives_cli_and_draft() -> None:
+    """统一任务表单状态应能反向驱动控件、CLI 预览与入队草稿。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    page._task_form_state = execution_page_module._ExecutionTaskFormState(  # type: ignore[attr-defined]
+        champion_ids=("1", "103"),
+        map_ids=("11",),
+        include_extract=True,
+        include_mapping=False,
+        vo_filter_key="ALL",
+        max_workers_text="8",
+        with_bp_vo=False,
+        force_update=True,
+        integrate_data=True,
+    )
+    page._apply_task_form_state()  # type: ignore[attr-defined]
+    app.processEvents()
+
+    draft = page._build_task_draft()
+
+    assert page.champion_ids_input.text() == "1,103"
+    assert page.map_ids_input.text() == "11"
+    assert page.extract_task_cb.isChecked() is True
+    assert page.mapping_task_cb.isChecked() is False
+    assert page.vo_filter.currentRouteKey() == "ALL"
+    assert page.max_workers_combo.currentText() == "8"
+    assert page.bp_voice_cb.isChecked() is False
+    assert page.force_update_cb.isChecked() is True
+    assert page.integrate_data_cb.isChecked() is True
+    assert draft.task_params == ExecutionTaskParamsSnapshot(
+        champion_ids=(1, 103),
+        map_ids=(11,),
+        run_update=True,
+        run_extract=True,
+        run_mapping=False,
+        max_workers=8,
+        with_bp_vo=False,
+        exclude_types=(),
+        integrate_data=True,
+    )
+    assert page._build_cli_command_text() == (
+        "uv run unpack "
+        "--update-champions 1,103 --update-maps 11 --force "
+        "--extract-champions 1,103 --extract-maps 11 "
+        "--max-workers 8 --no-with-bp-vo"
+    )
+
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_execution_page_build_task_draft_uses_gui_config_snapshot_entrypoint() -> None:
+    """执行页构造任务草稿时应通过 GuiConfig 的显式快照入口获取共享上下文输入。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    expected_snapshot = AppContextInputSnapshot(overrides=(("OUTPUT_PATH", r".\output"),))
+
+    class FakeCfg:
+        smooth_scroll_enabled = False
+        page_smooth_scroll_enabled = False
+        widget_smooth_scroll_enabled = False
+
+        def to_app_context_input_snapshot(self):
+            return expected_snapshot
+
+        def to_app_context_overrides(self):
+            raise AssertionError("execution page should not read raw overrides directly")
+
+    page.set_gui_config(FakeCfg())
+    draft = page._build_task_draft()
+
+    assert draft.context_input == expected_snapshot
 
     page.deleteLater()
     app.processEvents()
@@ -396,8 +584,8 @@ def test_execution_page_marks_task_completed_after_worker_finishes(monkeypatch) 
     """首个任务完成后应写回完成状态并触发数据刷新请求。"""
     app = QApplication.instance() or QApplication([])
     page = ExecutionPage()
-    refresh_events: list[bool] = []
-    page.refresh_requested.connect(lambda: refresh_events.append(True))
+    refresh_events: list[object] = []
+    page.output_state_refresh_requested.connect(refresh_events.append)
 
     class _ImmediateThreadPool:
         def start(self, worker) -> None:
@@ -451,7 +639,12 @@ def test_execution_page_marks_task_completed_after_worker_finishes(monkeypatch) 
     assert "[已完成]" in page.draft_list.item(0).text()
     assert "已完成 1" in page.queue_progress_label.text()
     assert page.task_progress_note.text().startswith("100%")
-    assert refresh_events == [True]
+    assert refresh_events == [
+        OutputStateRefreshRequest(
+            champion_ids=("1", "103"),
+            map_ids=("11",),
+        )
+    ]
 
     page.deleteLater()
     app.processEvents()
@@ -481,8 +674,8 @@ def test_execution_page_only_requests_refresh_after_queue_drains(monkeypatch) ->
     """存在后续待执行任务时，不应提前触发共享数据刷新请求。"""
     app = QApplication.instance() or QApplication([])
     page = ExecutionPage()
-    refresh_events: list[bool] = []
-    page.refresh_requested.connect(lambda: refresh_events.append(True))
+    refresh_events: list[object] = []
+    page.output_state_refresh_requested.connect(refresh_events.append)
     monkeypatch.setattr(page, "_start_task_worker", lambda task: None)
     app.processEvents()
 
@@ -510,7 +703,7 @@ def test_execution_page_only_requests_refresh_after_queue_drains(monkeypatch) ->
     page._on_task_finished(second_payload.task_id, result)
     app.processEvents()
 
-    assert refresh_events == [True]
+    assert refresh_events == [OutputStateRefreshRequest(requires_full_refresh=True)]
 
     page.deleteLater()
     app.processEvents()

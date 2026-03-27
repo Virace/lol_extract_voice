@@ -29,8 +29,8 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
-from lol_audio_unpack.gui.components.accordion_setting_card import FormAccordionCard
 from lol_audio_unpack.gui.common import GuiConfig, apply_smooth_scroll_enabled
+from lol_audio_unpack.gui.components.accordion_setting_card import FormAccordionCard
 
 
 def _log_setting_stage(stage: str, startup_begin: float, previous_mark: float) -> float:
@@ -334,7 +334,7 @@ class SettingPage(SmoothScrollArea):
     output_path_changed = Signal(str)
     wwiser_path_changed = Signal(str)
     vgmstream_path_changed = Signal(str)
-    entity_data_config_changed = Signal()
+    shared_context_input_changed = Signal()
     smooth_scroll_changed = Signal(bool, bool)
     log_drawer_auto_collapse_changed = Signal(bool)
     log_levels_changed = Signal(object)
@@ -605,7 +605,11 @@ class SettingPage(SmoothScrollArea):
             file_level=cfg.file_log_level,
         )
 
-    def _save_config(self, *_args, emit_entity_data_change: bool = True) -> None:
+    def _save_config(
+        self,
+        *_args,
+        emit_shared_context_input_change: bool = True,
+    ) -> None:
         """将各控件当前值写入 GuiConfig 并持久化。"""
         cfg = self._cfg
 
@@ -624,8 +628,8 @@ class SettingPage(SmoothScrollArea):
         cfg.file_log_level = self.logLevelCard.fileValue()
 
         cfg.save()
-        if emit_entity_data_change:
-            self.entity_data_config_changed.emit()
+        if emit_shared_context_input_change:
+            self.shared_context_input_changed.emit()
 
     def _save_theme_config(self) -> None:
         """保存主题配置到 GuiConfig。"""
@@ -688,7 +692,7 @@ class SettingPage(SmoothScrollArea):
             self._cfg.save()
             self._apply_path_label(self.gamePathCard, path)
             self.game_path_changed.emit(path)
-            self.entity_data_config_changed.emit()
+            self.shared_context_input_changed.emit()
 
     def _pick_output_path(self) -> None:
         """弹出文件夹选择对话框，更新解包输出目录。"""
@@ -702,7 +706,7 @@ class SettingPage(SmoothScrollArea):
             self._cfg.save()
             self._apply_path_label(self.outputPathCard, path, r".\output")
             self.output_path_changed.emit(path)
-            self.entity_data_config_changed.emit()
+            self.shared_context_input_changed.emit()
 
     def _pick_wwiser(self) -> None:
         """弹出文件选择对话框，更新 wwiser.py 路径。"""
@@ -783,7 +787,7 @@ class SettingPage(SmoothScrollArea):
 
     def _on_smooth_scroll_changed(self, _checked: bool) -> None:
         """保存并广播平滑滚动配置。"""
-        self._save_config(emit_entity_data_change=False)
+        self._save_config(emit_shared_context_input_change=False)
         page_enabled = self.smoothScrollCard.pageScrollEnabled()
         widget_enabled = self.smoothScrollCard.widgetScrollEnabled()
         apply_smooth_scroll_enabled(self, page_enabled)
@@ -791,12 +795,12 @@ class SettingPage(SmoothScrollArea):
 
     def _on_log_drawer_auto_collapse_changed(self, _checked: bool) -> None:
         """保存并广播日志抽屉点击外部自动收起配置。"""
-        self._save_config(emit_entity_data_change=False)
+        self._save_config(emit_shared_context_input_change=False)
         self.log_drawer_auto_collapse_changed.emit(self.logDrawerAutoCollapseCard.isChecked())
 
     def _on_console_log_level_changed(self, _value: str) -> None:
         """保存控制台日志等级，并在高频级别下提醒用户。"""
-        self._save_config(emit_entity_data_change=False)
+        self._save_config(emit_shared_context_input_change=False)
         if self.consoleLogLevelCard.value() in {"DEBUG", "TRACE"}:
             dialog = MessageBox(
                 "高频日志提示",
@@ -811,7 +815,7 @@ class SettingPage(SmoothScrollArea):
 
     def _on_file_log_level_changed(self, _value: str) -> None:
         """保存文件日志等级并广播配置变更。"""
-        self._save_config(emit_entity_data_change=False)
+        self._save_config(emit_shared_context_input_change=False)
         self.log_levels_changed.emit(self._cfg)
 
     # ------------------------------------------------------------------

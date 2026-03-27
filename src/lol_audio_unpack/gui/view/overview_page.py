@@ -157,6 +157,30 @@ class OverviewPage(QWidget):
         else:
             self._update_selection_summary()
 
+    def update_entity_rows(self, entity_type: str, rows: list[dict[str, Any]]) -> None:
+        """按实体 ID 增量更新页面缓存并刷新当前列表。"""
+        if entity_type not in self._cached_data or not rows:
+            return
+
+        row_by_id = {str(row["id"]): row for row in rows}
+        merged_rows: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+
+        for row in self._cached_data[entity_type]:
+            entity_id = str(row.get("id", ""))
+            if entity_id in row_by_id:
+                merged_rows.append(row_by_id[entity_id])
+                seen_ids.add(entity_id)
+            else:
+                merged_rows.append(row)
+
+        for row in rows:
+            entity_id = str(row["id"])
+            if entity_id not in seen_ids:
+                merged_rows.append(row)
+
+        self.set_entity_data(entity_type, merged_rows)
+
     def clear_data(self) -> None:
         """清空页面缓存并恢复占位内容。"""
         self._cached_data = {"champions": [], "maps": []}

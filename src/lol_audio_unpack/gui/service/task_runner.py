@@ -44,8 +44,9 @@ def _resolve_task_scope(task: QueuedExecutionTask) -> tuple[str, bool, bool]:
     Returns:
         ``(target, include_champions, include_maps)`` 元组。
     """
-    champion_ids = task.draft.champion_ids
-    map_ids = task.draft.map_ids
+    task_params = task.draft.task_params
+    champion_ids = task_params.champion_ids
+    map_ids = task_params.map_ids
 
     include_champions = champion_ids is None or len(champion_ids) > 0
     include_maps = map_ids is None or len(map_ids) > 0
@@ -68,9 +69,8 @@ def _build_runtime_overrides(task: QueuedExecutionTask) -> dict[str, str | bool]
     Returns:
         可直接传给 ``create_app_context`` 的配置映射。
     """
-    overrides = dict(task.draft.app_context_overrides)
-    overrides["WITH_BP_VO"] = task.draft.with_bp_vo
-    overrides["EXCLUDE_TYPE"] = ",".join(task.draft.exclude_types)
+    overrides = task.draft.context_input.to_cli_overrides()
+    overrides.update(task.draft.task_params.to_runtime_overrides())
     return overrides
 
 
@@ -125,13 +125,14 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     overrides = _build_runtime_overrides(task)
     app_context = create_app_context(cli_overrides=overrides)
     app = LolAudioUnpackApp(app_context)
-    options = task.draft.to_operation_options()
+    task_params = task.draft.task_params
+    options = task_params.to_operation_options()
     target, include_champions, include_maps = _resolve_task_scope(task)
     task_scope_label = _build_scope_label(
         include_champions=include_champions,
         include_maps=include_maps,
     )
-    steps = task.draft.selected_steps()
+    steps = task_params.selected_steps()
     completed_steps: list[str] = []
 
     try:

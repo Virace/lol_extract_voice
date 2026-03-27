@@ -4,6 +4,7 @@ from pathlib import Path
 
 from lol_audio_unpack.gui.common import gui_config as gui_config_module
 from lol_audio_unpack.gui.common.gui_config import GuiConfig
+from lol_audio_unpack.gui.task_models import AppContextInputSnapshot
 from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
 
 
@@ -70,6 +71,43 @@ def test_gui_config_to_app_context_overrides(monkeypatch, tmp_path):
         "REMOTE_GAME_MANIFEST_URL": "https://example.com/game",
         "WWISER_PATH": sample_wwiser_path,
     }
+
+
+def test_gui_config_to_app_context_input_snapshot(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _use_fake_qsettings(monkeypatch)
+    sample_game_path = _sample_path(tmp_path, "game-client")
+    sample_output_path = _sample_path(tmp_path, "output-root")
+    sample_wwiser_path = _sample_path(tmp_path, "tools", "wwiser.pyz")
+
+    cfg = GuiConfig()
+    cfg.source_mode = "remote_snapshot"
+    cfg.game_path = sample_game_path
+    cfg.output_path = sample_output_path
+    cfg.game_region = "zh_CN"
+    cfg.group_by_type = True
+    cfg.remote_live_region = "KR"
+    cfg.cleanup_remote = False
+    cfg.snapshot_version = "14.1"
+    cfg.snapshot_lcu_url = "https://example.com/lcu"
+    cfg.snapshot_game_url = "https://example.com/game"
+    cfg.wwiser_path = sample_wwiser_path
+
+    assert cfg.to_app_context_input_snapshot() == AppContextInputSnapshot(
+        overrides=(
+            ("SOURCE_MODE", "remote_snapshot"),
+            ("GAME_PATH", sample_game_path),
+            ("OUTPUT_PATH", sample_output_path),
+            ("GAME_REGION", "zh_CN"),
+            ("GROUP_BY_TYPE", True),
+            ("REMOTE_LIVE_REGION", "KR"),
+            ("CLEANUP_REMOTE", False),
+            ("REMOTE_VERSION", "14.1"),
+            ("REMOTE_LCU_MANIFEST_URL", "https://example.com/lcu"),
+            ("REMOTE_GAME_MANIFEST_URL", "https://example.com/game"),
+            ("WWISER_PATH", sample_wwiser_path),
+        ),
+    )
 
 
 def test_gui_config_load_migrates_legacy_vgmstream_env_key(monkeypatch, tmp_path):

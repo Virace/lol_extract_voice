@@ -103,6 +103,33 @@ def test_main_window_does_not_initialize_dev_console_until_triggered(monkeypatch
     _dispose_main_window(window, app)
 
 
+def test_main_window_disables_refresh_action_while_task_queue_busy(monkeypatch) -> None:
+    """任务执行期间应同时锁定设置页与手动刷新入口。"""
+    app = QApplication.instance() or QApplication([])
+
+    monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
+    window = MainWindow()
+    app.processEvents()
+
+    refresh_widget = window.navigationInterface.widget("refreshSharedData")
+    assert refresh_widget is not None
+    assert refresh_widget.isEnabled() is True
+
+    window._on_task_queue_busy_changed(True)
+    app.processEvents()
+
+    assert window.settingInterface._runtime_config_locked is True
+    assert refresh_widget.isEnabled() is False
+
+    window._on_task_queue_busy_changed(False)
+    app.processEvents()
+
+    assert window.settingInterface._runtime_config_locked is False
+    assert refresh_widget.isEnabled() is True
+
+    _dispose_main_window(window, app)
+
+
 def test_main_window_uses_real_app_icon_for_window_and_splash(monkeypatch) -> None:
     """主窗口与启动页都应使用当前资源目录中的应用图标。"""
     app = QApplication.instance() or QApplication([])
@@ -351,7 +378,7 @@ def test_main_window_output_path_change_keeps_reader_cache_without_auto_prepare(
 
     cfg = window.settingInterface.config
     cfg.output_path = r".\new-output"
-    window._on_entity_data_config_changed()
+    window._on_shared_context_input_changed()
     app.processEvents()
     window._flush_pending_runtime_entity_refresh()
     app.processEvents()
@@ -382,7 +409,7 @@ def test_main_window_game_path_change_resets_reader_and_allows_auto_prepare(monk
 
     cfg = window.settingInterface.config
     cfg.game_path = r".\another-game"
-    window._on_entity_data_config_changed()
+    window._on_shared_context_input_changed()
     app.processEvents()
     window._flush_pending_runtime_entity_refresh()
     app.processEvents()
@@ -393,8 +420,8 @@ def test_main_window_game_path_change_resets_reader_and_allows_auto_prepare(monk
     _dispose_main_window(window, app)
 
 
-def test_main_window_manual_refresh_materializes_current_shared_data(monkeypatch) -> None:
-    """手动刷新数据时，应先尝试重载当前输出目录，再按需自动准备。"""
+def test_main_window_manual_refresh_falls_back_to_full_reload_without_shared_context(monkeypatch) -> None:
+    """共享上下文未就绪时，手动刷新应回退到完整共享刷新。"""
     app = QApplication.instance() or QApplication([])
 
     monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
@@ -412,17 +439,17 @@ def test_main_window_manual_refresh_materializes_current_shared_data(monkeypatch
     app.processEvents()
 
     window.settingInterface.config.output_path = r".\manual-refresh-output"
-    window._refresh_shared_output_data()
+    window._refresh_shared_output_state()
     app.processEvents()
 
     assert reload_calls == [(True, True)]
-    assert reset_calls == [True]
+    assert reset_calls == []
 
     _dispose_main_window(window, app)
 
 
-def test_main_window_manual_refresh_logs_user_visible_info(monkeypatch) -> None:
-    """手动刷新数据时，应保留一条用户可见的 info 级进度日志。"""
+def test_main_window_manual_refresh_logs_fallback_reason(monkeypatch) -> None:
+    """共享上下文未就绪时，手动刷新应输出明确的回退日志。"""
     app = QApplication.instance() or QApplication([])
 
     monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
@@ -437,10 +464,10 @@ def test_main_window_manual_refresh_logs_user_visible_info(monkeypatch) -> None:
     monkeypatch.setattr(logger, "info", capture_info)
     app.processEvents()
 
-    window._refresh_shared_output_data()
+    window._refresh_shared_output_state()
     app.processEvents()
 
-    assert info_messages == ["开始刷新共享实体数据"]
+    assert info_messages == ["共享上下文尚未就绪，回退到完整共享数据刷新"]
 
     _dispose_main_window(window, app)
 
@@ -488,7 +515,7 @@ def test_main_window_output_path_change_reconfigures_logging(monkeypatch) -> Non
     app.processEvents()
 
     window.settingInterface.config.output_path = r".\reconfigured-output"
-    window._on_entity_data_config_changed()
+    window._on_shared_context_input_changed()
     app.processEvents()
 
     assert reconfigure_calls == [window.settingInterface.config]

@@ -23,6 +23,7 @@ from pathlib import Path
 from dotenv import dotenv_values, set_key, unset_key
 from PySide6.QtCore import QSettings
 
+from lol_audio_unpack.gui.task_models import AppContextInputSnapshot
 from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
 
 # ---------------------------------------------------------------------------
@@ -175,6 +176,12 @@ class GuiConfig:
             "REMOTE_GAME_MANIFEST_URL": self._snapshot_game_url,
             "WWISER_PATH": self._wwiser_path,
         }
+
+    def to_app_context_input_snapshot(self) -> AppContextInputSnapshot:
+        """构建执行中心可直接消费的共享上下文输入快照。"""
+        return AppContextInputSnapshot(
+            overrides=tuple(self.to_app_context_overrides().items()),
+        )
 
     # ------------------------------------------------------------------
     # Properties — source

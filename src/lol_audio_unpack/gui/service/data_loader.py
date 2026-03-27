@@ -142,6 +142,46 @@ class EntityDataLoader:
 
         return AudioEntityData.from_map(int(entity_id), self.data_reader, ctx=self.ctx)
 
+    def _load_raw_entities(self, entity_type: GuiEntityType) -> tuple[str, list[dict]]:
+        """读取指定实体类型对应的原始实体列表与版本号。"""
+        version = self.data_reader.version
+        raw_data = (
+            get_default_visible_champions(self.data_reader)
+            if entity_type == "champions"
+            else self.data_reader.get_maps()
+        )
+        return version, raw_data
+
+    def _build_entity_row(self, entity_type: GuiEntityType, entity_dict: dict, version: str) -> dict:
+        """将单个原始实体字典转换为 GUI 行数据。"""
+        entity_id = str(entity_dict["id"])
+        entity_data = self._build_entity_data(entity_type, entity_id)
+
+        audio_status, mapping_status = check_entity_status(
+            self.ctx, entity_data, version
+        )
+        mapping_path = resolve_mapping_file_path(
+            self.ctx,
+            entity_type,
+            entity_id,
+            version,
+        )
+
+        if entity_data.entity_title:
+            display_name = f"{entity_data.entity_name}·{entity_data.entity_title}"
+        else:
+            display_name = entity_data.entity_name
+
+        return {
+            "id": entity_id,
+            "name": display_name,
+            "alias": entity_data.entity_alias or "",
+            "audio": audio_status,
+            "mapping": mapping_status,
+            "entity_type": entity_type,
+            "mapping_file": str(mapping_path) if mapping_path else "",
+        }
+
     def load_entities(self, entity_type: Literal["champions", "maps"]) -> list[dict]:
         """加载指定类型的实体数据。
 
@@ -152,8 +192,7 @@ class EntityDataLoader:
             供 GUI 直接展示的实体列表。
         """
         try:
-            version = self.data_reader.version
-            raw_data = get_default_visible_champions(self.data_reader) if entity_type == "champions" else self.data_reader.get_maps()
+            version, raw_data = self._load_raw_entities(entity_type)
         except Exception as e:
             logger.warning(f"Error initializing data for {entity_type}: {e}")
             logger.debug(traceback.format_exc())
@@ -162,33 +201,34 @@ class EntityDataLoader:
         result = []
         for entity_dict in raw_data:
             try:
-                entity_id = str(entity_dict["id"])
-                entity_data = self._build_entity_data(entity_type, entity_id)
+                result.append(self._build_entity_row(entity_type, entity_dict, version))
+            except Exception as e:
+                logger.warning(f"Error loading entity {entity_dict.get('id', 'unknown')}: {e}")
+                logger.debug(traceback.format_exc())
+                continue
 
-                audio_status, mapping_status = check_entity_status(
-                    self.ctx, entity_data, version
-                )
-                mapping_path = resolve_mapping_file_path(
-                    self.ctx,
-                    entity_type,
-                    entity_id,
-                    version,
-                )
+        return result
 
-                if entity_data.entity_title:
-                    display_name = f"{entity_data.entity_name}·{entity_data.entity_title}"
-                else:
-                    display_name = entity_data.entity_name
+    def load_entities_by_ids(self, entity_type: GuiEntityType, entity_ids: tuple[str, ...]) -> list[dict]:
+        """按实体 ID 增量加载指定类型的 GUI 行数据。"""
+        if not entity_ids:
+            return []
 
-                result.append({
-                    "id": entity_id,
-                    "name": display_name,
-                    "alias": entity_data.entity_alias or "",
-                    "audio": audio_status,
-                    "mapping": mapping_status,
-                    "entity_type": entity_type,
-                    "mapping_file": str(mapping_path) if mapping_path else "",
-                })
+        target_ids = set(entity_ids)
+        try:
+            version, raw_data = self._load_raw_entities(entity_type)
+        except Exception as e:
+            logger.warning(f"Error initializing data for {entity_type}: {e}")
+            logger.debug(traceback.format_exc())
+            raise
+
+        result = []
+        for entity_dict in raw_data:
+            entity_id = str(entity_dict.get("id", ""))
+            if entity_id not in target_ids:
+                continue
+            try:
+                result.append(self._build_entity_row(entity_type, entity_dict, version))
             except Exception as e:
                 logger.warning(f"Error loading entity {entity_dict.get('id', 'unknown')}: {e}")
                 logger.debug(traceback.format_exc())

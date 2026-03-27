@@ -15,12 +15,25 @@ TASK_STATUS_CANCELLED = "已取消"
 
 
 @dataclass(slots=True, frozen=True)
-class ExecutionTaskDraft:
-    """执行中心中的任务草稿快照。
+class AppContextInputSnapshot:
+    """任务创建时记录的共享上下文输入快照。
 
     Args:
-        source: 任务来源标识，例如 ``overview_selection`` 或 ``manual_input``。
-        source_summary: 创建任务时展示给用户的来源摘要。
+        overrides: 创建 ``AppContext`` 时需要使用的输入覆盖配置。
+    """
+
+    overrides: tuple[tuple[str, str | bool], ...] = ()
+
+    def to_cli_overrides(self) -> dict[str, str | bool]:
+        """转换为 ``create_app_context`` 可直接消费的覆盖配置。"""
+        return dict(self.overrides)
+
+
+@dataclass(slots=True, frozen=True)
+class ExecutionTaskParamsSnapshot:
+    """任务创建时记录的单次执行参数快照。
+
+    Args:
         champion_ids: 目标英雄 ID；为空时表示不限制英雄范围。
         map_ids: 目标地图 ID；为空时表示不限制地图范围。
         run_update: 是否在执行前先跑更新流程。
@@ -30,11 +43,8 @@ class ExecutionTaskDraft:
         with_bp_vo: 是否包含 BP 语音。
         exclude_types: 需要排除的音频类型。
         integrate_data: 是否在映射阶段生成整合数据文件。
-        app_context_overrides: 创建 ``AppContext`` 时使用的配置快照。
     """
 
-    source: str
-    source_summary: str
     champion_ids: tuple[int, ...] | None = None
     map_ids: tuple[int, ...] | None = None
     run_update: bool = False
@@ -44,10 +54,9 @@ class ExecutionTaskDraft:
     with_bp_vo: bool = True
     exclude_types: tuple[str, ...] = ("SFX", "MUSIC")
     integrate_data: bool = False
-    app_context_overrides: tuple[tuple[str, str | bool], ...] = ()
 
     def selected_steps(self) -> tuple[str, ...]:
-        """返回当前草稿实际勾选的执行步骤。
+        """返回当前任务参数实际勾选的执行步骤。
 
         Returns:
             按执行顺序排列的步骤名称元组。
@@ -65,7 +74,7 @@ class ExecutionTaskDraft:
         """转换为后端门面可直接消费的 ``OperationOptions``。
 
         Returns:
-            基于当前草稿构造的操作选项对象。
+            基于当前任务参数构造的操作选项对象。
         """
         return OperationOptions(
             max_workers=self.max_workers,
@@ -75,6 +84,30 @@ class ExecutionTaskDraft:
             champion_ids=self.champion_ids,
             map_ids=self.map_ids,
         )
+
+    def to_runtime_overrides(self) -> dict[str, str | bool]:
+        """构造只属于单次任务的运行时覆盖配置。"""
+        return {
+            "WITH_BP_VO": self.with_bp_vo,
+            "EXCLUDE_TYPE": ",".join(self.exclude_types),
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class ExecutionTaskDraft:
+    """执行中心中的任务草稿快照。
+
+    Args:
+        source: 任务来源标识，例如 ``overview_selection`` 或 ``manual_input``。
+        source_summary: 创建任务时展示给用户的来源摘要。
+        context_input: 创建任务当时的共享上下文输入快照。
+        task_params: 创建任务当时的单次任务参数快照。
+    """
+
+    source: str
+    source_summary: str
+    context_input: AppContextInputSnapshot = field(default_factory=AppContextInputSnapshot)
+    task_params: ExecutionTaskParamsSnapshot = field(default_factory=ExecutionTaskParamsSnapshot)
 
 
 @dataclass(slots=True, frozen=True)
@@ -148,3 +181,16 @@ class ExecutionTaskResult:
     completed_steps: tuple[str, ...]
     summary: str
     duration_seconds: float
+
+
+@dataclass(slots=True, frozen=True)
+class OutputStateRefreshRequest:
+    """任务完成后用于刷新 GUI 实体状态的请求。"""
+
+    champion_ids: tuple[str, ...] = ()
+    map_ids: tuple[str, ...] = ()
+    requires_full_refresh: bool = False
+
+    def has_incremental_targets(self) -> bool:
+        """返回当前请求是否包含可增量刷新的实体目标。"""
+        return bool(self.champion_ids or self.map_ids)

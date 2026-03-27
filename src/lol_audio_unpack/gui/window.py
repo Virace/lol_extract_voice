@@ -36,7 +36,9 @@ from lol_audio_unpack.gui.components.log_drawer import (
     GlobalLogDrawer,
     _build_log_panel_host_rect,
 )
+from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 from lol_audio_unpack.gui.service.worker import DataLoadWorker
+from lol_audio_unpack.gui.task_models import OutputStateRefreshRequest
 from lol_audio_unpack.gui.view.about_page import AboutPage
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 from lol_audio_unpack.gui.view.home_page import HomePage
@@ -199,7 +201,7 @@ class MainWindow(FluentWindow):
             routeKey="refreshSharedData",
             icon=FIF.SYNC,
             text="刷新数据",
-            onClick=self._refresh_shared_output_data,
+            onClick=self._refresh_shared_output_state,
             selectable=False,
         )
 
@@ -417,10 +419,10 @@ class MainWindow(FluentWindow):
         self.executionInterface.set_gui_config(cfg)
         self.overviewInterface.set_gui_config(cfg)
         self.overviewInterface.selection_sync_requested.connect(self._sync_selection_to_execution_center)
-        self.executionInterface.refresh_requested.connect(self._refresh_shared_output_data)
+        self.executionInterface.output_state_refresh_requested.connect(self._refresh_shared_output_state)
         self.executionInterface.task_queue_busy_changed.connect(self._on_task_queue_busy_changed)
         self.executionInterface.log_lines_appended.connect(self._append_global_log_lines)
-        self.settingInterface.entity_data_config_changed.connect(self._on_entity_data_config_changed)
+        self.settingInterface.shared_context_input_changed.connect(self._on_shared_context_input_changed)
         self.settingInterface.smooth_scroll_changed.connect(self._apply_smooth_scroll_setting)
         self.settingInterface.log_drawer_auto_collapse_changed.connect(
             self._apply_log_drawer_auto_collapse_setting
@@ -541,6 +543,9 @@ class MainWindow(FluentWindow):
     def _on_task_queue_busy_changed(self, busy: bool) -> None:
         """在任务队列忙碌状态变化时同步设置页锁定与延迟刷新。"""
         self.settingInterface.set_runtime_config_locked(busy)
+        refresh_widget = self.navigationInterface.widget("refreshSharedData")
+        if refresh_widget is not None:
+            refresh_widget.setEnabled(not busy)
         if busy:
             self._runtime_entity_refresh_timer.stop()
             return
@@ -588,8 +593,8 @@ class MainWindow(FluentWindow):
         self.overviewInterface.set_smooth_scroll_enabled(widget_enabled)
         apply_smooth_scroll_enabled(self._global_log_drawer.output_widget, widget_enabled)
 
-    def _refresh_shared_output_data(self):
-        """刷新解包页与事件映射页共用的本地输出数据。"""
+    def _refresh_shared_output_state(self, refresh_request: object | None = None):
+        """仅刷新解包产物对应的实体检测状态与输出扫描结果。"""
         self._reconfigure_runtime_logging(self.settingInterface.config)
         if self.executionInterface.has_incomplete_tasks():
             logger.debug("执行中心仍有未完成任务，忽略共享刷新请求")
@@ -605,9 +610,48 @@ class MainWindow(FluentWindow):
             logger.debug("共享数据仍在加载中，忽略重复刷新请求")
             return
 
-        logger.info("开始刷新共享实体数据")
-        _reset_data_reader_singleton()
-        self._request_shared_data_reload(show_notice=True, allow_auto_prepare=True)
+        request = refresh_request if isinstance(refresh_request, OutputStateRefreshRequest) else None
+        self._pending_refresh_notice = True
+        if self._data_app_context is None:
+            logger.info("共享上下文尚未就绪，回退到完整共享数据刷新")
+            self._request_shared_data_reload(show_notice=True, allow_auto_prepare=True)
+            return
+
+        if request is not None and not request.requires_full_refresh and request.has_incremental_targets():
+            logger.info("开始增量刷新共享输出状态")
+            try:
+                loader = EntityDataLoader(self._data_app_context)
+                if request.champion_ids:
+                    champion_rows = loader.load_entities_by_ids("champions", request.champion_ids)
+                    self.executionInterface.update_entity_rows("champions", champion_rows)
+                    self.overviewInterface.update_entity_rows("champions", champion_rows)
+                if request.map_ids:
+                    map_rows = loader.load_entities_by_ids("maps", request.map_ids)
+                    self.executionInterface.update_entity_rows("maps", map_rows)
+                    self.overviewInterface.update_entity_rows("maps", map_rows)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"增量刷新共享输出状态失败，回退到全量刷新: {exc}")
+                self._request_shared_data_reload(show_notice=True, allow_auto_prepare=True)
+                return
+
+            if self._pending_refresh_notice:
+                self._show_refresh_infobar(
+                    title="数据已刷新",
+                    content="受影响实体的状态已按任务结果增量更新。",
+                    level="success",
+                )
+                self._pending_refresh_notice = False
+            return
+
+        logger.info("开始刷新共享输出状态")
+        self._allow_auto_prepare_on_shared_reload = False
+        self._shared_data_auto_prepare_attempted = False
+        self._is_loading_shared_data = True
+        self.homeInterface.set_loading_state("正在刷新输出状态…", active=True)
+        self._champions_worker = DataLoadWorker(self._data_app_context, "champions")
+        self._champions_worker.finished.connect(self._on_champions_loaded)
+        self._champions_worker.error.connect(self._on_data_load_error)
+        self._champions_worker.start()
 
     def _show_refresh_infobar(self, *, title: str, content: str, level: str) -> None:
         """在共享刷新完成后展示 InfoBar 通知。"""
@@ -642,8 +686,8 @@ class MainWindow(FluentWindow):
         self.homeInterface.set_loading_state("正在重新加载数据…", active=True)
         self._load_initial_data(cfg)
 
-    def _on_entity_data_config_changed(self) -> None:
-        """根据运行时配置变化类型安排共享实体数据刷新。"""
+    def _on_shared_context_input_changed(self) -> None:
+        """根据共享上下文输入变化类型安排共享实体数据刷新。"""
         cfg = self.settingInterface.config
         current_reader_signature = _build_shared_entity_reader_signature(cfg)
         current_scan_signature = _build_shared_entity_scan_signature(cfg)
