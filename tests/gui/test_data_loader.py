@@ -89,6 +89,26 @@ def test_resolve_mapping_file_path(mock_app_context):
     mock_find.assert_called_once()
 
 
+def test_resolve_mapping_file_path_prefers_integrated(mock_app_context):
+    """映射预览应优先使用 integrated 目录中的整合文件。"""
+    integrated_path = Path(mock_app_context.paths.hash_path) / "14.1.0" / "integrated" / "champions" / "1.msgpack"
+    normal_path = Path(mock_app_context.paths.hash_path) / "14.1.0" / "champions" / "1.msgpack"
+
+    def fake_find_data_file(path: Path, *, dev_mode: bool):
+        if "integrated" in str(path):
+            return integrated_path
+        return normal_path
+
+    with patch(
+        "lol_audio_unpack.gui.service.data_loader.find_data_file",
+        side_effect=fake_find_data_file,
+    ) as mock_find:
+        actual = resolve_mapping_file_path(mock_app_context, "champions", "1", "14.1.0")
+
+    assert actual == integrated_path
+    assert mock_find.call_count == 1
+
+
 def test_entity_data_loader_load_entities(mock_app_context):
     """测试实体数据加载"""
     with patch("lol_audio_unpack.gui.service.data_loader.DataReader") as mock_reader_cls:
@@ -198,6 +218,125 @@ def test_entity_data_loader_load_mapping_preview(mock_app_context):
     assert actual_data == expected_data
     assert '"entityName": "安妮"' in content
     assert '"Play_VO_Annie_Attack"' in content
+
+
+def test_entity_data_loader_load_mapping_preview_adapts_integrated_data(mock_app_context):
+    """整合版映射应保留原始文本预览，同时适配为普通 mapping 视图。"""
+    expected_path = Path(mock_app_context.paths.hash_path) / "14.1.0" / "integrated" / "champions" / "1.msgpack"
+    integrated_data = {
+        "metadata": {"gameVersion": "14.1.0", "languages": ["zh_CN"]},
+        "data": {
+            "championId": "1",
+            "alias": "annie",
+            "skins": [
+                {
+                    "id": 1000,
+                    "isBase": True,
+                    "skinNames": {"zh_CN": "经典"},
+                    "binPath": "Characters/Annie/Skins/Base",
+                    "events": {
+                        "Annie_Base_VO": {
+                            "banks": [["vo_audio.bnk", "vo_events.bnk"]],
+                            "mapping": {
+                                "Play_VO_Annie_Attack": [1, 2, 3],
+                            },
+                        }
+                    },
+                }
+            ],
+        },
+    }
+
+    with patch("lol_audio_unpack.gui.service.data_loader.DataReader") as mock_reader_cls:
+        mock_reader = Mock()
+        mock_reader.version = "14.1.0"
+        mock_reader_cls.return_value = mock_reader
+
+        with patch(
+            "lol_audio_unpack.gui.service.data_loader.resolve_mapping_file_path",
+            return_value=expected_path,
+        ), patch(
+            "lol_audio_unpack.gui.service.data_loader.read_data",
+            return_value=integrated_data,
+        ):
+            loader = EntityDataLoader(mock_app_context)
+            actual_path, actual_data, content = loader.load_mapping_preview("champions", "1")
+
+    assert actual_path == expected_path
+    assert actual_data == {
+        "metadata": {"gameVersion": "14.1.0", "languages": ["zh_CN"]},
+        "championId": "1",
+        "alias": "annie",
+        "skins": {
+            "1000": {
+                "events": {
+                    "Annie_Base_VO": {
+                        "Play_VO_Annie_Attack": [1, 2, 3],
+                    }
+                }
+            }
+        },
+    }
+    assert '"data"' in content
+    assert '"banks"' in content
+    assert '"mapping"' in content
+
+
+def test_entity_data_loader_load_mapping_preview_adapts_integrated_map_data(mock_app_context):
+    """整合版地图映射也应适配为普通预览结构。"""
+    expected_path = Path(mock_app_context.paths.hash_path) / "14.1.0" / "integrated" / "maps" / "11.msgpack"
+    integrated_data = {
+        "metadata": {"gameVersion": "14.1.0", "languages": ["zh_CN"]},
+        "data": {
+            "mapId": "11",
+            "name": "召唤师峡谷",
+            "map": {
+                "id": 11,
+                "events": {
+                    "ENV_Map11_SFX": {
+                        "banks": [["map_audio.bnk", "map_events.bnk"]],
+                        "mapping": {
+                            "Play_Map11_Ambience": [7654321],
+                        },
+                    }
+                },
+            },
+        },
+    }
+
+    with patch("lol_audio_unpack.gui.service.data_loader.DataReader") as mock_reader_cls:
+        mock_reader = Mock()
+        mock_reader.version = "14.1.0"
+        mock_reader_cls.return_value = mock_reader
+
+        with patch(
+            "lol_audio_unpack.gui.service.data_loader.resolve_mapping_file_path",
+            return_value=expected_path,
+        ), patch(
+            "lol_audio_unpack.gui.service.data_loader.read_data",
+            return_value=integrated_data,
+        ):
+            loader = EntityDataLoader(mock_app_context)
+            actual_path, actual_data, content = loader.load_mapping_preview("maps", "11")
+
+    assert actual_path == expected_path
+    assert actual_data == {
+        "metadata": {"gameVersion": "14.1.0", "languages": ["zh_CN"]},
+        "mapId": "11",
+        "name": "召唤师峡谷",
+        "map": {
+            "11": {
+                "events": {
+                    "ENV_Map11_SFX": {
+                        "Play_Map11_Ambience": [7654321],
+                    }
+                }
+            }
+        },
+    }
+    assert '"data"' in content
+    assert '"banks"' in content
+    assert '"mapping"' in content
 
 
 def test_entity_data_loader_load_available_audio_ids(mock_app_context, tmp_path):

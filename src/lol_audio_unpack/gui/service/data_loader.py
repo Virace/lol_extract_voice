@@ -20,6 +20,99 @@ from lol_audio_unpack.utils.path_constants import format_entity_folder_name, get
 GuiEntityType = Literal["champions", "maps"]
 
 
+def _build_mapping_preview_base(metadata: dict[str, object] | None) -> dict[str, object]:
+    """构造预览适配后的基础映射数据。"""
+    return {"metadata": dict(metadata) if isinstance(metadata, dict) else {}}
+
+
+def _normalize_integrated_events(events_payload: object) -> dict[str, dict[str, list[object]]]:
+    """把整合版事件节点还原成预览树可消费的 mapping 结构。
+
+    Args:
+        events_payload: 整合版 ``events`` 原始节点。
+
+    Returns:
+        与普通 mapping 对齐的 ``{category: {event_name: [audio_ids]}}`` 结构。
+    """
+    normalized_events: dict[str, dict[str, list[object]]] = {}
+    if not isinstance(events_payload, dict):
+        return normalized_events
+
+    for category, category_payload in events_payload.items():
+        if not isinstance(category_payload, dict):
+            continue
+        mapping_payload = category_payload.get("mapping")
+        if not isinstance(mapping_payload, dict):
+            continue
+        normalized_events[str(category)] = {
+            str(event_name): list(audio_ids)
+            for event_name, audio_ids in mapping_payload.items()
+            if isinstance(audio_ids, list | tuple)
+        }
+
+    return normalized_events
+
+
+def _normalize_integrated_mapping_data(
+    mapping_data: dict[str, object] | None,
+    *,
+    entity_type: GuiEntityType,
+    entity_id: str,
+) -> dict[str, object] | None:
+    """把整合版 mapping 数据投影成当前预览页使用的普通视图。
+
+    Args:
+        mapping_data: 原始 mapping 数据。
+        entity_type: GUI 实体类型目录名。
+        entity_id: 当前实体 ID。
+
+    Returns:
+        若输入是整合版结构，则返回适配后的普通 mapping 视图；否则原样返回。
+    """
+    if not isinstance(mapping_data, dict):
+        return mapping_data
+
+    data_payload = mapping_data.get("data")
+    if not isinstance(data_payload, dict):
+        return mapping_data
+
+    normalized = _build_mapping_preview_base(mapping_data.get("metadata"))
+
+    if entity_type == "champions":
+        skins_payload = data_payload.get("skins")
+        if not isinstance(skins_payload, list):
+            return mapping_data
+
+        normalized["championId"] = data_payload.get("championId", entity_id)
+        normalized["alias"] = data_payload.get("alias", "")
+        normalized_skins: dict[str, dict[str, dict[str, list[object]]]] = {}
+        for skin_payload in skins_payload:
+            if not isinstance(skin_payload, dict):
+                continue
+            skin_id = str(skin_payload.get("id", "")).strip()
+            if not skin_id:
+                continue
+
+            normalized_events = _normalize_integrated_events(skin_payload.get("events"))
+            if normalized_events:
+                normalized_skins[skin_id] = {"events": normalized_events}
+
+        normalized["skins"] = normalized_skins
+        return normalized
+
+    map_payload = data_payload.get("map")
+    if not isinstance(map_payload, dict):
+        return mapping_data
+
+    normalized["mapId"] = data_payload.get("mapId", entity_id)
+    normalized["name"] = data_payload.get("name", "")
+    normalized_events = _normalize_integrated_events(map_payload.get("events"))
+    normalized["map"] = {
+        str(data_payload.get("mapId", entity_id)): {"events": normalized_events}
+    }
+    return normalized
+
+
 def resolve_entity_audio_paths(
     ctx: AppContext,
     entity_data: AudioEntityData,
@@ -76,8 +169,20 @@ def resolve_mapping_file_path(
     Returns:
         映射文件的实际路径；不存在时返回 ``None``。
     """
-    hash_dir = Path(ctx.paths.hash_path) / version / entity_type
-    return find_data_file(hash_dir / str(entity_id), dev_mode=getattr(ctx.config, "dev_mode", False))
+    hash_root = Path(ctx.paths.hash_path) / version
+    dev_mode = getattr(ctx.config, "dev_mode", False)
+
+    integrated_path = find_data_file(
+        hash_root / "integrated" / entity_type / str(entity_id),
+        dev_mode=dev_mode,
+    )
+    if integrated_path is not None:
+        return integrated_path
+
+    return find_data_file(
+        hash_root / entity_type / str(entity_id),
+        dev_mode=dev_mode,
+    )
 
 
 def check_entity_status(
@@ -255,8 +360,13 @@ class EntityDataLoader:
         if mapping_path is None:
             return None, None, ""
 
-        mapping_data = read_data(mapping_path, dev_mode=getattr(self.ctx.config, "dev_mode", False))
-        return mapping_path, mapping_data, json.dumps(mapping_data, ensure_ascii=False, indent=2)
+        raw_mapping_data = read_data(mapping_path, dev_mode=getattr(self.ctx.config, "dev_mode", False))
+        mapping_data = _normalize_integrated_mapping_data(
+            raw_mapping_data,
+            entity_type=entity_type,
+            entity_id=str(entity_id),
+        )
+        return mapping_path, mapping_data, json.dumps(raw_mapping_data, ensure_ascii=False, indent=2)
 
     def load_available_audio_ids(self, entity_type: GuiEntityType, entity_id: str) -> set[str]:
         """加载当前实体在本地已存在的音频 ID 集合。
