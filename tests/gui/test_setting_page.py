@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import Mock
 
 from PySide6.QtWidgets import QApplication, QLabel
 
 import lol_audio_unpack.gui.view.setting_page as setting_page_module
 from lol_audio_unpack.gui.common import gui_config as gui_config_module
 from lol_audio_unpack.gui.view.setting_page import LogLevelSettingCard, SettingPage
+from lol_audio_unpack.utils.runtime_paths import get_default_vgmstream_relative_path
 
 
 class FakeQSettings:
@@ -133,3 +135,23 @@ def test_log_level_setting_card_captions_reuse_non_wrapping_subtitle_style() -> 
     assert target_labels
     assert all(label.wordWrap() is False for label in target_labels)
     assert all(label.objectName() == "contentLabel" for label in target_labels)
+
+
+def test_setting_page_apply_path_label_formats_default_root_relative_path() -> None:
+    """设置页默认路径文案应显示为平台风格的根目录提示。"""
+    card = Mock()
+    default_relative_path = f"./{get_default_vgmstream_relative_path()}"
+
+    SettingPage._apply_path_label(card, "", default_relative_path)
+
+    expected = f"默认: {setting_page_module.format_default_relative_path(default_relative_path)}"
+    card.setContent.assert_called_once_with(expected)
+
+
+def test_setting_page_apply_path_label_formats_actual_path_for_display() -> None:
+    """设置页当前路径文案应按显示层格式规范化分隔符。"""
+    card = Mock()
+
+    SettingPage._apply_path_label(card, "tools/wwiser/wwiser.pyz")
+
+    card.setContent.assert_called_once_with(r"当前: tools\wwiser\wwiser.pyz")

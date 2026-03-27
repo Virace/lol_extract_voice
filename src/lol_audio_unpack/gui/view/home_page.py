@@ -23,10 +23,18 @@ from qfluentwidgets import (
 )
 from qfluentwidgets import FluentIcon as FIF
 
-from lol_audio_unpack.gui.common import GuiConfig
+from lol_audio_unpack.gui.common import GuiConfig, format_default_relative_path
 from lol_audio_unpack.gui.workers import TaskWorker
 from lol_audio_unpack.manager.utils import get_game_version
-from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths, get_default_output_root
+from lol_audio_unpack.utils.runtime_paths import (
+    detect_runtime_paths,
+    get_default_output_relative_path,
+    get_default_output_root,
+    get_default_vgmstream_path,
+    get_default_vgmstream_relative_path,
+    get_default_wwiser_path,
+    get_default_wwiser_relative_path,
+)
 
 # ---------------------------------------------------------------------------
 # Worker result dataclass
@@ -129,8 +137,9 @@ class ClickableCard(CardWidget):
     def setPath(self, path: str) -> None:
         """Register the filesystem path this card should jump to."""
         self._raw_path = path
-        self.contentLabel.setText(path if path else "")
-        self.contentLabel.setToolTip(path if path else "")
+        display_path = format_default_relative_path(path) if path else ""
+        self.contentLabel.setText(display_path)
+        self.contentLabel.setToolTip(display_path)
 
     def setDisplayText(self, text: str) -> None:
         """Set display text without affecting the jump path."""
@@ -169,7 +178,7 @@ class ClickableCard(CardWidget):
 
         p = Path(raw).expanduser()
         if not p.is_absolute():
-            p = Path.cwd() / p
+            p = detect_runtime_paths().launch_root / p
 
         if p.is_file():
             target = p.parent
@@ -228,6 +237,16 @@ class HomePage(SmoothScrollArea):
         self._sync_from_config()
         self._start_background_check()
 
+    @staticmethod
+    def _runtime_paths():
+        """返回当前 GUI 运行时路径快照。"""
+        return detect_runtime_paths()
+
+    @staticmethod
+    def _default_relative_display_path(relative_path: str) -> str:
+        """将默认相对路径格式化为基于根目录的展示文案。"""
+        return format_default_relative_path(f"./{relative_path}")
+
     # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
@@ -272,7 +291,12 @@ class HomePage(SmoothScrollArea):
         self.version_card.setJumpEnabled(False)
 
         self.game_dir_card = ClickableCard(FIF.FOLDER, "游戏目录", "未设置", self)
-        self.output_dir_card = ClickableCard(FIF.DOWNLOAD, "输出目录", r".\output", self)
+        self.output_dir_card = ClickableCard(
+            FIF.DOWNLOAD,
+            "输出目录",
+            self._default_relative_display_path(get_default_output_relative_path()),
+            self,
+        )
 
         # Cache-status card (no path jump initially; will be set if found)
         self.cache_card = ClickableCard(FIF.SYNC, "缓存资源", "检查中…", self)
@@ -297,10 +321,16 @@ class HomePage(SmoothScrollArea):
         self.tools_flow.setVerticalSpacing(16)
 
         self.wwiser_card = ClickableCard(
-            FIF.DEVELOPER_TOOLS, "wwiser", r".\tools\wwiser\wwiser.pyz", self
+            FIF.DEVELOPER_TOOLS,
+            "wwiser",
+            self._default_relative_display_path(get_default_wwiser_relative_path()),
+            self,
         )
         self.vgmstream_card = ClickableCard(
-            FIF.COMMAND_PROMPT, "vgmstream-cli", r".\tools\vgmstream\vgmstream-cli.exe", self
+            FIF.COMMAND_PROMPT,
+            "vgmstream-cli",
+            self._default_relative_display_path(get_default_vgmstream_relative_path()),
+            self,
         )
 
         for card in (self.wwiser_card, self.vgmstream_card):
@@ -316,6 +346,7 @@ class HomePage(SmoothScrollArea):
     def _sync_from_config(self) -> None:
         """Pull current GuiConfig values into path-based cards."""
         cfg = self._cfg
+        runtime_paths = self._runtime_paths()
 
         if cfg.game_path:
             self.game_dir_card.setPath(cfg.game_path)
@@ -325,15 +356,30 @@ class HomePage(SmoothScrollArea):
             self.game_dir_card.setDisplayText("未设置")
             self.game_dir_card.setJumpEnabled(False)
 
-        output = cfg.output_path or r".\output"
-        self.output_dir_card.setPath(output)
+        if cfg.output_path:
+            self.output_dir_card.setPath(cfg.output_path)
+        else:
+            self.output_dir_card.setPath(str(get_default_output_root(runtime_paths)))
+            self.output_dir_card.setDisplayText(
+                self._default_relative_display_path(get_default_output_relative_path())
+            )
         self.output_dir_card.setJumpEnabled(True)
 
-        self.wwiser_card.setPath(cfg.wwiser_path or r".\tools\wwiser\wwiser.pyz")
+        if cfg.wwiser_path:
+            self.wwiser_card.setPath(cfg.wwiser_path)
+        else:
+            self.wwiser_card.setPath(str(get_default_wwiser_path(runtime_paths)))
+            self.wwiser_card.setDisplayText(
+                self._default_relative_display_path(get_default_wwiser_relative_path())
+            )
         self.wwiser_card.setJumpEnabled(True)
-        self.vgmstream_card.setPath(
-            cfg.vgmstream_path or r".\tools\vgmstream\vgmstream-cli.exe"
-        )
+        if cfg.vgmstream_path:
+            self.vgmstream_card.setPath(cfg.vgmstream_path)
+        else:
+            self.vgmstream_card.setPath(str(get_default_vgmstream_path(runtime_paths)))
+            self.vgmstream_card.setDisplayText(
+                self._default_relative_display_path(get_default_vgmstream_relative_path())
+            )
         self.vgmstream_card.setJumpEnabled(True)
 
     # ------------------------------------------------------------------
@@ -471,17 +517,39 @@ class HomePage(SmoothScrollArea):
         self._start_background_check()
 
     def update_output_dir(self, path: str) -> None:
-        display = path if path else r".\output"
-        self.output_dir_card.setPath(display)
+        if path:
+            self.output_dir_card.setPath(path)
+        else:
+            runtime_paths = self._runtime_paths()
+            self.output_dir_card.setPath(str(get_default_output_root(runtime_paths)))
+            self.output_dir_card.setDisplayText(
+                self._default_relative_display_path(get_default_output_relative_path())
+            )
         # Re-check cache with new output path
         if self._current_version:
             self._start_background_check()
 
     def update_wwiser(self, path: str) -> None:
-        self.wwiser_card.setPath(path or r".\tools\wwiser\wwiser.pyz")
+        if path:
+            self.wwiser_card.setPath(path)
+            return
+
+        runtime_paths = self._runtime_paths()
+        self.wwiser_card.setPath(str(get_default_wwiser_path(runtime_paths)))
+        self.wwiser_card.setDisplayText(
+            self._default_relative_display_path(get_default_wwiser_relative_path())
+        )
 
     def update_vgmstream(self, path: str) -> None:
-        self.vgmstream_card.setPath(path or r".\tools\vgmstream\vgmstream-cli.exe")
+        if path:
+            self.vgmstream_card.setPath(path)
+            return
+
+        runtime_paths = self._runtime_paths()
+        self.vgmstream_card.setPath(str(get_default_vgmstream_path(runtime_paths)))
+        self.vgmstream_card.setDisplayText(
+            self._default_relative_display_path(get_default_vgmstream_relative_path())
+        )
 
     # Legacy compat
     def update_dir_status(self, has_dir: bool, version: str | None = None) -> None:

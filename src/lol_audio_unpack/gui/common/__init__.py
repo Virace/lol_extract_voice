@@ -14,6 +14,10 @@ from lol_audio_unpack.gui.common.log_bridge import (
     install_startup_log_buffer,
     remove_startup_log_buffer,
 )
+from lol_audio_unpack.gui.common.path_display import (
+    format_default_relative_path,
+    format_path_for_display,
+)
 from lol_audio_unpack.gui.common.scrolling import apply_smooth_scroll_enabled
 
 __all__ = [
@@ -23,6 +27,8 @@ __all__ = [
     "apply_smooth_scroll_enabled",
     "calculate_feedback_duration",
     "clear_buffered_log_lines",
+    "format_default_relative_path",
+    "format_path_for_display",
     "get_buffered_log_lines",
     "install_startup_log_buffer",
     "load_app_icon",

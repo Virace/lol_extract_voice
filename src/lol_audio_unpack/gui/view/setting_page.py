@@ -29,8 +29,18 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
-from lol_audio_unpack.gui.common import GuiConfig, apply_smooth_scroll_enabled
+from lol_audio_unpack.gui.common import (
+    GuiConfig,
+    apply_smooth_scroll_enabled,
+    format_default_relative_path,
+    format_path_for_display,
+)
 from lol_audio_unpack.gui.components.accordion_setting_card import FormAccordionCard
+from lol_audio_unpack.utils.runtime_paths import (
+    get_default_output_relative_path,
+    get_default_vgmstream_relative_path,
+    get_default_wwiser_relative_path,
+)
 
 
 def _log_setting_stage(stage: str, startup_begin: float, previous_mark: float) -> float:
@@ -585,13 +595,13 @@ class SettingPage(SmoothScrollArea):
         )
 
         # 基础设置
-        self._apply_path_label(self.outputPathCard, cfg.output_path, r".\output")
+        self._apply_path_label(self.outputPathCard, cfg.output_path, f"./{get_default_output_relative_path()}")
         self.gameRegionCard.setValue(cfg.game_region)
         self.groupByTypeCard.setChecked(cfg.group_by_type)
 
         # 工具配置
-        self._apply_path_label(self.wwiserCard, cfg.wwiser_path, r".\tools\wwiser\wwiser.pyz")
-        self._apply_path_label(self.vgmstreamCard, cfg.vgmstream_path, r".\tools\vgmstream\vgmstream-cli.exe")
+        self._apply_path_label(self.wwiserCard, cfg.wwiser_path, f"./{get_default_wwiser_relative_path()}")
+        self._apply_path_label(self.vgmstreamCard, cfg.vgmstream_path, f"./{get_default_vgmstream_relative_path()}")
 
         # 个性化 — 应用已保存的主题
         self._apply_theme_from_config()
@@ -704,7 +714,7 @@ class SettingPage(SmoothScrollArea):
         if path:
             self._cfg.output_path = path
             self._cfg.save()
-            self._apply_path_label(self.outputPathCard, path, r".\output")
+            self._apply_path_label(self.outputPathCard, path, f"./{get_default_output_relative_path()}")
             self.output_path_changed.emit(path)
             self.shared_context_input_changed.emit()
 
@@ -717,7 +727,7 @@ class SettingPage(SmoothScrollArea):
         if path:
             self._cfg.wwiser_path = path
             self._cfg.save()
-            self._apply_path_label(self.wwiserCard, path, r".\tools\wwiser\wwiser.pyz")
+            self._apply_path_label(self.wwiserCard, path, f"./{get_default_wwiser_relative_path()}")
             self.wwiser_path_changed.emit(path)
 
     def _pick_vgmstream(self) -> None:
@@ -730,7 +740,7 @@ class SettingPage(SmoothScrollArea):
         if path:
             self._cfg.vgmstream_path = path
             self._cfg.save()
-            self._apply_path_label(self.vgmstreamCard, path, r".\tools\vgmstream\vgmstream-cli.exe")
+            self._apply_path_label(self.vgmstreamCard, path, f"./{get_default_vgmstream_relative_path()}")
             self.vgmstream_path_changed.emit(path)
 
     # ------------------------------------------------------------------
@@ -766,9 +776,9 @@ class SettingPage(SmoothScrollArea):
     def _apply_path_label(card: PushSettingCard, path: str, default: str = "") -> None:
         """将路径显示在卡片的 contentLabel 上；路径为空时显示默认值或"未设置"。"""
         if path:
-            card.setContent(f"当前: {path}")
+            card.setContent(f"当前: {format_path_for_display(path)}")
         elif default:
-            card.setContent(f"默认: {default}")
+            card.setContent(f"默认: {format_default_relative_path(default)}")
         else:
             card.setContent("当前: 未设置")
 

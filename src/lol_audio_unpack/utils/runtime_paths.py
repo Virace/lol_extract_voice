@@ -8,7 +8,16 @@ from pathlib import Path
 
 from lol_audio_unpack.utils.type_hints import StrPath
 
-__all__ = ["RuntimePaths", "detect_runtime_paths", "get_default_output_root"]
+__all__ = [
+    "RuntimePaths",
+    "detect_runtime_paths",
+    "get_default_output_root",
+    "get_default_output_relative_path",
+    "get_default_wwiser_path",
+    "get_default_wwiser_relative_path",
+    "get_default_vgmstream_path",
+    "get_default_vgmstream_relative_path",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,4 +87,48 @@ def get_default_output_root(runtime_paths: RuntimePaths) -> Path:
         Path: 默认输出根目录，固定为 ``launch_root / "output"``。
     """
 
-    return runtime_paths.launch_root / "output"
+    return runtime_paths.launch_root / Path(get_default_output_relative_path())
+
+
+def get_default_output_relative_path() -> str:
+    """返回默认输出目录相对于根目录的路径。"""
+
+    return "output"
+
+
+def get_default_wwiser_relative_path() -> str:
+    """返回默认 wwiser 工具相对于根目录的路径。"""
+
+    return "tools/wwiser/wwiser.pyz"
+
+
+def get_default_wwiser_path(runtime_paths: RuntimePaths) -> Path:
+    """返回默认的 wwiser 工具路径。"""
+
+    return runtime_paths.launch_root / Path(get_default_wwiser_relative_path())
+
+
+def get_default_vgmstream_relative_path(*, platform: str | None = None) -> str:
+    """返回默认 vgmstream 工具相对于根目录的路径。"""
+
+    normalized_platform = (platform or sys.platform).lower()
+    filename = "vgmstream-cli.exe" if normalized_platform.startswith("win") else "vgmstream-cli"
+    return f"tools/vgmstream/{filename}"
+
+
+def get_default_vgmstream_path(
+    runtime_paths: RuntimePaths,
+    *,
+    platform: str | None = None,
+) -> Path:
+    """返回默认的 vgmstream-cli 工具路径。
+
+    Args:
+        runtime_paths: 运行时路径快照。
+        platform: 可选目标平台；未提供时使用当前解释器平台。
+
+    Returns:
+        Path: 默认的 vgmstream-cli 可执行文件路径。
+    """
+
+    return runtime_paths.launch_root / Path(get_default_vgmstream_relative_path(platform=platform))

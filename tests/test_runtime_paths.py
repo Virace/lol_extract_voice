@@ -2,7 +2,12 @@
 
 from pathlib import Path
 
-from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths, get_default_output_root
+from lol_audio_unpack.utils.runtime_paths import (
+    detect_runtime_paths,
+    get_default_output_root,
+    get_default_vgmstream_path,
+    get_default_wwiser_path,
+)
 
 
 def test_detect_runtime_paths_uses_cwd_for_source_runs(tmp_path: Path) -> None:
@@ -55,3 +60,22 @@ def test_default_output_root_follows_launch_root(tmp_path: Path) -> None:
     )
 
     assert get_default_output_root(runtime_paths) == executable.parent.resolve(strict=False) / "output"
+
+
+def test_default_tool_paths_follow_launch_root_and_platform(tmp_path: Path) -> None:
+    """默认工具路径应跟随 launch_root，并按平台处理 vgmstream 后缀。"""
+    executable = tmp_path / "bundle" / "LolAudioUnpack.exe"
+    runtime_paths = detect_runtime_paths(
+        is_frozen=True,
+        cwd=tmp_path / "elsewhere",
+        executable=executable,
+    )
+    expected_root = executable.parent.resolve(strict=False)
+
+    assert get_default_wwiser_path(runtime_paths) == expected_root / "tools" / "wwiser" / "wwiser.pyz"
+    assert get_default_vgmstream_path(runtime_paths, platform="win32") == (
+        expected_root / "tools" / "vgmstream" / "vgmstream-cli.exe"
+    )
+    assert get_default_vgmstream_path(runtime_paths, platform="linux") == (
+        expected_root / "tools" / "vgmstream" / "vgmstream-cli"
+    )
