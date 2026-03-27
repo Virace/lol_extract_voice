@@ -126,6 +126,7 @@ packer/
 .CODING_STYLE.md
 benchmarks/
 .temp/
+.superpowers/
 
 
 !/params.json

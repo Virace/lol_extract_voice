@@ -137,6 +137,22 @@ def test_log_level_setting_card_captions_reuse_non_wrapping_subtitle_style() -> 
     assert all(label.objectName() == "contentLabel" for label in target_labels)
 
 
+def test_setting_page_renders_page_header(monkeypatch, tmp_path: Path) -> None:
+    """设置页应展示主标题与简短说明。"""
+    monkeypatch.chdir(tmp_path)
+    _use_fake_qsettings(monkeypatch)
+    app = QApplication.instance() or QApplication([])
+    page = SettingPage()
+
+    try:
+        labels = [label.text() for label in page.findChildren(QLabel)]
+        assert "全局设置" in labels
+        assert "统一管理运行环境、工具路径与界面偏好。" in labels
+    finally:
+        page.deleteLater()
+        app.processEvents()
+
+
 def test_setting_page_apply_path_label_formats_default_root_relative_path() -> None:
     """设置页默认路径文案应显示为平台风格的根目录提示。"""
     card = Mock()

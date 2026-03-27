@@ -5,8 +5,9 @@ from time import perf_counter
 from loguru import logger
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QFileDialog, QWidget
+from PySide6.QtWidgets import QFileDialog, QVBoxLayout, QWidget
 from qfluentwidgets import (
+    BodyLabel,
     ComboBox,
     CustomColorSettingCard,
     ExpandLayout,
@@ -21,6 +22,7 @@ from qfluentwidgets import (
     SwitchButton,
     SwitchSettingCard,
     Theme,
+    TitleLabel,
     qconfig,
     setTheme,
     setThemeColor,
@@ -386,9 +388,26 @@ class SettingPage(SmoothScrollArea):
     # ------------------------------------------------------------------
 
     def _build_ui(self):
-        self.expandLayout = ExpandLayout(self.view)
-        self.expandLayout.setContentsMargins(36, 10, 36, 0)
-        self.expandLayout.setSpacing(28)
+        root_layout = QVBoxLayout(self.view)
+        root_layout.setContentsMargins(36, 22, 36, 16)
+        root_layout.setSpacing(16)
+
+        page_title = TitleLabel("全局设置", self.view)
+        page_title.setObjectName("SettingPageTitle")
+        root_layout.addWidget(page_title)
+
+        page_subtitle = BodyLabel("统一管理运行环境、工具路径与界面偏好。", self.view)
+        page_subtitle.setObjectName("SettingPageSubtitle")
+        page_subtitle.setWordWrap(True)
+        root_layout.addWidget(page_subtitle)
+
+        content_widget = QWidget(self.view)
+        self.content_widget = content_widget
+        root_layout.addWidget(content_widget)
+
+        self.expandLayout = ExpandLayout(content_widget)
+        self.expandLayout.setContentsMargins(0, 6, 0, 0)
+        self.expandLayout.setSpacing(24)
 
         build_begin = perf_counter()
         build_mark = build_begin
@@ -415,7 +434,7 @@ class SettingPage(SmoothScrollArea):
         group_mark = group_begin
 
         # 1-A 模式选择（始终可见）
-        self.sourceModeGroup = SettingCardGroup("数据来源", self.view)
+        self.sourceModeGroup = SettingCardGroup("数据来源", self.content_widget)
         group_mark = _log_setting_stage("source: sourceModeGroup 创建完成", group_begin, group_mark)
         self.sourceModeCard = ComboRowSettingCard(
             FIF.CLOUD,
@@ -431,7 +450,7 @@ class SettingPage(SmoothScrollArea):
         group_mark = _log_setting_stage("source: sourceModeGroup.addWidget 完成", group_begin, group_mark)
 
         # 1-B Local 子组（本地模式时显示）
-        self.localGroup = SettingCardGroup("本地目录", self.view)
+        self.localGroup = SettingCardGroup("本地目录", self.content_widget)
         group_mark = _log_setting_stage("source: localGroup 创建完成", group_begin, group_mark)
         self.gamePathCard = PushSettingCard(
             "选择文件夹",
@@ -446,7 +465,7 @@ class SettingPage(SmoothScrollArea):
         group_mark = _log_setting_stage("source: localGroup.addWidget 完成", group_begin, group_mark)
 
         # 1-C Remote 子组（远程模式时显示）
-        self.remoteGroup = SettingCardGroup("远程配置", self.view)
+        self.remoteGroup = SettingCardGroup("远程配置", self.content_widget)
         group_mark = _log_setting_stage("source: remoteGroup 创建完成", group_begin, group_mark)
 
         self.remoteLiveRegionCard = ComboRowSettingCard(
@@ -478,7 +497,7 @@ class SettingPage(SmoothScrollArea):
     # 2. 基础设置 -------------------------------------------------------
 
     def _build_base_group(self):
-        self.baseGroup = SettingCardGroup("基础设置", self.view)
+        self.baseGroup = SettingCardGroup("基础设置", self.content_widget)
 
         self.outputPathCard = PushSettingCard(
             "选择文件夹",
@@ -506,7 +525,7 @@ class SettingPage(SmoothScrollArea):
     # 3. 工具配置 -------------------------------------------------------
 
     def _build_tools_group(self):
-        self.toolsGroup = SettingCardGroup("工具配置", self.view)
+        self.toolsGroup = SettingCardGroup("工具配置", self.content_widget)
 
         self.wwiserCard = PushSettingCard(
             "选择文件",
@@ -528,7 +547,7 @@ class SettingPage(SmoothScrollArea):
     # 4. 个性化 ---------------------------------------------------------
 
     def _build_personal_group(self):
-        self.personalGroup = SettingCardGroup("个性化", self.view)
+        self.personalGroup = SettingCardGroup("个性化", self.content_widget)
 
         self.themeCard = OptionsSettingCard(
             qconfig.themeMode,
