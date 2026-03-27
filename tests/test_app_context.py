@@ -8,6 +8,7 @@ import lol_audio_unpack.app_context as app_context_module
 from lol_audio_unpack import setup_app
 from lol_audio_unpack.app_context import (
     AppContext,
+    AppContextValidationError,
     OperationOptions,
     SourceMode,
     create_app_context,
@@ -22,6 +23,22 @@ DEFAULT_MAX_WORKERS = 4
 
 def _write_env_file(env_dir: Path, game_path: Path, output_path: Path) -> None:
     (env_dir / ".lol.env").write_text(
+        "\n".join(
+            [
+                f'LOL_GAME_PATH="{game_path}"',
+                f'LOL_OUTPUT_PATH="{output_path}"',
+                'LOL_GAME_REGION="zh_CN"',
+                'LOL_EXCLUDE_TYPE="SFX,MUSIC"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_named_env_file(env_dir: Path, filename: str, game_path: Path, output_path: Path) -> None:
+    """写入指定名称的环境变量文件。"""
+    (env_dir / filename).write_text(
         "\n".join(
             [
                 f'LOL_GAME_PATH="{game_path}"',
@@ -58,6 +75,22 @@ def test_initialize_context_from_env_builds_typed_context(tmp_path: Path) -> Non
     assert not app_context.paths.manifest_path.exists()
 
 
+def test_app_context_does_not_expose_logger_field(tmp_path: Path) -> None:
+    """AppContext 只承载共享配置、派生路径与运行时缓存，不暴露 logger 字段。"""
+    env_dir = tmp_path / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+
+    game_path = tmp_path / "game"
+    output_path = tmp_path / "output"
+    _write_env_file(env_dir, game_path, output_path)
+
+    app_context = create_app_context(env_path=env_dir)
+
+    assert isinstance(app_context, AppContext)
+    assert app_context.runtime_cache == {}
+    assert not hasattr(app_context, "logger")
+
+
 def test_create_app_context_applies_cli_overrides(tmp_path: Path) -> None:
     env_dir = tmp_path / "env"
     env_dir.mkdir(parents=True, exist_ok=True)
@@ -75,6 +108,116 @@ def test_create_app_context_applies_cli_overrides(tmp_path: Path) -> None:
     assert app_context.config.group_by_type is True
     assert app_context.config.exclude_types == ("VO",)
     assert set(app_context.config.include_types) == {"SFX", "MUSIC"}
+
+
+def test_create_app_context_default_mode_uses_dot_env_only(tmp_path: Path) -> None:
+    env_dir = tmp_path / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+
+    game_prod = tmp_path / "game_prod"
+    output_prod = tmp_path / "output_prod"
+    game_dev = tmp_path / "game_dev"
+    output_dev = tmp_path / "output_dev"
+
+    _write_named_env_file(env_dir, ".lol.env", game_prod, output_prod)
+    _write_named_env_file(env_dir, ".lol.env.dev", game_dev, output_dev)
+
+    app_context = create_app_context(env_path=env_dir, dev_mode=False)
+
+    assert app_context.config.game_path == game_prod
+    assert app_context.config.output_path == output_prod
+    assert app_context.config.dev_mode is False
+
+
+def test_create_app_context_dev_mode_prefers_dot_env_dev(tmp_path: Path) -> None:
+    env_dir = tmp_path / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+
+    game_prod = tmp_path / "game_prod"
+    output_prod = tmp_path / "output_prod"
+    game_dev = tmp_path / "game_dev"
+    output_dev = tmp_path / "output_dev"
+
+    _write_named_env_file(env_dir, ".lol.env", game_prod, output_prod)
+    _write_named_env_file(env_dir, ".lol.env.dev", game_dev, output_dev)
+
+    app_context = create_app_context(env_path=env_dir, dev_mode=True)
+
+    assert app_context.config.game_path == game_dev
+    assert app_context.config.output_path == output_dev
+    assert app_context.config.dev_mode is True
+
+
+def test_create_app_context_dev_mode_falls_back_to_dot_env_when_dev_missing(tmp_path: Path) -> None:
+    env_dir = tmp_path / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+
+    game_prod = tmp_path / "game_prod"
+    output_prod = tmp_path / "output_prod"
+
+    _write_named_env_file(env_dir, ".lol.env", game_prod, output_prod)
+
+    app_context = create_app_context(env_path=env_dir, dev_mode=True)
+
+    assert app_context.config.game_path == game_prod
+    assert app_context.config.output_path == output_prod
+    assert app_context.config.dev_mode is True
+
+
+def test_create_app_context_non_dev_mode_does_not_read_dot_env_dev_alone(tmp_path: Path) -> None:
+    env_dir = tmp_path / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+
+    game_dev = tmp_path / "game_dev"
+    output_dev = tmp_path / "output_dev"
+
+    _write_named_env_file(env_dir, ".lol.env.dev", game_dev, output_dev)
+
+    with pytest.raises(AppContextValidationError, match="GAME_PATH"):
+        create_app_context(env_path=env_dir, dev_mode=False)
+
+
+def test_create_app_context_system_env_overrides_dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env_dir = tmp_path / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+
+    game_dotenv = tmp_path / "game_dotenv"
+    output_dotenv = tmp_path / "output_dotenv"
+    game_env = tmp_path / "game_env"
+    output_env = tmp_path / "output_env"
+
+    _write_named_env_file(env_dir, ".lol.env", game_dotenv, output_dotenv)
+    monkeypatch.setenv("LOL_GAME_PATH", str(game_env))
+    monkeypatch.setenv("LOL_OUTPUT_PATH", str(output_env))
+
+    app_context = create_app_context(env_path=env_dir, dev_mode=False)
+
+    assert app_context.config.game_path == game_env
+    assert app_context.config.output_path == output_env
+
+
+def test_create_app_context_ignores_unknown_lol_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env_dir = tmp_path / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+
+    game_path = tmp_path / "game"
+    output_path = tmp_path / "output"
+
+    _write_named_env_file(env_dir, ".lol.env", game_path, output_path)
+    monkeypatch.setenv("LOL_UNKNOWN_KEY", "unexpected")
+
+    app_context = create_app_context(env_path=env_dir, dev_mode=False)
+
+    assert app_context.config.game_path == game_path
+    assert app_context.config.output_path == output_path
+
+
+def test_create_app_context_missing_required_raises_fast(tmp_path: Path) -> None:
+    env_dir = tmp_path / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+
+    with pytest.raises(AppContextValidationError, match="GAME_PATH"):
+        create_app_context(env_path=env_dir, dev_mode=False)
 
 
 def test_create_app_context_uses_runtime_defaults_when_env_path_and_output_path_missing(

@@ -119,7 +119,6 @@ class AppContext:
 
     config: AppConfig
     paths: AppPaths
-    logger: Any
     runtime_cache: dict[str, Any] = field(default_factory=dict)
 
 
@@ -461,7 +460,7 @@ def create_app_context(  # noqa: PLR0913
     )
     app_config = _build_app_config(settings=raw_settings, dev_mode=dev_mode)
     app_paths = _build_app_paths(app_config)
-    return AppContext(config=app_config, paths=app_paths, logger=logger, runtime_cache=runtime_cache or {})
+    return AppContext(config=app_config, paths=app_paths, runtime_cache=runtime_cache or {})
 
 
 def initialize_context_from_env(
@@ -492,4 +491,3 @@ __all__ = [
     "create_app_context",
     "initialize_context_from_env",
 ]
-

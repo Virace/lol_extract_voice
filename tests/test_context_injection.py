@@ -42,7 +42,7 @@ def _build_ctx(
         game_maps_path=game_path / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping",
         game_lcu_path=game_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data",
     )
-    return AppContext(config=app_config, paths=app_paths, logger=None)
+    return AppContext(config=app_config, paths=app_paths)
 
 
 def test_audio_entity_from_champion_uses_ctx_region_and_game_path(tmp_path: Path) -> None:
