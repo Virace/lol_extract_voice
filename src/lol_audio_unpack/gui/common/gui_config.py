@@ -24,7 +24,10 @@ from dotenv import dotenv_values, set_key, unset_key
 from PySide6.QtCore import QSettings
 
 from lol_audio_unpack.gui.task_models import AppContextInputSnapshot
-from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
+from lol_audio_unpack.utils.runtime_paths import (
+    detect_runtime_paths,
+    get_default_output_root,
+)
 
 # ---------------------------------------------------------------------------
 # Sentinel
@@ -182,6 +185,31 @@ class GuiConfig:
         return AppContextInputSnapshot(
             overrides=tuple(self.to_app_context_overrides().items()),
         )
+
+    def resolve_output_path(self) -> Path:
+        """解析当前 GUI 配置对应的有效输出目录。
+
+        Returns:
+            Path: 已解析的绝对输出目录。若用户未显式配置，则回退到共享
+                runtime 语义下的默认 ``output`` 目录。
+        """
+        runtime_paths = detect_runtime_paths()
+        raw = self._output_path.strip()
+        if not raw:
+            return get_default_output_root(runtime_paths)
+
+        output_path = Path(raw).expanduser()
+        if output_path.is_absolute():
+            return output_path
+        return runtime_paths.launch_root / output_path
+
+    def resolve_log_dir(self) -> Path:
+        """解析当前 GUI 配置对应的有效日志目录。
+
+        Returns:
+            Path: 当前 GUI 启动期与运行期都应写入的日志目录。
+        """
+        return self.resolve_output_path() / "logs"
 
     # ------------------------------------------------------------------
     # Properties — source

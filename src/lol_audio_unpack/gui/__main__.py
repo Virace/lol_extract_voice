@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-from pathlib import Path
 from time import perf_counter
 
 from loguru import logger
@@ -48,12 +47,12 @@ def main() -> None:
     cfg = GuiConfig()
     cfg.load()
     logger.enable("lol_audio_unpack")
-    # 显式启用项目命名空间日志，并初始化基础日志系统到当前目录下的 .logs 文件夹
+    # GUI 启动期直接写入解析后的有效日志目录，避免每次先污染工作目录再重挂。
     setup_logging(
         dev_mode=True,
         log_level=cfg.console_log_level,
         file_log_level=cfg.file_log_level,
-        log_file_path=Path.cwd() / ".logs",
+        log_file_path=cfg.resolve_log_dir(),
         show_function_info=True,
     )
     install_startup_log_buffer()

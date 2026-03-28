@@ -591,9 +591,10 @@ def test_main_window_champions_loaded_logs_info_with_clear_wording(monkeypatch) 
     _dispose_main_window(window, app)
 
 
-def test_gui_main_uses_info_console_log_level(monkeypatch) -> None:
+def test_gui_main_uses_info_console_log_level(monkeypatch, tmp_path: Path) -> None:
     """GUI 入口默认应以 INFO 作为控制台和窗口日志级别。"""
     setup_calls: list[dict[str, object]] = []
+    expected_log_dir = tmp_path / "runtime-output" / "logs"
 
     class FakeApp:
         def __init__(self, _argv):
@@ -618,9 +619,13 @@ def test_gui_main_uses_info_console_log_level(monkeypatch) -> None:
         theme_color = "#2E75FF"
         console_log_level = "INFO"
         file_log_level = "DEBUG"
+        output_path = ""
 
         def load(self) -> None:
             return None
+
+        def resolve_log_dir(self) -> Path:
+            return expected_log_dir
 
     class FakeWindow:
         def isVisible(self) -> bool:
@@ -647,6 +652,7 @@ def test_gui_main_uses_info_console_log_level(monkeypatch) -> None:
     assert setup_calls
     assert setup_calls[0]["log_level"] == "INFO"
     assert setup_calls[0]["file_log_level"] == "DEBUG"
+    assert setup_calls[0]["log_file_path"] == expected_log_dir
 
 
 def test_main_window_reconfigure_runtime_logging_uses_configured_levels(monkeypatch) -> None:
@@ -671,6 +677,35 @@ def test_main_window_reconfigure_runtime_logging_uses_configured_levels(monkeypa
     assert setup_calls[-1]["log_level"] == "DEBUG"
     assert setup_calls[-1]["file_log_level"] == "TRACE"
     assert sink_levels[-1] == "DEBUG"
+
+    _dispose_main_window(window, app)
+
+
+def test_main_window_reconfigure_runtime_logging_uses_resolved_log_dir(monkeypatch, tmp_path: Path) -> None:
+    """运行时日志重挂应使用解析后的有效日志目录，而不是原始 cwd 或空值。"""
+    app = QApplication.instance() or QApplication([])
+    expected_log_dir = tmp_path / "resolved-output" / "logs"
+
+    monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
+    window = MainWindow()
+    setup_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(window_module, "setup_logging", lambda **kwargs: setup_calls.append(kwargs))
+    monkeypatch.setattr(window.executionInterface, "attach_runtime_log_sink", lambda level="INFO": None)
+    monkeypatch.setattr(
+        window.settingInterface.config,
+        "resolve_log_dir",
+        lambda: expected_log_dir,
+        raising=False,
+    )
+    window.settingInterface.config.output_path = ""
+    app.processEvents()
+
+    window._reconfigure_runtime_logging(window.settingInterface.config)
+    app.processEvents()
+
+    assert setup_calls
+    assert setup_calls[-1]["log_file_path"] == expected_log_dir
 
     _dispose_main_window(window, app)
 

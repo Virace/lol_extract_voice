@@ -178,6 +178,26 @@ def test_gui_config_uses_runtime_config_root(monkeypatch, tmp_path):
     assert cfg._env_file == runtime_root / ".lol.env"
 
 
+def test_gui_config_resolves_default_output_and_log_dir_from_runtime_root(monkeypatch, tmp_path):
+    _use_fake_qsettings(monkeypatch)
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        gui_config_module,
+        "detect_runtime_paths",
+        lambda: detect_runtime_paths(
+            is_frozen=True,
+            cwd=tmp_path / "shortcut-workdir",
+            executable=runtime_root / "LolAudioUnpack.exe",
+        ),
+    )
+
+    cfg = GuiConfig()
+
+    assert cfg.resolve_output_path() == runtime_root / "output"
+    assert cfg.resolve_log_dir() == runtime_root / "output" / "logs"
+
+
 def test_gui_config_loads_legacy_smooth_scroll_into_split_flags(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     _use_fake_qsettings(monkeypatch)

@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtWidgets import QApplication
 from qfluentwidgets import FluentIcon as FIF
 
+from lol_audio_unpack.gui.common import gui_config as gui_config_module
 from lol_audio_unpack.gui.common.gui_config import GuiConfig
 from lol_audio_unpack.gui.common.path_display import (
     format_default_relative_path,
@@ -116,15 +117,15 @@ def test_home_page_relative_output_path_follows_runtime_launch_root(monkeypatch,
     """首页相对输出目录应基于共享 runtime 的默认根目录解析。"""
     QApplication.instance() or QApplication([])
     monkeypatch.setattr(HomePage, "_start_background_check", lambda self: None)
-    monkeypatch.setattr(
-        home_page_module,
-        "detect_runtime_paths",
-        lambda: detect_runtime_paths(
+    def runtime_paths():
+        return detect_runtime_paths(
             is_frozen=True,
             cwd=tmp_path / "shortcut-workdir",
             executable=tmp_path / "bundle" / "LolAudioUnpack.exe",
-        ),
-    )
+        )
+
+    monkeypatch.setattr(home_page_module, "detect_runtime_paths", runtime_paths)
+    monkeypatch.setattr(gui_config_module, "detect_runtime_paths", runtime_paths)
     cfg = GuiConfig(dev_mode=True)
     cfg.output_path = r".\custom-output"
     page = HomePage(cfg)

@@ -594,10 +594,7 @@ class HomePage(SmoothScrollArea):
 
     def _resolve_output_path(self) -> Path:
         """Return the absolute output directory path."""
-        runtime_paths = detect_runtime_paths()
-        raw = self._cfg.output_path or str(get_default_output_root(runtime_paths))
-        p = Path(raw).expanduser()
-        return p if p.is_absolute() else runtime_paths.launch_root / p
+        return self._cfg.resolve_output_path()
 
     @staticmethod
     def _check_audio_cache(output_path: Path, major_minor: str) -> tuple[bool, str]:

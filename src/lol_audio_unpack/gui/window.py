@@ -560,9 +560,7 @@ class MainWindow(FluentWindow):
 
     def _reconfigure_runtime_logging(self, cfg) -> None:
         """将运行时日志输出切换到当前输出目录，并重挂 GUI sink。"""
-        log_dir = None
-        if cfg.output_path:
-            log_dir = Path(cfg.output_path) / "logs"
+        log_dir = cfg.resolve_log_dir()
         setup_logging(
             dev_mode=True,
             log_level=cfg.console_log_level,
@@ -571,10 +569,7 @@ class MainWindow(FluentWindow):
             show_function_info=True,
         )
         self.executionInterface.attach_runtime_log_sink(cfg.console_log_level)
-        if log_dir is not None:
-            logger.debug(f"日志系统已重定向到输出目录: {log_dir}")
-        else:
-            logger.debug("日志系统已切换为仅控制台输出。")
+        logger.debug(f"日志系统已重定向到输出目录: {log_dir}")
 
     def _apply_log_drawer_auto_collapse_setting(self, enabled: bool) -> None:
         """应用日志抽屉点击外部自动收起设置。"""
