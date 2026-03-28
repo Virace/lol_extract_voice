@@ -11,6 +11,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--mode", choices=("onefile", "onedir"), default="onefile")
+parser.add_argument("--runtime-version", default="")
 options = parser.parse_args()
 
 SPEC_ROOT = Path(SPECPATH).resolve()
@@ -20,6 +21,19 @@ GUI_ENTRY = SRC_ROOT / "lol_audio_unpack" / "gui" / "__main__.py"
 GUI_ASSET_ROOT = SRC_ROOT / "lol_audio_unpack" / "gui" / "assets"
 APP_ICON = GUI_ASSET_ROOT / "app_icon.ico" if sys.platform.startswith("win") else None
 RUNTIME_HOOK = PROJECT_ROOT / "scripts" / "pyinstaller" / "runtime_hook_chdir.py"
+BUILD_VERSION_HOOK = Path(workpath) / "runtime_hook_build_version.py"
+
+if options.runtime_version:
+    BUILD_VERSION_HOOK.write_text(
+        "import os\n"
+        f"os.environ['LOL_AUDIO_UNPACK_BUILD_VERSION'] = {options.runtime_version!r}\n",
+        encoding="utf-8",
+    )
+
+runtime_hooks = []
+if options.runtime_version:
+    runtime_hooks.append(str(BUILD_VERSION_HOOK))
+runtime_hooks.append(str(RUNTIME_HOOK))
 
 datas = collect_data_files("qfluentwidgets")
 datas += [
@@ -38,7 +52,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[str(RUNTIME_HOOK)],
+    runtime_hooks=runtime_hooks,
     excludes=[],
     noarchive=False,
     optimize=0,

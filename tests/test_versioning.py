@@ -57,6 +57,20 @@ def test_resolve_runtime_version_falls_back_when_git_describe_fails(
     assert versioning.resolve_runtime_version(tmp_path, "3.5.1.dev0") == "3.5.1.dev0"
 
 
+def test_resolve_runtime_version_skips_git_probe_outside_git_repo(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(versioning.sys, "frozen", False, raising=False)
+
+    def _unexpected_git_probe(_repo_root: Path) -> str:
+        raise AssertionError("non-git runtime should not execute git describe")
+
+    monkeypatch.setattr(versioning, "describe_git_version", _unexpected_git_probe)
+
+    assert versioning.resolve_runtime_version(tmp_path, "3.5.1.dev0") == "3.5.1.dev0"
+
+
 def test_resolve_runtime_version_skips_git_probe_for_frozen_runs(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -69,3 +83,18 @@ def test_resolve_runtime_version_skips_git_probe_for_frozen_runs(
     monkeypatch.setattr(versioning, "describe_git_version", _unexpected_git_probe)
 
     assert versioning.resolve_runtime_version(tmp_path, "3.5.1.dev0") == "3.5.1.dev0"
+
+
+def test_resolve_runtime_version_prefers_injected_build_version(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(versioning.sys, "frozen", True, raising=False)
+    monkeypatch.setenv(versioning.BUILD_VERSION_ENV, "3.5.1.dev93+g0b2dd5a.dirty")
+
+    def _unexpected_git_probe(_repo_root: Path) -> str:
+        raise AssertionError("build-injected version should bypass git describe")
+
+    monkeypatch.setattr(versioning, "describe_git_version", _unexpected_git_probe)
+
+    assert versioning.resolve_runtime_version(tmp_path, "3.5.1.dev0") == "3.5.1.dev93+g0b2dd5a.dirty"

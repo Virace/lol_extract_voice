@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import platform
 import shutil
 import struct
@@ -13,6 +14,30 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SPEC_PATH = PROJECT_ROOT / "scripts" / "pyinstaller" / "gui.spec"
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / ".temp" / "pyinstaller"
 REQUIRED_PYTHON_BITS = 64
+
+
+def _load_versioning_module():
+    module_path = PROJECT_ROOT / "src" / "lol_audio_unpack" / "utils" / "versioning.py"
+    spec = importlib.util.spec_from_file_location("lol_audio_unpack_build_versioning", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"无法加载版本模块: {module_path}")
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _read_static_version() -> str:
+    pyproject_path = PROJECT_ROOT / "pyproject.toml"
+    for line in pyproject_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("version = "):
+            return line.split("=", 1)[1].strip().strip('"')
+    raise RuntimeError("无法从 pyproject.toml 读取静态版本号")
+
+
+def _resolve_build_version() -> str:
+    versioning = _load_versioning_module()
+    return versioning.resolve_runtime_version(PROJECT_ROOT, _read_static_version())
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -72,10 +97,12 @@ def main() -> int:
     output_root = Path(args.output_root).expanduser().resolve()
     dist_path = output_root / "dist"
     work_path = output_root / "build"
+    runtime_version = _resolve_build_version()
 
     print(f"RepoRoot   : {PROJECT_ROOT}")
     print(f"SpecPath   : {SPEC_PATH}")
     print(f"Mode       : {args.mode}")
+    print(f"Version    : {runtime_version}")
     print(f"OutputRoot : {output_root}")
     print(f"DistPath   : {dist_path}")
     print(f"WorkPath   : {work_path}")
@@ -106,6 +133,8 @@ def main() -> int:
         "--",
         "--mode",
         args.mode,
+        "--runtime-version",
+        runtime_version,
     ]
     _run_command(build_command, dry_run=args.dry_run)
     return 0

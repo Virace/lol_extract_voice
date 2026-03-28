@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -14,6 +15,13 @@ RUNTIME_VERSION_PATTERN = re.compile(
 )
 GIT_DESCRIBE_PATTERN = re.compile(r"^(?P<tag>.+)-(?P<count>\d+)-g(?P<sha>[0-9a-f]+)(?P<dirty>-dirty)?$")
 WINDOWS_VERSION_DOT_COUNT = 3
+BUILD_VERSION_ENV = "LOL_AUDIO_UNPACK_BUILD_VERSION"
+
+
+def is_git_repository(repo_root: Path) -> bool:
+    """判断目标目录是否仍携带 Git 仓库元数据。"""
+
+    return (repo_root / ".git").exists()
 
 
 def normalize_patch_version(version: str) -> str:
@@ -84,6 +92,9 @@ def describe_git_version(repo_root: Path) -> str:
     Returns:
         `git describe --tags --long --dirty` 的标准输出。
     """
+    if getattr(sys, "frozen", False) or not is_git_repository(repo_root):
+        raise RuntimeError(f"当前环境不应执行 git describe: {repo_root}")
+
     result = subprocess.run(
         [
             "git",
@@ -145,6 +156,10 @@ def resolve_runtime_version(repo_root: Path, fallback_version: str) -> str:
     Returns:
         运行时展示使用的版本号。
     """
+    injected_version = os.getenv(BUILD_VERSION_ENV)
+    if injected_version:
+        return injected_version.strip()
+
     if getattr(sys, "frozen", False):
         return fallback_version
 
