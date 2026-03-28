@@ -313,9 +313,9 @@ class ExecutionEntryCard(CardWidget):
         self.vBoxLayout.setContentsMargins(18, 18, 18, 18)
         self.vBoxLayout.setSpacing(8)
 
-        self.titleCaption = CaptionLabel("Next Step", self)
+        self.titleCaption = CaptionLabel("下一步", self)
         self.titleLabel = StrongBodyLabel("前往执行中心", self)
-        self.detailLabel = CaptionLabel("首页不直接执行任务，只负责进入真正的执行流程页面。", self)
+        self.detailLabel = CaptionLabel("去执行中心创建任务、查看进度。", self)
         self.detailLabel.setWordWrap(True)
         self.action_button = PrimaryPushButton("进入执行中心", self)
         self.action_button.clicked.connect(self.requested.emit)
@@ -480,11 +480,11 @@ class HomePage(SmoothScrollArea):
         self.top_status_layout.setContentsMargins(0, 0, 0, 0)
         self.top_status_layout.setSpacing(16)
 
-        self.version_card = CompactStatusCard(FIF.CODE, "Game Version", "读取中…", self.top_status_widget)
+        self.version_card = CompactStatusCard(FIF.CODE, "游戏版本", "读取中…", self.top_status_widget)
         self.version_card.setJumpEnabled(False)
         self.version_card.setDetailText("当前游戏客户端版本。")
 
-        self.cache_card = CompactStatusCard(FIF.SYNC, "Cache Resource", "检查中…", self.top_status_widget)
+        self.cache_card = CompactStatusCard(FIF.SYNC, "资源状态", "检查中…", self.top_status_widget)
         self.cache_card.setJumpEnabled(False)
         self.cache_card.setDetailText("当前缓存资源状态。")
 
@@ -506,12 +506,9 @@ class HomePage(SmoothScrollArea):
         self.entry_header_layout.setContentsMargins(0, 0, 0, 0)
         self.entry_header_layout.setSpacing(4)
         self.entry_header_layout.addWidget(StrongBodyLabel("快捷入口", self.entry_header))
-        entry_desc = CaptionLabel(
-            "主要承担目录与工具位置跳转。长条结构优先保证路径可读性，而不是信息堆叠。",
-            self.entry_header,
-        )
-        entry_desc.setWordWrap(True)
-        self.entry_header_layout.addWidget(entry_desc)
+        self.entry_desc_label = CaptionLabel("这里可以快速打开常用目录和工具位置。", self.entry_header)
+        self.entry_desc_label.setWordWrap(True)
+        self.entry_header_layout.addWidget(self.entry_desc_label)
         self.entry_panel_layout.addWidget(self.entry_header)
 
         self.entry_list_layout = QVBoxLayout()

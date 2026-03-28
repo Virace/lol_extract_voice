@@ -116,11 +116,12 @@ def test_execution_page_uses_single_task_builder_instead_of_dual_cards() -> None
     assert page.extract_task_cb.isChecked() is True
     assert page.mapping_task_cb.isChecked() is True
     assert page.bp_voice_cb.isChecked() is True
+    assert page.integrate_data_cb.isChecked() is True
     assert page.advanced_card.isExpand is True
     assert page.draft_list.contextMenuPolicy() == Qt.ContextMenuPolicy.CustomContextMenu
     assert not hasattr(page, "use_synced_selection_cb")
     assert page.copy_cli_btn.text() == "复制 CLI 命令"
-    assert page.task_builder_summary_label.text() == "当前会创建：音频解包 + 事件映射。"
+    assert page.task_builder_summary_label.text() == "将创建：音频解包和事件映射。"
     assert page.target_summary_value.text() == "全部英雄+地图"
     assert type(page.target_title_label) is type(page.task_kind_title_label)
     assert type(page.target_summary_value) is type(page.task_builder_summary_label)
@@ -199,7 +200,7 @@ def test_execution_page_can_merge_synced_selection_with_manual_input() -> None:
     page._ask_sync_conflict_resolution = lambda **_kwargs: "merge"  # type: ignore[method-assign]
     app.processEvents()
 
-    page.set_selected_entities(
+    summary = page.set_selected_entities(
         {
             "champion_ids": ("103", "222"),
             "map_ids": ("11", "12"),
@@ -211,6 +212,7 @@ def test_execution_page_can_merge_synced_selection_with_manual_input() -> None:
     assert page.champion_ids_input.text() == "1,103,222"
     assert page.map_ids_input.text() == "11,12"
     assert page.target_summary_value.text() == "目标：英雄 3 个，地图 2 个"
+    assert summary == "已合并到当前任务：3 个英雄、2 张地图。请前往执行中心继续创建任务。"
 
     page.deleteLater()
     app.processEvents()
@@ -291,7 +293,7 @@ def test_execution_page_builds_task_model_from_checkbox_selection(monkeypatch) -
     assert page.map_ids_input.text() == ""
     assert page.target_summary_value.text() == "全部英雄+地图"
     assert page.force_update_cb.isChecked() is False
-    assert page.integrate_data_cb.isChecked() is False
+    assert page.integrate_data_cb.isChecked() is True
     assert page.bp_voice_cb.isChecked() is True
     assert "[队列] #1" in page.current_log_text()
 
@@ -660,7 +662,7 @@ def test_execution_page_advanced_input_captions_reuse_non_wrapping_subtitle_styl
     target_labels = [
         label
         for label in page.advanced_card.findChildren(QLabel)
-        if "CLI 风格输入" in label.text() or "保留现有解包参数入口" in label.text()
+        if "多个英雄 ID 用逗号分隔" in label.text() or "默认同时处理 BP 语音" in label.text()
     ]
 
     assert target_labels

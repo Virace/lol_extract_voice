@@ -127,3 +127,11 @@ def test_window_refresh_shared_output_state_can_update_incrementally(monkeypatch
     assert any(entry[0] == "execution_update" for entry in calls)
     assert any(entry[0] == "overview_update" for entry in calls)
     assert not any(entry[0] == "full_reload" for entry in calls)
+    assert (
+        "infobar",
+        {
+            "title": "数据已刷新",
+            "content": "列表内容已经更新，可以继续查看或创建任务。",
+            "level": "success",
+        },
+    ) in calls

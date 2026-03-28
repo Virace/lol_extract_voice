@@ -123,7 +123,7 @@ class _ExecutionTaskFormDefaults:
     max_workers_text: str = "4"
     with_bp_vo: bool = True
     force_update: bool = False
-    integrate_data: bool = False
+    integrate_data: bool = True
 
 
 @dataclass(slots=True, frozen=True)
@@ -138,7 +138,7 @@ class _ExecutionTaskFormState:
     max_workers_text: str = "4"
     with_bp_vo: bool = True
     force_update: bool = False
-    integrate_data: bool = False
+    integrate_data: bool = True
 
     def target_summary(self) -> str:
         """返回当前目标范围摘要。"""
@@ -205,7 +205,7 @@ class AdvancedInputCard(FormAccordionCard):
         super().__init__(
             FIF.SETTING,
             "自定义输入",
-            "贴近 CLI 的自定义参数入口，用于补充或覆盖从实体总览同步进来的默认选择。",
+            "需要精细调整时，可以在这里补充范围和任务选项。",
             parent,
         )
         self.setExpand(True)
@@ -240,15 +240,15 @@ class AdvancedInputCard(FormAccordionCard):
         self.force_update_cb = CheckBox("启用")
         self.integrate_data_cb = CheckBox("启用")
 
-        self.add_form_row("英雄 ID", "按 CLI 风格输入，使用逗号分隔", self.champion_ids_input)
-        self.add_form_row("地图 ID", "按 CLI 风格输入，使用逗号分隔", self.map_ids_input)
-        self.add_form_row("音频范围", "执行中心里保留与 CLI 对齐的过滤方式", self.vo_filter)
-        self.add_form_row("并发数", "设置批量任务使用的最大线程数；一般不建议超过 CPU 线程数", self.max_workers_combo)
-        self.add_form_row("附加 BP 语音", "保留现有解包参数入口", self.bp_voice_cb)
-        self.add_form_row("强制刷新缓存", "执行前强制刷新当前任务依赖的缓存，适合本地缓存需要重建时使用", self.force_update_cb)
+        self.add_form_row("英雄 ID", "多个英雄 ID 用逗号分隔，如 1,103,555", self.champion_ids_input)
+        self.add_form_row("地图 ID", "多个地图 ID 用逗号分隔，如 0,11,12", self.map_ids_input)
+        self.add_form_row("音频范围", "默认只处理 VO，需要时可切换为全部类型", self.vo_filter)
+        self.add_form_row("并发数", "设置任务并发数；一般不建议超过 CPU 线程数", self.max_workers_combo)
+        self.add_form_row("附加 BP 语音", "默认同时处理 BP 语音", self.bp_voice_cb)
+        self.add_form_row("强制刷新缓存", "执行前重新刷新当前任务需要的缓存", self.force_update_cb)
         self.add_form_row(
-            "生成整合数据文件",
-            "对应 CLI 参数 --integrate-data，仅在映射任务中生效；勾选后会生成包含完整实体信息、banks 和 mapping 的整合文件",
+            "整合数据文件",
+            "映射任务时额外生成整合数据，便于后续整理和查看",
             self.integrate_data_cb,
         )
 
@@ -313,7 +313,7 @@ class ExecutionPage(SmoothScrollArea):
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(4)
         title_label = SubtitleLabel("执行中心", header_widget)
-        subtitle_label = CaptionLabel("在这里添加任务、查看队列状态，或复制当前配置对应的 CLI 命令。", header_widget)
+        subtitle_label = CaptionLabel("在这里创建任务、查看进度，也可以复制当前任务命令。", header_widget)
         subtitle_label.setWordWrap(True)
         header_layout.addWidget(title_label)
         header_layout.addWidget(subtitle_label)
@@ -331,7 +331,7 @@ class ExecutionPage(SmoothScrollArea):
         builder_layout.setContentsMargins(18, 16, 18, 18)
         builder_layout.setSpacing(12)
         builder_title = StrongBodyLabel("创建任务", self.task_builder_card)
-        builder_hint = CaptionLabel("确认当前目标后创建任务，或复制当前配置对应的 CLI 命令。", self.task_builder_card)
+        builder_hint = CaptionLabel("确认当前目标后就能创建任务；如果想在命令行执行，也可以先复制命令。", self.task_builder_card)
         builder_hint.setWordWrap(True)
         builder_layout.addWidget(builder_title)
         builder_layout.addWidget(builder_hint)
@@ -366,7 +366,7 @@ class ExecutionPage(SmoothScrollArea):
         task_kind_row.addWidget(self.extract_task_cb)
         task_kind_row.addWidget(self.mapping_task_cb)
         task_kind_row.addStretch(1)
-        self.task_builder_summary_label = StrongBodyLabel("当前会创建：音频解包 + 事件映射。", task_kind_widget)
+        self.task_builder_summary_label = StrongBodyLabel("将创建：音频解包和事件映射。", task_kind_widget)
         self.task_builder_summary_label.setWordWrap(True)
         task_kind_layout.addWidget(self.task_kind_title_label)
         task_kind_layout.addLayout(task_kind_row)
@@ -538,11 +538,20 @@ class ExecutionPage(SmoothScrollArea):
             if choice == "merge":
                 champion_ids = _merge_unique_ids(current_champion_ids, champion_ids)
                 map_ids = _merge_unique_ids(current_map_ids, map_ids)
-                summary = f"已与当前输入合并：{_build_target_summary(champion_ids, map_ids)}"
+                summary = (
+                    f"已合并到当前任务：{len(champion_ids)} 个英雄、{len(map_ids)} 张地图。"
+                    "请前往执行中心继续创建任务。"
+                )
             else:
-                summary = f"已覆盖为实体总览选择：{_build_target_summary(champion_ids, map_ids)}"
+                summary = (
+                    f"已同步 {len(champion_ids)} 个英雄、{len(map_ids)} 张地图，"
+                    "请前往执行中心继续创建任务。"
+                )
         elif summary == "未提供摘要":
-            summary = f"已同步实体总览选择：{_build_target_summary(champion_ids, map_ids)}"
+            summary = (
+                f"已同步 {len(champion_ids)} 个英雄、{len(map_ids)} 张地图，"
+                "请前往执行中心继续创建任务。"
+            )
 
         self._apply_selected_entities(
             champion_ids=champion_ids,
@@ -721,12 +730,12 @@ class ExecutionPage(SmoothScrollArea):
     ) -> str:
         """询问实体总览同步与当前输入冲突时的处理方式。"""
         dialog = MessageBox(
-            "同步到执行中心",
+            "更新当前任务目标",
             (
-                "当前执行中心里已经有待处理的 ID。\n\n"
-                f"当前输入：{_build_target_summary(current_champion_ids, current_map_ids)}\n"
-                f"实体总览：{_build_target_summary(incoming_champion_ids, incoming_map_ids)}\n\n"
-                "请选择如何处理。"
+                "执行中心里已经填写了目标。\n\n"
+                f"当前任务：{_build_target_summary(current_champion_ids, current_map_ids)}\n"
+                f"新选择：{_build_target_summary(incoming_champion_ids, incoming_map_ids)}\n\n"
+                "你可以选择覆盖、合并，或取消这次同步。"
             ),
             self._feedback_parent(feedback_parent),
         )
@@ -843,7 +852,9 @@ class ExecutionPage(SmoothScrollArea):
         if task_scope_summary == "未选择执行内容":
             self.task_builder_summary_label.setText("请至少勾选一个执行步骤后再创建任务。")
         else:
-            self.task_builder_summary_label.setText(f"当前会创建：{task_scope_summary}。")
+            self.task_builder_summary_label.setText(
+                f"将创建：{task_scope_summary.replace(' + ', '和')}。"
+            )
 
     def _build_cli_command_text(self) -> str | None:
         """根据当前勾选参数构造可复制的 CLI 命令。"""

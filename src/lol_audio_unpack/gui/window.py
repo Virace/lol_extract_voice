@@ -537,7 +537,7 @@ class MainWindow(FluentWindow):
         if self._pending_refresh_notice:
             self._show_refresh_infobar(
                 title="数据已刷新",
-                content="实体总览与执行中心摘要已同步到当前本地输出目录。",
+                content="列表内容已经更新，可以继续查看或创建任务。",
                 level="success",
             )
             self._pending_refresh_notice = False
@@ -640,7 +640,7 @@ class MainWindow(FluentWindow):
             if self._pending_refresh_notice:
                 self._show_refresh_infobar(
                     title="数据已刷新",
-                    content="受影响实体的状态已按任务结果增量更新。",
+                    content="列表内容已经更新，可以继续查看或创建任务。",
                     level="success",
                 )
                 self._pending_refresh_notice = False

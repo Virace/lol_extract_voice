@@ -267,7 +267,7 @@ class OverviewPage(QWidget):
 
         header_layout = QHBoxLayout()
         title_label = SubtitleLabel("实体总览", self)
-        self.subtitle_label = CaptionLabel("统一查看实体状态、筛选与选择，并同步到执行中心。", self)
+        self.subtitle_label = CaptionLabel("查看英雄和地图状态，选好后可直接发送到执行中心。", self)
         self.subtitle_label.setWordWrap(False)
 
         title_column = QVBoxLayout()
@@ -297,10 +297,10 @@ class OverviewPage(QWidget):
         left_layout.setSpacing(10)
 
         self.search_input = SearchLineEdit(left_widget)
-        self.search_input.setPlaceholderText("搜索实体 / alias / ID")
+        self.search_input.setPlaceholderText("搜索英雄、地图、别名或 ID")
         left_layout.addWidget(self.search_input)
 
-        self.selection_status_label = BodyLabel("已选中 英雄 0 个，地图 0 个。", left_widget)
+        self.selection_status_label = BodyLabel("已选 0 个英雄，0 张地图。", left_widget)
         left_layout.addWidget(self.selection_status_label)
 
         self.list_stack = QStackedWidget(left_widget)
@@ -317,7 +317,7 @@ class OverviewPage(QWidget):
         selection_layout.setSpacing(10)
 
         self.clear_selection_btn = PushButton("清空选择", self.selection_bar)
-        self.sync_selection_btn = PrimaryPushButton("同步到任务", self.selection_bar)
+        self.sync_selection_btn = PrimaryPushButton("发送到执行中心", self.selection_bar)
         self.clear_selection_btn.setEnabled(False)
         self.sync_selection_btn.setEnabled(False)
 
@@ -333,7 +333,7 @@ class OverviewPage(QWidget):
         right_layout.setSpacing(8)
 
         preview_title = StrongBodyLabel("资源预览", right_widget)
-        preview_hint = CaptionLabel("右侧支持事件树与原始数据预览；事件树当前仅展示基础层级。", right_widget)
+        preview_hint = CaptionLabel("右侧可以查看当前实体的事件和原始数据。", right_widget)
         preview_hint.setWordWrap(True)
         right_layout.addWidget(preview_title)
         right_layout.addWidget(preview_hint)
@@ -361,7 +361,7 @@ class OverviewPage(QWidget):
         summary_layout.setContentsMargins(12, 10, 12, 10)
         summary_layout.setSpacing(4)
         self.audio_preview_summary_label = BodyLabel(
-            "事件树会保留首层分组；英雄显示皮肤名，地图显示 map 子分组 ID。", self.audio_preview_summary_card
+            "这里会显示当前实体的事件分组、类型和音频数量。", self.audio_preview_summary_card
         )
         self.audio_preview_summary_label.setWordWrap(True)
         summary_layout.addWidget(self.audio_preview_summary_label)
@@ -491,9 +491,7 @@ class OverviewPage(QWidget):
         champion_count = len(self._selected_entity_ids["champions"])
         map_count = len(self._selected_entity_ids["maps"])
         total_count = champion_count + map_count
-        self.selection_status_label.setText(
-            f"已选中 英雄 {champion_count} 个，地图 {map_count} 个。"
-        )
+        self.selection_status_label.setText(f"已选 {champion_count} 个英雄，{map_count} 张地图。")
         self.clear_selection_btn.setEnabled(total_count > 0)
         self.sync_selection_btn.setEnabled(total_count > 0)
 
@@ -504,7 +502,10 @@ class OverviewPage(QWidget):
             "source": "overview_selection",
             "champion_ids": champion_ids,
             "map_ids": map_ids,
-            "summary": f"英雄 {len(champion_ids)} 个，地图 {len(map_ids)} 个",
+            "summary": (
+                f"已选择 {len(champion_ids)} 个英雄、{len(map_ids)} 张地图，"
+                "请前往执行中心继续创建任务。"
+            ),
         }
 
     def _sync_selected_entities(self) -> None:

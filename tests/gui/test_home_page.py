@@ -83,6 +83,18 @@ def test_home_page_primary_action_emits_navigation_request(monkeypatch, qtbot) -
     assert requested == [True]
 
 
+def test_home_page_primary_and_quick_entry_copy_is_user_facing(monkeypatch, qtbot) -> None:
+    """首页主入口和快捷入口说明应直接告诉用户下一步能做什么。"""
+    QApplication.instance() or QApplication([])
+    monkeypatch.setattr(HomePage, "_start_background_check", lambda self: None)
+    page = HomePage(GuiConfig(dev_mode=True))
+    qtbot.addWidget(page)
+
+    assert page.execution_center_card.titleCaption.text() == "下一步"
+    assert page.execution_center_card.detailLabel.text() == "去执行中心创建任务、查看进度。"
+    assert page.entry_desc_label.text() == "这里可以快速打开常用目录和工具位置。"
+
+
 def test_home_page_quick_entry_icon_is_vertically_centered(monkeypatch, qtbot) -> None:
     """快捷入口长条中的图标应随整行内容垂直居中。"""
     QApplication.instance() or QApplication([])

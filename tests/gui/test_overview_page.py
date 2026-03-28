@@ -204,10 +204,8 @@ def test_overview_page_uses_polished_preview_copy() -> None:
     assert create_preview_path_edit().placeholderText() == "请选择左侧实体以查看原始数据。"
     assert page.text_preview.toPlainText() == "请选择左侧实体以查看原始数据。"
     assert page._audio_preview_placeholder == "请选择左侧实体以查看事件内容。"
-    assert "右侧支持事件树与原始数据预览；事件树当前仅展示基础层级。" in caption_texts
-    assert page.audio_preview_summary_label.text() == (
-        "事件树会保留首层分组；英雄显示皮肤名，地图显示 map 子分组 ID。"
-    )
+    assert "右侧可以查看当前实体的事件和原始数据。" in caption_texts
+    assert page.audio_preview_summary_label.text() == "这里会显示当前实体的事件分组、类型和音频数量。"
 
 
 def test_overview_page_entity_list_uses_virtualized_model_view_pipeline() -> None:
@@ -359,10 +357,10 @@ def test_overview_page_header_and_splitter_use_single_line_and_locked_handle() -
     page = OverviewPage()
 
     assert page.subtitle_label.wordWrap() is False
-    assert page.subtitle_label.text() == "统一查看实体状态、筛选与选择，并同步到执行中心。"
+    assert page.subtitle_label.text() == "查看英雄和地图状态，选好后可直接发送到执行中心。"
     assert page.splitter.handleWidth() == 0
     assert page.splitter.handle(1).isEnabled() is False
-    assert page.sync_selection_btn.text() == "同步到任务"
+    assert page.sync_selection_btn.text() == "发送到执行中心"
 
 
 def test_overview_page_splitter_shrinks_with_window_width(qtbot) -> None:
@@ -387,8 +385,19 @@ def test_overview_page_empty_selection_uses_shorter_status_text() -> None:
     """未选择实体时顶部应显示计数摘要，底部操作栏不再承载提示文本。"""
     page = OverviewPage()
 
-    assert page.selection_status_label.text() == "已选中 英雄 0 个，地图 0 个。"
+    assert page.selection_status_label.text() == "已选 0 个英雄，0 张地图。"
     assert page.selection_status_label.parentWidget() is not page.selection_bar
+
+
+def test_overview_page_selected_payload_summary_guides_next_step() -> None:
+    """同步到执行中心前的摘要应直接告诉用户已选内容和下一步。"""
+    page = OverviewPage()
+    page._selected_entity_ids["champions"].update({"1", "103"})
+    page._selected_entity_ids["maps"].add("11")
+
+    payload = page._selected_payload()
+
+    assert payload["summary"] == "已选择 2 个英雄、1 张地图，请前往执行中心继续创建任务。"
 
 
 def test_overview_page_load_preview_populates_audio_tree_and_summary(tmp_path) -> None:
