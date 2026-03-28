@@ -55,3 +55,17 @@ def test_resolve_runtime_version_falls_back_when_git_describe_fails(
     monkeypatch.setattr(versioning, "describe_git_version", _raise_git_error)
 
     assert versioning.resolve_runtime_version(tmp_path, "3.5.1.dev0") == "3.5.1.dev0"
+
+
+def test_resolve_runtime_version_skips_git_probe_for_frozen_runs(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(versioning.sys, "frozen", True, raising=False)
+
+    def _unexpected_git_probe(_repo_root: Path) -> str:
+        raise AssertionError("frozen runtime should not execute git describe")
+
+    monkeypatch.setattr(versioning, "describe_git_version", _unexpected_git_probe)
+
+    assert versioning.resolve_runtime_version(tmp_path, "3.5.1.dev0") == "3.5.1.dev0"

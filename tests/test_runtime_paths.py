@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from lol_audio_unpack.utils.runtime_paths import (
+    apply_frozen_working_directory,
     detect_runtime_paths,
     get_default_output_root,
     get_default_vgmstream_path,
@@ -79,3 +80,41 @@ def test_default_tool_paths_follow_launch_root_and_platform(tmp_path: Path) -> N
     assert get_default_vgmstream_path(runtime_paths, platform="linux") == (
         expected_root / "tools" / "vgmstream" / "vgmstream-cli"
     )
+
+
+def test_apply_frozen_working_directory_switches_to_launch_root(tmp_path: Path) -> None:
+    """冻结态运行时应在 runtime hook 中切到 ``launch_root``。"""
+    executable = tmp_path / "bundle" / "LolAudioUnpack.exe"
+    runtime_paths = detect_runtime_paths(
+        is_frozen=True,
+        cwd=tmp_path / "shortcut-workdir",
+        executable=executable,
+    )
+    chdir_calls: list[Path] = []
+
+    target = apply_frozen_working_directory(
+        runtime_paths=runtime_paths,
+        chdir=lambda path: chdir_calls.append(Path(path)),
+    )
+
+    assert target == executable.parent.resolve(strict=False)
+    assert chdir_calls == [executable.parent.resolve(strict=False)]
+
+
+def test_apply_frozen_working_directory_keeps_source_runs_unchanged(tmp_path: Path) -> None:
+    """源码态运行时不应被 runtime hook 改写当前工作目录。"""
+    source_cwd = tmp_path / "workspace"
+    runtime_paths = detect_runtime_paths(
+        is_frozen=False,
+        cwd=source_cwd,
+        executable=tmp_path / "python" / "python.exe",
+    )
+    chdir_calls: list[Path] = []
+
+    target = apply_frozen_working_directory(
+        runtime_paths=runtime_paths,
+        chdir=lambda path: chdir_calls.append(Path(path)),
+    )
+
+    assert target is None
+    assert chdir_calls == []

@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from lol_audio_unpack.utils.type_hints import StrPath
 
 __all__ = [
+    "apply_frozen_working_directory",
     "RuntimePaths",
     "detect_runtime_paths",
     "get_default_output_root",
@@ -75,6 +78,29 @@ def detect_runtime_paths(
         config_root=launch_root,
         bundle_root=launch_root,
     )
+
+
+def apply_frozen_working_directory(
+    *,
+    runtime_paths: RuntimePaths | None = None,
+    chdir: Callable[[StrPath], None] = os.chdir,
+) -> Path | None:
+    """在冻结态下将当前工作目录切换到 ``launch_root``。
+
+    Args:
+        runtime_paths: 可选的运行时路径快照；未提供时自动探测当前进程。
+        chdir: 可注入的 ``chdir`` 实现，便于测试。
+
+    Returns:
+        Path | None: 实际切换到的目录；源码态返回 ``None``。
+    """
+
+    current_paths = runtime_paths or detect_runtime_paths()
+    if not current_paths.is_frozen:
+        return None
+
+    chdir(current_paths.launch_root)
+    return current_paths.launch_root
 
 
 def get_default_output_root(runtime_paths: RuntimePaths) -> Path:

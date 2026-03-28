@@ -1,13 +1,4 @@
-# 🐍 Explicit is better than implicit.
-# 🐼 明了胜于晦涩
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2025/1/15
-# @Update  : 2025/8/2 18:14
-# @Detail  : Loguru 日志配置工具（独立工具类，无外部依赖）
-
+"""集中管理项目的 Loguru 日志初始化与辅助能力。"""
 
 import sys
 import time
@@ -23,6 +14,22 @@ from lol_audio_unpack.utils.common import format_duration
 
 class LoggingConfiguration:
     """Loguru 日志配置工具（无外部依赖，可独立使用）"""
+
+    @staticmethod
+    def _resolve_console_sink(stream: Any) -> Any:
+        """将标准流对象转换为可安全传给 Loguru 的 sink。
+
+        Args:
+            stream: 标准输出或错误流对象。
+
+        Returns:
+            Any: 原始流对象；若传入 ``None``，则返回一个丢弃消息的 callable sink，
+                用于兼容 PyInstaller ``windowed`` / ``noconsole`` 下标准流缺失的场景。
+        """
+
+        if stream is not None:
+            return stream
+        return lambda _message: None
 
     @staticmethod
     def _add_handler_with_enqueue_fallback(*args, **kwargs) -> None:
@@ -71,7 +78,7 @@ class LoggingConfiguration:
 
         # 添加控制台日志处理器
         LoggingConfiguration._add_handler_with_enqueue_fallback(
-            sys.stderr,
+            LoggingConfiguration._resolve_console_sink(sys.stderr),
             level=log_level.upper(),
             format=console_format,
             backtrace=True,
@@ -226,7 +233,7 @@ def log_level_context(level: str):
             # 临时修改级别
             logger.remove()
             logger.add(
-                sys.stderr,
+                LoggingConfiguration._resolve_console_sink(sys.stderr),
                 level=self.target_level,
                 format="<level>{level: <8}</level> | <level>{message}</level>",
                 colorize=True,

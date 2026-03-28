@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 WINDOWS_VERSION_PATTERN = re.compile(rb"(?:[0-9]\x00)+(?:\.\x00(?:[0-9]\x00)+){3}")
@@ -144,6 +145,9 @@ def resolve_runtime_version(repo_root: Path, fallback_version: str) -> str:
     Returns:
         运行时展示使用的版本号。
     """
+    if getattr(sys, "frozen", False):
+        return fallback_version
+
     try:
         return derive_version_from_git_describe(describe_git_version(repo_root), fallback_version)
     except Exception:

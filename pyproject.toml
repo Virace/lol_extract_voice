@@ -36,6 +36,9 @@ managed = true
 default-groups = ["dev"]
 
 [dependency-groups]
+build = [
+    "pyinstaller>=6.19.0",
+]
 dev = [
     "memory-profiler>=0.61.0",
     "pytest>=9.0.0",
