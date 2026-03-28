@@ -800,18 +800,6 @@ class MainWindow(FluentWindow):
             )
             self._pending_refresh_notice = False
 
-    def _inject_mock_data(self):
-        mock_rows = [
-            {"id": "1", "name": "Annie", "alias": "annie", "audio": "已存在", "mapping": "未存在"},
-            {"id": "103", "name": "Ahri", "alias": "ahri", "audio": "已存在", "mapping": "已存在"},
-            {"id": "222", "name": "Jinx", "alias": "jinx", "audio": "未存在", "mapping": "未存在"},
-            {"id": "11", "name": "Summoner's Rift", "alias": "sr", "audio": "已存在", "mapping": "已存在"},
-        ]
-        self.overviewInterface.set_entity_data("champions", mock_rows[:3])
-        self.overviewInterface.set_entity_data("maps", mock_rows[3:])
-        self.executionInterface.set_entity_data("champions", mock_rows[:3])
-        self.executionInterface.set_entity_data("maps", mock_rows[3:])
-
     def resizeEvent(self, event: QResizeEvent) -> None:
         """在窗口尺寸变化时重排全局日志面板。"""
         super().resizeEvent(event)

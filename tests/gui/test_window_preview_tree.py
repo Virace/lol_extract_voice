@@ -56,6 +56,22 @@ def _attach_preview_loader(window: MainWindow, tmp_path: Path) -> None:
     window.overviewInterface._loader = loader
 
 
+def _seed_entity_rows(window: MainWindow) -> None:
+    """向主窗口业务页注入最小实体列表样例数据。"""
+    champion_rows = [
+        {"id": "1", "name": "Annie", "alias": "annie", "audio": "已存在", "mapping": "未存在"},
+        {"id": "103", "name": "Ahri", "alias": "ahri", "audio": "已存在", "mapping": "已存在"},
+        {"id": "222", "name": "Jinx", "alias": "jinx", "audio": "未存在", "mapping": "未存在"},
+    ]
+    map_rows = [
+        {"id": "11", "name": "Summoner's Rift", "alias": "sr", "audio": "已存在", "mapping": "已存在"},
+    ]
+    window.overviewInterface.set_entity_data("champions", champion_rows)
+    window.overviewInterface.set_entity_data("maps", map_rows)
+    window.executionInterface.set_entity_data("champions", champion_rows)
+    window.executionInterface.set_entity_data("maps", map_rows)
+
+
 def _dispose_main_window(window: MainWindow, app: QApplication) -> None:
     """以可预测的顺序关闭主窗口，避免遗留 QApplication 级状态。"""
     window.close()
@@ -117,6 +133,7 @@ def test_main_window_does_not_initialize_dev_console_until_triggered(monkeypatch
     app.processEvents()
 
     assert getattr(window, "_dev_console", None) is None
+    assert not hasattr(window, "_inject_mock_data")
     assert hasattr(window.executionInterface, "_debug_fill_mock_queue")
     assert hasattr(window.executionInterface, "_debug_clear_mock_queue")
     assert hasattr(window.executionInterface, "_debug_inspect_queue")
@@ -200,7 +217,7 @@ def test_main_window_overview_preview_tree_can_expand_with_custom_preview_tree(
 
     try:
         _configure_gui_app(app, theme=Theme.DARK)
-        window._inject_mock_data()
+        _seed_entity_rows(window)
         _attach_preview_loader(window, tmp_path)
         window.switchTo(window.overviewInterface)
         window.overviewInterface._on_preview_mode_changed("audio")
