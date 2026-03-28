@@ -377,6 +377,7 @@ class SettingPage(SmoothScrollArea):
         previous_mark = _log_setting_stage("_load_config 完成", startup_begin, previous_mark)
         apply_smooth_scroll_enabled(self, self._cfg.page_smooth_scroll_enabled)
         self._connect_signals()
+        self.destroyed.connect(self._disconnect_theme_persistence_signals)
         previous_mark = _log_setting_stage("_connect_signals 完成", startup_begin, previous_mark)
 
         # 初始化时根据当前模式刷新动态显隐
@@ -669,6 +670,14 @@ class SettingPage(SmoothScrollArea):
         cfg.theme_mode = theme_map.get(qconfig.themeMode.value, "Light")
         cfg.theme_color = qconfig.themeColor.value.name()
         cfg.save()
+
+    def _disconnect_theme_persistence_signals(self, *_args: object) -> None:
+        """断开设置页注册的全局主题持久化监听。"""
+        for signal in (qconfig.themeChanged, qconfig.themeColorChanged):
+            try:
+                signal.disconnect(self._save_theme_config)
+            except (RuntimeError, TypeError):
+                pass
 
     # ------------------------------------------------------------------
     # 信号连接

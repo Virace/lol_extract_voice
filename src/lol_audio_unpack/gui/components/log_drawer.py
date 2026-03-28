@@ -557,11 +557,29 @@ class GlobalLogDrawer(QObject):
         self._hover_animation.setDuration(LOG_PANEL_ANIMATION_DURATION_MS)
         self._hover_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
 
-        qconfig.themeChanged.connect(lambda _theme: self._refresh_surface_style())
-        qconfig.themeColorChanged.connect(lambda _color: self._refresh_surface_style())
+        self._theme_surface_listener = lambda _theme: self._refresh_surface_style()
+        self._theme_color_surface_listener = lambda _color: self._refresh_surface_style()
+        qconfig.themeChanged.connect(self._theme_surface_listener)
+        qconfig.themeColorChanged.connect(self._theme_color_surface_listener)
+        self.destroyed.connect(self._disconnect_theme_surface_listeners)
 
         self._refresh_surface_style()
         self.set_expanded(False, animate=False)
+
+    def _disconnect_theme_surface_listeners(self, *_args: object) -> None:
+        """断开日志抽屉注册的全局主题监听。"""
+        for signal, attr_name in (
+            (qconfig.themeChanged, "_theme_surface_listener"),
+            (qconfig.themeColorChanged, "_theme_color_surface_listener"),
+        ):
+            listener = getattr(self, attr_name, None)
+            if listener is None:
+                continue
+            try:
+                signal.disconnect(listener)
+            except (RuntimeError, TypeError):
+                pass
+            setattr(self, attr_name, None)
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         """监听日志标题上的隐藏开发控制台触发手势。"""

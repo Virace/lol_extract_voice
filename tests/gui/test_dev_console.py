@@ -5,6 +5,8 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
+from qfluentwidgets import Theme, qconfig, setTheme
+from shiboken6 import delete
 
 from lol_audio_unpack.gui.window import MainWindow
 
@@ -65,3 +67,21 @@ def test_dev_console_queue_commands_can_fill_and_inspect_execution_queue(qtbot, 
     assert "visible_rows=3" in output_text
     assert "queue_height=" in output_text
     _dispose_main_window(window, app)
+
+
+def test_main_window_disconnects_theme_listener_after_close(monkeypatch) -> None:
+    """主窗口关闭后再次切换主题不应回调到已销毁窗口。"""
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
+    original_theme = qconfig.theme
+    window = MainWindow()
+
+    _dispose_main_window(window, app)
+    delete(window)
+
+    try:
+        setTheme(Theme.DARK if original_theme != Theme.DARK else Theme.LIGHT)
+        app.processEvents()
+    finally:
+        setTheme(original_theme)
+        app.processEvents()

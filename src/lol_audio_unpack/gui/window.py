@@ -118,7 +118,8 @@ class MainWindow(FluentWindow):
         # apply specific real-time listeners for theme tracking
         qconfig.themeChanged.connect(setTheme)
         qconfig.themeColorChanged.connect(setThemeColor)
-        qconfig.themeChanged.connect(lambda _theme: self._try_enable_window_material())
+        self._theme_material_listener = lambda _theme: self._try_enable_window_material()
+        qconfig.themeChanged.connect(self._theme_material_listener)
         previous_mark = _log_window_stage("主题变更信号连接完成", startup_begin, previous_mark)
 
         self._data_app_context = None
@@ -249,6 +250,17 @@ class MainWindow(FluentWindow):
             return
         self._app_event_filter_installed = False
 
+    def _disconnect_theme_material_listener(self) -> None:
+        """断开当前窗口注册的主题材质刷新监听。"""
+        listener = getattr(self, "_theme_material_listener", None)
+        if listener is None:
+            return
+        try:
+            qconfig.themeChanged.disconnect(listener)
+        except (RuntimeError, TypeError):
+            pass
+        self._theme_material_listener = None
+
     def _try_enable_window_material(self) -> None:
         """在支持的平台上启用 Windows 原生 Mica Alt 材质。"""
         if sys.platform != "win32" or not self.isVisible():
@@ -287,6 +299,7 @@ class MainWindow(FluentWindow):
     def event(self, event):
         """在窗口激活状态变化后重刷 Mica，修正首轮焦点切换才生效的问题。"""
         if event.type() == QEvent.Type.DeferredDelete:
+            self._disconnect_theme_material_listener()
             self._unregister_app_event_filter()
         if event.type() in {
             QEvent.Type.WindowActivate,
@@ -298,6 +311,7 @@ class MainWindow(FluentWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """关闭窗口前解除 QApplication 级事件过滤器。"""
+        self._disconnect_theme_material_listener()
         self._unregister_app_event_filter()
         super().closeEvent(event)
 

@@ -109,6 +109,7 @@ class OverviewPage(QWidget):
         self._audio_preview_placeholder = "请选择左侧实体以查看事件内容。"
         self._build_ui()
         self._setup_connections()
+        self.destroyed.connect(self._disconnect_theme_refresh_listeners)
 
     def showEvent(self, event):
         """页面首次展示时同步当前缓存。"""
@@ -221,6 +222,14 @@ class OverviewPage(QWidget):
             selection_model.selectionChanged.connect(
                 lambda _selected, _deselected, et=entity_type: self._on_entity_selection_changed(et)
             )
+
+    def _disconnect_theme_refresh_listeners(self, *_args: object) -> None:
+        """断开实体总览页注册的全局主题监听。"""
+        for signal in (qconfig.themeChanged, qconfig.themeColorChanged):
+            try:
+                signal.disconnect(self._refresh_theme_styles)
+            except (RuntimeError, TypeError):
+                pass
 
     def _refresh_entity_list_theme(self) -> None:
         """在主题或主题色变化后刷新列表绘制。"""

@@ -347,12 +347,20 @@ class AboutPage(SmoothScrollArea):
         self.setWidgetResizable(True)
         self.setStyleSheet("QScrollArea {border: none; background: transparent;}")
         qconfig.themeChanged.connect(self._refresh_theme_styles)
+        self.destroyed.connect(self._disconnect_theme_refresh_listener)
 
         self._build_ui()
 
     def _refresh_theme_styles(self, *_args: object) -> None:
         """按当前主题刷新关于页的容器样式。"""
         self.view.setStyleSheet(self._build_view_stylesheet())
+
+    def _disconnect_theme_refresh_listener(self, *_args: object) -> None:
+        """断开关于页注册的全局主题监听。"""
+        try:
+            qconfig.themeChanged.disconnect(self._refresh_theme_styles)
+        except (RuntimeError, TypeError):
+            pass
 
     def _build_view_stylesheet(self) -> str:
         """根据当前主题构造关于页的样式表。"""
