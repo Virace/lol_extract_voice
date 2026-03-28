@@ -37,6 +37,7 @@ from lol_audio_unpack.gui.common import (
     format_default_relative_path,
     format_path_for_display,
 )
+from lol_audio_unpack.gui.common.style import apply_page_content_margins
 from lol_audio_unpack.gui.components.accordion_setting_card import FormAccordionCard
 from lol_audio_unpack.utils.runtime_paths import (
     get_default_output_relative_path,
@@ -389,7 +390,7 @@ class SettingPage(SmoothScrollArea):
 
     def _build_ui(self):
         root_layout = QVBoxLayout(self.view)
-        root_layout.setContentsMargins(36, 22, 36, 16)
+        apply_page_content_margins(root_layout)
         root_layout.setSpacing(16)
 
         page_title = TitleLabel("全局设置", self.view)

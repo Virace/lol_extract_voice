@@ -416,6 +416,7 @@ class MainWindow(FluentWindow):
         si.output_path_changed.connect(hi.update_output_dir)
         si.wwiser_path_changed.connect(hi.update_wwiser)
         si.vgmstream_path_changed.connect(hi.update_vgmstream)
+        hi.navigate_to_execution_requested.connect(lambda: self.switchTo(self.executionInterface))
 
         # 注入配置到各业务页面
         self.executionInterface.set_gui_config(cfg)

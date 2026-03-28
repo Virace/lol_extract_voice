@@ -26,6 +26,7 @@ from qfluentwidgets.common.icon import FluentIconBase, drawIcon
 
 from lol_audio_unpack import __version__
 from lol_audio_unpack.gui.common.icon import get_app_logo_path
+from lol_audio_unpack.gui.common.style import apply_page_content_margins
 from lol_audio_unpack.gui.common.styles import (
     get_fluent_frame_stroke_pair,
     get_fluent_neutral_surface_pair,
@@ -421,7 +422,7 @@ class AboutPage(SmoothScrollArea):
     def _build_ui(self):
         """构建关于页面的布局内容。"""
         root_layout = QVBoxLayout(self.view)
-        root_layout.setContentsMargins(36, 34, 36, 34)
+        apply_page_content_margins(root_layout)
         root_layout.setSpacing(24)
         self._refresh_theme_styles()
 

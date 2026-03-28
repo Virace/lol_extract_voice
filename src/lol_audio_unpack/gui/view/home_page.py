@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QThreadPool, QUrl
+from PySide6.QtCore import Qt, QThreadPool, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
@@ -16,14 +16,18 @@ from qfluentwidgets import (
     IndeterminateProgressBar,
     InfoBar,
     InfoBarPosition,
+    PrimaryPushButton,
     ProgressBar,
+    PushButton,
     SmoothScrollArea,
+    StrongBodyLabel,
     SubtitleLabel,
     TitleLabel,
 )
 from qfluentwidgets import FluentIcon as FIF
 
 from lol_audio_unpack.gui.common import GuiConfig, format_default_relative_path
+from lol_audio_unpack.gui.common.style import apply_page_content_margins
 from lol_audio_unpack.gui.workers import TaskWorker
 from lol_audio_unpack.manager.utils import get_game_version
 from lol_audio_unpack.utils.runtime_paths import (
@@ -75,6 +79,34 @@ class ElidedLabel(CaptionLabel):
             self._full_text, Qt.TextElideMode.ElideRight, self.width() - 2
         )
         super().setText(elided)
+
+
+def _open_path_in_explorer(raw: str, *, warn) -> None:
+    """打开目标路径，必要时向上回退到最近存在的父目录。"""
+    raw = raw.strip()
+    if not raw:
+        warn("路径未设置", "请先在「全局设置」中配置此路径。")
+        return
+
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = detect_runtime_paths().launch_root / path
+
+    if path.is_file():
+        target = path.parent
+    elif path.is_dir():
+        target = path
+    else:
+        ancestor = path.parent
+        while ancestor != ancestor.parent and not ancestor.exists():
+            ancestor = ancestor.parent
+        if ancestor.exists():
+            target = ancestor
+        else:
+            warn("路径不存在", f"找不到路径：{raw}")
+            return
+
+    QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
 
 
 # ---------------------------------------------------------------------------
@@ -171,31 +203,193 @@ class ClickableCard(CardWidget):
         self._open_in_explorer()
 
     def _open_in_explorer(self) -> None:
-        raw = self._raw_path.strip()
-        if not raw:
-            self._warn("路径未设置", "请先在「全局设置」中配置此路径。")
+        _open_path_in_explorer(self._raw_path, warn=self._warn)
+
+    def _warn(self, title: str, content: str) -> None:
+        InfoBar.warning(
+            title=title,
+            content=content,
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=3000,
+            parent=self.window(),
+        )
+
+
+class CompactStatusCard(CardWidget):
+    """首页顶部使用的紧凑状态卡。"""
+
+    def __init__(self, icon, title: str, content: str, parent=None):
+        super().__init__(parent)
+        self._raw_path: str = ""
+        self._jump_enabled = False
+
+        self.vBoxLayout = QVBoxLayout(self)
+        self.vBoxLayout.setContentsMargins(18, 18, 18, 18)
+        self.vBoxLayout.setSpacing(8)
+
+        self.headerLayout = QHBoxLayout()
+        self.headerLayout.setContentsMargins(0, 0, 0, 0)
+        self.headerLayout.setSpacing(8)
+
+        self.iconWidget = IconWidget(icon, self)
+        self.iconWidget.setFixedSize(18, 18)
+        self.linkIcon = IconWidget(FIF.LINK, self)
+        self.linkIcon.setFixedSize(14, 14)
+        self.linkIcon.hide()
+
+        self.headerLayout.addWidget(self.iconWidget)
+        self.headerLayout.addStretch(1)
+        self.headerLayout.addWidget(self.linkIcon)
+
+        self.titleCaption = CaptionLabel(title, self)
+        self.valueLabel = StrongBodyLabel(content, self)
+        self.detailLabel = CaptionLabel("", self)
+        self.detailLabel.hide()
+        self.detailLabel.setWordWrap(True)
+
+        self.vBoxLayout.addLayout(self.headerLayout)
+        self.vBoxLayout.addWidget(self.titleCaption)
+        self.vBoxLayout.addWidget(self.valueLabel)
+        self.vBoxLayout.addWidget(self.detailLabel)
+        self.vBoxLayout.addStretch(1)
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def setPath(self, path: str) -> None:
+        """设置当前状态卡关联的跳转路径。"""
+        self._raw_path = path
+
+    def setDisplayText(self, text: str) -> None:
+        """设置状态卡主文案。"""
+        self.valueLabel.setText(text)
+
+    def setDetailText(self, text: str) -> None:
+        """设置状态卡补充说明。"""
+        self.detailLabel.setVisible(bool(text))
+        self.detailLabel.setText(text)
+
+    def isJumpEnabled(self) -> bool:
+        """返回当前状态卡是否允许跳转。"""
+        return self._jump_enabled
+
+    def setJumpEnabled(self, is_enabled: bool) -> None:
+        """设置状态卡是否允许跳转。"""
+        self._jump_enabled = bool(is_enabled)
+        self.linkIcon.setVisible(self._jump_enabled)
+        self.setCursor(
+            Qt.CursorShape.PointingHandCursor if self._jump_enabled else Qt.CursorShape.ArrowCursor
+        )
+
+    def mouseReleaseEvent(self, event):
+        """处理状态卡点击跳转。"""
+        super().mouseReleaseEvent(event)
+        if self._jump_enabled:
+            self._open_in_explorer()
+
+    def _open_in_explorer(self) -> None:
+        _open_path_in_explorer(self._raw_path, warn=self._warn)
+
+    def _warn(self, title: str, content: str) -> None:
+        InfoBar.warning(
+            title=title,
+            content=content,
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=3000,
+            parent=self.window(),
+        )
+
+
+class ExecutionEntryCard(CardWidget):
+    """首页顶部的执行中心入口卡。"""
+
+    requested = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.vBoxLayout = QVBoxLayout(self)
+        self.vBoxLayout.setContentsMargins(18, 18, 18, 18)
+        self.vBoxLayout.setSpacing(8)
+
+        self.titleCaption = CaptionLabel("Next Step", self)
+        self.titleLabel = StrongBodyLabel("前往执行中心", self)
+        self.detailLabel = CaptionLabel("首页不直接执行任务，只负责进入真正的执行流程页面。", self)
+        self.detailLabel.setWordWrap(True)
+        self.action_button = PrimaryPushButton("进入执行中心", self)
+        self.action_button.clicked.connect(self.requested.emit)
+
+        self.vBoxLayout.addWidget(self.titleCaption)
+        self.vBoxLayout.addWidget(self.titleLabel)
+        self.vBoxLayout.addWidget(self.detailLabel)
+        self.vBoxLayout.addStretch(1)
+        self.vBoxLayout.addWidget(self.action_button, alignment=Qt.AlignmentFlag.AlignLeft)
+
+
+class QuickOpenRow(CardWidget):
+    """首页下方的长条快捷入口。"""
+
+    def __init__(self, icon, title: str, content: str, action_text: str, parent=None):
+        super().__init__(parent)
+        self._raw_path: str = ""
+        self._jump_enabled = True
+
+        self.rowLayout = QHBoxLayout(self)
+        self.rowLayout.setContentsMargins(16, 14, 16, 14)
+        self.rowLayout.setSpacing(14)
+
+        self.iconWidget = IconWidget(icon, self)
+        self.iconWidget.setFixedSize(18, 18)
+
+        self.textLayout = QVBoxLayout()
+        self.textLayout.setContentsMargins(0, 0, 0, 0)
+        self.textLayout.setSpacing(4)
+        self.titleLabel = BodyLabel(title, self)
+        self.contentLabel = ElidedLabel(content, self)
+        self.contentLabel.setTextColor(Qt.GlobalColor.gray, Qt.GlobalColor.gray)
+        self.contentLabel.setToolTip(content)
+        self.textLayout.addWidget(self.titleLabel)
+        self.textLayout.addWidget(self.contentLabel)
+
+        self.action_button = PushButton(action_text, self)
+        self.action_button.clicked.connect(self._open_in_explorer)
+
+        self.rowLayout.addWidget(self.iconWidget, alignment=Qt.AlignmentFlag.AlignVCenter)
+        self.rowLayout.addLayout(self.textLayout, 1)
+        self.rowLayout.addWidget(self.action_button, alignment=Qt.AlignmentFlag.AlignVCenter)
+
+    def setPath(self, path: str) -> None:
+        """设置长条入口关联的真实路径。"""
+        self._raw_path = path
+        display_path = format_default_relative_path(path) if path else ""
+        self.contentLabel.setText(display_path)
+        self.contentLabel.setToolTip(display_path)
+
+    def setDisplayText(self, text: str) -> None:
+        """设置长条入口显示文本。"""
+        self.contentLabel.setText(text)
+        self.contentLabel.setToolTip(text)
+
+    def isJumpEnabled(self) -> bool:
+        """返回入口是否可跳转。"""
+        return self._jump_enabled
+
+    def setJumpEnabled(self, is_enabled: bool) -> None:
+        """设置入口是否允许跳转。"""
+        self._jump_enabled = bool(is_enabled)
+        self.action_button.setEnabled(self._jump_enabled)
+
+    def mouseReleaseEvent(self, event):
+        """点击整行时也可触发打开。"""
+        super().mouseReleaseEvent(event)
+        if self._jump_enabled:
+            self._open_in_explorer()
+
+    def _open_in_explorer(self) -> None:
+        if not self._jump_enabled:
             return
-
-        p = Path(raw).expanduser()
-        if not p.is_absolute():
-            p = detect_runtime_paths().launch_root / p
-
-        if p.is_file():
-            target = p.parent
-        elif p.is_dir():
-            target = p
-        else:
-            # Traverse upward to find nearest existing ancestor
-            ancestor = p.parent
-            while ancestor != ancestor.parent and not ancestor.exists():
-                ancestor = ancestor.parent
-            if ancestor.exists():
-                target = ancestor
-            else:
-                self._warn("路径不存在", f"找不到路径：{raw}")
-                return
-
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
+        _open_path_in_explorer(self._raw_path, warn=self._warn)
 
     def _warn(self, title: str, content: str) -> None:
         InfoBar.warning(
@@ -219,6 +413,8 @@ class HomePage(SmoothScrollArea):
     On show, a background worker reads the game version and checks whether
     a matching audio cache exists under the configured output directory.
     """
+
+    navigate_to_execution_requested = Signal()
 
     def __init__(self, cfg: GuiConfig, parent=None):
         super().__init__(parent=parent)
@@ -253,7 +449,7 @@ class HomePage(SmoothScrollArea):
 
     def _build_ui(self):
         root_layout = QVBoxLayout(self.view)
-        root_layout.setContentsMargins(36, 36, 36, 36)
+        apply_page_content_margins(root_layout)
         root_layout.setSpacing(24)
 
         # ── Title ──────────────────────────────────────────────────────
@@ -279,64 +475,77 @@ class HomePage(SmoothScrollArea):
         loading_layout.addWidget(self.progress_bar)
         root_layout.addWidget(self._loading_widget)
 
-        # ── Overview cards ─────────────────────────────────────────────
-        root_layout.addWidget(CaptionLabel("概览", self))
+        self.top_status_widget = QWidget(self.view)
+        self.top_status_layout = QHBoxLayout(self.top_status_widget)
+        self.top_status_layout.setContentsMargins(0, 0, 0, 0)
+        self.top_status_layout.setSpacing(16)
 
-        self.overview_flow = FlowLayout()
-        self.overview_flow.setContentsMargins(0, 0, 0, 0)
-        self.overview_flow.setHorizontalSpacing(16)
-        self.overview_flow.setVerticalSpacing(16)
-
-        self.version_card = ClickableCard(FIF.CODE, "游戏版本", "读取中…", self)
+        self.version_card = CompactStatusCard(FIF.CODE, "Game Version", "读取中…", self.top_status_widget)
         self.version_card.setJumpEnabled(False)
+        self.version_card.setDetailText("当前游戏客户端版本。")
 
-        self.game_dir_card = ClickableCard(FIF.FOLDER, "游戏目录", "未设置", self)
-        self.output_dir_card = ClickableCard(
+        self.cache_card = CompactStatusCard(FIF.SYNC, "Cache Resource", "检查中…", self.top_status_widget)
+        self.cache_card.setJumpEnabled(False)
+        self.cache_card.setDetailText("当前缓存资源状态。")
+
+        self.execution_center_card = ExecutionEntryCard(self.top_status_widget)
+        self.execution_center_card.requested.connect(self.navigate_to_execution_requested.emit)
+
+        for card in (self.version_card, self.cache_card, self.execution_center_card):
+            card.setMinimumHeight(116)
+            self.top_status_layout.addWidget(card, 1)
+
+        root_layout.addWidget(self.top_status_widget)
+
+        self.entry_panel = QFrame(self.view)
+        self.entry_panel_layout = QVBoxLayout(self.entry_panel)
+        self.entry_panel_layout.setContentsMargins(0, 0, 0, 0)
+        self.entry_panel_layout.setSpacing(12)
+        self.entry_header = QWidget(self.entry_panel)
+        self.entry_header_layout = QVBoxLayout(self.entry_header)
+        self.entry_header_layout.setContentsMargins(0, 0, 0, 0)
+        self.entry_header_layout.setSpacing(4)
+        self.entry_header_layout.addWidget(StrongBodyLabel("快捷入口", self.entry_header))
+        entry_desc = CaptionLabel(
+            "主要承担目录与工具位置跳转。长条结构优先保证路径可读性，而不是信息堆叠。",
+            self.entry_header,
+        )
+        entry_desc.setWordWrap(True)
+        self.entry_header_layout.addWidget(entry_desc)
+        self.entry_panel_layout.addWidget(self.entry_header)
+
+        self.entry_list_layout = QVBoxLayout()
+        self.entry_list_layout.setContentsMargins(0, 0, 0, 0)
+        self.entry_list_layout.setSpacing(10)
+
+        self.game_dir_card = QuickOpenRow(FIF.FOLDER, "游戏目录", "未设置", "打开目录", self.entry_panel)
+        self.output_dir_card = QuickOpenRow(
             FIF.DOWNLOAD,
             "输出目录",
             self._default_relative_display_path(get_default_output_relative_path()),
-            self,
+            "打开目录",
+            self.entry_panel,
         )
-
-        # Cache-status card (no path jump initially; will be set if found)
-        self.cache_card = ClickableCard(FIF.SYNC, "缓存资源", "检查中…", self)
-        self.cache_card.setJumpEnabled(False)
-
-        for card in (
-            self.version_card,
-            self.cache_card,
-            self.game_dir_card,
-            self.output_dir_card,
-        ):
-            self.overview_flow.addWidget(card)
-
-        root_layout.addLayout(self.overview_flow)
-
-        # ── Tool cards ─────────────────────────────────────────────────
-        root_layout.addWidget(CaptionLabel("工具配置", self))
-
-        self.tools_flow = FlowLayout()
-        self.tools_flow.setContentsMargins(0, 0, 0, 0)
-        self.tools_flow.setHorizontalSpacing(16)
-        self.tools_flow.setVerticalSpacing(16)
-
-        self.wwiser_card = ClickableCard(
+        self.wwiser_card = QuickOpenRow(
             FIF.DEVELOPER_TOOLS,
             "wwiser",
             self._default_relative_display_path(get_default_wwiser_relative_path()),
-            self,
+            "打开位置",
+            self.entry_panel,
         )
-        self.vgmstream_card = ClickableCard(
+        self.vgmstream_card = QuickOpenRow(
             FIF.COMMAND_PROMPT,
             "vgmstream-cli",
             self._default_relative_display_path(get_default_vgmstream_relative_path()),
-            self,
+            "打开位置",
+            self.entry_panel,
         )
 
-        for card in (self.wwiser_card, self.vgmstream_card):
-            self.tools_flow.addWidget(card)
+        for card in (self.game_dir_card, self.output_dir_card, self.wwiser_card, self.vgmstream_card):
+            self.entry_list_layout.addWidget(card)
 
-        root_layout.addLayout(self.tools_flow)
+        self.entry_panel_layout.addLayout(self.entry_list_layout)
+        root_layout.addWidget(self.entry_panel)
         root_layout.addStretch(1)
 
     # ------------------------------------------------------------------

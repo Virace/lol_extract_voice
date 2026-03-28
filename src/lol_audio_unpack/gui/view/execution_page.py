@@ -47,6 +47,7 @@ from lol_audio_unpack.gui.common import (
     get_buffered_log_lines,
     show_feedback_infobar,
 )
+from lol_audio_unpack.gui.common.style import apply_page_content_margins
 from lol_audio_unpack.gui.components.accordion_setting_card import FormAccordionCard
 from lol_audio_unpack.gui.service.task_runner import run_execution_task
 from lol_audio_unpack.gui.task_models import (
@@ -304,7 +305,7 @@ class ExecutionPage(SmoothScrollArea):
 
     def _build_ui(self) -> None:
         self.expandLayout = ExpandLayout(self.view)
-        self.expandLayout.setContentsMargins(24, 24, 24, 24)
+        apply_page_content_margins(self.expandLayout)
         self.expandLayout.setSpacing(16)
 
         header_widget = QWidget(self.view)

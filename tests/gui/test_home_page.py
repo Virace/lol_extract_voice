@@ -18,6 +18,10 @@ from lol_audio_unpack.gui.view import home_page as home_page_module
 from lol_audio_unpack.gui.view.home_page import ClickableCard, HomePage
 from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
 
+HOME_TOP_BLOCK_COUNT = 3
+HOME_QUICK_ENTRY_COUNT = 4
+HOME_QUICK_ENTRY_ICON_CENTER_TOLERANCE = 3
+
 
 def test_clickable_card_can_disable_jump_behavior(qtbot, monkeypatch) -> None:
     """禁用跳转后，卡片点击不应再尝试打开路径或弹出提示。"""
@@ -47,6 +51,53 @@ def test_home_page_version_card_is_display_only(monkeypatch, qtbot) -> None:
     assert page.version_card.isJumpEnabled() is False
     assert page.version_card.linkIcon.isHidden() is True
     assert page.version_card.cursor().shape() == Qt.CursorShape.ArrowCursor
+
+
+def test_home_page_uses_three_compact_top_blocks_and_entry_list(monkeypatch, qtbot) -> None:
+    """首页应切为顶部三块紧凑状态区 + 下方长条快捷入口列表。"""
+    QApplication.instance() or QApplication([])
+    monkeypatch.setattr(HomePage, "_start_background_check", lambda self: None)
+    page = HomePage(GuiConfig(dev_mode=True))
+    qtbot.addWidget(page)
+
+    assert page.top_status_layout.count() == HOME_TOP_BLOCK_COUNT
+    assert page.entry_list_layout.count() == HOME_QUICK_ENTRY_COUNT
+    assert page.version_card.parentWidget() is page.top_status_widget
+    assert page.cache_card.parentWidget() is page.top_status_widget
+    assert page.execution_center_card.parentWidget() is page.top_status_widget
+    assert page.game_dir_card.parentWidget() is page.entry_panel
+    assert page.output_dir_card.parentWidget() is page.entry_panel
+
+
+def test_home_page_primary_action_emits_navigation_request(monkeypatch, qtbot) -> None:
+    """首页主动作应只发出跳转到执行中心的请求。"""
+    QApplication.instance() or QApplication([])
+    monkeypatch.setattr(HomePage, "_start_background_check", lambda self: None)
+    page = HomePage(GuiConfig(dev_mode=True))
+    qtbot.addWidget(page)
+    requested: list[bool] = []
+    page.navigate_to_execution_requested.connect(lambda: requested.append(True))
+
+    qtbot.mouseClick(page.execution_center_card.action_button, Qt.MouseButton.LeftButton)
+
+    assert requested == [True]
+
+
+def test_home_page_quick_entry_icon_is_vertically_centered(monkeypatch, qtbot) -> None:
+    """快捷入口长条中的图标应随整行内容垂直居中。"""
+    QApplication.instance() or QApplication([])
+    monkeypatch.setattr(HomePage, "_start_background_check", lambda self: None)
+    page = HomePage(GuiConfig(dev_mode=True))
+    qtbot.addWidget(page)
+    page.resize(1280, 860)
+    page.show()
+    qtbot.wait(10)
+
+    row = page.game_dir_card
+    icon_center_y = row.iconWidget.geometry().center().y()
+    row_center_y = row.rect().center().y()
+
+    assert abs(icon_center_y - row_center_y) <= HOME_QUICK_ENTRY_ICON_CENTER_TOLERANCE
 
 
 def test_home_page_relative_output_path_follows_runtime_launch_root(monkeypatch, qtbot, tmp_path: Path) -> None:

@@ -48,6 +48,7 @@ from qfluentwidgets import (
 )
 
 from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled
+from lol_audio_unpack.gui.common.style import apply_page_content_margins
 from lol_audio_unpack.gui.common.styles import build_fluent_panel_frame_theme_pair
 from lol_audio_unpack.gui.components.overview_entity_list import OVERVIEW_ROW_ROLE, OverviewEntityListView
 from lol_audio_unpack.gui.components.preview_tree import (
@@ -197,7 +198,6 @@ class OverviewPage(QWidget):
             list_widget.set_rows([])
             list_widget.setCurrentIndex(QModelIndex())
             del blockers
-        self.list_summary_label.setText("等待实体数据加载…")
         self._update_selection_summary()
         self._show_placeholder("当前暂无可预览的内容。")
 
@@ -262,7 +262,7 @@ class OverviewPage(QWidget):
 
     def _build_ui(self) -> None:
         root_layout = QVBoxLayout(self)
-        root_layout.setContentsMargins(24, 24, 24, 24)
+        apply_page_content_margins(root_layout)
         root_layout.setSpacing(16)
 
         header_layout = QHBoxLayout()
@@ -300,8 +300,8 @@ class OverviewPage(QWidget):
         self.search_input.setPlaceholderText("搜索实体 / alias / ID")
         left_layout.addWidget(self.search_input)
 
-        self.list_summary_label = BodyLabel("等待实体数据加载…", left_widget)
-        left_layout.addWidget(self.list_summary_label)
+        self.selection_status_label = BodyLabel("已选中 英雄 0 个，地图 0 个。", left_widget)
+        left_layout.addWidget(self.selection_status_label)
 
         self.list_stack = QStackedWidget(left_widget)
         for entity_type in ("champions", "maps"):
@@ -316,13 +316,12 @@ class OverviewPage(QWidget):
         selection_layout.setContentsMargins(12, 10, 12, 10)
         selection_layout.setSpacing(10)
 
-        self.selection_status_label = BodyLabel("尚未选中实体。", self.selection_bar)
         self.clear_selection_btn = PushButton("清空选择", self.selection_bar)
         self.sync_selection_btn = PrimaryPushButton("同步到任务", self.selection_bar)
         self.clear_selection_btn.setEnabled(False)
         self.sync_selection_btn.setEnabled(False)
 
-        selection_layout.addWidget(self.selection_status_label, 1)
+        selection_layout.addStretch(1)
         selection_layout.addWidget(self.clear_selection_btn)
         selection_layout.addWidget(self.sync_selection_btn)
         left_layout.addWidget(self.selection_bar)
@@ -458,20 +457,16 @@ class OverviewPage(QWidget):
         self.list_stack.setCurrentWidget(list_widget)
 
         if not source_rows:
-            self.list_summary_label.setText("等待实体数据加载…")
             self._set_splitter_sizes_evenly()
             self._show_placeholder("当前实体数据尚未加载完成。")
             self._update_selection_summary()
             return
 
         if visible_count == 0:
-            self.list_summary_label.setText("当前筛选结果为空。")
             self._set_splitter_sizes_evenly()
             self._show_placeholder("未找到匹配的实体，请调整筛选条件。")
             self._update_selection_summary()
             return
-
-        self.list_summary_label.setText(f"共 {len(source_rows)} 个实体，当前显示 {visible_count} 个。")
 
         if current_preview_id is None:
             list_widget.setCurrentIndex(QModelIndex())
@@ -496,12 +491,9 @@ class OverviewPage(QWidget):
         champion_count = len(self._selected_entity_ids["champions"])
         map_count = len(self._selected_entity_ids["maps"])
         total_count = champion_count + map_count
-        if total_count == 0:
-            self.selection_status_label.setText("尚未选中实体。")
-        else:
-            self.selection_status_label.setText(
-                f"已选中 英雄 {champion_count} 个，地图 {map_count} 个。"
-            )
+        self.selection_status_label.setText(
+            f"已选中 英雄 {champion_count} 个，地图 {map_count} 个。"
+        )
         self.clear_selection_btn.setEnabled(total_count > 0)
         self.sync_selection_btn.setEnabled(total_count > 0)
 
@@ -697,7 +689,7 @@ class OverviewPage(QWidget):
 
         left_min_width = 280
         right_min_width = 190
-        left_preferred_width = min(max(int(total_width * 0.54), left_min_width), 580)
+        left_preferred_width = min(max(total_width // 2, left_min_width), 580)
         max_left_width = max(total_width - right_min_width, left_min_width)
         left_width = min(left_preferred_width, max_left_width)
         left_width = max(left_width, min(left_min_width, total_width))

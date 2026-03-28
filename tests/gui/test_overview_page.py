@@ -38,7 +38,7 @@ from lol_audio_unpack.gui.view.overview_page import (
 EXPECTED_ENTITY_ROW_COUNT = 2
 OVERVIEW_LEFT_PANEL_MIN_WIDTH = 280
 OVERVIEW_RIGHT_PANEL_MIN_WIDTH = 190
-OVERVIEW_BALANCED_SPLITTER_MAX_DELTA = 80
+OVERVIEW_BALANCED_SPLITTER_MAX_DELTA = 2
 MIN_TRANSPARENT_STATE_RULES = 2
 INSET_ZEBRA_MIN_DISTANCE = 6
 
@@ -332,7 +332,7 @@ def test_overview_page_search_filters_proxy_row_count() -> None:
 
 
 def test_overview_page_splitter_defaults_to_adaptive_ratio(qtbot) -> None:
-    """未选择实体时左右面板应接近均衡，同时保持最小可用宽度。"""
+    """未选择实体时左右面板应默认保持近似对称。"""
     page = OverviewPage()
     qtbot.addWidget(page)
     page.resize(1200, 800)
@@ -384,10 +384,11 @@ def test_overview_page_splitter_shrinks_with_window_width(qtbot) -> None:
 
 
 def test_overview_page_empty_selection_uses_shorter_status_text() -> None:
-    """未选择实体时底部提示应保持简短，不额外占用宽度。"""
+    """未选择实体时顶部应显示计数摘要，底部操作栏不再承载提示文本。"""
     page = OverviewPage()
 
-    assert page.selection_status_label.text() == "尚未选中实体。"
+    assert page.selection_status_label.text() == "已选中 英雄 0 个，地图 0 个。"
+    assert page.selection_status_label.parentWidget() is not page.selection_bar
 
 
 def test_overview_page_load_preview_populates_audio_tree_and_summary(tmp_path) -> None:

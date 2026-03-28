@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 from loguru import logger
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import QApplication
 from qfluentwidgets import Theme, qconfig, setTheme, setThemeColor
@@ -59,6 +60,26 @@ def _dispose_main_window(window: MainWindow, app: QApplication) -> None:
     """以可预测的顺序关闭主窗口，避免遗留 QApplication 级状态。"""
     window.close()
     app.processEvents()
+
+
+def test_main_window_home_primary_action_switches_to_execution_page(qtbot, monkeypatch) -> None:
+    """首页主动作应切换到执行中心，而不是直接启动任务。"""
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(MainWindow, "_load_initial_data", lambda self, cfg: None)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    switched_to: list[object] = []
+
+    def _capture_switch(widget) -> None:
+        switched_to.append(widget)
+
+    monkeypatch.setattr(window, "switchTo", _capture_switch)
+
+    qtbot.mouseClick(window.homeInterface.execution_center_card.action_button, Qt.MouseButton.LeftButton)
+    app.processEvents()
+
+    assert switched_to == [window.executionInterface]
+    _dispose_main_window(window, app)
 
 
 def test_main_window_shows_before_bootstrap_and_finishes_splash(monkeypatch) -> None:
