@@ -10,7 +10,10 @@ from PySide6.QtWidgets import QApplication, QLabel
 import lol_audio_unpack.gui.view.setting_page as setting_page_module
 from lol_audio_unpack.gui.common import gui_config as gui_config_module
 from lol_audio_unpack.gui.view.setting_page import LogLevelSettingCard, SettingPage
-from lol_audio_unpack.utils.runtime_paths import get_default_vgmstream_relative_path
+from lol_audio_unpack.utils.runtime_paths import (
+    detect_runtime_paths,
+    get_default_vgmstream_relative_path,
+)
 
 
 class FakeQSettings:
@@ -122,6 +125,63 @@ def test_setting_page_emits_shared_context_input_changed_after_runtime_save(monk
         app.processEvents()
 
 
+def test_setting_page_dialogs_use_runtime_resolved_initial_paths(monkeypatch, tmp_path: Path) -> None:
+    """设置页文件选择器应以 runtime 解析后的绝对路径作为初始位置。"""
+    monkeypatch.chdir(tmp_path)
+    _use_fake_qsettings(monkeypatch)
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        gui_config_module,
+        "detect_runtime_paths",
+        lambda: detect_runtime_paths(
+            is_frozen=True,
+            cwd=tmp_path / "shortcut-workdir",
+            executable=runtime_root / "LolAudioUnpack.exe",
+        ),
+    )
+
+    directory_currents: list[str] = []
+    file_currents: list[str] = []
+    monkeypatch.setattr(
+        setting_page_module.QFileDialog,
+        "getExistingDirectory",
+        lambda *_args, **_kwargs: directory_currents.append(_args[2]) or "",
+    )
+    monkeypatch.setattr(
+        setting_page_module.QFileDialog,
+        "getOpenFileName",
+        lambda *_args, **_kwargs: (file_currents.append(_args[2]) or "", ""),
+    )
+
+    app = QApplication.instance() or QApplication([])
+    page = SettingPage()
+
+    try:
+        page.config.game_path = r".\game-client"
+        page.config.output_path = r".\custom-output"
+        page.config.wwiser_path = r".\tools\wwiser\wwiser.pyz"
+        page.config.vgmstream_path = r".\tools\vgmstream\vgmstream-cli.exe"
+
+        page._pick_game_path()
+        page._pick_output_path()
+        page._pick_wwiser()
+        page._pick_vgmstream()
+        app.processEvents()
+
+        assert directory_currents == [
+            str(runtime_root / "game-client"),
+            str(runtime_root / "custom-output"),
+        ]
+        assert file_currents == [
+            str(runtime_root / "tools" / "wwiser" / "wwiser.pyz"),
+            str(runtime_root / "tools" / "vgmstream" / "vgmstream-cli.exe"),
+        ]
+    finally:
+        page.deleteLater()
+        app.processEvents()
+
+
 def test_log_level_setting_card_captions_reuse_non_wrapping_subtitle_style() -> None:
     """日志等级手风琴内的说明文字应复用不自动换行的副标题样式。"""
     card = LogLevelSettingCard()
@@ -171,3 +231,12 @@ def test_setting_page_apply_path_label_formats_actual_path_for_display() -> None
     SettingPage._apply_path_label(card, "tools/wwiser/wwiser.pyz")
 
     card.setContent.assert_called_once_with(r"当前: tools\wwiser\wwiser.pyz")
+
+
+def test_setting_page_apply_path_label_formats_relative_runtime_path() -> None:
+    """设置页当前相对路径文案也应显示为基于根目录的提示。"""
+    card = Mock()
+
+    SettingPage._apply_path_label(card, r".\reconfigured-output")
+
+    card.setContent.assert_called_once_with(r"当前: 根目录\reconfigured-output")

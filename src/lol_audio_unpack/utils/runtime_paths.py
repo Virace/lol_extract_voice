@@ -14,6 +14,7 @@ __all__ = [
     "apply_frozen_working_directory",
     "RuntimePaths",
     "detect_runtime_paths",
+    "resolve_runtime_path",
     "get_default_output_root",
     "get_default_output_relative_path",
     "get_default_wwiser_path",
@@ -80,6 +81,32 @@ def detect_runtime_paths(
     )
 
 
+def resolve_runtime_path(
+    path: StrPath,
+    *,
+    runtime_paths: RuntimePaths | None = None,
+    relative_to: StrPath | None = None,
+) -> Path:
+    """按统一 runtime 语义将路径解析为绝对 ``Path``。
+
+    Args:
+        path: 用户输入或配置中的原始路径。
+        runtime_paths: 可选运行时路径快照；未提供时自动探测。
+        relative_to: 可选的相对路径锚点；未提供时回退到 ``launch_root``。
+
+    Returns:
+        Path: 标准化后的绝对路径。
+    """
+
+    current_paths = runtime_paths or detect_runtime_paths()
+    raw_path = Path(path).expanduser()
+    if raw_path.is_absolute():
+        return raw_path.resolve(strict=False)
+
+    base_path = _normalize_path(relative_to or current_paths.launch_root)
+    return (base_path / raw_path).resolve(strict=False)
+
+
 def apply_frozen_working_directory(
     *,
     runtime_paths: RuntimePaths | None = None,
@@ -113,7 +140,7 @@ def get_default_output_root(runtime_paths: RuntimePaths) -> Path:
         Path: 默认输出根目录，固定为 ``launch_root / "output"``。
     """
 
-    return runtime_paths.launch_root / Path(get_default_output_relative_path())
+    return resolve_runtime_path(get_default_output_relative_path(), runtime_paths=runtime_paths)
 
 
 def get_default_output_relative_path() -> str:
@@ -131,7 +158,7 @@ def get_default_wwiser_relative_path() -> str:
 def get_default_wwiser_path(runtime_paths: RuntimePaths) -> Path:
     """返回默认的 wwiser 工具路径。"""
 
-    return runtime_paths.launch_root / Path(get_default_wwiser_relative_path())
+    return resolve_runtime_path(get_default_wwiser_relative_path(), runtime_paths=runtime_paths)
 
 
 def get_default_vgmstream_relative_path(*, platform: str | None = None) -> str:
@@ -157,4 +184,7 @@ def get_default_vgmstream_path(
         Path: 默认的 vgmstream-cli 可执行文件路径。
     """
 
-    return runtime_paths.launch_root / Path(get_default_vgmstream_relative_path(platform=platform))
+    return resolve_runtime_path(
+        get_default_vgmstream_relative_path(platform=platform),
+        runtime_paths=runtime_paths,
+    )

@@ -38,6 +38,7 @@ from lol_audio_unpack.utils.runtime_paths import (
     get_default_vgmstream_relative_path,
     get_default_wwiser_path,
     get_default_wwiser_relative_path,
+    resolve_runtime_path,
 )
 
 # ---------------------------------------------------------------------------
@@ -88,9 +89,7 @@ def _open_path_in_explorer(raw: str, *, warn) -> None:
         warn("路径未设置", "请先在「全局设置」中配置此路径。")
         return
 
-    path = Path(raw).expanduser()
-    if not path.is_absolute():
-        path = detect_runtime_paths().launch_root / path
+    path = resolve_runtime_path(raw, runtime_paths=detect_runtime_paths())
 
     if path.is_file():
         target = path.parent
@@ -613,12 +612,12 @@ class HomePage(SmoothScrollArea):
 
     def _build_check_fn(self):
         """Return the callable for TaskWorker (captures config snapshot)."""
-        game_path_str = self._cfg.game_path
+        game_path = self._cfg.resolve_game_path()
         output_path = self._resolve_output_path()
 
         def _check() -> HomeCheckResult:
             # Step 1: game version
-            if not game_path_str:
+            if game_path is None:
                 return HomeCheckResult(
                     version="",
                     version_error="游戏目录未设置",
@@ -626,7 +625,7 @@ class HomePage(SmoothScrollArea):
                     cache_path="",
                 )
             try:
-                version = get_game_version(Path(game_path_str))
+                version = get_game_version(game_path)
             except Exception as exc:  # noqa: BLE001
                 return HomeCheckResult(
                     version="",

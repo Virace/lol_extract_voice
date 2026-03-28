@@ -134,6 +134,44 @@ def test_home_page_relative_output_path_follows_runtime_launch_root(monkeypatch,
     assert page._resolve_output_path() == (tmp_path / "bundle" / "custom-output").resolve(strict=False)
 
 
+def test_home_page_version_check_uses_resolved_relative_game_path(
+    monkeypatch,
+    qtbot,
+    tmp_path: Path,
+) -> None:
+    """首页后台检查游戏版本时应复用 GuiConfig 的 runtime 路径解析。"""
+    QApplication.instance() or QApplication([])
+    monkeypatch.setattr(HomePage, "_start_background_check", lambda self: None)
+
+    def runtime_paths():
+        return detect_runtime_paths(
+            is_frozen=True,
+            cwd=tmp_path / "shortcut-workdir",
+            executable=tmp_path / "bundle" / "LolAudioUnpack.exe",
+        )
+
+    monkeypatch.setattr(home_page_module, "detect_runtime_paths", runtime_paths)
+    monkeypatch.setattr(gui_config_module, "detect_runtime_paths", runtime_paths)
+
+    captured_paths: list[Path] = []
+    monkeypatch.setattr(
+        home_page_module,
+        "get_game_version",
+        lambda path: captured_paths.append(path) or "16.5",
+    )
+
+    cfg = GuiConfig(dev_mode=True)
+    cfg.game_path = r".\game-client"
+    page = HomePage(cfg)
+    qtbot.addWidget(page)
+
+    result = page._build_check_fn()()
+
+    assert captured_paths == [(tmp_path / "bundle" / "game-client").resolve(strict=False)]
+    assert result.version == "16.5"
+    assert result.version_error == ""
+
+
 def test_format_default_relative_path_uses_platform_root_label() -> None:
     """默认相对路径提示应转成平台风格的“根目录”文案。"""
     assert format_default_relative_path(r".\tools\wwiser\wwiser.pyz", platform="win32") == r"根目录\tools\wwiser\wwiser.pyz"

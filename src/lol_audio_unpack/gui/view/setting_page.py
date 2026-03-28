@@ -721,7 +721,7 @@ class SettingPage(SmoothScrollArea):
 
     def _pick_game_path(self) -> None:
         """弹出文件夹选择对话框，更新游戏根目录。"""
-        current = self._cfg.game_path or ""
+        current = str(self._cfg.resolve_game_path() or "")
         path = QFileDialog.getExistingDirectory(
             self, "选择游戏根目录", current,
             QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontResolveSymlinks,
@@ -735,7 +735,7 @@ class SettingPage(SmoothScrollArea):
 
     def _pick_output_path(self) -> None:
         """弹出文件夹选择对话框，更新解包输出目录。"""
-        current = self._cfg.output_path or ""
+        current = str(self._cfg.resolve_output_path())
         path = QFileDialog.getExistingDirectory(
             self, "选择解包输出目录", current,
             QFileDialog.Option.ShowDirsOnly | QFileDialog.Option.DontResolveSymlinks,
@@ -749,7 +749,7 @@ class SettingPage(SmoothScrollArea):
 
     def _pick_wwiser(self) -> None:
         """弹出文件选择对话框，更新 wwiser.py 路径。"""
-        current = self._cfg.wwiser_path or ""
+        current = str(self._cfg.resolve_wwiser_path() or "")
         path, _ = QFileDialog.getOpenFileName(
             self, "选择 wwiser.py", current, "Python 脚本 (wwiser.py wwiser.pyz);;所有文件 (*)"
         )
@@ -761,7 +761,7 @@ class SettingPage(SmoothScrollArea):
 
     def _pick_vgmstream(self) -> None:
         """弹出文件选择对话框，更新 vgmstream-cli 路径。"""
-        current = self._cfg.vgmstream_path or ""
+        current = str(self._cfg.resolve_vgmstream_path() or "")
         path, _ = QFileDialog.getOpenFileName(
             self, "选择 vgmstream-cli", current,
             "可执行文件 (vgmstream-cli.exe vgmstream-cli);;所有文件 (*)"
@@ -805,7 +805,7 @@ class SettingPage(SmoothScrollArea):
     def _apply_path_label(card: PushSettingCard, path: str, default: str = "") -> None:
         """将路径显示在卡片的 contentLabel 上；路径为空时显示默认值或"未设置"。"""
         if path:
-            card.setContent(f"当前: {format_path_for_display(path)}")
+            card.setContent(f"当前: {format_default_relative_path(path)}")
         elif default:
             card.setContent(f"默认: {format_default_relative_path(default)}")
         else:

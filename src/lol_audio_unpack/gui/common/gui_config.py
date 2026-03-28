@@ -27,6 +27,7 @@ from lol_audio_unpack.gui.task_models import AppContextInputSnapshot
 from lol_audio_unpack.utils.runtime_paths import (
     detect_runtime_paths,
     get_default_output_root,
+    resolve_runtime_path,
 )
 
 # ---------------------------------------------------------------------------
@@ -186,6 +187,17 @@ class GuiConfig:
             overrides=tuple(self.to_app_context_overrides().items()),
         )
 
+    def _resolve_optional_runtime_path(self, raw: str) -> Path | None:
+        """按共享 runtime 语义解析可选路径。"""
+        text = raw.strip()
+        if not text:
+            return None
+        return resolve_runtime_path(text, runtime_paths=detect_runtime_paths())
+
+    def resolve_game_path(self) -> Path | None:
+        """解析当前 GUI 配置对应的有效游戏目录。"""
+        return self._resolve_optional_runtime_path(self._game_path)
+
     def resolve_output_path(self) -> Path:
         """解析当前 GUI 配置对应的有效输出目录。
 
@@ -198,10 +210,7 @@ class GuiConfig:
         if not raw:
             return get_default_output_root(runtime_paths)
 
-        output_path = Path(raw).expanduser()
-        if output_path.is_absolute():
-            return output_path
-        return runtime_paths.launch_root / output_path
+        return resolve_runtime_path(raw, runtime_paths=runtime_paths)
 
     def resolve_log_dir(self) -> Path:
         """解析当前 GUI 配置对应的有效日志目录。
@@ -210,6 +219,14 @@ class GuiConfig:
             Path: 当前 GUI 启动期与运行期都应写入的日志目录。
         """
         return self.resolve_output_path() / "logs"
+
+    def resolve_wwiser_path(self) -> Path | None:
+        """解析当前 GUI 配置对应的有效 wwiser 工具路径。"""
+        return self._resolve_optional_runtime_path(self._wwiser_path)
+
+    def resolve_vgmstream_path(self) -> Path | None:
+        """解析当前 GUI 配置对应的有效 vgmstream 工具路径。"""
+        return self._resolve_optional_runtime_path(self._vgmstream_path)
 
     # ------------------------------------------------------------------
     # Properties — source
