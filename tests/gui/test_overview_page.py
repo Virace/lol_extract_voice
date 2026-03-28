@@ -4,8 +4,8 @@ from math import dist
 from pathlib import Path
 from unittest.mock import Mock
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QRect, Qt
+from PySide6.QtGui import QColor, QFontMetrics, QImage, QPainter
 from PySide6.QtWidgets import QApplication, QSizePolicy, QWidget
 from qfluentwidgets import CaptionLabel, LineEdit, Theme, setTheme, setThemeColor, themeColor
 from qfluentwidgets import theme as current_theme
@@ -26,7 +26,12 @@ from lol_audio_unpack.gui.components.overview_entity_list import (
 )
 from lol_audio_unpack.gui.components.overview_status_badge import (
     _build_status_badge_styles,
+    _build_status_pill_segment_polygons,
+    _build_status_pill_seam_lines,
     _create_status_badge,
+    measure_status_pill_width,
+    paint_status_pill,
+    resolve_status_pill_segment_colors,
 )
 from lol_audio_unpack.gui.components.preview_tree import PreviewTreeModel
 from lol_audio_unpack.gui.view.overview_page import (
@@ -151,6 +156,140 @@ def test_create_status_badge_uses_fluent_system_colors() -> None:
 
         assert FluentSystemColor.SUCCESS_FOREGROUND.color(Theme.DARK).name() in success_badge.styleSheet().lower()
         assert FluentSystemColor.CAUTION_FOREGROUND.color(Theme.DARK).name() in caution_badge.styleSheet().lower()
+    finally:
+        setTheme(original_theme)
+
+
+def test_measure_status_pill_width_grows_with_segments_and_label_length() -> None:
+    """分段胶囊宽度应随段数和标签长度动态增长。"""
+    app = QApplication.instance() or QApplication([])
+    metrics = QFontMetrics(app.font())
+
+    width_two = measure_status_pill_width(("A", "M"), metrics)
+    width_three = measure_status_pill_width(("A", "M", "X"), metrics)
+    width_long = measure_status_pill_width(("Audio", "M"), metrics)
+
+    assert width_two > 0
+    assert width_three > width_two
+    assert width_long > width_two
+
+
+def test_build_status_pill_segment_polygons_use_diagonal_split() -> None:
+    """分段胶囊的接缝应保留斜切，而不是完全垂直对半。"""
+    polygons = _build_status_pill_segment_polygons(
+        QRect(0, 0, 72, 24),
+        (36, 36),
+        diagonal_offset=6,
+    )
+
+    assert len(polygons) == 2
+    first_points = [polygons[0].at(i) for i in range(polygons[0].count())]
+    second_points = [polygons[1].at(i) for i in range(polygons[1].count())]
+
+    assert first_points[1].x() != first_points[2].x()
+    assert second_points[0].x() != second_points[3].x()
+
+
+def test_resolve_status_pill_segment_colors_uses_muted_semantic_palette() -> None:
+    """A/M 分段胶囊应使用低饱和的暖色/绿色语义，而不是通用成功警告色。"""
+    app = QApplication.instance() or QApplication([])
+    original_theme = current_theme()
+    widget = QWidget()
+
+    try:
+        setTheme(Theme.LIGHT)
+        app.processEvents()
+        light_palette = widget.palette()
+        audio_bg_light, audio_fg_light = resolve_status_pill_segment_colors("A", "已存在", light_palette)
+        mapping_bg_light, mapping_fg_light = resolve_status_pill_segment_colors("M", "已存在", light_palette)
+        audio_missing_light, _audio_missing_fg_light = resolve_status_pill_segment_colors("A", "未存在", light_palette)
+
+        setTheme(Theme.DARK)
+        app.processEvents()
+        dark_palette = widget.palette()
+        mapping_missing_dark, mapping_missing_fg_dark = resolve_status_pill_segment_colors("M", "未存在", dark_palette)
+        audio_bg_dark, _audio_fg_dark = resolve_status_pill_segment_colors("A", "已存在", dark_palette)
+        mapping_bg_dark, _mapping_fg_dark = resolve_status_pill_segment_colors("M", "已存在", dark_palette)
+
+        assert audio_bg_light.name() == "#bc8f36"
+        assert mapping_bg_light.name() == "#67a85b"
+        assert audio_fg_light.name() == "#fffaf1"
+        assert mapping_fg_light.name() == "#f7fff5"
+        assert audio_missing_light.name() == "#d8c4a0"
+        assert mapping_missing_dark.name() == "#4f6950"
+        assert mapping_missing_fg_dark.name() == "#d3ebcf"
+        assert audio_bg_dark.name() == "#8f6d33"
+        assert mapping_bg_dark.name() == "#5a8f56"
+    finally:
+        setTheme(original_theme)
+
+
+def test_build_status_pill_seam_lines_match_segment_boundaries_without_gaps() -> None:
+    """分段胶囊的斜切分隔线应和接缝重合，并从顶部连到底部。"""
+    rect = QRect(0, 0, 72, 24)
+    segment_widths = (36, 36)
+    seam_lines = _build_status_pill_seam_lines(rect, segment_widths, diagonal_offset=6)
+
+    assert len(seam_lines) == 1
+    start, end = seam_lines[0]
+    assert start.x() == 39.5
+    assert end.x() == 33.5
+    assert start.y() == 0.5
+    assert end.y() == 23.5
+
+
+def test_paint_status_pill_keeps_seam_inside_capsule_bounds() -> None:
+    """接缝线不应在胶囊顶部外侧留下可见像素。"""
+    app = QApplication.instance() or QApplication([])
+    original_theme = current_theme()
+    image = QImage(84, 36, QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    widget = QWidget()
+
+    try:
+        setTheme(Theme.LIGHT)
+        app.processEvents()
+        paint_status_pill(
+            painter,
+            QRect(6, 6, 72, 24),
+            (("A", "已存在"), ("M", "已存在")),
+            palette=widget.palette(),
+        )
+    finally:
+        painter.end()
+        setTheme(original_theme)
+
+    above_seam = image.pixelColor(45, 5)
+    on_seam = image.pixelColor(45, 6)
+
+    assert above_seam.alpha() == 0
+    assert on_seam.alpha() > 0
+
+
+def test_resolve_status_pill_segment_colors_follows_theme_not_widget_palette() -> None:
+    """切换 Fluent 主题后，胶囊配色应跟随主题，而不是依赖 QWidget palette 的窗口色。"""
+    app = QApplication.instance() or QApplication([])
+    original_theme = current_theme()
+    widget = QWidget()
+
+    try:
+        setTheme(Theme.LIGHT)
+        app.processEvents()
+        light_palette = widget.palette()
+        light_audio_bg, _light_audio_fg = resolve_status_pill_segment_colors("A", "已存在", light_palette)
+        light_mapping_bg, _light_mapping_fg = resolve_status_pill_segment_colors("M", "已存在", light_palette)
+
+        setTheme(Theme.DARK)
+        app.processEvents()
+        dark_palette = widget.palette()
+        dark_audio_bg, _dark_audio_fg = resolve_status_pill_segment_colors("A", "已存在", dark_palette)
+        dark_mapping_bg, _dark_mapping_fg = resolve_status_pill_segment_colors("M", "已存在", dark_palette)
+
+        assert light_audio_bg.name() == "#bc8f36"
+        assert light_mapping_bg.name() == "#67a85b"
+        assert dark_audio_bg.name() == "#8f6d33"
+        assert dark_mapping_bg.name() == "#5a8f56"
     finally:
         setTheme(original_theme)
 

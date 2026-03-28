@@ -22,7 +22,11 @@ from lol_audio_unpack.gui.common.styles import (
     build_fluent_list_shell_theme_pair,
     resolve_fluent_neutral_surface,
 )
-from lol_audio_unpack.gui.components.overview_status_badge import STATUS_BADGE_SIZE, paint_status_badge
+from lol_audio_unpack.gui.components.overview_status_badge import (
+    STATUS_BADGE_SIZE,
+    measure_status_pill_width,
+    paint_status_pill,
+)
 
 EMPTY_MODEL_INDEX = QModelIndex()
 OVERVIEW_ITEM_HEIGHT = 40
@@ -279,42 +283,45 @@ class OverviewEntityItemDelegate(QStyledItemDelegate):
             painter.setBrush(_build_overview_idle_background())
             painter.drawRoundedRect(interaction_rect, OVERVIEW_INTERACTION_RADIUS, OVERVIEW_INTERACTION_RADIUS)
 
-        badge_spacing = 8
-        badge_width = STATUS_BADGE_SIZE
-        badge_count = 2
-        badges_total_width = badge_count * badge_width + (badge_count - 1) * badge_spacing
+        metrics = QFontMetrics(style_option.font)
+        pill_spacing = 8
+        badge_segments = (
+            ("A", str(index.data(OVERVIEW_AUDIO_STATUS_ROLE) or "未存在")),
+            ("M", str(index.data(OVERVIEW_MAPPING_STATUS_ROLE) or "未存在")),
+        )
+        pill_width = measure_status_pill_width(
+            tuple(label for label, _status in badge_segments),
+            metrics,
+        )
         title_rect = QRect(
             content_rect.left(),
             content_rect.top(),
             max(
                 0,
-                content_rect.right() - badges_total_width - badge_spacing - content_rect.left(),
+                content_rect.right() - pill_width - pill_spacing - content_rect.left(),
             ),
             content_rect.height(),
         )
 
         display_text = str(index.data(Qt.ItemDataRole.DisplayRole) or "")
-        metrics = QFontMetrics(style_option.font)
         elided_text = metrics.elidedText(display_text, Qt.TextElideMode.ElideRight, title_rect.width())
         painter.setPen(style_option.palette.color(QPalette.ColorRole.Text))
         painter.drawText(title_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided_text)
 
-        badge_top = interaction_rect.center().y() - STATUS_BADGE_SIZE // 2
-        badge_left = interaction_rect.right() - badges_total_width - OVERVIEW_TEXT_RIGHT_PADDING + 1
-        badges = (
-            ("A", str(index.data(OVERVIEW_AUDIO_STATUS_ROLE) or "未存在")),
-            ("M", str(index.data(OVERVIEW_MAPPING_STATUS_ROLE) or "未存在")),
+        pill_top = interaction_rect.center().y() - STATUS_BADGE_SIZE // 2
+        pill_left = interaction_rect.right() - pill_width - OVERVIEW_TEXT_RIGHT_PADDING + 1
+        pill_rect = QRect(
+            pill_left,
+            pill_top,
+            pill_width,
+            STATUS_BADGE_SIZE,
         )
-        for badge_label, badge_status in badges:
-            badge_rect = QRect(badge_left, badge_top, STATUS_BADGE_SIZE, STATUS_BADGE_SIZE)
-            paint_status_badge(
-                painter,
-                badge_rect,
-                badge_label,
-                badge_status,
-                palette=style_option.palette,
-            )
-            badge_left += badge_width + badge_spacing
+        paint_status_pill(
+            painter,
+            pill_rect,
+            badge_segments,
+            palette=style_option.palette,
+        )
 
         painter.restore()
 
