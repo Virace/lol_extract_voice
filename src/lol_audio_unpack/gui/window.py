@@ -71,7 +71,6 @@ def _prepare_shared_entity_data(cli_overrides: dict[str, str | bool]) -> None:
     prepare_overrides = dict(cli_overrides)
     prepare_overrides["WITH_BP_VO"] = True
     app_context = create_app_context(cli_overrides=prepare_overrides)
-    app_context.runtime_cache["disable_terminal_progress"] = True
     app = LolAudioUnpackApp(app_context)
     app.update(OperationOptions(), target="all")
 

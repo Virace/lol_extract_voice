@@ -289,22 +289,27 @@ def test_process_single_map_records_note_when_common_dedup_removes_all_events(tm
     assert any("category=AMB_SFX" in detail for detail in summary.stages["update"].debug_details)
 
 
-def test_update_champions_skips_terminal_progress_when_disabled_in_runtime_cache(tmp_path, monkeypatch):
-    """验证禁用终端进度时不会调用 ``alive_it``。"""
+def test_update_champions_logs_simple_progress_messages(tmp_path, monkeypatch):
+    """验证英雄批量更新会输出简单的日志进度提示。"""
     updater = m_bin_updater.BinUpdater.__new__(m_bin_updater.BinUpdater)
     updater.ctx = SimpleNamespace(
         config=SimpleNamespace(game_path=tmp_path, dev_mode=False),
-        runtime_cache={"disable_terminal_progress": True},
+        runtime_cache={},
         paths=SimpleNamespace(),
     )
     updater.champion_banks_dir = tmp_path / "banks" / "champions"
     updater.champion_events_dir = tmp_path / "events" / "champions"
     processed_ids: list[str] = []
+    info_messages: list[str] = []
+    success_messages: list[str] = []
 
     monkeypatch.setattr(
         m_bin_updater,
-        "alive_it",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("unexpected alive_it call")),
+        "logger",
+        SimpleNamespace(
+            info=lambda message: info_messages.append(str(message)),
+            success=lambda message: success_messages.append(str(message)),
+        ),
     )
     monkeypatch.setattr(
         updater,
@@ -315,3 +320,44 @@ def test_update_champions_skips_terminal_progress_when_disabled_in_runtime_cache
     updater._update_champions({"champions": {"2": {}, "1": {}}})
 
     assert processed_ids == ["1", "2"]
+    assert "处理英雄进度 1/2: 1" in info_messages
+    assert "处理英雄进度 2/2: 2" in info_messages
+    assert success_messages == ["英雄Banks数据更新完成"]
+
+
+def test_update_maps_logs_simple_progress_messages(tmp_path, monkeypatch):
+    """验证地图批量更新会输出简单的日志进度提示。"""
+    updater = m_bin_updater.BinUpdater.__new__(m_bin_updater.BinUpdater)
+    updater.ctx = SimpleNamespace(
+        config=SimpleNamespace(game_path=tmp_path, dev_mode=False),
+        runtime_cache={},
+        paths=SimpleNamespace(),
+    )
+    updater.map_banks_dir = tmp_path / "banks" / "maps"
+    updater.map_events_dir = tmp_path / "events" / "maps"
+    processed_ids: list[str] = []
+    info_messages: list[str] = []
+    success_messages: list[str] = []
+
+    monkeypatch.setattr(
+        m_bin_updater,
+        "logger",
+        SimpleNamespace(
+            info=lambda message: info_messages.append(str(message)),
+            success=lambda message: success_messages.append(str(message)),
+            debug=lambda _message: None,
+            opt=lambda **_kwargs: SimpleNamespace(error=lambda _message: None),
+        ),
+    )
+    monkeypatch.setattr(
+        updater,
+        "_process_single_map",
+        lambda map_id, *_args: processed_ids.append(map_id),
+    )
+
+    updater._update_maps({"maps": {"11": {"name": "Map11"}, "12": {"name": "Map12"}}})
+
+    assert processed_ids == ["11", "12"]
+    assert "处理地图进度 1/2: 11" in info_messages
+    assert "处理地图进度 2/2: 12" in info_messages
+    assert success_messages == ["地图Banks数据更新完成"]

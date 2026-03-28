@@ -349,8 +349,8 @@ def test_main_window_auto_prepares_shared_data_after_missing_data_error(monkeypa
     _dispose_main_window(window, app)
 
 
-def test_prepare_shared_entity_data_disables_terminal_progress(monkeypatch) -> None:
-    """GUI 共享数据准备应显式禁用终端进度条输出。"""
+def test_prepare_shared_entity_data_does_not_inject_terminal_progress_flag(monkeypatch) -> None:
+    """GUI 共享数据准备不应再写入终端进度相关遗留标志。"""
     fake_context = Mock(runtime_cache={})
     update_targets: list[str] = []
     create_overrides: list[dict[str, object]] = []
@@ -371,7 +371,7 @@ def test_prepare_shared_entity_data_disables_terminal_progress(monkeypatch) -> N
 
     window_module._prepare_shared_entity_data({"OUTPUT_PATH": r".\temp"})
 
-    assert fake_context.runtime_cache["disable_terminal_progress"] is True
+    assert fake_context.runtime_cache == {}
     assert update_targets == ["all"]
     assert create_overrides == [{"OUTPUT_PATH": r".\temp", "WITH_BP_VO": True}]
 
