@@ -1,5 +1,6 @@
 """GUI 公共能力导出。"""
 
+from lol_audio_unpack.gui.common.app_context_guard import get_app_context_block_reason
 from lol_audio_unpack.gui.common.feedback import (
     calculate_feedback_duration,
     show_feedback_infobar,
@@ -29,6 +30,7 @@ __all__ = [
     "clear_buffered_log_lines",
     "format_default_relative_path",
     "format_path_for_display",
+    "get_app_context_block_reason",
     "get_buffered_log_lines",
     "install_startup_log_buffer",
     "load_app_icon",

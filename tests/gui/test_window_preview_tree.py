@@ -246,7 +246,7 @@ def test_main_window_overview_preview_tree_can_expand_with_custom_preview_tree(
         _dispose_main_window(window, app)
 
 
-def test_main_window_only_locks_runtime_config_while_queue_not_empty(monkeypatch) -> None:
+def test_main_window_only_locks_runtime_config_while_queue_not_empty(monkeypatch, tmp_path) -> None:
     """队列未清空时仅锁定运行时配置，个性化设置仍应保持可编辑。"""
     app = QApplication.instance() or QApplication([])
 
@@ -254,6 +254,10 @@ def test_main_window_only_locks_runtime_config_while_queue_not_empty(monkeypatch
     window = MainWindow()
     monkeypatch.setattr(window.executionInterface, "_start_task_worker", lambda task: None)
     app.processEvents()
+
+    game_root = tmp_path / "game-client"
+    game_root.mkdir(parents=True, exist_ok=True)
+    window.settingInterface.config.game_path = str(game_root)
 
     page = window.executionInterface
     page._queue_task_draft()
@@ -381,6 +385,7 @@ def test_main_window_startup_auto_prepares_shared_data_when_manifest_is_missing(
     app = QApplication.instance() or QApplication([])
     prepare_calls: list[object] = []
 
+    monkeypatch.setattr(window_module, "get_app_context_block_reason", lambda _cfg: None)
     monkeypatch.setattr(window_module, "create_app_context", lambda **_kwargs: Mock())
     monkeypatch.setattr(
         window_module.DataLoadWorker,

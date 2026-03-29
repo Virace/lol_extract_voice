@@ -44,6 +44,7 @@ from lol_audio_unpack.gui.common import (
     GUI_LOG_FORMAT,
     GUI_LOG_MAX_LINES,
     apply_smooth_scroll_enabled,
+    get_app_context_block_reason,
     get_buffered_log_lines,
     show_feedback_infobar,
 )
@@ -110,6 +111,7 @@ def _build_task_scope_summary(*, include_extract: bool, include_mapping: bool) -
     if include_mapping:
         parts.append("事件映射")
     return " + ".join(parts) if parts else "未选择执行内容"
+
 
 TASK_ITEM_ROLE = int(Qt.ItemDataRole.UserRole)
 QUEUE_VISIBLE_ROW_COUNT = 3
@@ -1417,6 +1419,18 @@ class ExecutionPage(SmoothScrollArea):
             show_feedback_infobar(
                 title="无法创建任务",
                 content="请至少勾选音频解包或事件映射中的一个步骤。",
+                parent=self._feedback_parent(),
+                level="warning",
+                position=InfoBarPosition.TOP,
+            )
+            return
+
+        block_reason = get_app_context_block_reason(self.gui_config)
+        if block_reason is not None:
+            self._log_gui_event("warning", f"[队列] {block_reason}")
+            show_feedback_infobar(
+                title="无法创建任务",
+                content=block_reason,
                 parent=self._feedback_parent(),
                 level="warning",
                 position=InfoBarPosition.TOP,

@@ -28,6 +28,7 @@ from lol_audio_unpack.app_context import OperationOptions, create_app_context
 from lol_audio_unpack.facade import LolAudioUnpackApp
 from lol_audio_unpack.gui.common import (
     apply_smooth_scroll_enabled,
+    get_app_context_block_reason,
     load_app_icon,
     show_feedback_infobar,
 )
@@ -103,6 +104,18 @@ def _build_shared_entity_scan_signature(cfg) -> tuple[str | bool, ...]:
         overrides["OUTPUT_PATH"],
         overrides["GROUP_BY_TYPE"],
     )
+
+
+def _apply_shared_data_blocked_state(window, message: str) -> None:
+    """在共享数据暂不可用时切到空状态而不是错误态。"""
+    window._is_loading_shared_data = False
+    window._data_app_context = None
+    window.executionInterface.clear_entity_data()
+    window.overviewInterface.clear_data()
+    window.overviewInterface.set_app_context(None)
+    window.homeInterface.set_loading_state(message, active=False)
+    if getattr(window, "_pending_refresh_notice", False):
+        window._pending_refresh_notice = False
 
 
 class MainWindow(FluentWindow):
@@ -454,6 +467,12 @@ class MainWindow(FluentWindow):
         self._shared_entity_reader_signature = _build_shared_entity_reader_signature(cfg)
         self._shared_entity_scan_signature = _build_shared_entity_scan_signature(cfg)
 
+        block_reason = get_app_context_block_reason(cfg)
+        if block_reason is not None:
+            logger.info(f"共享实体数据首轮加载已跳过: {block_reason}")
+            _apply_shared_data_blocked_state(self, block_reason)
+            return
+
         # 首页初始化完成后加载数据
         logger.debug("准备触发首轮共享实体数据加载")
         hi.set_loading_state("正在加载实体数据…", active=True)
@@ -462,6 +481,12 @@ class MainWindow(FluentWindow):
     def _load_initial_data(self, cfg):
         """程序启动时加载实体数据"""
         logger.info("开始加载共享实体数据")
+        block_reason = get_app_context_block_reason(cfg)
+        if block_reason is not None:
+            logger.info(f"共享实体数据加载已跳过: {block_reason}")
+            _apply_shared_data_blocked_state(self, block_reason)
+            return
+
         self._is_loading_shared_data = True
 
         try:
@@ -690,6 +715,12 @@ class MainWindow(FluentWindow):
 
     def _reload_unpack_data(self, cfg):
         """重新加载解包页与事件映射页共用的实体数据。"""
+        block_reason = get_app_context_block_reason(cfg)
+        if block_reason is not None:
+            logger.info(f"共享实体数据重载已跳过: {block_reason}")
+            _apply_shared_data_blocked_state(self, block_reason)
+            return
+
         self._data_app_context = None
         self.executionInterface.clear_entity_data()
         self.overviewInterface.clear_data()

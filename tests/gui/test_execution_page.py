@@ -477,6 +477,107 @@ def test_execution_page_build_task_draft_uses_gui_config_snapshot_entrypoint() -
     app.processEvents()
 
 
+def test_execution_page_blocks_queue_creation_without_game_path_in_local_mode(monkeypatch) -> None:
+    """本地模式缺少游戏目录时，不应把真实任务加入队列。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    started_tasks: list[object] = []
+    feedback_calls: list[dict[str, object]] = []
+
+    def capture_started_task(task) -> None:
+        started_tasks.append(task)
+
+    class FakeCfg:
+        smooth_scroll_enabled = False
+        page_smooth_scroll_enabled = False
+        widget_smooth_scroll_enabled = False
+        source_mode = "local_path"
+        game_path = ""
+        output_path = ""
+
+        def resolve_game_path(self):
+            return None
+
+        def to_app_context_input_snapshot(self):
+            return AppContextInputSnapshot()
+
+    page.set_gui_config(FakeCfg())
+    monkeypatch.setattr(page, "_start_task_worker", capture_started_task)
+    monkeypatch.setattr(
+        execution_page_module,
+        "show_feedback_infobar",
+        lambda **kwargs: feedback_calls.append(kwargs),
+    )
+    app.processEvents()
+
+    page._queue_task_draft()
+    app.processEvents()
+
+    assert started_tasks == []
+    assert page.draft_list.count() == 1
+    assert page.draft_list.item(0).flags() == Qt.NoItemFlags
+    assert feedback_calls == [
+        {
+            "title": "无法创建任务",
+            "content": "请先在「全局设置」中配置游戏目录。",
+            "parent": page,
+            "level": "warning",
+            "position": execution_page_module.InfoBarPosition.TOP,
+        }
+    ]
+
+    page.deleteLater()
+    app.processEvents()
+
+
+def test_execution_page_allows_queue_creation_without_game_path_in_remote_mode(monkeypatch) -> None:
+    """远端模式不应被本地游戏目录门禁误伤。"""
+    app = QApplication.instance() or QApplication([])
+    page = ExecutionPage()
+    started_tasks: list[object] = []
+    feedback_calls: list[dict[str, object]] = []
+    expected_snapshot = AppContextInputSnapshot(overrides=(("SOURCE_MODE", "remote_snapshot"),))
+
+    def capture_started_task(task) -> None:
+        started_tasks.append(task)
+
+    class FakeCfg:
+        smooth_scroll_enabled = False
+        page_smooth_scroll_enabled = False
+        widget_smooth_scroll_enabled = False
+        source_mode = "remote_snapshot"
+        game_path = ""
+        output_path = r".\output"
+
+        def resolve_game_path(self):
+            return None
+
+        def to_app_context_input_snapshot(self):
+            return expected_snapshot
+
+    page.set_gui_config(FakeCfg())
+    monkeypatch.setattr(page, "_start_task_worker", capture_started_task)
+    monkeypatch.setattr(
+        execution_page_module,
+        "show_feedback_infobar",
+        lambda **kwargs: feedback_calls.append(kwargs),
+    )
+    app.processEvents()
+
+    page._queue_task_draft()
+    app.processEvents()
+
+    assert len(started_tasks) == 1
+    assert started_tasks[0].draft.context_input == expected_snapshot
+    assert page.draft_list.count() == 1
+    assert "[运行中]" in page.draft_list.item(0).text()
+    assert feedback_calls
+    assert feedback_calls[-1]["title"] == "已加入任务队列"
+
+    page.deleteLater()
+    app.processEvents()
+
+
 def test_execution_page_can_remove_waiting_task_without_touching_running_task(monkeypatch) -> None:
     """右键菜单删除等待中的任务时，不应影响已经运行中的任务。"""
     app = QApplication.instance() or QApplication([])
