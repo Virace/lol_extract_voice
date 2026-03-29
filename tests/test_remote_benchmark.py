@@ -14,6 +14,8 @@ sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 
 pytestmark = pytest.mark.unit
+REMOTE_BENCHMARK_TEMP_ROOT = Path(".temp") / "remote_live_benchmark"
+REMOTE_BENCHMARK_REPORT_PATH = Path(".temp") / "benchmarks" / "remote_live" / "latest.json"
 
 
 def test_parse_id_csv_returns_int_tuple() -> None:
@@ -22,8 +24,8 @@ def test_parse_id_csv_returns_int_tuple() -> None:
 
 def test_build_config_requires_exactly_three_champions(tmp_path: Path) -> None:
     args = SimpleNamespace(
-        report=Path("benchmarks/remote_live/latest.json"),
-        output_root=Path(".cache/remote_live_benchmark"),
+        report=REMOTE_BENCHMARK_REPORT_PATH,
+        output_root=REMOTE_BENCHMARK_TEMP_ROOT,
         live_region="EUW",
         game_region="zh_CN",
         champion_ids="1,2",
@@ -43,8 +45,8 @@ def test_build_config_requires_exactly_three_champions(tmp_path: Path) -> None:
 
 def test_build_config_allows_single_champion_when_map_scenario_skipped(tmp_path: Path) -> None:
     args = SimpleNamespace(
-        report=Path("benchmarks/remote_live/latest.json"),
-        output_root=Path(".cache/remote_live_benchmark"),
+        report=REMOTE_BENCHMARK_REPORT_PATH,
+        output_root=REMOTE_BENCHMARK_TEMP_ROOT,
         live_region="EUW",
         game_region="zh_CN",
         champion_ids="1",

@@ -27,9 +27,20 @@ class FakeQSettings:
         self._store[key] = value
 
 
-def _use_fake_qsettings(monkeypatch) -> None:
+def _use_fake_qsettings(monkeypatch, *, runtime_root: Path | None = None) -> None:
     FakeQSettings._store = {}
     monkeypatch.setattr(gui_config_module, "QSettings", FakeQSettings)
+    if runtime_root is not None:
+        runtime_root = runtime_root.resolve()
+        monkeypatch.setattr(
+            gui_config_module,
+            "detect_runtime_paths",
+            lambda: detect_runtime_paths(
+                is_frozen=False,
+                cwd=runtime_root,
+                executable=runtime_root / "python.exe",
+            ),
+        )
 
 
 def _sample_path(tmp_path: Path, *parts: str) -> str:
@@ -38,7 +49,7 @@ def _sample_path(tmp_path: Path, *parts: str) -> str:
 
 def test_gui_config_to_app_context_overrides(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    _use_fake_qsettings(monkeypatch)
+    _use_fake_qsettings(monkeypatch, runtime_root=tmp_path)
     sample_game_path = _sample_path(tmp_path, "game-client")
     sample_output_path = _sample_path(tmp_path, "output-root")
     sample_wwiser_path = _sample_path(tmp_path, "tools", "wwiser.pyz")
@@ -75,7 +86,7 @@ def test_gui_config_to_app_context_overrides(monkeypatch, tmp_path):
 
 def test_gui_config_to_app_context_input_snapshot(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    _use_fake_qsettings(monkeypatch)
+    _use_fake_qsettings(monkeypatch, runtime_root=tmp_path)
     sample_game_path = _sample_path(tmp_path, "game-client")
     sample_output_path = _sample_path(tmp_path, "output-root")
     sample_wwiser_path = _sample_path(tmp_path, "tools", "wwiser.pyz")
@@ -112,7 +123,7 @@ def test_gui_config_to_app_context_input_snapshot(monkeypatch, tmp_path):
 
 def test_gui_config_load_migrates_legacy_vgmstream_env_key(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    _use_fake_qsettings(monkeypatch)
+    _use_fake_qsettings(monkeypatch, runtime_root=tmp_path)
     sample_output_path = _sample_path(tmp_path, "output-root")
     sample_vgmstream_path = _sample_path(tmp_path, "tools", "vgmstream-cli.exe")
 
@@ -139,7 +150,7 @@ def test_gui_config_load_migrates_legacy_vgmstream_env_key(monkeypatch, tmp_path
 
 def test_gui_config_save_keeps_vgmstream_in_qsettings_only(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    _use_fake_qsettings(monkeypatch)
+    _use_fake_qsettings(monkeypatch, runtime_root=tmp_path)
     sample_game_path = _sample_path(tmp_path, "game-client")
     sample_output_path = _sample_path(tmp_path, "output-root")
     sample_vgmstream_path = _sample_path(tmp_path, "tools", "vgmstream-cli.exe")
@@ -224,7 +235,7 @@ def test_gui_config_resolves_relative_runtime_paths_from_launch_root(monkeypatch
 
 def test_gui_config_loads_legacy_smooth_scroll_into_split_flags(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    _use_fake_qsettings(monkeypatch)
+    _use_fake_qsettings(monkeypatch, runtime_root=tmp_path)
 
     FakeQSettings._store["smooth_scroll_enabled"] = True
 
@@ -238,7 +249,7 @@ def test_gui_config_loads_legacy_smooth_scroll_into_split_flags(monkeypatch, tmp
 
 def test_gui_config_persists_split_smooth_scroll_flags(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    _use_fake_qsettings(monkeypatch)
+    _use_fake_qsettings(monkeypatch, runtime_root=tmp_path)
 
     cfg = GuiConfig()
     cfg.page_smooth_scroll_enabled = True
@@ -259,7 +270,7 @@ def test_gui_config_persists_split_smooth_scroll_flags(monkeypatch, tmp_path):
 
 def test_gui_config_persists_log_drawer_auto_collapse_flag(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    _use_fake_qsettings(monkeypatch)
+    _use_fake_qsettings(monkeypatch, runtime_root=tmp_path)
 
     cfg = GuiConfig()
     cfg.log_drawer_auto_collapse_enabled = False
@@ -275,7 +286,7 @@ def test_gui_config_persists_log_drawer_auto_collapse_flag(monkeypatch, tmp_path
 
 def test_gui_config_persists_log_levels(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    _use_fake_qsettings(monkeypatch)
+    _use_fake_qsettings(monkeypatch, runtime_root=tmp_path)
     monkeypatch.setattr(gui_config_module, "set_key", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(gui_config_module, "unset_key", lambda *_args, **_kwargs: None)
 

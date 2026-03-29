@@ -17,6 +17,8 @@ pytestmark = [pytest.mark.integration, pytest.mark.remote_live]
 LIVE_REGION = "EUW"
 GAME_REGION = "zh_CN"
 TARGET_CHAMPION_IDS = (1, 103, 555)
+REMOTE_LIVE_TEMP_ROOT = Path(".temp") / "remote_live"
+WWISER_TOOL_ROOT = Path(".temp") / "tools" / "wwiser"
 
 
 def _reset_data_reader_singleton() -> None:
@@ -79,7 +81,7 @@ def _ensure_remote_update_ready(
 
 def _ensure_wwiser_ready() -> Path:
     """确保测试使用的 wwiser.pyz 已下载。"""
-    tool_dir = Path(".cache") / "tools" / "wwiser"
+    tool_dir = WWISER_TOOL_ROOT
     tool_dir.mkdir(parents=True, exist_ok=True)
     wwiser_path = tool_dir / "wwiser.pyz"
     if wwiser_path.exists():
@@ -99,7 +101,13 @@ def test_remote_snapshot_mapping_champions_live_latest() -> None:
     pair = resolver.resolve_manifest_pair(LIVE_REGION)
     version = str(pair.version)
 
-    output_path = Path(".cache") / "remote_live_update_test" / LIVE_REGION.lower() / version / "update_champions_1_103_555"
+    output_path = (
+        REMOTE_LIVE_TEMP_ROOT
+        / "update_test"
+        / LIVE_REGION.lower()
+        / version
+        / "update_champions_1_103_555"
+    )
     output_path.mkdir(parents=True, exist_ok=True)
 
     _ensure_remote_update_ready(
