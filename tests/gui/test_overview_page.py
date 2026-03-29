@@ -26,8 +26,8 @@ from lol_audio_unpack.gui.components.overview_entity_list import (
 )
 from lol_audio_unpack.gui.components.overview_status_badge import (
     _build_status_badge_styles,
-    _build_status_pill_segment_polygons,
     _build_status_pill_seam_lines,
+    _build_status_pill_segment_polygons,
     _create_status_badge,
     measure_status_pill_width,
     paint_status_pill,
@@ -46,6 +46,14 @@ OVERVIEW_RIGHT_PANEL_MIN_WIDTH = 190
 OVERVIEW_BALANCED_SPLITTER_MAX_DELTA = 2
 MIN_TRANSPARENT_STATE_RULES = 2
 INSET_ZEBRA_MIN_DISTANCE = 6
+EXPECTED_STATUS_PILL_SEGMENT_COUNT = 2
+EXPECTED_STATUS_SEAM_START_X = 39.5
+EXPECTED_STATUS_SEAM_END_X = 33.5
+EXPECTED_STATUS_SEAM_START_Y = 0.5
+EXPECTED_STATUS_SEAM_END_Y = 23.5
+UPDATED_PREVIEW_AUDIO_VOLUME_PERCENT = 25
+DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY = "default"
+UPDATED_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY = "device:realtek"
 
 
 def _rgba_text(rgba: tuple[int, int, int, int]) -> str:
@@ -182,7 +190,7 @@ def test_build_status_pill_segment_polygons_use_diagonal_split() -> None:
         diagonal_offset=6,
     )
 
-    assert len(polygons) == 2
+    assert len(polygons) == EXPECTED_STATUS_PILL_SEGMENT_COUNT
     first_points = [polygons[0].at(i) for i in range(polygons[0].count())]
     second_points = [polygons[1].at(i) for i in range(polygons[1].count())]
 
@@ -232,10 +240,10 @@ def test_build_status_pill_seam_lines_match_segment_boundaries_without_gaps() ->
 
     assert len(seam_lines) == 1
     start, end = seam_lines[0]
-    assert start.x() == 39.5
-    assert end.x() == 33.5
-    assert start.y() == 0.5
-    assert end.y() == 23.5
+    assert start.x() == EXPECTED_STATUS_SEAM_START_X
+    assert end.x() == EXPECTED_STATUS_SEAM_END_X
+    assert start.y() == EXPECTED_STATUS_SEAM_START_Y
+    assert end.y() == EXPECTED_STATUS_SEAM_END_Y
 
 
 def test_paint_status_pill_keeps_seam_inside_capsule_bounds() -> None:
@@ -707,3 +715,95 @@ def test_overview_page_preview_load_keeps_left_list_without_horizontal_scroll(qt
     assert view.horizontalScrollBar().maximum() == 0
     assert left_size >= OVERVIEW_LEFT_PANEL_MIN_WIDTH
     assert right_size >= OVERVIEW_RIGHT_PANEL_MIN_WIDTH
+
+
+def test_overview_page_toggles_cached_audio_preview_request(tmp_path) -> None:
+    """点击试听叶子行后，总览页应缓存已解析的音频请求并更新树状态。"""
+    app = QApplication.instance() or QApplication([])
+    page = OverviewPage()
+    preview_path = tmp_path / "hashes" / "16.5" / "champions" / "1.json"
+    wem_path = tmp_path / "audios" / "16.5" / "champions" / "Annie" / "118669424.wem"
+    page._loader = Mock()
+    page._loader.load_mapping_preview.return_value = (
+        preview_path,
+        {
+            "skins": {
+                "1000": {
+                    "events": {
+                        "Annie_Base_VO": {
+                            "Play_vo_Annie_Attack2DGeneral": [118669424],
+                        }
+                    }
+                }
+            }
+        },
+        "raw-preview",
+    )
+    page._loader.load_available_audio_ids.return_value = {"118669424"}
+    page._loader.resolve_audio_file_path.return_value = wem_path
+    item = Mock()
+    item.data.return_value = {
+        "id": "1",
+        "name": "安妮",
+    }
+
+    page._load_preview_for_item("champions", item)
+    page.audio_preview_tree.audio_id_toggle_requested.emit("118669424")
+    app.processEvents()
+
+    page._loader.resolve_audio_file_path.assert_called_once_with("champions", "1", "118669424")
+    assert page._current_audio_preview_audio_id == "118669424"
+    assert page._current_audio_preview_path == wem_path
+    assert page.audio_preview_tree._active_audio_id == "118669424"
+    assert page.audio_preview_tree._active_audio_progress == 0.0
+    assert page.audio_preview_tree._active_audio_is_playing is False
+    assert page.audio_preview_tree._active_audio_is_paused is True
+
+    page.audio_preview_tree.audio_id_toggle_requested.emit("118669424")
+    app.processEvents()
+
+    assert page._loader.resolve_audio_file_path.call_count == 1
+    assert page._current_audio_preview_audio_id is None
+    assert page._current_audio_preview_path is None
+    assert page.audio_preview_tree._active_audio_id is None
+    assert page.audio_preview_tree._active_audio_progress == 0.0
+    assert page.audio_preview_tree._active_audio_is_playing is False
+    assert page.audio_preview_tree._active_audio_is_paused is False
+
+
+def test_overview_page_set_gui_config_caches_preview_audio_volume() -> None:
+    """注入 GUI 配置后，总览页应缓存试听音量配置。"""
+    page = OverviewPage()
+    cfg = type(
+        "FakeCfg",
+        (),
+        {
+            "smooth_scroll_enabled": False,
+            "widget_smooth_scroll_enabled": False,
+            "preview_audio_volume_percent": UPDATED_PREVIEW_AUDIO_VOLUME_PERCENT,
+        },
+    )()
+
+    page.set_gui_config(cfg)
+
+    assert page._preview_audio_volume_percent == UPDATED_PREVIEW_AUDIO_VOLUME_PERCENT
+    assert page._preview_audio_output_device_key == DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY
+
+
+def test_overview_page_set_gui_config_caches_preview_audio_output_device() -> None:
+    """注入 GUI 配置后，总览页应缓存试听输出设备配置。"""
+    page = OverviewPage()
+    cfg = type(
+        "FakeCfg",
+        (),
+        {
+            "smooth_scroll_enabled": False,
+            "widget_smooth_scroll_enabled": False,
+            "preview_audio_volume_percent": UPDATED_PREVIEW_AUDIO_VOLUME_PERCENT,
+            "preview_audio_output_device_key": UPDATED_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY,
+        },
+    )()
+
+    page.set_gui_config(cfg)
+
+    assert page._preview_audio_output_device_key == UPDATED_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY

@@ -5,6 +5,7 @@ from time import perf_counter
 from loguru import logger
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
+from PySide6.QtMultimedia import QMediaDevices
 from PySide6.QtWidgets import QFileDialog, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
@@ -18,6 +19,7 @@ from qfluentwidgets import (
     PushSettingCard,
     SettingCard,
     SettingCardGroup,
+    Slider,
     SmoothScrollArea,
     SwitchButton,
     SwitchSettingCard,
@@ -44,6 +46,33 @@ from lol_audio_unpack.utils.runtime_paths import (
     get_default_vgmstream_relative_path,
     get_default_wwiser_relative_path,
 )
+
+DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY = "default"
+
+
+def _build_audio_output_device_key(device) -> str:
+    """为 Qt 音频输出设备构造稳定键值。"""
+    return f"device:{bytes(device.id()).hex()}"
+
+
+def get_preview_audio_output_device_options() -> list[tuple[str, str]]:
+    """列出 GUI 可选的试听输出设备。
+
+    Returns:
+        list[tuple[str, str]]: ``[(显示文案, 设备键值), ...]``，首项永远为
+        ``("默认设备", "default")``。
+    """
+    options: list[tuple[str, str]] = [("默认设备", DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY)]
+    seen_labels: dict[str, int] = {}
+
+    for index, device in enumerate(QMediaDevices.audioOutputs(), start=1):
+        base_label = device.description().strip() or f"输出设备 {index}"
+        count = seen_labels.get(base_label, 0) + 1
+        seen_labels[base_label] = count
+        label = base_label if count == 1 else f"{base_label} ({count})"
+        options.append((label, _build_audio_output_device_key(device)))
+
+    return options
 
 
 def _log_setting_stage(stage: str, startup_begin: float, previous_mark: float) -> float:
@@ -83,7 +112,6 @@ class ComboRowSettingCard(SettingCard):
         self._label_map = label_map or {}
         self.comboBox = ComboBox(self)
         self.comboBox.addItems(items)
-        self.comboBox.setFixedWidth(180)
         self.hBoxLayout.addWidget(self.comboBox, 0, Qt.AlignRight)
         self.hBoxLayout.addSpacing(16)
 
@@ -148,6 +176,49 @@ class LineEditSettingCard(SettingCard):
 
     def setValue(self, text: str):
         self.lineEdit.setText(text)
+
+
+class SliderSettingCard(SettingCard):
+    """右侧嵌入滑块和百分比文案的设置卡。"""
+
+    def __init__(  # noqa: PLR0913
+        self,
+        icon,
+        title: str,
+        content: str,
+        *,
+        minimum: int,
+        maximum: int,
+        value: int,
+        parent=None,
+    ) -> None:
+        super().__init__(icon, title, content, parent)
+        self.slider = Slider(Qt.Orientation.Horizontal, self)
+        self.slider.setRange(minimum, maximum)
+        self.slider.setFixedWidth(180)
+        self.valueLabel = BodyLabel(self)
+        self.valueLabel.setMinimumWidth(44)
+        self.valueLabel.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.slider.valueChanged.connect(self._sync_value_label)
+        self.hBoxLayout.addWidget(self.slider, 0, Qt.AlignmentFlag.AlignRight)
+        self.hBoxLayout.addSpacing(12)
+        self.hBoxLayout.addWidget(self.valueLabel, 0, Qt.AlignmentFlag.AlignRight)
+        self.hBoxLayout.addSpacing(16)
+        self.setValue(value)
+
+    def value(self) -> int:
+        """返回当前滑块值。"""
+        return int(self.slider.value())
+
+    def setValue(self, value: int) -> None:
+        """同步当前滑块值。"""
+        normalized = int(value)
+        self.slider.setValue(normalized)
+        self._sync_value_label(normalized)
+
+    def _sync_value_label(self, value: int) -> None:
+        """同步右侧百分比文案。"""
+        self.valueLabel.setText(f"{int(value)}%")
 
 
 class LocalizedSwitchSettingCard(SwitchSettingCard):
@@ -351,6 +422,8 @@ class SettingPage(SmoothScrollArea):
     smooth_scroll_changed = Signal(bool, bool)
     log_drawer_auto_collapse_changed = Signal(bool)
     log_levels_changed = Signal(object)
+    preview_audio_output_device_changed = Signal(str)
+    preview_audio_volume_changed = Signal(int)
 
     def __init__(self, parent=None):
         startup_begin = perf_counter()
@@ -580,6 +653,26 @@ class SettingPage(SmoothScrollArea):
         self.personalGroup.addSettingCard(self.colorCard)
         self.smoothScrollCard = SmoothScrollSettingCard(self.personalGroup)
         self.personalGroup.addSettingCard(self.smoothScrollCard)
+        audio_output_device_options = get_preview_audio_output_device_options()
+        self.previewAudioOutputDeviceCard = ComboRowSettingCard(
+            FIF.MUSIC,
+            "播放设备",
+            "默认跟随系统当前输出设备；如有多路输出，可在此固定指定试听设备。",
+            [label for label, _value in audio_output_device_options],
+            label_map={label: value for label, value in audio_output_device_options},
+            parent=self.personalGroup,
+        )
+        self.personalGroup.addSettingCard(self.previewAudioOutputDeviceCard)
+        self.previewAudioVolumeCard = SliderSettingCard(
+            FIF.VOLUME,
+            "试听音量",
+            "控制显式音频 ID 叶子行的本地试听音量。",
+            minimum=0,
+            maximum=100,
+            value=10,
+            parent=self.personalGroup,
+        )
+        self.personalGroup.addSettingCard(self.previewAudioVolumeCard)
         self.logDrawerAutoCollapseCard = LocalizedSwitchSettingCard(
             FIF.SETTING,
             "点击外部自动收起日志",
@@ -630,6 +723,8 @@ class SettingPage(SmoothScrollArea):
             page_enabled=cfg.page_smooth_scroll_enabled,
             widget_enabled=cfg.widget_smooth_scroll_enabled,
         )
+        self.previewAudioOutputDeviceCard.setValue(cfg.preview_audio_output_device_key)
+        self.previewAudioVolumeCard.setValue(cfg.preview_audio_volume_percent)
         self.logDrawerAutoCollapseCard.setValue(cfg.log_drawer_auto_collapse_enabled)
         self.logLevelCard.setValues(
             console_level=cfg.console_log_level,
@@ -707,6 +802,8 @@ class SettingPage(SmoothScrollArea):
         self.groupByTypeCard.checkedChanged.connect(self._save_config)
         self.smoothScrollCard.pageSwitchButton.checkedChanged.connect(self._on_smooth_scroll_changed)
         self.smoothScrollCard.widgetSwitchButton.checkedChanged.connect(self._on_smooth_scroll_changed)
+        self.previewAudioOutputDeviceCard.comboBox.currentTextChanged.connect(self._on_preview_audio_output_device_changed)
+        self.previewAudioVolumeCard.slider.valueChanged.connect(self._on_preview_audio_volume_changed)
         self.logDrawerAutoCollapseCard.checkedChanged.connect(self._on_log_drawer_auto_collapse_changed)
         self.consoleLogLevelCard.comboBox.currentTextChanged.connect(self._on_console_log_level_changed)
         self.fileLogLevelCard.comboBox.currentTextChanged.connect(self._on_file_log_level_changed)
@@ -836,6 +933,18 @@ class SettingPage(SmoothScrollArea):
         """保存并广播日志抽屉点击外部自动收起配置。"""
         self._save_config(emit_shared_context_input_change=False)
         self.log_drawer_auto_collapse_changed.emit(self.logDrawerAutoCollapseCard.isChecked())
+
+    def _on_preview_audio_output_device_changed(self, _value: str) -> None:
+        """保存并广播试听输出设备配置。"""
+        self._cfg.preview_audio_output_device_key = self.previewAudioOutputDeviceCard.value()
+        self._cfg.save()
+        self.preview_audio_output_device_changed.emit(self._cfg.preview_audio_output_device_key)
+
+    def _on_preview_audio_volume_changed(self, value: int) -> None:
+        """保存并广播试听音量配置。"""
+        self._cfg.preview_audio_volume_percent = int(value)
+        self._cfg.save()
+        self.preview_audio_volume_changed.emit(self._cfg.preview_audio_volume_percent)
 
     def _on_console_log_level_changed(self, _value: str) -> None:
         """保存控制台日志等级，并在高频级别下提醒用户。"""

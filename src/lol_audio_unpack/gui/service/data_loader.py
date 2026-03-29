@@ -390,3 +390,32 @@ class EntityDataLoader:
                 available_ids.add(wem_path.stem)
 
         return available_ids
+
+    def resolve_audio_file_path(self, entity_type: GuiEntityType, entity_id: str, audio_id: str) -> Path | None:
+        """解析指定音频 ID 在本地输出目录中的 wem 路径。
+
+        Args:
+            entity_type: 实体类型目录名。
+            entity_id: 实体 ID。
+            audio_id: 目标音频 ID。
+
+        Returns:
+            Path | None: 若命中本地 wem 文件则返回其路径，否则返回 ``None``。
+        """
+        audio_id_text = str(audio_id).strip()
+        if not audio_id_text:
+            return None
+
+        entity_data = self._build_entity_data(entity_type, str(entity_id))
+        audio_paths = resolve_entity_audio_paths(self.ctx, entity_data, self.data_reader.version)
+        matched_paths: list[Path] = []
+
+        for audio_path in audio_paths:
+            if not audio_path.exists():
+                continue
+
+            matched_paths.extend(sorted(audio_path.rglob(f"{audio_id_text}.wem")))
+
+        if not matched_paths:
+            return None
+        return min(matched_paths, key=lambda path: str(path).lower())

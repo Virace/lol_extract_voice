@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from PySide6.QtCore import QAbstractItemModel, QEvent, QModelIndex, QPoint, QPointF, QRect, Qt
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtCore import QAbstractItemModel, QEvent, QModelIndex, QPoint, QPointF, QRect, Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import QStyle, QStyleOptionViewItem, QTreeView
 from qfluentwidgets import (
     CustomStyleSheet,
@@ -37,6 +37,8 @@ PREVIEW_TREE_TEXT_GAP = 4
 PREVIEW_TREE_SELECTED_BAR_WIDTH = 3
 PREVIEW_TREE_SELECTED_BAR_MARGIN = 0
 PREVIEW_TREE_INDENTATION = 10
+PREVIEW_TREE_AUDIO_BUTTON_SIZE = 18
+PREVIEW_TREE_AUDIO_BUTTON_GAP = 6
 
 
 def _build_preview_tree_branch_styles() -> str:
@@ -561,6 +563,8 @@ class PreviewTreeModel(QAbstractItemModel):
 class PreviewTreeView(QTreeView):
     """最基础的试听树视图。"""
 
+    audio_id_toggle_requested = Signal(str)
+
     def _index_depth(self, index: QModelIndex) -> int:
         """返回当前节点深度。"""
         depth = 0
@@ -590,12 +594,49 @@ class PreviewTreeView(QTreeView):
             + icon_span
             + PREVIEW_TREE_TEXT_GAP
         )
+        audio_control_rect = self._audio_control_rect(row_rect, index)
+        if not audio_control_rect.isNull():
+            content_left = audio_control_rect.left() + audio_control_rect.width() + PREVIEW_TREE_AUDIO_BUTTON_GAP
         return QRect(
             content_left,
             option.rect.top(),
             max(0, row_rect.right() - content_left - 8),
             option.rect.height(),
         )
+
+    def _audio_control_rect(self, row_rect: QRect, index: QModelIndex) -> QRect:
+        """返回音频叶子行左侧播放按钮区域。"""
+        if not self._is_audio_leaf(index) or not self._is_audio_available(index):
+            return QRect()
+
+        depth = self._index_depth(index)
+        icon_span = max(PREVIEW_TREE_BRANCH_SLOT_WIDTH, PREVIEW_TREE_BRANCH_ICON_SIZE)
+        button_left = (
+            row_rect.left()
+            + depth * self.indentation()
+            + icon_span
+            + PREVIEW_TREE_TEXT_GAP
+        )
+        button_size = max(12, min(PREVIEW_TREE_AUDIO_BUTTON_SIZE, row_rect.height() - 8))
+        return QRect(
+            button_left,
+            row_rect.center().y() - button_size // 2,
+            button_size,
+            button_size,
+        )
+
+    def _audio_control_rect_for_index(self, index: QModelIndex) -> QRect:
+        """按当前可视区域计算音频叶子行的播放按钮矩形。"""
+        visual_rect = self.visualRect(index)
+        if not index.isValid() or not visual_rect.isValid() or visual_rect.isEmpty():
+            return QRect()
+        row_rect = QRect(
+            PREVIEW_TREE_ROW_HORIZONTAL_MARGIN,
+            visual_rect.top() + 2,
+            max(0, self.viewport().width() - PREVIEW_TREE_ROW_HORIZONTAL_MARGIN * 2),
+            max(0, visual_rect.height() - 4),
+        )
+        return self._audio_control_rect(row_rect, index)
 
     def _draw_selected_bar(self, painter: QPainter, row_rect: QRect, index: QModelIndex) -> None:
         """绘制选中竖条。"""
@@ -679,12 +720,102 @@ class PreviewTreeView(QTreeView):
         selection_model = self.selectionModel()
         is_selected = selection_model.isSelected(index) if selection_model is not None else False
         is_hovered = index == self._hovered_index
-        if not is_selected and not is_hovered:
+        audio_id = self._audio_id_for_index(index)
+        is_active_audio = audio_id is not None and audio_id == self._active_audio_id
+        if not is_selected and not is_hovered and not is_active_audio:
             return None
 
+        if is_active_audio and not is_selected and not is_hovered:
+            active_color = QColor(themeColor())
+            active_color.setAlpha(22)
+            return active_color
         return resolve_fluent_neutral_surface(
             "emphasis_selected" if is_selected else "emphasis_hover"
         )
+
+    def _audio_id_for_index(self, index: QModelIndex) -> str | None:
+        """返回指定索引对应的音频 ID。"""
+        model = self.model()
+        if model is None:
+            return None
+        audio_id = model.data(index, AUDIO_ID_ROLE)
+        if audio_id is None:
+            return None
+        text = str(audio_id).strip()
+        return text or None
+
+    def _is_audio_leaf(self, index: QModelIndex) -> bool:
+        """判断索引是否为音频 ID 叶子节点。"""
+        model = self.model()
+        return bool(index.isValid() and model is not None and model.data(index, NODE_KIND_ROLE) == "audio_id")
+
+    def _is_audio_available(self, index: QModelIndex) -> bool:
+        """判断索引是否为本地可试听的音频叶子节点。"""
+        model = self.model()
+        return bool(index.isValid() and model is not None and model.data(index, AUDIO_AVAILABLE_ROLE))
+
+    def _playback_progress_for_index(self, index: QModelIndex) -> float:
+        """返回当前行的试听进度。"""
+        if self._audio_id_for_index(index) != self._active_audio_id:
+            return 0.0
+        return max(0.0, min(1.0, self._active_audio_progress))
+
+    def _draw_playback_progress(self, painter: QPainter, row_rect: QRect, index: QModelIndex) -> None:
+        """为当前正在试听的叶子行绘制整行进度背景。"""
+        progress = self._playback_progress_for_index(index)
+        if progress <= 0:
+            return
+
+        progress_color = QColor(themeColor())
+        progress_color.setAlpha(72 if self._active_audio_is_playing else 56)
+        progress_width = max(0, min(row_rect.width(), int(round(row_rect.width() * progress))))
+        if progress_width <= 0:
+            return
+
+        clip_rect = QRect(row_rect.left(), row_rect.top(), progress_width, row_rect.height())
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setClipRect(clip_rect)
+        painter.setBrush(progress_color)
+        painter.drawRoundedRect(row_rect, 6, 6)
+        painter.restore()
+
+    def _draw_audio_control(self, painter: QPainter, row_rect: QRect, index: QModelIndex) -> None:
+        """为可试听叶子行绘制播放/暂停按钮。"""
+        button_rect = self._audio_control_rect(row_rect, index)
+        if button_rect.isNull():
+            return
+
+        is_active_audio = self._audio_id_for_index(index) == self._active_audio_id
+        button_background = QColor(themeColor()) if is_active_audio else resolve_fluent_neutral_surface("emphasis_hover")
+        button_background.setAlpha(34 if is_active_audio else 20)
+        icon_color = QColor(themeColor()) if is_active_audio else resolve_fluent_text_primary_color()
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(button_background)
+        painter.drawRoundedRect(button_rect, 5, 5)
+        painter.setBrush(icon_color)
+        if is_active_audio and self._active_audio_is_playing:
+            bar_width = max(2, button_rect.width() // 6)
+            gap = max(2, button_rect.width() // 8)
+            bar_height = max(8, button_rect.height() - 8)
+            top = button_rect.center().y() - bar_height // 2
+            left = button_rect.center().x() - gap // 2 - bar_width
+            painter.drawRoundedRect(QRect(left, top, bar_width, bar_height), 1, 1)
+            painter.drawRoundedRect(QRect(left + bar_width + gap, top, bar_width, bar_height), 1, 1)
+        else:
+            points = QPolygonF(
+                (
+                    QPointF(button_rect.left() + button_rect.width() * 0.36, button_rect.top() + button_rect.height() * 0.26),
+                    QPointF(button_rect.left() + button_rect.width() * 0.36, button_rect.bottom() - button_rect.height() * 0.26),
+                    QPointF(button_rect.right() - button_rect.width() * 0.24, button_rect.center().y()),
+                )
+            )
+            painter.drawPolygon(points)
+        painter.restore()
 
     def __init__(self, parent=None) -> None:
         """初始化树视图。
@@ -694,6 +825,10 @@ class PreviewTreeView(QTreeView):
         """
         super().__init__(parent)
         self._hovered_index = QModelIndex()
+        self._active_audio_id: str | None = None
+        self._active_audio_progress = 0.0
+        self._active_audio_is_playing = False
+        self._active_audio_is_paused = False
         model = PreviewTreeModel(self)
         self.setModel(model)
         self.setHeaderHidden(True)
@@ -722,6 +857,19 @@ class PreviewTreeView(QTreeView):
                 self.viewport().update()
         return super().viewportEvent(event)
 
+    def mouseReleaseEvent(self, event) -> None:
+        """拦截叶子行播放按钮点击，避免落入默认选择逻辑。"""
+        if event.button() == Qt.MouseButton.LeftButton:
+            click_pos = event.position().toPoint()
+            index = self._hovered_index_at_y(click_pos.y())
+            button_rect = self._audio_control_rect_for_index(index)
+            audio_id = self._audio_id_for_index(index)
+            if audio_id is not None and button_rect.contains(click_pos):
+                self.audio_id_toggle_requested.emit(audio_id)
+                event.accept()
+                return
+        super().mouseReleaseEvent(event)
+
     def drawBranches(self, painter: QPainter, rect: QRect, index: QModelIndex) -> None:
         """只绘制展开/收缩图标，避免默认 branch 连接线与背景叠加。"""
         return
@@ -739,8 +887,10 @@ class PreviewTreeView(QTreeView):
             painter.drawRoundedRect(row_rect, 6, 6)
             painter.restore()
 
+        self._draw_playback_progress(painter, row_rect, index)
         self._draw_selected_bar(painter, row_rect, index)
         self._draw_branch_icon(painter, row_rect, index)
+        self._draw_audio_control(painter, row_rect, index)
 
         clean_option = QStyleOptionViewItem(option)
         clean_option.state &= ~QStyle.StateFlag.State_Selected
@@ -752,6 +902,22 @@ class PreviewTreeView(QTreeView):
         delegate = self.itemDelegateForIndex(index) or self.itemDelegate()
         if delegate is not None:
             delegate.paint(painter, clean_option, index)
+
+    def set_audio_playback_state(
+        self,
+        audio_id: str | None,
+        *,
+        progress: float,
+        is_playing: bool,
+        is_paused: bool,
+    ) -> None:
+        """更新当前试听叶子行的按钮状态与整行进度背景。"""
+        normalized_audio_id = str(audio_id).strip() if audio_id is not None else ""
+        self._active_audio_id = normalized_audio_id or None
+        self._active_audio_progress = max(0.0, min(1.0, float(progress)))
+        self._active_audio_is_playing = bool(is_playing and self._active_audio_id)
+        self._active_audio_is_paused = bool(is_paused and self._active_audio_id)
+        self.viewport().update()
 
 
 __all__ = [

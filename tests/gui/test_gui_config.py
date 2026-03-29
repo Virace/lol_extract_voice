@@ -7,6 +7,11 @@ from lol_audio_unpack.gui.common.gui_config import GuiConfig
 from lol_audio_unpack.gui.task_models import AppContextInputSnapshot
 from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
 
+DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT = 10
+UPDATED_PREVIEW_AUDIO_VOLUME_PERCENT = 35
+DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY = "default"
+UPDATED_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY = "device:realtek"
+
 
 class FakeQSettings:
     class Format:
@@ -303,3 +308,47 @@ def test_gui_config_persists_log_levels(monkeypatch, tmp_path):
 
     assert reloaded_cfg.console_log_level == "DEBUG"
     assert reloaded_cfg.file_log_level == "TRACE"
+
+
+def test_gui_config_persists_preview_audio_volume_percent(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _use_fake_qsettings(monkeypatch, runtime_root=tmp_path)
+    monkeypatch.setattr(gui_config_module, "set_key", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gui_config_module, "unset_key", lambda *_args, **_kwargs: None)
+
+    cfg = GuiConfig()
+    cfg.load()
+
+    assert cfg.preview_audio_volume_percent == DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT
+
+    cfg.preview_audio_volume_percent = UPDATED_PREVIEW_AUDIO_VOLUME_PERCENT
+    cfg.save()
+
+    assert FakeQSettings._store["preview_audio_volume_percent"] == UPDATED_PREVIEW_AUDIO_VOLUME_PERCENT
+
+    reloaded_cfg = GuiConfig()
+    reloaded_cfg.load()
+
+    assert reloaded_cfg.preview_audio_volume_percent == UPDATED_PREVIEW_AUDIO_VOLUME_PERCENT
+
+
+def test_gui_config_persists_preview_audio_output_device_key(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    _use_fake_qsettings(monkeypatch, runtime_root=tmp_path)
+    monkeypatch.setattr(gui_config_module, "set_key", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(gui_config_module, "unset_key", lambda *_args, **_kwargs: None)
+
+    cfg = GuiConfig()
+    cfg.load()
+
+    assert cfg.preview_audio_output_device_key == DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY
+
+    cfg.preview_audio_output_device_key = UPDATED_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY
+    cfg.save()
+
+    assert FakeQSettings._store["preview_audio_output_device_key"] == UPDATED_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY
+
+    reloaded_cfg = GuiConfig()
+    reloaded_cfg.load()
+
+    assert reloaded_cfg.preview_audio_output_device_key == UPDATED_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY

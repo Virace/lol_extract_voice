@@ -23,6 +23,7 @@ EXPECTED_FULL_EVENT_COUNT = 2
 EXPECTED_FULL_AUDIO_ID_COUNT = 3
 EXPECTED_FULL_AVAILABLE_AUDIO_ID_COUNT = 2
 EXPECTED_ROOT_CHILD_COUNT = 2
+EXPECTED_ACTIVE_AUDIO_PROGRESS = 0.35
 
 
 def _find_child_index_by_label(model: PreviewTreeModel, parent_index, label: str):
@@ -66,6 +67,19 @@ def _sample_map_mapping_data() -> dict:
             }
         }
     }
+
+
+def _expand_to_first_audio_id_leaf(model: PreviewTreeModel) -> tuple[object, object, object, object]:
+    """展开样例树并返回第一对可用/不可用音频叶子索引。"""
+    skin_index = model.index(0, 0)
+    model.ensure_children_loaded(skin_index)
+    type_index = _find_child_index_by_label(model, skin_index, "Annie_Base_VO")
+    model.ensure_children_loaded(type_index)
+    event_index = _find_child_index_by_label(model, type_index, "Play_vo_Annie_Attack2DGeneral")
+    model.ensure_children_loaded(event_index)
+    available_leaf = model.index(0, 0, event_index)
+    unavailable_leaf = model.index(1, 0, event_index)
+    return skin_index, type_index, event_index, available_leaf, unavailable_leaf
 
 
 def test_collect_audio_preview_stats_counts_full_tree() -> None:
@@ -180,6 +194,91 @@ def test_audio_preview_tree_view_expands_with_basic_model_loading() -> None:
     view.expanded.emit(root_index)
 
     assert model.rowCount(root_index) == EXPECTED_ROOT_CHILD_COUNT
+
+
+def test_audio_preview_tree_view_tracks_audio_playback_state() -> None:
+    """试听树应缓存当前播放叶子与进度状态。"""
+    QApplication.instance() or QApplication([])
+    view = PreviewTreeView()
+
+    view.set_audio_playback_state(
+        "118669424",
+        progress=EXPECTED_ACTIVE_AUDIO_PROGRESS,
+        is_playing=True,
+        is_paused=False,
+    )
+
+    assert view._active_audio_id == "118669424"
+    assert view._active_audio_progress == EXPECTED_ACTIVE_AUDIO_PROGRESS
+    assert view._active_audio_is_playing is True
+    assert view._active_audio_is_paused is False
+
+
+def test_audio_preview_tree_view_emits_toggle_signal_for_available_audio_leaf(qtbot) -> None:
+    """点击可试听叶子行的播放按钮后应发出 audio id 切换信号。"""
+    view = PreviewTreeView()
+    qtbot.addWidget(view)
+    view.resize(520, 360)
+    model = view.model()
+    assert isinstance(model, PreviewTreeModel)
+    model.set_preview_data(_sample_mapping_data(), {"118669424"})
+    view.show()
+    qtbot.wait(10)
+
+    skin_index, type_index, event_index, available_leaf, unavailable_leaf = _expand_to_first_audio_id_leaf(model)
+    view.expand(skin_index)
+    view.expand(type_index)
+    view.expand(event_index)
+    qtbot.wait(10)
+
+    emitted_audio_ids: list[str] = []
+    view.audio_id_toggle_requested.connect(emitted_audio_ids.append)
+    available_button_rect = view._audio_control_rect_for_index(available_leaf)
+    unavailable_button_rect = view._audio_control_rect_for_index(unavailable_leaf)
+
+    assert available_button_rect.isValid()
+    assert unavailable_button_rect.isNull()
+
+    qtbot.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=available_button_rect.center())
+
+    assert emitted_audio_ids == ["118669424"]
+
+
+def test_audio_preview_tree_view_does_not_keep_selection_fill_on_non_leaf_rows(qtbot) -> None:
+    """非叶子节点被选中时，仍应保留正常的选中高亮。"""
+    view = PreviewTreeView()
+    qtbot.addWidget(view)
+    model = view.model()
+    assert isinstance(model, PreviewTreeModel)
+    model.set_preview_data(_sample_mapping_data(), {"118669424"})
+
+    skin_index, type_index, event_index, _available_leaf, _unavailable_leaf = _expand_to_first_audio_id_leaf(model)
+    view.setCurrentIndex(event_index)
+    qtbot.wait(10)
+
+    assert view._current_row_color(event_index) is not None
+
+
+def test_audio_preview_tree_view_non_leaf_rows_do_not_treat_none_as_active_audio(qtbot) -> None:
+    """未进入播放态时，非叶子节点不应因 ``None == None`` 被误判成活动音频。"""
+    view = PreviewTreeView()
+    qtbot.addWidget(view)
+    view.resize(640, 480)
+    model = view.model()
+    assert isinstance(model, PreviewTreeModel)
+    model.set_preview_data(_sample_mapping_data(), {"118669424"})
+
+    skin_index, type_index, event_index, _available_leaf, _unavailable_leaf = _expand_to_first_audio_id_leaf(model)
+    view.expand(skin_index)
+    view.expand(type_index)
+    view.expand(event_index)
+    view.show()
+    qtbot.wait(10)
+
+    assert view._active_audio_id is None
+    assert view._current_row_color(skin_index) is None
+    assert view._current_row_color(type_index) is None
+    assert view._current_row_color(event_index) is None
 
 
 def test_audio_preview_tree_mouse_expand_subprocess_does_not_crash() -> None:

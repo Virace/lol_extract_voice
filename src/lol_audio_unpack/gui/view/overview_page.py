@@ -59,6 +59,9 @@ from lol_audio_unpack.gui.components.preview_tree import (
 )
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 
+DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT = 10
+DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY = "default"
+
 
 def build_preview_path_text(mapping_path: Path | None) -> str:
     """构造右侧预览区域顶部路径文本。
@@ -104,7 +107,16 @@ class OverviewPage(QWidget):
         self._cached_data: dict[str, list[dict[str, Any]]] = {"champions": [], "maps": []}
         self._selected_entity_ids: dict[str, set[str]] = {"champions": set(), "maps": set()}
         self._current_preview_ids: dict[str, str | None] = {"champions": None, "maps": None}
+        self._current_preview_entity_type: str | None = None
+        self._current_preview_entity_id: str | None = None
         self._current_mapping_path: Path | None = None
+        self._current_audio_preview_audio_id: str | None = None
+        self._current_audio_preview_path: Path | None = None
+        self._current_audio_preview_progress = 0.0
+        self._current_audio_preview_is_playing = False
+        self._current_audio_preview_is_paused = False
+        self._preview_audio_volume_percent = DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT
+        self._preview_audio_output_device_key = DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY
         self._entity_lists: dict[str, OverviewEntityListView] = {}
         self._audio_preview_placeholder = "请选择左侧实体以查看事件内容。"
         self._build_ui()
@@ -130,6 +142,20 @@ class OverviewPage(QWidget):
         self.set_smooth_scroll_enabled(
             bool(getattr(cfg, "widget_smooth_scroll_enabled", fallback_enabled))
         )
+        self.set_preview_audio_volume(
+            int(getattr(cfg, "preview_audio_volume_percent", DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT))
+        )
+        self.set_preview_audio_output_device(
+            str(getattr(cfg, "preview_audio_output_device_key", DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY))
+        )
+
+    def set_preview_audio_volume(self, value: int) -> None:
+        """缓存试听音量设置，后续可直接接回底层播放器。"""
+        self._preview_audio_volume_percent = int(value)
+
+    def set_preview_audio_output_device(self, value: str) -> None:
+        """缓存试听输出设备设置，后续可直接接回底层播放器。"""
+        self._preview_audio_output_device_key = str(value or "").strip() or DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY
 
     def set_app_context(self, app_context) -> None:
         """注入应用上下文。
@@ -209,6 +235,7 @@ class OverviewPage(QWidget):
         self.sync_selection_btn.clicked.connect(self._sync_selected_entities)
         self.clear_selection_btn.clicked.connect(self._clear_selected_entities)
         self.reveal_file_btn.clicked.connect(self._reveal_selected_mapping_file)
+        self.audio_preview_tree.audio_id_toggle_requested.connect(self._on_audio_preview_toggle_requested)
         qconfig.themeChanged.connect(self._refresh_theme_styles)
         qconfig.themeColorChanged.connect(self._refresh_theme_styles)
 
@@ -570,6 +597,8 @@ class OverviewPage(QWidget):
             return
 
         self._current_preview_ids[entity_type] = str(row["id"])
+        self._current_preview_entity_type = entity_type
+        self._current_preview_entity_id = str(row["id"])
         loader = self._ensure_loader()
         if loader is None:
             self._show_placeholder("当前配置尚未完成初始化，暂时无法读取预览内容。")
@@ -592,6 +621,7 @@ class OverviewPage(QWidget):
         self.preview_path_edit.setCursorPosition(0)
         self.preview_path_edit.setToolTip(str(mapping_path))
         self.text_preview.setPlainText(preview_content or "{}")
+        self._clear_audio_preview_request()
         self._refresh_audio_preview(mapping_data, available_audio_ids, group_label_map)
         self.reveal_file_btn.setEnabled(True)
 
@@ -678,9 +708,65 @@ class OverviewPage(QWidget):
         if isinstance(model, PreviewTreeModel):
             self.audio_preview_tree.collapseAll()
             model.set_preview_data(mapping_data, available_audio_ids, group_label_map)
+        self._sync_audio_preview_playback_state()
+
+    def _on_audio_preview_toggle_requested(self, audio_id: str) -> None:
+        """响应试听树叶子行点击并保留后续接回播放器所需的请求壳子。"""
+        if audio_id == self._current_audio_preview_audio_id:
+            self._clear_audio_preview_request()
+            self._sync_audio_preview_playback_state()
+            return
+
+        loader = self._ensure_loader()
+        if (
+            loader is None
+            or self._current_preview_entity_type is None
+            or self._current_preview_entity_id is None
+        ):
+            return
+
+        audio_path = loader.resolve_audio_file_path(
+            self._current_preview_entity_type,
+            self._current_preview_entity_id,
+            audio_id,
+        )
+        if audio_path is None:
+            InfoBar.warning(
+                "找不到试听音频",
+                f"当前实体未定位到音频 ID {audio_id} 对应的 wem 文件。",
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+            )
+            return
+
+        self._current_audio_preview_audio_id = str(audio_id)
+        self._current_audio_preview_path = audio_path
+        self._current_audio_preview_progress = 0.0
+        self._current_audio_preview_is_playing = False
+        self._current_audio_preview_is_paused = True
+        self._sync_audio_preview_playback_state()
+
+    def _sync_audio_preview_playback_state(self) -> None:
+        """把当前缓存的试听状态同步到试听树视图。"""
+        self.audio_preview_tree.set_audio_playback_state(
+            self._current_audio_preview_audio_id,
+            progress=self._current_audio_preview_progress,
+            is_playing=self._current_audio_preview_is_playing,
+            is_paused=self._current_audio_preview_is_paused,
+        )
+
+    def _clear_audio_preview_request(self) -> None:
+        """清空当前试听请求，仅保留后续播放器接回所需的页面壳子。"""
+        self._current_audio_preview_audio_id = None
+        self._current_audio_preview_path = None
+        self._current_audio_preview_progress = 0.0
+        self._current_audio_preview_is_playing = False
+        self._current_audio_preview_is_paused = False
 
     def _show_placeholder(self, message: str) -> None:
         self._current_mapping_path = None
+        self._current_preview_entity_type = None
+        self._current_preview_entity_id = None
         self.preview_path_edit.clear()
         self.preview_path_edit.setToolTip("")
         self.text_preview.setPlainText(message)
@@ -688,6 +774,8 @@ class OverviewPage(QWidget):
         if isinstance(model, PreviewTreeModel):
             self.audio_preview_tree.collapseAll()
             model.clear_preview()
+        self._clear_audio_preview_request()
+        self._sync_audio_preview_playback_state()
         self.audio_preview_summary_label.setText(self._audio_preview_placeholder)
         self.reveal_file_btn.setEnabled(False)
 

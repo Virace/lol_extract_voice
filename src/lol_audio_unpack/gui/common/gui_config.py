@@ -72,6 +72,8 @@ class GuiConfig:
         self._log_drawer_auto_collapse_enabled: bool = True
         self._console_log_level: str = "INFO"
         self._file_log_level: str = "DEBUG"
+        self._preview_audio_volume_percent: int = 10
+        self._preview_audio_output_device_key: str = "default"
 
     def load(self) -> None:
         """从 .lol.env 和 QSettings 加载配置。"""
@@ -133,6 +135,12 @@ class GuiConfig:
         )
         self._console_log_level = str(self._qs.value("console_log_level", "INFO") or "INFO").upper()
         self._file_log_level = str(self._qs.value("file_log_level", "DEBUG") or "DEBUG").upper()
+        self._preview_audio_volume_percent = self._clamp_percentage(
+            self._qs.value("preview_audio_volume_percent", 10)
+        )
+        self._preview_audio_output_device_key = str(
+            self._qs.value("preview_audio_output_device_key", "default") or "default"
+        )
 
     def save(self) -> None:
         """保存配置到 .lol.env。"""
@@ -163,6 +171,8 @@ class GuiConfig:
         self._qs.setValue("log_drawer_auto_collapse_enabled", self._log_drawer_auto_collapse_enabled)
         self._qs.setValue("console_log_level", self._console_log_level)
         self._qs.setValue("file_log_level", self._file_log_level)
+        self._qs.setValue("preview_audio_volume_percent", self._preview_audio_volume_percent)
+        self._qs.setValue("preview_audio_output_device_key", self._preview_audio_output_device_key)
         self._qs.setValue("smooth_scroll_enabled", self.smooth_scroll_enabled)
 
     def to_app_context_overrides(self) -> dict[str, str | bool]:
@@ -427,6 +437,25 @@ class GuiConfig:
     def file_log_level(self, v: str) -> None:
         self._file_log_level = str(v).upper()
 
+    @property
+    def preview_audio_volume_percent(self) -> int:
+        """试听音量百分比。"""
+        return self._preview_audio_volume_percent
+
+    @preview_audio_volume_percent.setter
+    def preview_audio_volume_percent(self, value: int) -> None:
+        self._preview_audio_volume_percent = self._clamp_percentage(value)
+
+    @property
+    def preview_audio_output_device_key(self) -> str:
+        """试听输出设备键值。"""
+        return self._preview_audio_output_device_key
+
+    @preview_audio_output_device_key.setter
+    def preview_audio_output_device_key(self, value: str) -> None:
+        text = str(value or "").strip()
+        self._preview_audio_output_device_key = text or "default"
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -439,3 +468,12 @@ class GuiConfig:
         if isinstance(v, str):
             return v.lower() in ("true", "1", "yes")
         return bool(v)
+
+    @staticmethod
+    def _clamp_percentage(value) -> int:
+        """将任意输入约束到 0~100 的整数百分比。"""
+        try:
+            normalized = int(round(float(value)))
+        except (TypeError, ValueError):
+            normalized = 10
+        return max(0, min(100, normalized))

@@ -453,6 +453,10 @@ class MainWindow(FluentWindow):
         self.executionInterface.log_lines_appended.connect(self._append_global_log_lines)
         self.settingInterface.shared_context_input_changed.connect(self._on_shared_context_input_changed)
         self.settingInterface.smooth_scroll_changed.connect(self._apply_smooth_scroll_setting)
+        self.settingInterface.preview_audio_output_device_changed.connect(
+            self.overviewInterface.set_preview_audio_output_device
+        )
+        self.settingInterface.preview_audio_volume_changed.connect(self.overviewInterface.set_preview_audio_volume)
         self.settingInterface.log_drawer_auto_collapse_changed.connect(
             self._apply_log_drawer_auto_collapse_setting
         )

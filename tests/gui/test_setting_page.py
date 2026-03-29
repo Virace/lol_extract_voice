@@ -15,6 +15,11 @@ from lol_audio_unpack.utils.runtime_paths import (
     get_default_vgmstream_relative_path,
 )
 
+DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT = 10
+UPDATED_PREVIEW_AUDIO_VOLUME_PERCENT = 35
+DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY = "default"
+UPDATED_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY = "device:realtek"
+
 
 class FakeQSettings:
     class Format:
@@ -240,3 +245,95 @@ def test_setting_page_apply_path_label_formats_relative_runtime_path() -> None:
     SettingPage._apply_path_label(card, r".\reconfigured-output")
 
     card.setContent.assert_called_once_with(r"当前: 根目录\reconfigured-output")
+
+
+def test_setting_page_preview_audio_volume_slider_defaults_to_ten_percent(monkeypatch, tmp_path: Path) -> None:
+    """试听音量滑块应默认加载为 10%。"""
+    monkeypatch.chdir(tmp_path)
+    _use_fake_qsettings(monkeypatch)
+    app = QApplication.instance() or QApplication([])
+    page = SettingPage()
+
+    try:
+        assert page.previewAudioVolumeCard.slider.value() == DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT
+        assert page.previewAudioVolumeCard.valueLabel.text() == f"{DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT}%"
+        assert page.config.preview_audio_volume_percent == DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT
+    finally:
+        page.deleteLater()
+        app.processEvents()
+
+
+def test_setting_page_preview_audio_volume_slider_updates_config_and_signal(monkeypatch, tmp_path: Path) -> None:
+    """试听音量滑块变化后应即时写回配置并发出通知。"""
+    monkeypatch.chdir(tmp_path)
+    _use_fake_qsettings(monkeypatch)
+    app = QApplication.instance() or QApplication([])
+    page = SettingPage()
+    emitted_values: list[int] = []
+
+    try:
+        page.preview_audio_volume_changed.connect(emitted_values.append)
+        page.previewAudioVolumeCard.slider.setValue(UPDATED_PREVIEW_AUDIO_VOLUME_PERCENT)
+        app.processEvents()
+
+        assert page.previewAudioVolumeCard.valueLabel.text() == f"{UPDATED_PREVIEW_AUDIO_VOLUME_PERCENT}%"
+        assert page.config.preview_audio_volume_percent == UPDATED_PREVIEW_AUDIO_VOLUME_PERCENT
+        assert FakeQSettings._store["preview_audio_volume_percent"] == UPDATED_PREVIEW_AUDIO_VOLUME_PERCENT
+        assert emitted_values == [UPDATED_PREVIEW_AUDIO_VOLUME_PERCENT]
+    finally:
+        page.deleteLater()
+        app.processEvents()
+
+
+def test_setting_page_preview_audio_output_device_defaults_to_default(monkeypatch, tmp_path: Path) -> None:
+    """播放设备下拉框应默认选中“默认设备”。"""
+    monkeypatch.chdir(tmp_path)
+    _use_fake_qsettings(monkeypatch)
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(
+        setting_page_module,
+        "get_preview_audio_output_device_options",
+        lambda: [
+            ("默认设备", DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY),
+            ("扬声器 (Realtek)", UPDATED_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY),
+        ],
+    )
+    page = SettingPage()
+
+    try:
+        assert page.previewAudioOutputDeviceCard.displayValue() == "默认设备"
+        assert page.config.preview_audio_output_device_key == DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY
+    finally:
+        page._disconnect_theme_persistence_signals()
+        page.deleteLater()
+        app.processEvents()
+
+
+def test_setting_page_preview_audio_output_device_updates_config_and_signal(monkeypatch, tmp_path: Path) -> None:
+    """播放设备下拉变化后应即时写回配置并发出通知。"""
+    monkeypatch.chdir(tmp_path)
+    _use_fake_qsettings(monkeypatch)
+    app = QApplication.instance() or QApplication([])
+    monkeypatch.setattr(
+        setting_page_module,
+        "get_preview_audio_output_device_options",
+        lambda: [
+            ("默认设备", DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY),
+            ("扬声器 (Realtek)", UPDATED_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY),
+        ],
+    )
+    page = SettingPage()
+    emitted_values: list[str] = []
+
+    try:
+        page.preview_audio_output_device_changed.connect(emitted_values.append)
+        page.previewAudioOutputDeviceCard.comboBox.setCurrentText("扬声器 (Realtek)")
+        app.processEvents()
+
+        assert page.config.preview_audio_output_device_key == UPDATED_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY
+        assert FakeQSettings._store["preview_audio_output_device_key"] == UPDATED_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY
+        assert emitted_values == [UPDATED_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY]
+    finally:
+        page._disconnect_theme_persistence_signals()
+        page.deleteLater()
+        app.processEvents()
