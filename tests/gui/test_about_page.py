@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF
+import re
+
+from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QEnterEvent, QFont
 from PySide6.QtWidgets import QApplication, QLabel, QWidget
 from qfluentwidgets import IconWidget, Theme, qconfig, setTheme
@@ -10,7 +12,12 @@ from qfluentwidgets.common.icon import FluentIconBase
 
 from lol_audio_unpack import __version__
 from lol_audio_unpack.gui.common.styles import get_fluent_frame_stroke_pair
-from lol_audio_unpack.gui.view.about_page import AboutPage, AboutRotatingLogoWidget, FaShakeIconWidget
+from lol_audio_unpack.gui.view.about_page import (
+    AboutPage,
+    AboutRotatingLogoWidget,
+    FaShakeIconWidget,
+    SponsorDialog,
+)
 
 MIN_HERO_TITLE_GAP = 28
 SHAKE_SETTLE_EPSILON = 0.1
@@ -77,6 +84,92 @@ def test_about_page_renders_hero_and_action_cards(qtbot) -> None:
         assert icon_widget is not None
         assert isinstance(icon_widget._icon, FluentIconBase)
     assert "Msgpack" not in labels
+
+
+def test_about_page_clicking_sponsor_card_opens_qr_dialog(qtbot, monkeypatch) -> None:
+    """点击赞助卡片后应弹出包含微信和支付宝二维码的模态框。"""
+    app = QApplication.instance() or QApplication([])
+    page = AboutPage()
+    qtbot.addWidget(page)
+    page.resize(900, 700)
+    page.show()
+    app.processEvents()
+
+    sponsor_card = page.findChild(QWidget, "AboutActionCardSponsor")
+
+    assert sponsor_card is not None
+
+    captured: dict[str, SponsorDialog] = {}
+
+    def fake_exec(self) -> int:
+        captured["dialog"] = self
+        return 0
+
+    monkeypatch.setattr(SponsorDialog, "exec", fake_exec)
+
+    qtbot.mouseClick(sponsor_card, Qt.LeftButton, pos=sponsor_card.rect().center())
+    app.processEvents()
+
+    dialog = captured.get("dialog")
+
+    assert dialog is not None
+
+    labels = {label.text() for label in dialog.findChildren(QLabel)}
+
+    assert "赞助支持" in labels
+    assert "微信支付" in labels
+    assert "支付宝" in labels
+
+
+def test_sponsor_dialog_uses_solid_surface_container(qtbot) -> None:
+    """赞助弹窗的主体容器背景必须是完全不透明的。"""
+    app = QApplication.instance() or QApplication([])
+    host = QWidget()
+    host.resize(1200, 800)
+    host.show()
+    qtbot.addWidget(host)
+
+    dialog = SponsorDialog(host)
+    qtbot.addWidget(dialog)
+    app.processEvents()
+
+    style = dialog.widget.styleSheet().replace(" ", "").replace("\n", "").lower()
+    assert "qwidget#sponsordialogcontent" in style
+    assert (
+        re.search(
+            r"qwidget#sponsordialogcontent\{background:rgb\(\d+,\d+,\d+\);",
+            style,
+        )
+        is not None
+        or re.search(
+            r"qwidget#sponsordialogcontent\{background:rgba\(\d+,\d+,\d+,255\);",
+            style,
+        )
+        is not None
+    )
+    assert "qframe#buttongroup{background:transparent;" in style
+
+
+def test_sponsor_dialog_description_keeps_single_line_when_space_is_enough(qtbot) -> None:
+    """赞助说明文案在当前模态框宽度足够时不应被强制折行。"""
+    app = QApplication.instance() or QApplication([])
+    host = QWidget()
+    host.resize(1200, 800)
+    host.show()
+    qtbot.addWidget(host)
+
+    dialog = SponsorDialog(host)
+    qtbot.addWidget(dialog)
+    app.processEvents()
+
+    description_label = dialog.findChild(QLabel, "SponsorDialogDescription")
+
+    assert description_label is not None
+    assert description_label.wordWrap() is False
+    assert (
+        description_label.fontMetrics().horizontalAdvance(description_label.text())
+        <= dialog.widget.width() - 48
+    )
 
 
 def test_about_page_helper_labels_use_dedicated_subtitle_style(qtbot) -> None:
