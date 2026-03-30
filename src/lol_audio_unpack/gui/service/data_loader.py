@@ -257,6 +257,20 @@ class EntityDataLoader:
         )
         return version, raw_data
 
+    def _ensure_bank_dataset_ready(self, entity_type: GuiEntityType) -> None:
+        """在按实体扫描前，先确认对应 bank 数据集根目录已经就绪。"""
+        bank_root = (
+            self.data_reader.champion_banks_dir
+            if entity_type == "champions"
+            else self.data_reader.map_banks_dir
+        )
+        if bank_root.is_dir():
+            return
+
+        raise FileNotFoundError(
+            f"{entity_type} 共享 bank 数据目录不存在，请先运行更新程序。path={bank_root}"
+        )
+
     def _build_entity_row(self, entity_type: GuiEntityType, entity_dict: dict, version: str) -> dict:
         """将单个原始实体字典转换为 GUI 行数据。"""
         entity_id = str(entity_dict["id"])
@@ -298,6 +312,7 @@ class EntityDataLoader:
         """
         try:
             version, raw_data = self._load_raw_entities(entity_type)
+            self._ensure_bank_dataset_ready(entity_type)
         except Exception as e:
             logger.warning(f"Error initializing data for {entity_type}: {e}")
             logger.debug(traceback.format_exc())
@@ -322,6 +337,7 @@ class EntityDataLoader:
         target_ids = set(entity_ids)
         try:
             version, raw_data = self._load_raw_entities(entity_type)
+            self._ensure_bank_dataset_ready(entity_type)
         except Exception as e:
             logger.warning(f"Error initializing data for {entity_type}: {e}")
             logger.debug(traceback.format_exc())

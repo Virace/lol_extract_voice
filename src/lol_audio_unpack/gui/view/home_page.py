@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt, QThreadPool, QUrl, Signal
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
@@ -27,9 +26,20 @@ from qfluentwidgets import (
 from qfluentwidgets import FluentIcon as FIF
 
 from lol_audio_unpack.gui.common import GuiConfig, format_default_relative_path
-from lol_audio_unpack.gui.common.style import apply_page_content_margins
-from lol_audio_unpack.gui.workers import TaskWorker
-from lol_audio_unpack.manager.utils import get_game_version
+from lol_audio_unpack.gui.common.style import (
+    apply_page_content_margins,
+    configure_transparent_scroll_page,
+)
+from lol_audio_unpack.gui.controllers.home_status_controller import (
+    HomeStatusController,
+    HomeStatusDisplayState,
+)
+from lol_audio_unpack.gui.view.home.widgets import (
+    ClickableCard,
+    CompactStatusCard,
+    ExecutionEntryCard,
+    QuickOpenRow,
+)
 from lol_audio_unpack.utils.runtime_paths import (
     detect_runtime_paths,
     get_default_output_relative_path,
@@ -40,367 +50,6 @@ from lol_audio_unpack.utils.runtime_paths import (
     get_default_wwiser_relative_path,
     resolve_runtime_path,
 )
-
-# ---------------------------------------------------------------------------
-# Worker result dataclass
-# ---------------------------------------------------------------------------
-
-@dataclass
-class HomeCheckResult:
-    """Result produced by the background home-page initialisation worker."""
-    version: str             # e.g. "16.5", or "" on error
-    version_error: str       # non-empty when version lookup failed
-    cache_found: bool        # True when matching audios/<ver>* folder exists
-    cache_path: str          # the matched folder path, or "" when not found
-
-
-# ---------------------------------------------------------------------------
-# ElidedLabel
-# ---------------------------------------------------------------------------
-
-class ElidedLabel(CaptionLabel):
-    """A label that elides text when it overflows the layout."""
-
-    def __init__(self, text="", parent=None):
-        super().__init__(parent)
-        self._full_text = text
-        self.setMinimumWidth(50)
-
-    def setText(self, text):
-        self._full_text = text
-        self._elide_text()
-
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        self._elide_text()
-
-    def _elide_text(self):
-        metrics = self.fontMetrics()
-        elided = metrics.elidedText(
-            self._full_text, Qt.TextElideMode.ElideRight, self.width() - 2
-        )
-        super().setText(elided)
-
-
-def _open_path_in_explorer(raw: str, *, warn) -> None:
-    """打开目标路径，必要时向上回退到最近存在的父目录。"""
-    raw = raw.strip()
-    if not raw:
-        warn("路径未设置", "请先在「全局设置」中配置此路径。")
-        return
-
-    path = resolve_runtime_path(raw, runtime_paths=detect_runtime_paths())
-
-    if path.is_file():
-        target = path.parent
-    elif path.is_dir():
-        target = path
-    else:
-        ancestor = path.parent
-        while ancestor != ancestor.parent and not ancestor.exists():
-            ancestor = ancestor.parent
-        if ancestor.exists():
-            target = ancestor
-        else:
-            warn("路径不存在", f"找不到路径：{raw}")
-            return
-
-    QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
-
-
-# ---------------------------------------------------------------------------
-# ClickableCard
-# ---------------------------------------------------------------------------
-
-class ClickableCard(CardWidget):
-    """Clickable card that opens a path in the system file manager on click.
-
-    If the path is unset / non-existent an InfoBar warning is displayed.
-    """
-
-    def __init__(self, icon, title: str, content: str, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(240, 140)
-
-        self._raw_path: str = ""  # resolved path for jump; empty = no jump
-        self._jump_enabled = True
-
-        self.vBoxLayout = QVBoxLayout(self)
-        self.vBoxLayout.setContentsMargins(20, 20, 20, 20)
-        self.vBoxLayout.setSpacing(4)
-
-        # Header (icon left, link icon right)
-        self.headerLayout = QHBoxLayout()
-        self.headerLayout.setContentsMargins(0, 0, 0, 0)
-
-        self.iconWidget = IconWidget(icon, self)
-        self.iconWidget.setFixedSize(24, 24)
-
-        self.linkIcon = IconWidget(FIF.LINK, self)
-        self.linkIcon.setFixedSize(14, 14)
-
-        self.headerLayout.addWidget(self.iconWidget)
-        self.headerLayout.addStretch(1)
-        self.headerLayout.addWidget(self.linkIcon)
-        self.headerLayout.setAlignment(
-            self.linkIcon, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight
-        )
-
-        # Labels
-        self.titleLabel = SubtitleLabel(title, self)
-
-        self.contentLabel = ElidedLabel(content, self)
-        self.contentLabel.setTextColor(Qt.GlobalColor.gray, Qt.GlobalColor.gray)
-        self.contentLabel.setToolTip(content)
-
-        self.vBoxLayout.addLayout(self.headerLayout)
-        self.vBoxLayout.addSpacing(12)
-        self.vBoxLayout.addWidget(self.titleLabel)
-        self.vBoxLayout.addSpacing(4)
-        self.vBoxLayout.addWidget(self.contentLabel)
-        self.vBoxLayout.addStretch(1)
-        self.setJumpEnabled(True)
-
-    # ------------------------------------------------------------------
-    # Public helpers
-    # ------------------------------------------------------------------
-
-    def setPath(self, path: str) -> None:
-        """Register the filesystem path this card should jump to."""
-        self._raw_path = path
-        display_path = format_default_relative_path(path) if path else ""
-        self.contentLabel.setText(display_path)
-        self.contentLabel.setToolTip(display_path)
-
-    def setDisplayText(self, text: str) -> None:
-        """Set display text without affecting the jump path."""
-        self.contentLabel.setText(text)
-        self.contentLabel.setToolTip(text)
-
-    def isJumpEnabled(self) -> bool:
-        """返回当前卡片是否具备跳转能力。"""
-        return self._jump_enabled
-
-    def setJumpEnabled(self, is_enabled: bool) -> None:
-        """设置当前卡片是否允许跳转，并同步图标与鼠标样式。"""
-        self._jump_enabled = bool(is_enabled)
-        self.linkIcon.setVisible(self._jump_enabled)
-        self.setCursor(
-            Qt.CursorShape.PointingHandCursor
-            if self._jump_enabled
-            else Qt.CursorShape.ArrowCursor
-        )
-
-    # ------------------------------------------------------------------
-    # Click → open in file manager
-    # ------------------------------------------------------------------
-
-    def mouseReleaseEvent(self, e):
-        super().mouseReleaseEvent(e)
-        if not self._jump_enabled:
-            return
-        self._open_in_explorer()
-
-    def _open_in_explorer(self) -> None:
-        _open_path_in_explorer(self._raw_path, warn=self._warn)
-
-    def _warn(self, title: str, content: str) -> None:
-        InfoBar.warning(
-            title=title,
-            content=content,
-            orient=Qt.Orientation.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=3000,
-            parent=self.window(),
-        )
-
-
-class CompactStatusCard(CardWidget):
-    """首页顶部使用的紧凑状态卡。"""
-
-    def __init__(self, icon, title: str, content: str, parent=None):
-        super().__init__(parent)
-        self._raw_path: str = ""
-        self._jump_enabled = False
-
-        self.vBoxLayout = QVBoxLayout(self)
-        self.vBoxLayout.setContentsMargins(18, 18, 18, 18)
-        self.vBoxLayout.setSpacing(8)
-
-        self.headerLayout = QHBoxLayout()
-        self.headerLayout.setContentsMargins(0, 0, 0, 0)
-        self.headerLayout.setSpacing(8)
-
-        self.iconWidget = IconWidget(icon, self)
-        self.iconWidget.setFixedSize(18, 18)
-        self.linkIcon = IconWidget(FIF.LINK, self)
-        self.linkIcon.setFixedSize(14, 14)
-        self.linkIcon.hide()
-
-        self.headerLayout.addWidget(self.iconWidget)
-        self.headerLayout.addStretch(1)
-        self.headerLayout.addWidget(self.linkIcon)
-
-        self.titleCaption = CaptionLabel(title, self)
-        self.valueLabel = StrongBodyLabel(content, self)
-        self.detailLabel = CaptionLabel("", self)
-        self.detailLabel.hide()
-        self.detailLabel.setWordWrap(True)
-
-        self.vBoxLayout.addLayout(self.headerLayout)
-        self.vBoxLayout.addWidget(self.titleCaption)
-        self.vBoxLayout.addWidget(self.valueLabel)
-        self.vBoxLayout.addWidget(self.detailLabel)
-        self.vBoxLayout.addStretch(1)
-        self.setCursor(Qt.CursorShape.ArrowCursor)
-
-    def setPath(self, path: str) -> None:
-        """设置当前状态卡关联的跳转路径。"""
-        self._raw_path = path
-
-    def setDisplayText(self, text: str) -> None:
-        """设置状态卡主文案。"""
-        self.valueLabel.setText(text)
-
-    def setDetailText(self, text: str) -> None:
-        """设置状态卡补充说明。"""
-        self.detailLabel.setVisible(bool(text))
-        self.detailLabel.setText(text)
-
-    def isJumpEnabled(self) -> bool:
-        """返回当前状态卡是否允许跳转。"""
-        return self._jump_enabled
-
-    def setJumpEnabled(self, is_enabled: bool) -> None:
-        """设置状态卡是否允许跳转。"""
-        self._jump_enabled = bool(is_enabled)
-        self.linkIcon.setVisible(self._jump_enabled)
-        self.setCursor(
-            Qt.CursorShape.PointingHandCursor if self._jump_enabled else Qt.CursorShape.ArrowCursor
-        )
-
-    def mouseReleaseEvent(self, event):
-        """处理状态卡点击跳转。"""
-        super().mouseReleaseEvent(event)
-        if self._jump_enabled:
-            self._open_in_explorer()
-
-    def _open_in_explorer(self) -> None:
-        _open_path_in_explorer(self._raw_path, warn=self._warn)
-
-    def _warn(self, title: str, content: str) -> None:
-        InfoBar.warning(
-            title=title,
-            content=content,
-            orient=Qt.Orientation.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=3000,
-            parent=self.window(),
-        )
-
-
-class ExecutionEntryCard(CardWidget):
-    """首页顶部的执行中心入口卡。"""
-
-    requested = Signal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.vBoxLayout = QVBoxLayout(self)
-        self.vBoxLayout.setContentsMargins(18, 18, 18, 18)
-        self.vBoxLayout.setSpacing(8)
-
-        self.titleCaption = CaptionLabel("下一步", self)
-        self.titleLabel = StrongBodyLabel("前往执行中心", self)
-        self.detailLabel = CaptionLabel("去执行中心创建任务、查看进度。", self)
-        self.detailLabel.setWordWrap(True)
-        self.action_button = PrimaryPushButton("进入执行中心", self)
-        self.action_button.clicked.connect(self.requested.emit)
-
-        self.vBoxLayout.addWidget(self.titleCaption)
-        self.vBoxLayout.addWidget(self.titleLabel)
-        self.vBoxLayout.addWidget(self.detailLabel)
-        self.vBoxLayout.addStretch(1)
-        self.vBoxLayout.addWidget(self.action_button, alignment=Qt.AlignmentFlag.AlignLeft)
-
-
-class QuickOpenRow(CardWidget):
-    """首页下方的长条快捷入口。"""
-
-    def __init__(self, icon, title: str, content: str, action_text: str, parent=None):
-        super().__init__(parent)
-        self._raw_path: str = ""
-        self._jump_enabled = True
-
-        self.rowLayout = QHBoxLayout(self)
-        self.rowLayout.setContentsMargins(16, 14, 16, 14)
-        self.rowLayout.setSpacing(14)
-
-        self.iconWidget = IconWidget(icon, self)
-        self.iconWidget.setFixedSize(18, 18)
-
-        self.textLayout = QVBoxLayout()
-        self.textLayout.setContentsMargins(0, 0, 0, 0)
-        self.textLayout.setSpacing(4)
-        self.titleLabel = BodyLabel(title, self)
-        self.contentLabel = ElidedLabel(content, self)
-        self.contentLabel.setTextColor(Qt.GlobalColor.gray, Qt.GlobalColor.gray)
-        self.contentLabel.setToolTip(content)
-        self.textLayout.addWidget(self.titleLabel)
-        self.textLayout.addWidget(self.contentLabel)
-
-        self.action_button = PushButton(action_text, self)
-        self.action_button.clicked.connect(self._open_in_explorer)
-
-        self.rowLayout.addWidget(self.iconWidget, alignment=Qt.AlignmentFlag.AlignVCenter)
-        self.rowLayout.addLayout(self.textLayout, 1)
-        self.rowLayout.addWidget(self.action_button, alignment=Qt.AlignmentFlag.AlignVCenter)
-
-    def setPath(self, path: str) -> None:
-        """设置长条入口关联的真实路径。"""
-        self._raw_path = path
-        display_path = format_default_relative_path(path) if path else ""
-        self.contentLabel.setText(display_path)
-        self.contentLabel.setToolTip(display_path)
-
-    def setDisplayText(self, text: str) -> None:
-        """设置长条入口显示文本。"""
-        self.contentLabel.setText(text)
-        self.contentLabel.setToolTip(text)
-
-    def isJumpEnabled(self) -> bool:
-        """返回入口是否可跳转。"""
-        return self._jump_enabled
-
-    def setJumpEnabled(self, is_enabled: bool) -> None:
-        """设置入口是否允许跳转。"""
-        self._jump_enabled = bool(is_enabled)
-        self.action_button.setEnabled(self._jump_enabled)
-
-    def mouseReleaseEvent(self, event):
-        """点击整行时也可触发打开。"""
-        super().mouseReleaseEvent(event)
-        if self._jump_enabled:
-            self._open_in_explorer()
-
-    def _open_in_explorer(self) -> None:
-        if not self._jump_enabled:
-            return
-        _open_path_in_explorer(self._raw_path, warn=self._warn)
-
-    def _warn(self, title: str, content: str) -> None:
-        InfoBar.warning(
-            title=title,
-            content=content,
-            orient=Qt.Orientation.Horizontal,
-            isClosable=True,
-            position=InfoBarPosition.TOP,
-            duration=3000,
-            parent=self.window(),
-        )
-
 
 # ---------------------------------------------------------------------------
 # HomePage
@@ -419,18 +68,21 @@ class HomePage(SmoothScrollArea):
         super().__init__(parent=parent)
         self._cfg = cfg
         self._current_version: str = ""  # filled in by worker
+        self._home_status_controller = HomeStatusController(parent=self)
+        self._home_status_controller.display_state_ready.connect(self._apply_home_status_display_state)
 
-        self.setObjectName("HomePage")
-        self.view = QWidget(self)
-        self.view.setObjectName("HomePageView")
-        self.view.setStyleSheet("QWidget#HomePageView{background: transparent}")
-        self.setWidget(self.view)
-        self.setWidgetResizable(True)
-        self.setStyleSheet("QScrollArea {border: none; background: transparent;}")
+        self.view = configure_transparent_scroll_page(
+            self,
+            page_object_name="HomePage",
+            view_object_name="HomePageView",
+        )
 
         self._build_ui()
         self._sync_from_config()
-        self._start_background_check()
+        self._home_status_controller.start_check(
+            game_path=self._cfg.resolve_game_path(),
+            output_path=self._resolve_output_path(),
+        )
 
     @staticmethod
     def _runtime_paths():
@@ -595,99 +247,14 @@ class HomePage(SmoothScrollArea):
         """Return the absolute output directory path."""
         return self._cfg.resolve_output_path()
 
-    @staticmethod
-    def _check_audio_cache(output_path: Path, major_minor: str) -> tuple[bool, str]:
-        """Check if audios/<major.minor>* folder exists.
-
-        Ignores the patch revision (e.g. '16.5' matches '16.5.1', '16.5.2', …).
-        Returns (found, matched_path_str).
-        """
-        audios_dir = output_path / "audios"
-        if not audios_dir.is_dir():
-            return False, ""
-        for child in audios_dir.iterdir():
-            if child.is_dir() and child.name.startswith(major_minor):
-                return True, str(child)
-        return False, ""
-
-    def _build_check_fn(self):
-        """Return the callable for TaskWorker (captures config snapshot)."""
-        game_path = self._cfg.resolve_game_path()
-        output_path = self._resolve_output_path()
-
-        def _check() -> HomeCheckResult:
-            # Step 1: game version
-            if game_path is None:
-                return HomeCheckResult(
-                    version="",
-                    version_error="游戏目录未设置",
-                    cache_found=False,
-                    cache_path="",
-                )
-            try:
-                version = get_game_version(game_path)
-            except Exception as exc:  # noqa: BLE001
-                return HomeCheckResult(
-                    version="",
-                    version_error=str(exc),
-                    cache_found=False,
-                    cache_path="",
-                )
-
-            # Step 2: cache check
-            found, matched = HomePage._check_audio_cache(output_path, version)
-            return HomeCheckResult(
-                version=version,
-                version_error="",
-                cache_found=found,
-                cache_path=matched,
-            )
-
-        return _check
-
-    def _start_background_check(self) -> None:
-        """Kick off the background initialisation worker."""
-        worker = TaskWorker(self._build_check_fn())
-        worker.signals.finished.connect(self._on_check_finished)
-        worker.signals.failed.connect(self._on_check_failed)
-        QThreadPool.globalInstance().start(worker)
-
-    def _on_check_finished(self, result: object) -> None:
-        """Apply HomeCheckResult to the UI (called on the main thread)."""
-        r: HomeCheckResult = result  # type: ignore[assignment]
-
-        # — version card —
-        if r.version_error:
-            self.version_card.setDisplayText(r.version_error)
-            self._current_version = ""
-            self.version_card.setJumpEnabled(False)
-        else:
-            self._current_version = r.version
-            self.version_card.setDisplayText(r.version)
-            self.version_card.setJumpEnabled(False)
-
-        # — cache card —
-        if not r.version:
-            # Cannot determine version → cannot check cache
-            self.cache_card.setDisplayText("无法获取版本")
-            self.cache_card.setJumpEnabled(False)
-        elif r.cache_found:
-            self.cache_card.setPath(r.cache_path)
-            self.cache_card.setDisplayText(f"已找到 {r.version}")
-            self.cache_card.setJumpEnabled(True)
-        else:
-            output_path = self._resolve_output_path()
-            audios_dir = output_path / "audios"
-            self.cache_card.setPath(str(audios_dir))
-            self.cache_card.setDisplayText(f"无 {r.version} 缓存")
-            self.cache_card.setJumpEnabled(True)
-
-    def _on_check_failed(self, error: str) -> None:
-        """Handle unexpected worker exception."""
-        self.version_card.setDisplayText("读取失败")
-        self.version_card.setJumpEnabled(False)
-        self.cache_card.setDisplayText("检查失败")
-        self.cache_card.setJumpEnabled(False)
+    def _apply_home_status_display_state(self, state: HomeStatusDisplayState) -> None:
+        """把首页状态控制器产出的显示状态应用到卡片。"""
+        self._current_version = state.current_version
+        self.version_card.setDisplayText(state.version_text)
+        self.version_card.setJumpEnabled(state.version_jump_enabled)
+        self.cache_card.setPath(state.cache_path)
+        self.cache_card.setDisplayText(state.cache_text)
+        self.cache_card.setJumpEnabled(state.cache_jump_enabled)
 
     def set_loading_state(self, message: str, *, active: bool) -> None:
         """更新首页顶部的加载状态条。
@@ -716,7 +283,10 @@ class HomePage(SmoothScrollArea):
             self.game_dir_card.setDisplayText("未设置")
             self.game_dir_card.setJumpEnabled(False)
         # Re-run background check with new game path
-        self._start_background_check()
+        self._home_status_controller.start_check(
+            game_path=self._cfg.resolve_game_path(),
+            output_path=self._resolve_output_path(),
+        )
 
     def update_output_dir(self, path: str) -> None:
         if path:
@@ -729,7 +299,10 @@ class HomePage(SmoothScrollArea):
             )
         # Re-check cache with new output path
         if self._current_version:
-            self._start_background_check()
+            self._home_status_controller.start_check(
+                game_path=self._cfg.resolve_game_path(),
+                output_path=self._resolve_output_path(),
+            )
 
     def update_wwiser(self, path: str) -> None:
         if path:

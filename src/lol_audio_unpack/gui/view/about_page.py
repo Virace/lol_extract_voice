@@ -29,7 +29,10 @@ from qfluentwidgets.common.icon import FluentIconBase, drawIcon
 
 from lol_audio_unpack import __version__
 from lol_audio_unpack.gui.common.icon import get_app_logo_path
-from lol_audio_unpack.gui.common.style import apply_page_content_margins
+from lol_audio_unpack.gui.common.style import (
+    apply_page_content_margins,
+    configure_transparent_scroll_page,
+)
 from lol_audio_unpack.gui.common.styles import (
     get_fluent_frame_stroke_pair,
     get_fluent_neutral_surface_pair,
@@ -520,12 +523,11 @@ class AboutPage(SmoothScrollArea):
             parent: 父级窗口或容器。
         """
         super().__init__(parent=parent)
-        self.setObjectName("AboutPage")
-        self.view = QWidget(self)
-        self.view.setObjectName("AboutPageView")
-        self.setWidget(self.view)
-        self.setWidgetResizable(True)
-        self.setStyleSheet("QScrollArea {border: none; background: transparent;}")
+        self.view = configure_transparent_scroll_page(
+            self,
+            page_object_name="AboutPage",
+            view_object_name="AboutPageView",
+        )
         qconfig.themeChanged.connect(self._refresh_theme_styles)
         self.destroyed.connect(self._disconnect_theme_refresh_listener)
 
