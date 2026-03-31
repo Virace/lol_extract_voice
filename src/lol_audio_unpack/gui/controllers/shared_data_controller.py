@@ -583,6 +583,9 @@ class SharedDataController(QObject):
             SharedDataLoadingState(message=message, active=False)
         )
         if self.pending_refresh_notice:
+            self.notice_requested.emit(
+                GuiNotice(title="无法刷新数据", content=message, level="warning")
+            )
             self.pending_refresh_notice = False
 
     @staticmethod
