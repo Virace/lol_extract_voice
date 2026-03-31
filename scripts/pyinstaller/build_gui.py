@@ -8,12 +8,19 @@ import platform
 import shutil
 import struct
 import subprocess
+import textwrap
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SPEC_PATH = PROJECT_ROOT / "scripts" / "pyinstaller" / "gui.spec"
 DEFAULT_OUTPUT_ROOT = PROJECT_ROOT / ".temp" / "pyinstaller"
 REQUIRED_PYTHON_BITS = 64
+WINDOWS_VERSION_FILE_NAME = "windows_version_info.py"
+WINDOWS_COMPANY_NAME = "Virace"
+WINDOWS_PRODUCT_NAME = "lol-audio-unpack"
+WINDOWS_FILE_DESCRIPTION = "Lol Audio Unpack GUI"
+WINDOWS_INTERNAL_NAME = "LolAudioUnpack"
+WINDOWS_ORIGINAL_FILENAME = "LolAudioUnpack.exe"
 
 
 def _load_versioning_module():
@@ -38,6 +45,80 @@ def _read_static_version() -> str:
 def _resolve_build_version() -> str:
     versioning = _load_versioning_module()
     return versioning.resolve_runtime_version(PROJECT_ROOT, _read_static_version())
+
+
+def _escape_version_value(value: str) -> str:
+    """转义 version file 中的字符串字面量。"""
+    return value.replace("\\", "\\\\").replace("'", "\\'")
+
+
+def _render_windows_version_file(runtime_version: str, *, version_quad: tuple[int, int, int, int]) -> str:
+    """生成 PyInstaller Windows 版本资源文件内容。
+
+    Args:
+        runtime_version: 当前构建对应的运行时版本号。
+        version_quad: Windows ``FixedFileInfo`` 使用的四段式数字版本。
+
+    Returns:
+        可直接写入 version file 的 Python 文本。
+    """
+    major, minor, patch, build = version_quad
+    escaped_runtime_version = _escape_version_value(runtime_version)
+    escaped_company_name = _escape_version_value(WINDOWS_COMPANY_NAME)
+    escaped_product_name = _escape_version_value(WINDOWS_PRODUCT_NAME)
+    escaped_file_description = _escape_version_value(WINDOWS_FILE_DESCRIPTION)
+    escaped_internal_name = _escape_version_value(WINDOWS_INTERNAL_NAME)
+    escaped_original_filename = _escape_version_value(WINDOWS_ORIGINAL_FILENAME)
+    return textwrap.dedent(
+        f"""\
+        VSVersionInfo(
+          ffi=FixedFileInfo(
+            filevers=({major}, {minor}, {patch}, {build}),
+            prodvers=({major}, {minor}, {patch}, {build}),
+            mask=0x3F,
+            flags=0x0,
+            OS=0x40004,
+            fileType=0x1,
+            subtype=0x0,
+            date=(0, 0),
+          ),
+          kids=[
+            StringFileInfo(
+              [
+                StringTable(
+                  '080404B0',
+                  [
+                    StringStruct('CompanyName', '{escaped_company_name}'),
+                    StringStruct('FileDescription', '{escaped_file_description}'),
+                    StringStruct('FileVersion', '{escaped_runtime_version}'),
+                    StringStruct('InternalName', '{escaped_internal_name}'),
+                    StringStruct('OriginalFilename', '{escaped_original_filename}'),
+                    StringStruct('ProductName', '{escaped_product_name}'),
+                    StringStruct('ProductVersion', '{escaped_runtime_version}'),
+                  ],
+                )
+              ]
+            ),
+            VarFileInfo([VarStruct('Translation', [2052, 1200])]),
+          ],
+        )
+        """
+    )
+
+
+def _write_windows_version_file(output_root: Path, *, runtime_version: str) -> Path:
+    """写出 PyInstaller 使用的 Windows 版本资源文件。"""
+    versioning = _load_versioning_module()
+    version_file = output_root / WINDOWS_VERSION_FILE_NAME
+    version_file.parent.mkdir(parents=True, exist_ok=True)
+    version_file.write_text(
+        _render_windows_version_file(
+            runtime_version,
+            version_quad=versioning.format_windows_version_quad(runtime_version),
+        ),
+        encoding="utf-8",
+    )
+    return version_file
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -98,6 +179,7 @@ def main() -> int:
     dist_path = output_root / "dist"
     work_path = output_root / "build"
     runtime_version = _resolve_build_version()
+    version_file = _write_windows_version_file(work_path, runtime_version=runtime_version)
 
     print(f"RepoRoot   : {PROJECT_ROOT}")
     print(f"SpecPath   : {SPEC_PATH}")
@@ -135,6 +217,8 @@ def main() -> int:
         args.mode,
         "--runtime-version",
         runtime_version,
+        "--version-file",
+        str(version_file),
     ]
     _run_command(build_command, dry_run=args.dry_run)
     return 0

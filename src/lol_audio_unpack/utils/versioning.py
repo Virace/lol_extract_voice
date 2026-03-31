@@ -11,7 +11,7 @@ from pathlib import Path
 WINDOWS_VERSION_PATTERN = re.compile(rb"(?:[0-9]\x00)+(?:\.\x00(?:[0-9]\x00)+){3}")
 PATCH_VERSION_PATTERN = re.compile(r"^(\d+\.\d+)")
 RUNTIME_VERSION_PATTERN = re.compile(
-    r"^(?:v)?(?P<base>\d+\.\d+\.\d+)(?:\.dev(?P<dev>\d+))?(?:\+(?P<local>[0-9A-Za-z.-]+))?$"
+    r"^(?:v)?(?P<base>\d+\.\d+\.\d+)(?:-pre\.(?P<pre>\d+))?(?:\.dev(?P<dev>\d+))?(?:\+(?P<local>[0-9A-Za-z.-]+))?$"
 )
 GIT_DESCRIBE_PATTERN = re.compile(r"^(?P<tag>.+)-(?P<count>\d+)-g(?P<sha>[0-9a-f]+)(?P<dirty>-dirty)?$")
 WINDOWS_VERSION_DOT_COUNT = 3
@@ -42,14 +42,20 @@ def normalize_patch_version(version: str) -> str:
     return match.group(1)
 
 
-def _parse_runtime_version(version: str) -> tuple[str, int | None, str | None]:
+def _parse_runtime_version(version: str) -> tuple[str, int | None, int | None, str | None]:
     """解析仓库使用的运行时版本格式。"""
     match = RUNTIME_VERSION_PATTERN.fullmatch(version.strip())
     if match is None:
         raise ValueError(f"无法解析运行时版本号: {version}")
 
+    pre_group = match.group("pre")
     dev_group = match.group("dev")
-    return match.group("base"), int(dev_group) if dev_group is not None else None, match.group("local")
+    return (
+        match.group("base"),
+        int(pre_group) if pre_group is not None else None,
+        int(dev_group) if dev_group is not None else None,
+        match.group("local"),
+    )
 
 
 def _bump_patch_version(base_version: str) -> str:
@@ -69,7 +75,9 @@ def _normalize_tag_version(tag: str) -> str:
 
 def _next_cycle_version(tag_version: str) -> str:
     """根据最近 tag 推导当前开发周期的起始版本。"""
-    base_version, dev_number, _ = _parse_runtime_version(tag_version)
+    base_version, pre_number, dev_number, _ = _parse_runtime_version(tag_version)
+    if pre_number is not None:
+        return f"{base_version}.dev0"
     if dev_number is None:
         return f"{_bump_patch_version(base_version)}.dev0"
     return f"{base_version}.dev{dev_number}"
@@ -77,7 +85,9 @@ def _next_cycle_version(tag_version: str) -> str:
 
 def _advance_dev_version(version: str, commit_count: int) -> str:
     """把开发版号按提交数推进。"""
-    base_version, dev_number, _ = _parse_runtime_version(version)
+    base_version, pre_number, dev_number, _ = _parse_runtime_version(version)
+    if pre_number is not None:
+        raise ValueError(f"版本 {version} 不是合法的开发版本号")
     if dev_number is None:
         raise ValueError(f"版本 {version} 不是合法的开发版本号")
     return f"{base_version}.dev{dev_number + commit_count}"
@@ -167,6 +177,22 @@ def resolve_runtime_version(repo_root: Path, fallback_version: str) -> str:
         return derive_version_from_git_describe(describe_git_version(repo_root), fallback_version)
     except Exception:
         return fallback_version
+
+
+def format_windows_version_quad(version: str) -> tuple[int, int, int, int]:
+    """把运行时版本号转换为 Windows 版本资源需要的四段式数字版本。
+
+    Args:
+        version: 仓库运行时版本号，例如 ``3.5.1``、``3.5.1-pre.2`` 或
+            ``3.5.2.dev63+gabcdef0``。
+
+    Returns:
+        Windows 版本资源使用的 ``major.minor.patch.build`` 四元组。
+    """
+    base_version, pre_number, dev_number, _ = _parse_runtime_version(version)
+    major, minor, patch = (int(part) for part in base_version.split("."))
+    build = pre_number if pre_number is not None else (dev_number if dev_number is not None else 0)
+    return major, minor, patch, build
 
 
 def extract_windows_file_version(payload: bytes) -> str:

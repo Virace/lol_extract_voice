@@ -20,6 +20,7 @@ def test_pyinstaller_spec_supports_default_onefile_and_optional_onedir() -> None
 
     assert 'parser.add_argument("--mode"' in spec_text
     assert 'parser.add_argument("--runtime-version"' in spec_text
+    assert 'parser.add_argument("--version-file"' in spec_text
     assert 'default="onefile"' in spec_text
     assert 'if options.mode == "onefile"' in spec_text
     assert 'elif options.mode == "onedir"' in spec_text
@@ -28,6 +29,9 @@ def test_pyinstaller_spec_supports_default_onefile_and_optional_onedir() -> None
     assert "runtime_hooks.append(str(RUNTIME_HOOK))" in spec_text
     assert "runtime_hook_chdir.py" in spec_text
     assert "LOL_AUDIO_UNPACK_BUILD_VERSION" in spec_text
+    assert "version_file is not None" in spec_text
+    assert 'sys.platform.startswith("win")' in spec_text
+    assert "version=str(version_file)" in spec_text
     assert "console=False" in spec_text
     assert "COLLECT(" in spec_text
     assert "exclude_binaries=True" in spec_text
@@ -41,10 +45,15 @@ def test_pyinstaller_python_build_script_defaults_to_onefile() -> None:
     assert ".temp/pyinstaller" in script_text.replace("\\", "/")
     assert '"--mode"' in script_text
     assert '"--runtime-version"' in script_text
+    assert '"--version-file"' in script_text
     assert 'default="onefile"' in script_text
     assert "pyinstaller" in script_text.lower()
     assert "--" in script_text
     assert "packer" not in script_text.lower()
+    assert "CompanyName" in script_text
+    assert "FileDescription" in script_text
+    assert "ProductVersion" in script_text
+    assert "OriginalFilename" in script_text
 
 
 def test_pyinstaller_ps1_is_only_a_wrapper_to_python_entry() -> None:

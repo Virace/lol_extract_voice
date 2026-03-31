@@ -12,6 +12,7 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 parser = argparse.ArgumentParser()
 parser.add_argument("--mode", choices=("onefile", "onedir"), default="onefile")
 parser.add_argument("--runtime-version", default="")
+parser.add_argument("--version-file", default="")
 options = parser.parse_args()
 
 SPEC_ROOT = Path(SPECPATH).resolve()
@@ -22,6 +23,7 @@ GUI_ASSET_ROOT = SRC_ROOT / "lol_audio_unpack" / "gui" / "assets"
 APP_ICON = GUI_ASSET_ROOT / "app_icon.ico" if sys.platform.startswith("win") else None
 RUNTIME_HOOK = PROJECT_ROOT / "scripts" / "pyinstaller" / "runtime_hook_chdir.py"
 BUILD_VERSION_HOOK = Path(workpath) / "runtime_hook_build_version.py"
+version_file = Path(options.version_file).resolve() if options.version_file else None
 
 if options.runtime_version:
     BUILD_VERSION_HOOK.write_text(
@@ -74,6 +76,7 @@ if options.mode == "onefile":
         upx=False,
         console=False,
         disable_windowed_traceback=False,
+        version=str(version_file) if sys.platform.startswith("win") and version_file is not None else None,
         icon=str(APP_ICON) if APP_ICON is not None and APP_ICON.is_file() else None,
     )
 elif options.mode == "onedir":
@@ -89,6 +92,7 @@ elif options.mode == "onedir":
         upx=False,
         console=False,
         disable_windowed_traceback=False,
+        version=str(version_file) if sys.platform.startswith("win") and version_file is not None else None,
         icon=str(APP_ICON) if APP_ICON is not None and APP_ICON.is_file() else None,
     )
 

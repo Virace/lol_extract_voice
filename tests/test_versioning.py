@@ -46,6 +46,21 @@ def test_derive_version_from_git_describe_accepts_v_prefix_tag() -> None:
     )
 
 
+def test_derive_version_from_git_describe_returns_prerelease_for_exact_pre_tag() -> None:
+    assert (
+        versioning.derive_version_from_git_describe("v3.5.1-pre.1-0-gabc1234", fallback_version="3.5.1.dev0")
+        == "3.5.1-pre.1"
+    )
+
+
+def test_format_windows_version_quad_uses_pre_number_for_prerelease() -> None:
+    assert versioning.format_windows_version_quad("3.5.1-pre.2") == (3, 5, 1, 2)
+
+
+def test_format_windows_version_quad_uses_zero_for_release() -> None:
+    assert versioning.format_windows_version_quad("3.5.1") == (3, 5, 1, 0)
+
+
 def test_resolve_runtime_version_falls_back_when_git_describe_fails(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
