@@ -323,6 +323,79 @@ def test_create_app_context_ignores_blank_output_from_env_file(
     assert app_context.config.output_path == runtime_root / "output"
 
 
+def test_create_app_context_resolves_relative_cli_paths_from_runtime_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.delenv("LOL_GAME_PATH", raising=False)
+    monkeypatch.delenv("LOL_OUTPUT_PATH", raising=False)
+    monkeypatch.delenv("LOL_WWISER_PATH", raising=False)
+    monkeypatch.setattr(
+        app_context_module,
+        "detect_runtime_paths",
+        lambda: detect_runtime_paths(
+            is_frozen=True,
+            cwd=tmp_path / "shortcut-workdir",
+            executable=runtime_root / "LolAudioUnpack.exe",
+        ),
+    )
+
+    app_context = create_app_context(
+        cli_overrides={
+            "SOURCE_MODE": "local_path",
+            "GAME_PATH": "./game-client",
+            "OUTPUT_PATH": "./custom-output",
+            "WWISER_PATH": "./tools/wwiser/wwiser.pyz",
+        }
+    )
+
+    assert app_context.config.game_path == runtime_root / "game-client"
+    assert app_context.config.output_path == runtime_root / "custom-output"
+    assert app_context.config.wwiser_path == runtime_root / "tools" / "wwiser" / "wwiser.pyz"
+    assert app_context.paths.log_path == runtime_root / "custom-output" / "logs"
+
+
+def test_create_app_context_resolves_relative_env_paths_from_runtime_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime_root = tmp_path / "runtime-root"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    (runtime_root / ".lol.env").write_text(
+        "\n".join(
+            [
+                'LOL_GAME_PATH="./game-client"',
+                'LOL_OUTPUT_PATH="./custom-output"',
+                'LOL_WWISER_PATH="./tools/wwiser/wwiser.pyz"',
+                'LOL_GAME_REGION="zh_CN"',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("LOL_GAME_PATH", raising=False)
+    monkeypatch.delenv("LOL_OUTPUT_PATH", raising=False)
+    monkeypatch.delenv("LOL_WWISER_PATH", raising=False)
+    monkeypatch.setattr(
+        app_context_module,
+        "detect_runtime_paths",
+        lambda: detect_runtime_paths(
+            is_frozen=True,
+            cwd=tmp_path / "shortcut-workdir",
+            executable=runtime_root / "LolAudioUnpack.exe",
+        ),
+    )
+
+    app_context = create_app_context()
+
+    assert app_context.config.game_path == runtime_root / "game-client"
+    assert app_context.config.output_path == runtime_root / "custom-output"
+    assert app_context.config.wwiser_path == runtime_root / "tools" / "wwiser" / "wwiser.pyz"
+    assert app_context.paths.log_path == runtime_root / "custom-output" / "logs"
+
+
 def test_create_app_context_builds_remote_snapshot_config(tmp_path: Path) -> None:
     env_dir = tmp_path / "env"
     env_dir.mkdir(parents=True, exist_ok=True)

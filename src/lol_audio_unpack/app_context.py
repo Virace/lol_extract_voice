@@ -12,7 +12,11 @@ from typing import Any
 from loguru import logger
 from riotmanifest import LeagueManifestError, LeagueManifestResolver
 
-from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths, get_default_output_root
+from lol_audio_unpack.utils.runtime_paths import (
+    detect_runtime_paths,
+    get_default_output_root,
+    resolve_runtime_path,
+)
 from lol_audio_unpack.utils.type_hints import StrPath
 from lol_audio_unpack.utils.versioning import normalize_patch_version
 
@@ -202,6 +206,16 @@ def _to_path(value: Any, key_name: str) -> Path:
     return Path(text)
 
 
+def _to_runtime_path(value: Any, key_name: str, *, runtime_root: Path) -> Path:
+    """按统一 runtime 语义将输入转换为绝对 ``Path``。"""
+    if value is None:
+        raise AppContextValidationError(f"缺少必要的配置项: {key_name}")
+    text = str(value).strip()
+    if not text:
+        raise AppContextValidationError(f"缺少必要的配置项: {key_name}")
+    return resolve_runtime_path(text, relative_to=runtime_root)
+
+
 def _to_optional_text(value: Any) -> str | None:
     """将输入标准化为可选非空字符串。"""
     if value is None:
@@ -210,14 +224,20 @@ def _to_optional_text(value: Any) -> str | None:
     return text or None
 
 
-def _resolve_game_path(*, settings: Mapping[str, Any], output_path: Path, source_mode: SourceMode) -> Path:
+def _resolve_game_path(
+    *,
+    settings: Mapping[str, Any],
+    output_path: Path,
+    source_mode: SourceMode,
+    runtime_root: Path,
+) -> Path:
     """根据来源模式解析游戏根目录。"""
     if source_mode is SourceMode.REMOTE_SNAPSHOT:
         explicit_path = _to_optional_text(settings.get("GAME_PATH"))
         if explicit_path is not None:
-            return Path(explicit_path)
+            return resolve_runtime_path(explicit_path, relative_to=runtime_root)
         return output_path / "_prepared_game"
-    return _to_path(settings.get("GAME_PATH"), "GAME_PATH")
+    return _to_runtime_path(settings.get("GAME_PATH"), "GAME_PATH", runtime_root=runtime_root)
 
 
 def _build_remote_snapshot_config(
@@ -367,9 +387,15 @@ def _build_raw_settings(
 
 def _build_app_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConfig:
     """从原始配置构建 ``AppConfig``。"""
-    output_path = _to_path(settings.get("OUTPUT_PATH"), "OUTPUT_PATH")
+    runtime_root = detect_runtime_paths().launch_root
+    output_path = _to_runtime_path(settings.get("OUTPUT_PATH"), "OUTPUT_PATH", runtime_root=runtime_root)
     source_mode = _parse_source_mode(settings.get("SOURCE_MODE"))
-    game_path = _resolve_game_path(settings=settings, output_path=output_path, source_mode=source_mode)
+    game_path = _resolve_game_path(
+        settings=settings,
+        output_path=output_path,
+        source_mode=source_mode,
+        runtime_root=runtime_root,
+    )
     remote_snapshot = _build_remote_snapshot_config(settings=settings, source_mode=source_mode)
 
     game_region = str(settings.get("GAME_REGION", "zh_CN") or "zh_CN")
@@ -392,7 +418,11 @@ def _build_app_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConf
         remote_snapshot=remote_snapshot,
         group_by_type=_parse_bool(settings.get("GROUP_BY_TYPE", False)),
         with_bp_vo=_parse_bool(settings.get("WITH_BP_VO", False)),
-        wwiser_path=Path(wwiser_path_raw) if wwiser_path_raw else None,
+        wwiser_path=(
+            resolve_runtime_path(str(wwiser_path_raw).strip(), relative_to=runtime_root)
+            if wwiser_path_raw
+            else None
+        ),
         dev_mode=dev_mode,
     )
 

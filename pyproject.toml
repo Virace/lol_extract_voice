@@ -19,6 +19,7 @@ requires-python = ">= 3.10"
 gui = [
     "pyside6>=6",
     "pyside6-fluent-widgets>=1.7.0",
+    "pyvgmstream>=0.1.0",
 ]
 
 [project.scripts]

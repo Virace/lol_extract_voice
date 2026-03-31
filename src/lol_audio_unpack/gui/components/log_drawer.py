@@ -38,6 +38,7 @@ from qfluentwidgets import (
 from shiboken6 import isValid
 
 from lol_audio_unpack.gui.common import GUI_LOG_MAX_LINES
+from lol_audio_unpack.gui.common.font_compat import apply_switch_button_safe_font
 from lol_audio_unpack.gui.common.loguru_palette import (
     ANSI_FIXED_HEX_BY_SGR,
     LOGURU_DEFAULT_LEVEL_ANSI_STYLES,
@@ -512,6 +513,7 @@ class GlobalLogDrawer(QObject):
         self._follow_scroll_switch.setOffText("关")
         self._follow_scroll_switch.setChecked(True)
         self._follow_scroll_switch.setText("开")
+        apply_switch_button_safe_font(self._follow_scroll_switch)
         self._follow_scroll_switch.checkedChanged.connect(self.set_follow_scroll_enabled)
 
         self._follow_scroll_widget = QWidget(self._card.headerView)

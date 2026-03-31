@@ -13,11 +13,16 @@ from qfluentwidgets import Theme, qconfig, setTheme, setThemeColor
 
 from lol_audio_unpack.gui.common import (
     GuiConfig,
+    install_pyvgmstream_log_bridge,
+    install_qt_message_bridge,
     install_startup_log_buffer,
     remove_startup_log_buffer,
 )
+from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
+from lol_audio_unpack.gui.controllers.runtime_logging_session import (
+    apply_runtime_logging_session,
+)
 from lol_audio_unpack.gui.window import MainWindow
-from lol_audio_unpack.utils.logging import setup_logging
 
 
 def _log_startup_stage(stage: str, startup_begin: float, previous_mark: float) -> float:
@@ -47,14 +52,14 @@ def main() -> None:
     cfg = GuiConfig()
     cfg.load()
     logger.enable("lol_audio_unpack")
-    # GUI 启动期直接写入解析后的有效日志目录，避免每次先污染工作目录再重挂。
-    setup_logging(
+    # GUI 启动期先建立一次会话级日志文件，后续同目录重配置沿用该文件。
+    apply_runtime_logging_session(
+        RuntimeLoggingConfig.from_gui_config(cfg),
         dev_mode=True,
-        log_level=cfg.console_log_level,
-        file_log_level=cfg.file_log_level,
-        log_file_path=cfg.resolve_log_dir(),
         show_function_info=True,
     )
+    install_qt_message_bridge()
+    install_pyvgmstream_log_bridge()
     install_startup_log_buffer()
     logger.info("GUI 启动")
     previous_mark = _log_startup_stage("setup_logging 完成", startup_begin, previous_mark)

@@ -9,6 +9,9 @@ from loguru import logger
 
 from lol_audio_unpack.app_context import create_app_context
 from lol_audio_unpack.facade import LolAudioUnpackApp
+from lol_audio_unpack.gui.common.packaged_remote_mode_policy import (
+    normalize_app_context_overrides,
+)
 from lol_audio_unpack.gui.task_models import (
     ExecutionTaskProgress,
     ExecutionTaskResult,
@@ -78,7 +81,7 @@ def _build_runtime_overrides(
     overrides.update(task.draft.task_params.to_runtime_overrides())
     if force_bp_vo:
         overrides["WITH_BP_VO"] = True
-    return overrides
+    return normalize_app_context_overrides(overrides)
 
 
 def _build_scope_label(*, include_champions: bool, include_maps: bool) -> str:

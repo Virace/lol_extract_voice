@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from PySide6.QtCore import Property, QEasingCurve, QPropertyAnimation, QRectF, Qt, QUrl
+from PySide6.QtCore import Property, QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
@@ -14,6 +15,8 @@ from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
     IconWidget,
+    ImageLabel,
+    MessageBoxBase,
     SimpleCardWidget,
     SmoothScrollArea,
     Theme,
@@ -26,7 +29,10 @@ from qfluentwidgets.common.icon import FluentIconBase, drawIcon
 
 from lol_audio_unpack import __version__
 from lol_audio_unpack.gui.common.icon import get_app_logo_path
-from lol_audio_unpack.gui.common.style import apply_page_content_margins
+from lol_audio_unpack.gui.common.style import (
+    apply_page_content_margins,
+    configure_transparent_scroll_page,
+)
 from lol_audio_unpack.gui.common.styles import (
     get_fluent_frame_stroke_pair,
     get_fluent_neutral_surface_pair,
@@ -37,6 +43,7 @@ REPOSITORY_URL = "https://github.com/Virace/lol_audio_unpack"
 BILIBILI_URL = "https://space.bilibili.com/12353537"
 TECH_STACK = ("Python", "PySide6", "QFluentWidgets")
 BILIBILI_ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "bilibili.svg"
+QR_CODE_ASSET_DIR = Path(__file__).resolve().parent.parent / "assets" / "qr"
 
 
 def _rgba_text(rgba: tuple[int, int, int, int]) -> str:
@@ -79,6 +86,30 @@ class AboutActionSpec:
     value: str
     helper: str
     url: str | None = None
+    on_click: Callable[[], None] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SponsorQrSpec:
+    """赞助弹窗中的二维码卡片定义。"""
+
+    object_name: str
+    title: str
+    image_path: Path
+
+
+SPONSOR_QR_SPECS = (
+    SponsorQrSpec(
+        object_name="SponsorDialogWechatCard",
+        title="微信支付",
+        image_path=QR_CODE_ASSET_DIR / "wechat.png",
+    ),
+    SponsorQrSpec(
+        object_name="SponsorDialogAlipayCard",
+        title="支付宝",
+        image_path=QR_CODE_ASSET_DIR / "ali.png",
+    ),
+)
 
 
 class AboutRotatingLogoWidget(QWidget):
@@ -261,6 +292,150 @@ class AboutActionIconShell(QFrame):
         self.icon_widget.setGeometry(x, y, size, size)
 
 
+class SponsorDialog(MessageBoxBase):
+    """展示赞助二维码的模态框。"""
+
+    def __init__(self, parent=None) -> None:
+        """初始化赞助弹窗。
+
+        Args:
+            parent: 父级窗口或容器。
+        """
+        super().__init__(parent=parent)
+        self.setObjectName("SponsorDialog")
+        self.widget.setObjectName("SponsorDialogContent")
+        self.widget.setAttribute(Qt.WA_StyledBackground, True)
+        self.buttonGroup.setAttribute(Qt.WA_StyledBackground, True)
+        self.setWindowTitle("赞助支持")
+
+        self.viewLayout.setSpacing(20)
+        self._build_ui()
+        self._apply_theme_styles()
+
+        self.cancelButton.hide()
+        self.buttonLayout.removeWidget(self.cancelButton)
+        self.buttonLayout.insertStretch(0, 1)
+        self.buttonLayout.addStretch(1)
+        self.yesButton.setText("关闭")
+        self.yesButton.setFixedWidth(132)
+        self.buttonGroup.setMinimumWidth(180)
+
+        size_hint = self.widget.sizeHint()
+        self.widget.setFixedSize(max(560, size_hint.width()), size_hint.height())
+
+    def _build_ui(self) -> None:
+        """构建赞助弹窗的主体内容。"""
+        hero_icon_shell = AboutActionIconShell(icon=FIF.HEART, animated=False, parent=self.widget)
+        hero_icon_shell.setObjectName("SponsorDialogHeroIconShell")
+
+        title_label = TitleLabel("赞助支持", self.widget)
+        title_label.setObjectName("SponsorDialogTitle")
+        title_label.setAlignment(Qt.AlignHCenter)
+
+        description_label = BodyLabel(
+            "如果您觉得本工具对您有帮助，欢迎扫码请作者喝杯咖啡！您的支持是我持续维护项目的最大动力。",
+            self.widget,
+        )
+        description_label.setObjectName("SponsorDialogDescription")
+        description_label.setWordWrap(False)
+        description_label.setAlignment(Qt.AlignHCenter)
+
+        qr_row = QWidget(self.widget)
+        qr_row.setObjectName("SponsorDialogQrRow")
+        qr_layout = QHBoxLayout(qr_row)
+        qr_layout.setContentsMargins(0, 0, 0, 0)
+        qr_layout.setSpacing(16)
+        qr_layout.addStretch(1)
+
+        for spec in SPONSOR_QR_SPECS:
+            qr_layout.addWidget(self._build_qr_card(spec))
+
+        qr_layout.addStretch(1)
+
+        self.viewLayout.addWidget(hero_icon_shell, 0, Qt.AlignHCenter)
+        self.viewLayout.addWidget(title_label, 0, Qt.AlignHCenter)
+        self.viewLayout.addWidget(description_label, 0, Qt.AlignHCenter)
+        self.viewLayout.addWidget(qr_row)
+
+    def _build_qr_card(self, spec: SponsorQrSpec) -> SimpleCardWidget:
+        """构建单个二维码卡片。"""
+        card = SimpleCardWidget(self.widget)
+        card.setObjectName(spec.object_name)
+        card.setProperty("sponsorRole", "qrCard")
+        card.setBorderRadius(18)
+        card.setFixedWidth(196)
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setSpacing(14)
+
+        image_label = ImageLabel(card)
+        image_label.setObjectName(f"{spec.object_name}Image")
+        image_label.setImage(str(spec.image_path))
+        image_label.setScaledSize(QSize(160, 160))
+        image_label.setFixedSize(160, 160)
+        image_label.setBorderRadius(14, 14, 14, 14)
+
+        title_label = BodyLabel(spec.title, card)
+        title_label.setObjectName(f"{spec.object_name}Title")
+        title_label.setAlignment(Qt.AlignHCenter)
+        _configure_label_font(title_label, pixel_size=15, weight=QFont.Weight.DemiBold)
+
+        layout.addWidget(image_label, 0, Qt.AlignHCenter)
+        layout.addWidget(title_label)
+
+        return card
+
+    def _apply_theme_styles(self) -> None:
+        """按当前主题应用赞助弹窗的局部样式。"""
+        light_idle_surface, dark_idle_surface = get_fluent_neutral_surface_pair("subtle_idle")
+        light_hover_surface, dark_hover_surface = get_fluent_neutral_surface_pair("subtle_hover")
+        light_border, dark_border = get_fluent_frame_stroke_pair()
+
+        if isDarkTheme():
+            panel_background = "rgb(28, 31, 38)"
+            card_background = _rgba_text(dark_idle_surface)
+            card_hover_background = _rgba_text(dark_hover_surface)
+            frame_border = dark_border
+            description_color = "rgba(255, 255, 255, 168)"
+        else:
+            panel_background = "rgb(255, 255, 255)"
+            card_background = _rgba_text(light_idle_surface)
+            card_hover_background = _rgba_text(light_hover_surface)
+            frame_border = light_border
+            description_color = "rgba(36, 36, 36, 140)"
+
+        self.widget.setStyleSheet(
+            f"""
+            QWidget#SponsorDialogContent {{
+                background: {panel_background};
+                border: 1px solid {frame_border};
+                border-radius: 28px;
+            }}
+            QFrame#SponsorDialogHeroIconShell {{
+                background: rgba(255, 79, 141, 0.12);
+                border-radius: 16px;
+            }}
+            QFrame#buttonGroup {{
+                background: transparent;
+                border: none;
+            }}
+            BodyLabel#SponsorDialogDescription {{
+                color: {description_color};
+            }}
+            SimpleCardWidget[sponsorRole="qrCard"] {{
+                background: {card_background};
+                border: 1px solid {frame_border};
+                border-radius: 18px;
+            }}
+            SimpleCardWidget[sponsorRole="qrCard"]:hover {{
+                background: {card_hover_background};
+                border: 1px solid {frame_border};
+            }}
+            """
+        )
+
+
 class AboutActionCard(SimpleCardWidget):
     """关于页底部的入口卡片。"""
 
@@ -268,10 +443,11 @@ class AboutActionCard(SimpleCardWidget):
         """初始化入口卡片。"""
         super().__init__(parent)
         self._url = spec.url
+        self._on_click = spec.on_click
         self.setObjectName(spec.object_name)
         self.setFixedSize(196, 236)
         self.setBorderRadius(20)
-        self.setCursor(Qt.PointingHandCursor if spec.url else Qt.ArrowCursor)
+        self.setCursor(Qt.PointingHandCursor if (spec.url or spec.on_click) else Qt.ArrowCursor)
         self.setProperty("aboutRole", "action")
         self._animated_icon_widget: FaShakeIconWidget | None = None
 
@@ -326,6 +502,13 @@ class AboutActionCard(SimpleCardWidget):
     def mouseReleaseEvent(self, event) -> None:
         """整卡点击时打开目标链接。"""
         super().mouseReleaseEvent(event)
+        if event.button() != Qt.LeftButton:
+            return
+
+        if self._on_click is not None:
+            self._on_click()
+            return
+
         if self._url:
             QDesktopServices.openUrl(QUrl(self._url))
 
@@ -340,12 +523,11 @@ class AboutPage(SmoothScrollArea):
             parent: 父级窗口或容器。
         """
         super().__init__(parent=parent)
-        self.setObjectName("AboutPage")
-        self.view = QWidget(self)
-        self.view.setObjectName("AboutPageView")
-        self.setWidget(self.view)
-        self.setWidgetResizable(True)
-        self.setStyleSheet("QScrollArea {border: none; background: transparent;}")
+        self.view = configure_transparent_scroll_page(
+            self,
+            page_object_name="AboutPage",
+            view_object_name="AboutPageView",
+        )
         qconfig.themeChanged.connect(self._refresh_theme_styles)
         self.destroyed.connect(self._disconnect_theme_refresh_listener)
 
@@ -519,6 +701,7 @@ class AboutPage(SmoothScrollArea):
                 title="赞助支持",
                 value="支持作者",
                 helper="赞助入口",
+                on_click=self._show_sponsor_dialog,
             ),
         )
         for spec in action_specs:
@@ -526,3 +709,7 @@ class AboutPage(SmoothScrollArea):
         cards_layout.addStretch(1)
         root_layout.addWidget(cards_row)
         root_layout.addStretch(1)
+
+    def _show_sponsor_dialog(self) -> None:
+        """弹出赞助二维码模态框。"""
+        SponsorDialog(self.window()).exec()

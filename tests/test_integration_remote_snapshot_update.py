@@ -16,6 +16,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.remote_live]
 LIVE_REGION = "EUW"
 GAME_REGION = "zh_CN"
 TARGET_CHAMPION_IDS = (1, 103, 555)
+REMOTE_LIVE_TEMP_ROOT = Path(".temp") / "remote_live"
 
 
 def _reset_data_reader_singleton() -> None:
@@ -29,7 +30,13 @@ def test_remote_snapshot_update_champions_live_latest() -> None:
     pair = resolver.resolve_manifest_pair(LIVE_REGION)
     version = str(pair.version)
 
-    output_path = Path(".cache") / "remote_live_update_test" / LIVE_REGION.lower() / version / "update_champions_1_103_555"
+    output_path = (
+        REMOTE_LIVE_TEMP_ROOT
+        / "update_test"
+        / LIVE_REGION.lower()
+        / version
+        / "update_champions_1_103_555"
+    )
     output_path.mkdir(parents=True, exist_ok=True)
 
     snapshot_file = output_path / "remote_snapshot_context.json"
