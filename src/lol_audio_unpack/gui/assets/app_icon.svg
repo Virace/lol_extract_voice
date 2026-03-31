@@ -1,0 +1,202 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="1024"
+  height="1024"
+  viewBox="0 0 1024 1024"
+  fill="none"
+  role="img"
+  aria-labelledby="title desc"
+>
+  <title id="title">lol_audio_unpack Hexcore Crest icon</title>
+  <desc id="desc">
+    Dark gold desktop application icon with a hextech-inspired crystal core and subtle resonance lines for an audio extraction tool.
+  </desc>
+
+  <defs>
+    <linearGradient id="bgGradient" x1="160" y1="136" x2="864" y2="904" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#12283D" />
+      <stop offset="0.52" stop-color="#0A1725" />
+      <stop offset="1" stop-color="#040A12" />
+    </linearGradient>
+
+    <linearGradient id="frameGradient" x1="150" y1="132" x2="871" y2="892" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E8CA82" />
+      <stop offset="0.22" stop-color="#B38A4D" />
+      <stop offset="0.5" stop-color="#7D5C2B" />
+      <stop offset="0.74" stop-color="#C59A53" />
+      <stop offset="1" stop-color="#F0D292" />
+    </linearGradient>
+
+    <linearGradient id="innerFrameGradient" x1="220" y1="196" x2="802" y2="842" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#183551" />
+      <stop offset="0.6" stop-color="#09131E" />
+      <stop offset="1" stop-color="#050A10" />
+    </linearGradient>
+
+    <radialGradient id="auraGradient" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse"
+      gradientTransform="translate(512 508) rotate(90) scale(284)">
+      <stop offset="0" stop-color="#4CD6C2" stop-opacity="0.44" />
+      <stop offset="0.5" stop-color="#2A7F95" stop-opacity="0.16" />
+      <stop offset="1" stop-color="#071018" stop-opacity="0" />
+    </radialGradient>
+
+    <linearGradient id="ringGradient" x1="292" y1="290" x2="729" y2="730" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E5C77D" stop-opacity="0.78" />
+      <stop offset="0.38" stop-color="#7C5A2B" stop-opacity="0.32" />
+      <stop offset="0.68" stop-color="#55B7BF" stop-opacity="0.26" />
+      <stop offset="1" stop-color="#E5C77D" stop-opacity="0.7" />
+    </linearGradient>
+
+    <linearGradient id="crystalGradient" x1="408" y1="238" x2="650" y2="776" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#D8FFF6" />
+      <stop offset="0.15" stop-color="#8EF2DD" />
+      <stop offset="0.44" stop-color="#34C0BE" />
+      <stop offset="0.74" stop-color="#1F6E93" />
+      <stop offset="1" stop-color="#11314F" />
+    </linearGradient>
+
+    <linearGradient id="crystalFacetLeft" x1="354" y1="346" x2="491" y2="754" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#9CF7E8" stop-opacity="0.84" />
+      <stop offset="0.34" stop-color="#56D4CA" stop-opacity="0.58" />
+      <stop offset="1" stop-color="#103651" stop-opacity="0.18" />
+    </linearGradient>
+
+    <linearGradient id="crystalFacetRight" x1="637" y1="300" x2="562" y2="746" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#DFFBF8" stop-opacity="0.9" />
+      <stop offset="0.28" stop-color="#80EFF4" stop-opacity="0.44" />
+      <stop offset="1" stop-color="#10263D" stop-opacity="0.14" />
+    </linearGradient>
+
+    <linearGradient id="grooveGradient" x1="388" y1="350" x2="637" y2="646" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#EFFFFA" stop-opacity="0.86" />
+      <stop offset="0.44" stop-color="#A5FFF2" stop-opacity="0.58" />
+      <stop offset="1" stop-color="#67C9D9" stop-opacity="0.22" />
+    </linearGradient>
+
+    <linearGradient id="pedestalGradient" x1="404" y1="714" x2="620" y2="874" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E9CC87" />
+      <stop offset="0.4" stop-color="#A67C42" />
+      <stop offset="1" stop-color="#65441D" />
+    </linearGradient>
+
+    <filter id="softShadow" x="-48" y="-48" width="1120" height="1120" filterUnits="userSpaceOnUse">
+      <feOffset dy="22" />
+      <feGaussianBlur stdDeviation="26" />
+      <feColorMatrix
+        type="matrix"
+        values="0 0 0 0 0.0117 0 0 0 0 0.0352 0 0 0 0 0.0547 0 0 0 0.44 0"
+      />
+    </filter>
+
+    <clipPath id="crystalClip">
+      <path d="M512 192L680 352L620 776L512 842L404 776L344 352L512 192Z" />
+    </clipPath>
+  </defs>
+
+  <g transform="translate(512 512) scale(1.18) translate(-512 -512)">
+    <g filter="url(#softShadow)">
+      <rect x="136" y="136" width="752" height="752" rx="208" fill="url(#bgGradient)" />
+    </g>
+
+    <rect x="138" y="138" width="748" height="748" rx="206" fill="url(#bgGradient)" />
+    <rect x="138" y="138" width="748" height="748" rx="206" stroke="url(#frameGradient)" stroke-width="24" />
+
+    <path
+      d="M204 236C250 172 334 136 430 136H594C690 136 774 172 820 236V214C820 181 793 154 760 154H264C231 154 204 181 204 214V236Z"
+      fill="#F2E0A5"
+      fill-opacity="0.08"
+    />
+
+    <rect x="196" y="196" width="632" height="632" rx="174" fill="url(#innerFrameGradient)" />
+    <rect x="196" y="196" width="632" height="632" rx="174" stroke="#6C512A" stroke-opacity="0.52" stroke-width="4" />
+
+    <circle cx="512" cy="512" r="284" fill="url(#auraGradient)" />
+    <circle cx="512" cy="512" r="236" stroke="url(#ringGradient)" stroke-width="14" />
+    <circle cx="512" cy="512" r="203" stroke="#79D9DA" stroke-opacity="0.14" stroke-width="4" />
+
+    <path
+      d="M512 236L658 370L606 742L512 808L418 742L366 370L512 236Z"
+      fill="url(#crystalGradient)"
+      stroke="#DBFFF8"
+      stroke-opacity="0.62"
+      stroke-width="7"
+    />
+
+    <path d="M512 236L418 742L366 370L512 236Z" fill="url(#crystalFacetLeft)" />
+    <path d="M512 236L658 370L606 742L512 808V236Z" fill="url(#crystalFacetRight)" />
+
+    <path
+      d="M512 236L548 370L512 808L476 370L512 236Z"
+      fill="#E6FFF9"
+      fill-opacity="0.18"
+    />
+
+    <path
+      d="M420 742L512 670L604 742L512 808L420 742Z"
+      fill="#0D2A40"
+      fill-opacity="0.34"
+    />
+
+    <g clip-path="url(#crystalClip)">
+      <path
+        d="M392 404C432 374 470 362 512 362C556 362 598 376 640 404"
+        stroke="url(#grooveGradient)"
+        stroke-width="19"
+        stroke-linecap="round"
+        stroke-opacity="0.78"
+      />
+      <path
+        d="M380 488C424 456 468 442 512 442C558 442 600 456 644 488"
+        stroke="url(#grooveGradient)"
+        stroke-width="17"
+        stroke-linecap="round"
+        stroke-opacity="0.72"
+      />
+      <path
+        d="M388 574C428 546 470 532 512 532C554 532 596 546 636 574"
+        stroke="url(#grooveGradient)"
+        stroke-width="14"
+        stroke-linecap="round"
+        stroke-opacity="0.66"
+      />
+      <path
+        d="M410 654C444 632 478 622 512 622C548 622 580 632 614 654"
+        stroke="url(#grooveGradient)"
+        stroke-width="11"
+        stroke-linecap="round"
+        stroke-opacity="0.54"
+      />
+
+      <path d="M326 460H700" stroke="#DFFFF6" stroke-opacity="0.08" stroke-width="6" />
+      <path d="M350 540H674" stroke="#C6FFF3" stroke-opacity="0.09" stroke-width="5" />
+    </g>
+
+    <path
+      d="M512 204L554 282L512 332L470 282L512 204Z"
+      fill="#F1FFFF"
+      fill-opacity="0.48"
+    />
+
+    <path
+      d="M448 744L512 822L576 744L628 772L512 860L396 772L448 744Z"
+      fill="url(#pedestalGradient)"
+      fill-opacity="0.94"
+    />
+
+    <path
+      d="M404 782L512 850L620 782"
+      stroke="#F7E2A5"
+      stroke-opacity="0.42"
+      stroke-width="5"
+      stroke-linecap="round"
+    />
+
+    <path
+      d="M282 768C332 820 412 852 512 852C612 852 692 820 742 768"
+      stroke="#F2D691"
+      stroke-opacity="0.18"
+      stroke-width="8"
+      stroke-linecap="round"
+    />
+  </g>
+</svg>

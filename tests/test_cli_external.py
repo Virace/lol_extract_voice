@@ -9,7 +9,7 @@ pytestmark = pytest.mark.integration
 def _run_unpack_cli(*args: str, timeout: int = 180) -> subprocess.CompletedProcess[str]:
     """通过 subprocess 调用外部 `unpack` CLI。"""
     repo_root = Path(__file__).resolve().parents[1]
-    cmd = [str(repo_root / "scripts" / "_uv.sh"), "run", "unpack", *args]
+    cmd = ["uv", "run", "unpack", *args]
     return subprocess.run(
         cmd,
         cwd=repo_root,

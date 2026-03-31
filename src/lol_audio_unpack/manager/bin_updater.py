@@ -1,34 +1,34 @@
-# 🐍 There should be one-- and preferably only one --obvious way to do it.
-# 🐼 任何问题应有一种，且最好只有一种，显而易见的解决方法
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2025/7/30 7:40
-# @Update  : 2025/8/3 8:57
-# @Detail  : BIN文件更新器
+"""本地与预处理游戏资源的 BIN 更新辅助逻辑。
 
+该模块负责协调 BIN 来源选择、资源提取，以及更新流程中的
+元数据刷新。
+"""
+
+from __future__ import annotations
 
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from alive_progress import alive_it
 from league_tools.formats import BIN, WAD
 from loguru import logger
 
 from lol_audio_unpack.manager.utils import (
     create_metadata_object,
-    get_game_version,
     needs_update,
     read_data,
+    resolve_context_version,
     write_data,
 )
-from lol_audio_unpack.utils.config import config
 from lol_audio_unpack.utils.logging import performance_monitor
+from lol_audio_unpack.utils.run_summary import record_runtime_note
+
+if TYPE_CHECKING:
+    from lol_audio_unpack.app_context import AppContext
 
 # 类型别名定义
 ChampionData = dict[str, Any]
+CommonEventSourceIndex = dict[str, set[str]]
 
 
 class BinUpdater:
@@ -38,28 +38,47 @@ class BinUpdater:
     支持可选的事件处理：设置 process_events=False 可显著提升处理速度，但不会生成事件数据
     """
 
-    def __init__(self, force_update: bool = False, process_events: bool = True):
+    def __init__(
+        self,
+        force_update: bool = False,
+        process_events: bool = True,
+        *,
+        ctx: AppContext,
+    ):
         """
         初始化BIN音频更新器
 
         :param force_update: 是否强制更新，忽略版本检查
         :param process_events: 是否处理事件数据（默认True，设置为False可大幅提升处理速度）
+        :param ctx: 运行时上下文。
         """
-        self.game_path: Path = config.GAME_PATH
-        self.manifest_path: Path = config.MANIFEST_PATH
+        self.ctx = ctx
+        self.game_path = Path(self.ctx.config.game_path)
+        self.manifest_path = Path(self.ctx.paths.manifest_path)
+
         if not self.game_path or not self.manifest_path:
             raise ValueError("GAME_PATH 和 MANIFEST_PATH 必须在配置中设置")
 
         self.force_update = force_update
         self.process_events = process_events
-        self.version: str = get_game_version(self.game_path)
+        self.version: str = resolve_context_version(self.ctx)
         self.version_manifest_path: Path = self.manifest_path / self.version
         self.data_file_base: Path = self.version_manifest_path / "data"
+        self.use_local_bin_flag_file: Path = self.version_manifest_path / ".use_local_bin"
+        self.local_bin_input_dir: Path = self.version_manifest_path / "bin_input"
         self.champion_banks_dir: Path = self.version_manifest_path / "banks" / "champions"
         self.map_banks_dir: Path = self.version_manifest_path / "banks" / "maps"
         self.champion_events_dir: Path = self.version_manifest_path / "events" / "champions"
         self.map_events_dir: Path = self.version_manifest_path / "events" / "maps"
         self.languages: list[str] = []  # 在update()中初始化
+
+    def _is_dev_mode(self) -> bool:
+        """返回当前运行是否为开发模式。"""
+        return bool(self.ctx.config.dev_mode)
+
+    def _log_simple_progress(self, stage_name: str, index: int, total: int, entity_id: str) -> None:
+        """输出简单的批量处理进度日志。"""
+        logger.info(f"{stage_name}进度 {index}/{total}: {entity_id}")
 
     @logger.catch
     @performance_monitor(level="INFO")
@@ -76,29 +95,156 @@ class BinUpdater:
         :param champion_ids: 指定要处理的英雄ID列表，为None时处理所有英雄
         :param map_ids: 指定要处理的地图ID列表，为None时处理所有地图
         """
-        data = read_data(self.data_file_base)
+        data = read_data(self.data_file_base, dev_mode=self._is_dev_mode())
         if not data:
             logger.error(f"数据文件不存在，请先运行DataUpdater: {self.data_file_base}")
             raise FileNotFoundError(f"数据文件不存在: {self.data_file_base}")
 
         self.languages = data.get("metadata", {}).get("languages", [])
+        local_bin_mode_enabled = self._is_local_bin_mode_enabled()
 
         # 根据传入的IDs构建筛选后的数据
         if champion_ids or map_ids:
             # 精确模式：根据具体ID筛选数据
             filtered_data = self._filter_data_by_ids(data, champion_ids, map_ids)
+            champion_count = len(filtered_data.get("champions", {}))
+            map_count = len(filtered_data.get("maps", {}))
+            logger.info(
+                f"开始更新 BIN 数据（精确模式）：英雄 {champion_count} 个，地图 {map_count} 个，"
+                f"事件处理={'开启' if self.process_events else '关闭'}，"
+                f"本地BIN模式={'开启' if local_bin_mode_enabled else '关闭'}"
+            )
             if champion_ids and filtered_data.get("champions"):
                 self._update_champions(filtered_data)
             if map_ids and filtered_data.get("maps"):
+                self._record_targeted_map_event_scope_note(map_ids)
                 self._update_maps(filtered_data)
-            logger.success(f"BinUpdater 更新完成 (精确模式: champions={champion_ids}, maps={map_ids})")
+            logger.success(f"BinUpdater 更新完成（精确模式）：英雄 {champion_count} 个，地图 {map_count} 个")
         else:
             # 批量模式：使用target控制
+            champion_count = len(data.get("champions", {})) if target in ["skin", "all"] else 0
+            map_count = len(data.get("maps", {})) if target in ["map", "all"] else 0
+            logger.info(
+                f"开始更新 BIN 数据（批量模式）：target={target}，英雄 {champion_count} 个，地图 {map_count} 个，"
+                f"事件处理={'开启' if self.process_events else '关闭'}，"
+                f"本地BIN模式={'开启' if local_bin_mode_enabled else '关闭'}"
+            )
             if target in ["skin", "all"]:
                 self._update_champions(data)
             if target in ["map", "all"]:
                 self._update_maps(data)
-            logger.success(f"BinUpdater 更新完成 (批量模式: {target})")
+            logger.success(f"BinUpdater 更新完成（批量模式）：英雄 {champion_count} 个，地图 {map_count} 个")
+
+    def _record_targeted_map_event_scope_note(self, map_ids: list[str]) -> None:
+        """记录精确地图更新在未包含 Common 地图时的事件差异说明。"""
+        if not self.process_events or "0" in map_ids:
+            return
+
+        normalized_ids = [map_id for map_id in map_ids if map_id]
+        if not normalized_ids:
+            return
+
+        message = "本次仅处理指定地图且未包含 Common 地图 0，地图事件不会应用公共事件去重；结果可能与全量更新不同。"
+        detail = f"精确地图更新目标: {normalized_ids}；由于未包含地图 0，Common 事件差量规则不会参与本次运行。"
+        record_runtime_note(self.ctx.runtime_cache, "update", message, label="数据更新", detail=detail)
+
+    def _is_local_bin_mode_enabled(self) -> bool:
+        """
+        检查是否启用了本地 BIN 输入模式。
+
+        :returns: 启用返回 True，否则返回 False。
+        """
+        return self.use_local_bin_flag_file.exists()
+
+    def _build_local_bin_path(self, bin_path: str) -> Path:
+        """
+        将 binPath 转换为本地 BIN 文件绝对路径，并阻止路径逃逸。
+
+        :param bin_path: 数据文件中的相对 BIN 路径。
+        :returns: 本地 BIN 文件绝对路径。
+        :raises ValueError: 当路径越界时抛出。
+        """
+        local_root = self.local_bin_input_dir.resolve()
+        candidate = (self.local_bin_input_dir / Path(bin_path)).resolve()
+        try:
+            candidate.relative_to(local_root)
+        except ValueError as e:
+            raise ValueError(f"检测到越界 binPath，拒绝读取: {bin_path}") from e
+        return candidate
+
+    def _extract_bin_raws(
+        self,
+        wad_path: Path | None,
+        bin_paths: list[str],
+        entity_label: str,
+        local_required_dir: Path | None = None,
+    ) -> list[bytes | None]:
+        """
+        按优先级提取 BIN 二进制数据。
+
+        优先级:
+        1) WAD 文件存在时，强制走 WAD 提取。
+        2) WAD 不存在时，若存在 `.use_local_bin` 标志，则走本地目录读取。
+        3) 其余情况返回空结果。
+
+        :param wad_path: 待提取的 WAD 路径；为空表示无可用 WAD 信息。
+        :param bin_paths: 目标 BIN 路径列表。
+        :param entity_label: 实体标签（用于日志）。
+        :param local_required_dir: 本地模式下要求存在的目录（相对于 `bin_input`）。
+        :returns: 与 `bin_paths` 顺序一致的二进制数组，缺失项为 ``None``。
+        :raises FileNotFoundError: 本地模式开启但目录缺失时抛出。
+        :raises ValueError: 当路径越界时抛出。
+        """
+        if not bin_paths:
+            return []
+
+        if wad_path and wad_path.exists():
+            logger.trace(f"{entity_label} 使用 WAD 读取 BIN: {wad_path}")
+            return WAD(wad_path).extract(bin_paths, raw=True)
+
+        if not self._is_local_bin_mode_enabled():
+            if wad_path:
+                logger.warning(f"{entity_label} 的WAD文件不存在，且未启用本地BIN模式: {wad_path}")
+            else:
+                logger.warning(f"{entity_label} 缺少WAD路径信息，且未启用本地BIN模式")
+            return []
+
+        if wad_path:
+            logger.debug(f"{entity_label} 的WAD文件不可用，回退到本地BIN模式: {wad_path}")
+        else:
+            logger.debug(f"{entity_label} 缺少WAD路径信息，回退到本地BIN模式")
+
+        if not self.local_bin_input_dir.exists():
+            raise FileNotFoundError(f"{entity_label} 启用了本地BIN模式，但目录不存在: {self.local_bin_input_dir}")
+
+        if local_required_dir is not None:
+            required_path = self.local_bin_input_dir / local_required_dir
+            if not required_path.exists():
+                raise FileNotFoundError(f"{entity_label} 本地BIN实体目录不存在: {required_path}")
+
+        bin_raws: list[bytes | None] = []
+        missing_count = 0
+        for bin_path in bin_paths:
+            local_bin_file = self._build_local_bin_path(bin_path)
+            if not local_bin_file.is_file():
+                bin_raws.append(None)
+                missing_count += 1
+                continue
+
+            file_data = local_bin_file.read_bytes()
+            if not file_data:
+                bin_raws.append(None)
+                missing_count += 1
+                continue
+            bin_raws.append(file_data)
+
+        if missing_count > 0:
+            logger.debug(
+                f"{entity_label} 本地BIN存在缺失或空文件，已按缺失处理: {missing_count}/{len(bin_paths)}"
+            )
+
+        logger.trace(f"{entity_label} 使用本地BIN目录读取: {self.local_bin_input_dir}")
+        return bin_raws
 
     def _filter_data_by_ids(self, data: dict, champion_ids: list[str] | None, map_ids: list[str] | None) -> dict:
         """
@@ -154,13 +300,13 @@ class BinUpdater:
         champions = data.get("champions", {})
         sorted_champion_ids = sorted(champions.keys(), key=int)
 
-        champion_bar = alive_it(sorted_champion_ids, title="英雄音频数据处理")
-        for champion_id in champion_bar:
+        total_champions = len(sorted_champion_ids)
+        for index, champion_id in enumerate(sorted_champion_ids, start=1):
             champion_data = champions[champion_id]
-            champion_bar.text(f"处理英雄 {champion_id}")
+            self._log_simple_progress("处理英雄", index, total_champions, champion_id)
             self._process_champion_skins(champion_data, champion_id)
 
-        logger.success("英雄Banks数据更新完成")
+        logger.success(f"英雄Banks数据更新完成，共处理 {total_champions} 个英雄")
 
     @performance_monitor(level="DEBUG")
     def _update_maps(self, data: dict) -> None:
@@ -176,7 +322,7 @@ class BinUpdater:
         maps = data.get("maps", {})
 
         # 预处理公共地图(ID 0)的事件数据和Banks数据
-        common_events_set = set()
+        common_event_sources: CommonEventSourceIndex = {}
         common_banks_set = set()
         if "0" in maps:
             logger.debug("正在预处理公共地图(ID 0)的数据...")
@@ -184,9 +330,9 @@ class BinUpdater:
                 # 预处理事件数据
                 if map_events := self._process_map_events_for_id("0", maps["0"]):
                     if "events" in map_events:
-                        for events_list in map_events["events"].values():
+                        for category, events_list in map_events["events"].items():
                             for event_string in events_list:
-                                common_events_set.add(event_string)
+                                common_event_sources.setdefault(event_string, set()).add(f"地图 0/{category}")
 
                 # 预处理Banks数据
                 if map_banks := self._process_map_banks_for_id("0", maps["0"]):
@@ -196,15 +342,16 @@ class BinUpdater:
                                 common_banks_set.add(tuple(sorted(path)))
             except Exception:
                 logger.opt(exception=True).error("预处理公共地图(ID 0)的数据时出错")
-                if config.is_dev_mode():
+                if self._is_dev_mode():
                     raise
 
-        map_bar = alive_it(maps.items(), title="地图音频与事件数据处理")
-        for map_id, map_data in map_bar:
-            map_bar.text(f"处理地图 {map_id}")
-            self._process_single_map(map_id, map_data, common_events_set, common_banks_set)
+        map_items = list(maps.items())
+        total_maps = len(map_items)
+        for index, (map_id, map_data) in enumerate(map_items, start=1):
+            self._log_simple_progress("处理地图", index, total_maps, map_id)
+            self._process_single_map(map_id, map_data, common_event_sources, common_banks_set)
 
-        logger.success("地图Banks数据更新完成")
+        logger.success(f"地图Banks数据更新完成，共处理 {total_maps} 个地图")
 
     @performance_monitor(level="DEBUG")
     def _process_champion_skins(self, champion_data: ChampionData, champion_id: str) -> None:
@@ -214,7 +361,8 @@ class BinUpdater:
         :param champion_data: 英雄数据字典
         :param champion_id: 英雄ID
         """
-        alias = champion_data.get("alias", "").lower()
+        alias_raw = champion_data.get("alias", "")
+        alias = alias_raw.lower()
         if not alias:
             return
 
@@ -222,8 +370,8 @@ class BinUpdater:
         banks_file_base = self.champion_banks_dir / champion_id
         events_file_base = self.champion_events_dir / champion_id
 
-        if not needs_update(banks_file_base, self.version, self.force_update) and not needs_update(
-            events_file_base, self.version, self.force_update
+        if not needs_update(banks_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()) and not needs_update(
+            events_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()
         ):
             logger.trace(f"英雄 {champion_id} ({alias}) 的数据已是最新，跳过处理")
             return
@@ -248,20 +396,25 @@ class BinUpdater:
         if not path_to_skin_id_map:
             return
 
-        root_wad_path = champion_data["wad"].get("root")
-        if not root_wad_path:
-            return
-
-        full_wad_path = self.game_path / root_wad_path
-        if not full_wad_path.exists():
-            logger.warning(f"英雄 {alias} 的WAD文件不存在: {full_wad_path}")
-            return
-
         bin_paths = list(path_to_skin_id_map.keys())
+        root_wad_path = champion_data.get("wad", {}).get("root")
+        full_wad_path = self.game_path / root_wad_path if root_wad_path else None
+        local_required_dir = Path("data") / "characters" / alias_raw
         try:
             logger.trace(f"从 {alias} 提取 {len(bin_paths)} 个BIN文件")
-            bin_raws = WAD(full_wad_path).extract(bin_paths, raw=True)
+            bin_raws = self._extract_bin_raws(
+                wad_path=full_wad_path,
+                bin_paths=bin_paths,
+                entity_label=f"英雄 {champion_id} ({alias})",
+                local_required_dir=local_required_dir,
+            )
+            if not bin_raws or not bin_raws[0]:
+                logger.warning(f"英雄 {champion_id} ({alias}) 的首个BIN缺失或为空，跳过处理")
+                return
             raw_data_map = dict(zip(bin_paths, bin_raws, strict=False))
+        except (FileNotFoundError, ValueError):
+            logger.opt(exception=True).error(f"处理英雄 {alias} 的本地BIN时出错")
+            return
         except Exception:
             logger.opt(exception=True).error(f"处理英雄 {alias} 的WAD文件时出错")
             return
@@ -312,59 +465,55 @@ class BinUpdater:
 
             except Exception:
                 logger.opt(exception=True).error(f"解析皮肤BIN失败: {path}")
-                if config.is_dev_mode():
+                if self._is_dev_mode():
                     raise
 
         # 优化映射关系
         self._optimize_champion_mappings(champion_banks_data)
 
         # 写入banks数据
-        if needs_update(banks_file_base, self.version, self.force_update):
-            write_data(champion_banks_data, banks_file_base)
+        if needs_update(banks_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()):
+            write_data(champion_banks_data, banks_file_base, dev_mode=self._is_dev_mode())
 
         # 写入events数据
-        if champion_skin_events and needs_update(events_file_base, self.version, self.force_update):
+        if champion_skin_events and needs_update(
+            events_file_base,
+            self.version,
+            self.force_update,
+            dev_mode=self._is_dev_mode(),
+        ):
             final_event_data = self._create_base_data(champion_id, "champion", alias=alias, skins=champion_skin_events)
-            write_data(final_event_data, events_file_base)
+            write_data(final_event_data, events_file_base, dev_mode=self._is_dev_mode())
 
     def _process_single_map(
-        self, map_id: str, map_data: dict, common_events_set: set | None = None, common_banks_set: set | None = None
+        self,
+        map_id: str,
+        map_data: dict,
+        common_event_sources: CommonEventSourceIndex | None = None,
+        common_banks_set: set | None = None,
     ) -> None:
         """
         处理单个地图的Banks和Events数据
 
         :param map_id: 地图ID
         :param map_data: 地图数据字典
-        :param common_events_set: 公共事件集合，用于去重
+        :param common_event_sources: 公共事件来源索引，用于事件去重和总结
         :param common_banks_set: 公共Banks集合，用于去重
         """
         banks_file_base = self.map_banks_dir / map_id
         events_file_base = self.map_events_dir / map_id
 
-        if not needs_update(banks_file_base, self.version, self.force_update) and not needs_update(
-            events_file_base, self.version, self.force_update
+        if not needs_update(banks_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()) and not needs_update(
+            events_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()
         ):
             logger.trace(f"地图 {map_id} 的数据已是最新，跳过处理")
             return
 
-        if not map_data.get("wad") or not map_data.get("binPath"):
+        if not map_data.get("binPath"):
             return
 
-        wad_path = self.game_path / map_data["wad"]["root"]
-        bin_path = map_data["binPath"]
-
-        if not wad_path.exists():
-            return
-
-        try:
-            bin_raws = WAD(wad_path).extract([bin_path], raw=True)
-            if not bin_raws or not bin_raws[0]:
-                return
-            bin_file = BIN(bin_raws[0])
-        except Exception:
-            logger.opt(exception=True).error(f"提取或解析地图 {map_id} 的BIN文件时出错")
-            if config.is_dev_mode():
-                raise
+        bin_file = self._load_map_bin_file(map_id, map_data)
+        if bin_file is None:
             return
 
         # 处理Banks数据
@@ -383,7 +532,7 @@ class BinUpdater:
             map_banks[category] = [list(p) for p in unique_paths_tuples]
 
         # 写入Banks数据
-        if map_banks and needs_update(banks_file_base, self.version, self.force_update):
+        if map_banks and needs_update(banks_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()):
             map_banks_data = self._create_base_data(map_id, "map", name=self._get_map_name(map_data), banks=map_banks)
 
             # 对非公共地图进行去重处理
@@ -392,17 +541,65 @@ class BinUpdater:
 
             # 去重后检查是否还有数据需要写入
             if map_banks_data.get("banks"):
-                write_data(map_banks_data, banks_file_base)
+                write_data(map_banks_data, banks_file_base, dev_mode=self._is_dev_mode())
             else:
                 logger.trace(f"地图 {map_id} 去重后无独有Banks数据，跳过写入")
 
         # 处理Events数据，只有在启用事件处理时才提取
-        if self.process_events and needs_update(events_file_base, self.version, self.force_update):
-            if map_events := self._extract_map_events(bin_file, common_events_set if map_id != "0" else None):
+        if self.process_events and needs_update(
+            events_file_base,
+            self.version,
+            self.force_update,
+            dev_mode=self._is_dev_mode(),
+        ):
+            map_events, dedup_summary = self._extract_map_events(
+                bin_file,
+                common_event_sources if map_id != "0" else None,
+            )
+            if dedup_summary:
+                self._record_map_event_dedup_summary(map_id, map_data, dedup_summary)
+            if map_events:
                 final_event_data = self._create_base_data(
                     map_id, "map", name=self._get_map_name(map_data), map=map_events
                 )
-                write_data(final_event_data, events_file_base)
+                write_data(final_event_data, events_file_base, dev_mode=self._is_dev_mode())
+
+    def _load_map_bin_file(self, map_id: str, map_data: dict) -> BIN | None:
+        """
+        统一加载地图 BIN 文件，兼容 WAD 与本地 BIN 模式。
+
+        :param map_id: 地图ID。
+        :param map_data: 地图数据字典。
+        :returns: BIN 对象；失败时返回 None。
+        """
+        bin_path = map_data.get("binPath")
+        if not bin_path:
+            return None
+
+        wad_root = map_data.get("wad", {}).get("root")
+        wad_path = self.game_path / wad_root if wad_root else None
+        local_required_dir = Path(bin_path).parent
+
+        try:
+            bin_raws = self._extract_bin_raws(
+                wad_path=wad_path,
+                bin_paths=[bin_path],
+                entity_label=f"地图 {map_id}",
+                local_required_dir=local_required_dir,
+            )
+            if not bin_raws:
+                return None
+            bin_raw = bin_raws[0]
+            if not bin_raw:
+                return None
+            return BIN(bin_raw)
+        except (FileNotFoundError, ValueError):
+            logger.opt(exception=True).error(f"提取或解析地图 {map_id} 的本地BIN文件时出错")
+        except Exception:
+            logger.opt(exception=True).error(f"提取或解析地图 {map_id} 的BIN文件时出错")
+            if self._is_dev_mode():
+                raise
+        return None
 
     def _extract_skin_events(self, bin_file: BIN, base_skin_id: str | None, current_skin_id: str) -> dict | None:
         """
@@ -440,15 +637,20 @@ class BinUpdater:
 
         return skin_events if skin_events else None
 
-    def _extract_map_events(self, bin_file: BIN, common_events_set: set | None = None) -> dict | None:
+    def _extract_map_events(
+        self,
+        bin_file: BIN,
+        common_event_sources: CommonEventSourceIndex | None = None,
+    ) -> tuple[dict | None, dict[str, Any] | None]:
         """
         从BIN文件中提取并根据公共事件集合进行去重
 
         :param bin_file: BIN文件对象
-        :param common_events_set: 公共事件集合，用于去重
-        :returns: 地图事件数据字典，无数据时返回None
+        :param common_event_sources: 公共事件来源索引，用于去重和记录来源
+        :returns: 地图事件数据字典，以及公共事件去重摘要
         """
         map_events = {}
+        dedup_by_category: dict[str, dict[str, set[str]]] = {}
         if bin_file.theme_music:
             map_events["theme_music"] = bin_file.theme_music
 
@@ -460,22 +662,53 @@ class BinUpdater:
                 if not event_data.events:
                     continue
 
+                category = event_data.category
                 event_strings = [e.string for e in event_data.events]
                 unique_events_in_group = list(dict.fromkeys(event_strings))  # 保持顺序的去重
 
-                if common_events_set:
-                    unique_events_in_group = [e for e in unique_events_in_group if e not in common_events_set]
+                removed_events: list[str] = []
+                if common_event_sources:
+                    filtered_events: list[str] = []
+                    for event_name in unique_events_in_group:
+                        if event_name in common_event_sources:
+                            removed_events.append(event_name)
+                        else:
+                            filtered_events.append(event_name)
+                    unique_events_in_group = filtered_events
+
+                if removed_events:
+                    category_entry = dedup_by_category.setdefault(category, {"events": set(), "sources": set()})
+                    category_entry["events"].update(removed_events)
+                    for event_name in removed_events:
+                        category_entry["sources"].update(common_event_sources.get(event_name, set()))
 
                 if unique_events_in_group:
-                    category = event_data.category
                     if category not in all_events_by_category:
                         all_events_by_category[category] = []
                     all_events_by_category[category].extend(unique_events_in_group)
 
+        dedup_summary = None
+        if dedup_by_category:
+            categories = {}
+            total_removed = 0
+            for category, payload in dedup_by_category.items():
+                removed_event_names = sorted(payload["events"])
+                total_removed += len(removed_event_names)
+                categories[category] = {
+                    "count": len(removed_event_names),
+                    "examples": removed_event_names[:5],
+                    "sources": sorted(payload["sources"]),
+                }
+            dedup_summary = {
+                "total_removed": total_removed,
+                "remaining_event_count": sum(len(events) for events in all_events_by_category.values()),
+                "categories": categories,
+            }
+
         if all_events_by_category:
             map_events["events"] = all_events_by_category
 
-        return map_events if map_events else None
+        return map_events if map_events else None, dedup_summary
 
     def _deduplicate_single_map_banks(self, map_data: dict, common_banks_set: set) -> None:
         """
@@ -537,38 +770,69 @@ class BinUpdater:
                     champion_data["skinAudioMappings"][skin_id] = owner_id
 
     def _process_map_events_for_id(
-        self, map_id: str, map_data: dict, common_events_set: set | None = None
+        self, map_id: str, map_data: dict, common_event_sources: CommonEventSourceIndex | None = None
     ) -> dict | None:
         """
         提取、去重并保存单个地图的事件数据（兼容性方法）
 
         :param map_id: 地图ID
         :param map_data: 地图数据字典
-        :param common_events_set: 公共事件集合，用于去重
+        :param common_event_sources: 公共事件来源索引，用于去重
         :returns: 地图事件数据字典，失败时返回None
         """
         # 如果未启用事件处理，直接返回None
         if not self.process_events:
             return None
 
-        if not map_data.get("wad") or not map_data.get("binPath"):
+        if not map_data.get("binPath"):
             return None
 
-        wad_path = self.game_path / map_data["wad"]["root"]
-        bin_path = map_data["binPath"]
-
-        if not wad_path.exists():
+        bin_file = self._load_map_bin_file(map_id, map_data)
+        if bin_file is None:
             return None
 
-        try:
-            bin_raws = WAD(wad_path).extract([bin_path], raw=True)
-            if not bin_raws or not bin_raws[0]:
-                return None
-            bin_file = BIN(bin_raws[0])
-        except Exception:
-            return None
+        return self._extract_map_events(bin_file, common_event_sources)[0]
 
-        return self._extract_map_events(bin_file, common_events_set)
+    def _record_map_event_dedup_summary(self, map_id: str, map_data: dict, dedup_summary: dict[str, Any]) -> None:
+        """记录地图公共事件去重造成的可解释差异。"""
+        total_removed = int(dedup_summary.get("total_removed", 0))
+        if total_removed <= 0:
+            return
+
+        map_name = self._get_map_name(map_data)
+        remaining_event_count = int(dedup_summary.get("remaining_event_count", 0))
+        source_labels = sorted(
+            {
+                source.split("/", 1)[0]
+                for payload in dedup_summary.get("categories", {}).values()
+                for source in payload.get("sources", [])
+            }
+        )
+        source_text = "、".join(source_labels) if source_labels else "公共地图"
+
+        if remaining_event_count == 0:
+            message = (
+                f"地图 {map_id} ({map_name}) 的事件在与 {source_text} 的公共事件去重后为空，"
+                f"共省略 {total_removed} 个事件；单独处理该地图时结果可能不同。"
+            )
+        else:
+            message = (
+                f"地图 {map_id} ({map_name}) 有 {total_removed} 个事件因与 {source_text} 的公共事件去重被省略，"
+                f"当前仍保留 {remaining_event_count} 个事件。"
+            )
+
+        detail_lines = []
+        for category, payload in sorted(dedup_summary.get("categories", {}).items()):
+            examples = ", ".join(payload.get("examples", [])) or "-"
+            sources = ", ".join(payload.get("sources", [])) or "-"
+            detail_lines.append(
+                f"category={category}, removed={payload.get('count', 0)}, sources=[{sources}], examples=[{examples}]"
+            )
+
+        detail = "\n".join(detail_lines)
+        record_runtime_note(self.ctx.runtime_cache, "update", message, label="数据更新", detail=detail)
+        for line in detail_lines:
+            logger.trace(f"地图 {map_id} 公共事件去重明细: {line}")
 
     def _process_map_banks_for_id(self, map_id: str, map_data: dict) -> dict | None:
         """
@@ -578,21 +842,11 @@ class BinUpdater:
         :param map_data: 地图数据字典
         :returns: 地图Banks数据字典，失败时返回None
         """
-        if not map_data.get("wad") or not map_data.get("binPath"):
+        if not map_data.get("binPath"):
             return None
 
-        wad_path = self.game_path / map_data["wad"]["root"]
-        bin_path = map_data["binPath"]
-
-        if not wad_path.exists():
-            return None
-
-        try:
-            bin_raws = WAD(wad_path).extract([bin_path], raw=True)
-            if not bin_raws or not bin_raws[0]:
-                return None
-            bin_file = BIN(bin_raws[0])
-        except Exception:
+        bin_file = self._load_map_bin_file(map_id, map_data)
+        if bin_file is None:
             return None
 
         # 处理Banks数据

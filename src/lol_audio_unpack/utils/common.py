@@ -1,14 +1,4 @@
-# 🐍 Sparse is better than dense.
-# 🐼 稀疏优于稠密
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2024/5/6 1:19
-# @Update  : 2025/8/4 8:58
-# @Detail  : 通用函数
-
-
+"""通用文件读写、路径处理与杂项辅助函数。"""
 import json
 import os
 import re
@@ -253,10 +243,13 @@ def dump_json(
 
 
 def load_json(path: str | PathLike | Path) -> dict:
-    """
-    读取json文件
-    :param path:
-    :return:
+    """读取 JSON 文件。
+
+    Args:
+        path: JSON 文件路径。
+
+    Returns:
+        dict: 读取失败或文件不存在时返回空字典。
     """
 
     path = Path(path)
@@ -270,13 +263,13 @@ def load_json(path: str | PathLike | Path) -> dict:
         with path.open(encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError:
-        logger.error(f"文件不存在， 位置: {path}")
+        logger.opt(exception=True).error(f"文件不存在，位置: {path}")
         return {}
     except json.JSONDecodeError as e:
-        logger.error(f"JSON 解析错误， 位置: {path}, 错误: {e}")
+        logger.opt(exception=True).error(f"JSON 解析错误，位置: {path}, 错误: {e}")
         return {}
     except Exception as e:
-        logger.error(f"未知错误， 位置: {path}, 错误: {e}")
+        logger.opt(exception=True).error(f"未知错误，位置: {path}, 错误: {e}")
         return {}
 
 
@@ -293,11 +286,13 @@ def dump_msgpack(obj, path: str | PathLike | Path):
 
 
 def load_msgpack(path: str | PathLike | Path) -> dict:
-    """
-    从文件读取并使用 MessagePack 反序列化对象
+    """从文件读取并使用 MessagePack 反序列化对象。
 
-    :param path: 文件路径
-    :return: 反序列化后的对象
+    Args:
+        path: MessagePack 文件路径。
+
+    Returns:
+        dict: 反序列化后的对象；读取失败或文件不存在时返回空字典。
     """
     path = Path(path)
     if not path.exists():
@@ -307,10 +302,10 @@ def load_msgpack(path: str | PathLike | Path) -> dict:
         with path.open("rb") as f:
             return msgpack.load(f, raw=False)
     except msgpack.exceptions.UnpackException as e:
-        logger.error(f"MessagePack 解析错误，位置: {path}, 错误: {e}")
+        logger.opt(exception=True).error(f"MessagePack 解析错误，位置: {path}, 错误: {e}")
         return {}
     except Exception as e:
-        logger.error(f"加载 MessagePack 文件时发生未知错误，位置: {path}, 错误: {e}")
+        logger.opt(exception=True).error(f"加载 MessagePack 文件时发生未知错误，位置: {path}, 错误: {e}")
         return {}
 
 
@@ -329,11 +324,13 @@ def dump_yaml(data: dict, path: PathLike | str | Path) -> None:
 
 
 def load_yaml(path: PathLike | str | Path) -> dict:
-    """
-    从YAML文件加载数据。
+    """从 YAML 文件加载数据。
 
-    :param path: 输入文件路径。
-    :return: 从YAML文件加载的字典数据。
+    Args:
+        path: 输入文件路径。
+
+    Returns:
+        dict: 从 YAML 文件加载的字典数据；读取失败或文件不存在时返回空字典。
     """
     path = Path(path)
     if not path.exists():
@@ -344,7 +341,7 @@ def load_yaml(path: PathLike | str | Path) -> dict:
         with path.open("r", encoding="utf-8") as f:
             return yaml.load(f) or {}
     except Exception as e:
-        logger.error(f"加载 YAML 文件时出错: {path}, 错误: {e}")
+        logger.opt(exception=True).error(f"加载 YAML 文件时出错: {path}, 错误: {e}")
         return {}
 
 

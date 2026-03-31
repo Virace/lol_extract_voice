@@ -1,23 +1,31 @@
 [project]
 name = "lol-audio-unpack"
-version = "3.5.0"
+version = "3.6.0"
 description = "英雄联盟游戏音频文件解包工具"
 authors = [
     { name = "Virace", email = "Virace@aliyun.com" }
 ]
 dependencies = [
-    "python-dotenv>=1.1.1",
+    "python-dotenv>=1.2.2",
     "msgpack>=1.1.1",
     "ruamel-yaml>=0.18.14",
-    "alive-progress>=3.3.0",
-    "league-tools",
+    "league-tools>=1.1.4",
+    "riotmanifest>=2.4.0",
 ]
 readme = "README.md"
-requires-python = ">= 3.13"
+requires-python = ">= 3.10"
+
+[project.optional-dependencies]
+gui = [
+    "pyside6>=6",
+    "pyside6-fluent-widgets>=1.7.0",
+    "pyvgmstream>=0.1.0",
+]
 
 [project.scripts]
 "unpack" = "lol_audio_unpack.__main__:main"
 "mapping" = "lol_audio_unpack.mapping:main"
+"unpack-gui" = "lol_audio_unpack.gui.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -28,9 +36,13 @@ managed = true
 default-groups = ["dev"]
 
 [dependency-groups]
+build = [
+    "pyinstaller>=6.19.0",
+]
 dev = [
     "memory-profiler>=0.61.0",
     "pytest>=9.0.0",
+    "pytest-qt>=4.5.0",
     "ruff>=0.13.0",
 ]
 
@@ -42,7 +54,7 @@ packages = ["src/lol_audio_unpack"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py313"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = [
@@ -97,10 +109,13 @@ docstring-code-format = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-m 'not remote_live' --basetemp=.temp/pytest"
+cache_dir = ".temp/.pytest_cache"
 markers = [
     "unit: 纯单元测试，不依赖本地游戏实体资源",
     "integration: 集成测试，可能依赖临时文件与多模块协作",
     "local_game: 依赖本地英雄联盟实体资源的只读验证测试",
+    "remote_live: 基于最新 live 清单与真实远端下载的长耗时测试，默认不在全量 pytest 中执行",
 ]
 
 [[tool.uv.index]]

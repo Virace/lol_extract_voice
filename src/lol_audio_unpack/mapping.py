@@ -1,32 +1,76 @@
-# 🐍 Although that way may not be obvious at first unless you're Dutch.
-# 🐼 尽管这方法一开始并非如此直观，除非你是荷兰人
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2025/8/4 8:00
-# @Update  : 2025/8/5 8:04
-# @Detail  : 音频文件映射
+"""音频事件映射核心流程。"""
 
+from __future__ import annotations
 
 import threading
 import time
-import traceback
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from league_tools import WAD, AudioEventMapper, WwiserHIRC
-from league_tools.utils.wwiser import WwiserManager
+from league_tools import WAD, AudioEventMapper, NativeHIRC, WwiserHIRC, WwiserManager
 from loguru import logger
 
-from lol_audio_unpack import setup_app
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.manager.utils import create_metadata_object, write_data
 from lol_audio_unpack.model import AudioEntityData, generate_champion_tasks, generate_map_tasks
-from lol_audio_unpack.utils.config import config
 from lol_audio_unpack.utils.logging import performance_monitor
+
+if TYPE_CHECKING:
+    from lol_audio_unpack.app_context import AppContext
+
+
+ParsedHIRC = NativeHIRC | WwiserHIRC
+
+
+def _get_wwiser_path(ctx: AppContext) -> Path | str | None:
+    """获取 wwiser 可执行路径。"""
+    return ctx.config.wwiser_path
+
+
+def _resolve_wwiser_path(ctx: AppContext) -> Path | None:
+    """解析并校验 wwiser 可执行路径。"""
+    wwiser_path = _get_wwiser_path(ctx)
+    if wwiser_path is None:
+        return None
+
+    path = Path(wwiser_path)
+    if not path.is_file():
+        raise ValueError(f"错误：Wwiser 工具路径不存在或不是文件: {path}")
+    return path
+
+
+def describe_hirc_backend(ctx: AppContext) -> str:
+    """返回当前 mapping 流程使用的 HIRC 后端描述。"""
+    wwiser_path = _resolve_wwiser_path(ctx)
+    if wwiser_path is None:
+        return "NativeHIRC（默认）"
+    return f"WwiserHIRC ({wwiser_path})"
+
+
+def _create_wwiser_manager(ctx: AppContext) -> WwiserManager | None:
+    """按上下文创建可选的 wwiser 管理器。"""
+    wwiser_path = _resolve_wwiser_path(ctx)
+    if wwiser_path is None:
+        return None
+    return WwiserManager(wwiser_path)
+
+
+def _get_cache_base_path(ctx: AppContext) -> Path:
+    """获取 cache 根目录。"""
+    return Path(ctx.paths.cache_path)
+
+
+def _get_hash_base_path(ctx: AppContext) -> Path:
+    """获取 hashes 根目录。"""
+    return Path(ctx.paths.hash_path)
+
+
+def _get_game_base_path(ctx: AppContext) -> Path:
+    """获取游戏根目录。"""
+    return Path(ctx.config.game_path)
 
 
 @dataclass
@@ -35,7 +79,7 @@ class MappingRuntimeCache:
 
     wad_cache: dict[Path, WAD] = field(default_factory=dict)
     extract_cache: set[tuple[Path, str]] = field(default_factory=set)
-    hirc_cache: dict[Path, WwiserHIRC] = field(default_factory=dict)
+    hirc_cache: dict[tuple[Path, str], ParsedHIRC] = field(default_factory=dict)
     cache_lock: threading.Lock | None = None
 
 
@@ -118,65 +162,76 @@ def _mark_bnk_extracted(
 def _get_cached_hirc(
     bnk_path: Path,
     hirc_cache_dir: Path,
-    wwiser_manager: WwiserManager,
+    wwiser_manager: WwiserManager | None,
     runtime_cache: MappingRuntimeCache | None,
-) -> WwiserHIRC:
+) -> ParsedHIRC:
     """获取 HIRC 对象并复用缓存。
 
     Args:
         bnk_path: bnk 文件路径。
         hirc_cache_dir: hirc 缓存目录。
-        wwiser_manager: wwiser 管理器。
+        wwiser_manager: 可选的 wwiser 管理器；为 ``None`` 时走 ``NativeHIRC``。
         runtime_cache: 映射过程共享缓存。
 
     Returns:
-        解析后的 ``WwiserHIRC`` 对象。
+        解析后的 HIRC 对象。
     """
-    if runtime_cache is None:
+    backend_key = "wwiser" if wwiser_manager is not None else "native"
+    cache_key = (bnk_path, backend_key)
+
+    def parse_hirc() -> ParsedHIRC:
+        if wwiser_manager is None:
+            return NativeHIRC.from_bnk(bnk_path, cache_dir=hirc_cache_dir)
         return WwiserHIRC.from_bnk(bnk_path, cache_dir=hirc_cache_dir, wwiser_manager=wwiser_manager)
+
+    if runtime_cache is None:
+        return parse_hirc()
 
     hirc_cache = runtime_cache.hirc_cache
     cache_lock = runtime_cache.cache_lock
 
     if cache_lock is None:
-        cached = hirc_cache.get(bnk_path)
+        cached = hirc_cache.get(cache_key)
         if cached is not None:
             return cached
-        parsed = WwiserHIRC.from_bnk(bnk_path, cache_dir=hirc_cache_dir, wwiser_manager=wwiser_manager)
-        hirc_cache[bnk_path] = parsed
+        parsed = parse_hirc()
+        hirc_cache[cache_key] = parsed
         return parsed
 
     with cache_lock:
-        cached = hirc_cache.get(bnk_path)
+        cached = hirc_cache.get(cache_key)
     if cached is not None:
         return cached
 
-    parsed = WwiserHIRC.from_bnk(bnk_path, cache_dir=hirc_cache_dir, wwiser_manager=wwiser_manager)
+    parsed = parse_hirc()
     with cache_lock:
-        existing = hirc_cache.get(bnk_path)
+        existing = hirc_cache.get(cache_key)
         if existing is not None:
             return existing
-        hirc_cache[bnk_path] = parsed
+        hirc_cache[cache_key] = parsed
         return parsed
 
 
 @logger.catch
 @performance_monitor(level="DEBUG")
-def build_audio_event_mapping(
+def build_audio_event_mapping(  # noqa: PLR0913
     entity_data: AudioEntityData,
     reader: DataReader,
     wwiser_manager: WwiserManager | None = None,
     integrate_data: bool = False,
     runtime_cache: MappingRuntimeCache | None = None,
+    *,
+    ctx: AppContext,
 ) -> dict[str, Any]:
     """构建单个实体的事件映射。
 
     Args:
         entity_data: 包含 events 的实体数据。
         reader: 数据读取器实例。
-        wwiser_manager: 可复用的 wwiser 管理器；为 ``None`` 时内部创建。
+        wwiser_manager: 可复用的 wwiser 管理器；为 ``None`` 时按 ``ctx`` 自动选择后端。
         integrate_data: 是否输出整合数据（实体信息 + banks + mapping）。
         runtime_cache: 映射流程共享缓存，用于复用 WAD/HIRC 解析结果。
+        ctx: 运行时上下文。
 
     Returns:
         映射结果或整合结果字典。
@@ -189,15 +244,15 @@ def build_audio_event_mapping(
 
     logger.info(f"构建 {entity_data.entity_name} (ID:{entity_data.entity_id}) 的事件映射")
 
-    # 使用传入的wwiser_manager或创建新实例
+    # 使用传入的 wwiser_manager，或按上下文决定是否启用 WwiserHIRC。
     if wwiser_manager is None:
-        wm = WwiserManager(config.WWISER_PATH)
+        wm = _create_wwiser_manager(ctx)
     else:
         wm = wwiser_manager
 
     # 创建版本化的缓存目录
-    version_cache_dir = config.CACHE_PATH / reader.version
-    version_hash_dir = config.HASH_PATH / reader.version
+    version_cache_dir = _get_cache_base_path(ctx) / reader.version
+    version_hash_dir = _get_hash_base_path(ctx) / reader.version
     version_cache_dir.mkdir(parents=True, exist_ok=True)
     version_hash_dir.mkdir(parents=True, exist_ok=True)
 
@@ -222,6 +277,9 @@ def build_audio_event_mapping(
         mapping_data_key = "map"
 
     mapping_result = base_data
+    mapped_event_count = 0
+    errored_event_count = 0
+    skipped_event_count = 0
 
     # 遍历所有子实体（皮肤或地图）
     for sub_id, sub_data in entity_data.sub_entities.items():
@@ -248,6 +306,7 @@ def build_audio_event_mapping(
                 logger.info(f"特殊情况，{sub_id} {category} 有 {len(paths_list)} 个路径组合，将逐个处理并合并")
 
             category_mapping = None  # 用于合并多个映射结果
+            category_error_count = 0
 
             # 循环处理每个路径组合
             for path_group_idx, path_group in enumerate(paths_list):
@@ -272,7 +331,7 @@ def build_audio_event_mapping(
                 else:
                     wad_file = entity_data.wad_root
 
-                wad_path = config.GAME_PATH / wad_file
+                wad_path = _get_game_base_path(ctx) / wad_file
                 if not wad_path.exists():
                     logger.warning(f"WAD文件不存在: {wad_path}")
                     continue
@@ -295,7 +354,7 @@ def build_audio_event_mapping(
                     hirc_cache_dir = version_cache_dir / "hirc"
                     hirc_cache_dir.mkdir(parents=True, exist_ok=True)
 
-                    # 使用 WwiserHIRC 解析
+                    # 默认走 NativeHIRC；仅在显式提供 wwiser 路径时走 WwiserHIRC。
                     hirc = _get_cached_hirc(
                         bnk_path=bnk_path,
                         hirc_cache_dir=hirc_cache_dir,
@@ -318,21 +377,33 @@ def build_audio_event_mapping(
                         logger.debug(f"路径组合 {path_group_idx + 1}: 合并映射完成")
 
                 except Exception as e:
-                    logger.error(f"处理路径组合 {path_group_idx + 1} 时出错: {e}")
-                    logger.debug(traceback.format_exc())
+                    category_error_count += 1
+                    logger.opt(exception=bool(getattr(ctx.config, "dev_mode", False))).warning(
+                        f"处理路径组合 {path_group_idx + 1} 时出错: {e}"
+                    )
                     continue
 
             # 保存最终的合并结果
             if category_mapping is not None:
                 # 检查映射结果是否为空，只保存非空的映射
                 if category_mapping.forward_mapping:
+                    mapped_count = len(category_mapping.forward_mapping)
+                    skipped_count = max(len(event_list) - mapped_count, 0)
+                    mapped_event_count += mapped_count
+                    skipped_event_count += skipped_count
                     sub_mapping[category] = category_mapping.forward_mapping
-                    logger.success(
-                        f"完成 {category} 的映射，处理了 {len(paths_list)} 个路径组合，事件数: {len(event_list)}，映射条目: {len(category_mapping.forward_mapping)}"
+                    logger.debug(
+                        f"完成 {category} 的映射，处理了 {len(paths_list)} 个路径组合，事件数: {len(event_list)}，"
+                        f"映射条目: {mapped_count}，未映射跳过: {skipped_count}"
                     )
                 else:
+                    skipped_event_count += len(event_list)
                     logger.warning(f"类别 {category} 映射结果为空，跳过保存")
             else:
+                if category_error_count > 0:
+                    errored_event_count += len(event_list)
+                else:
+                    skipped_event_count += len(event_list)
                 logger.warning(f"类别 {category} 没有生成任何有效的映射结果")
 
         # 只保存非空的子实体映射
@@ -355,10 +426,20 @@ def build_audio_event_mapping(
             )
             integration_save_dir.mkdir(parents=True, exist_ok=True)
             integration_file_base = integration_save_dir / entity_data.entity_id
-            write_data(integrated_result, integration_file_base)
-            logger.success(f"整合数据已保存: {integration_file_base}")
+            write_data(integrated_result, integration_file_base, dev_mode=ctx.config.dev_mode)
+            logger.debug(f"整合数据已保存: {integration_file_base}")
 
-        logger.success(f"完成 {entity_data.entity_name} 的整合数据构建")
+        summary_message = (
+            f"{entity_data.entity_name} 的整合数据统计：成功映射事件 {mapped_event_count} 个，"
+            f"异常事件 {errored_event_count} 个，未映射跳过 {skipped_event_count} 个"
+        )
+        if errored_event_count > 0:
+            if mapped_event_count > 0 or skipped_event_count > 0:
+                logger.warning(summary_message)
+            else:
+                logger.error(summary_message)
+        else:
+            logger.success(summary_message)
         return integrated_result
     else:
         # 移除 languages 字段（映射文件不需要）
@@ -367,12 +448,22 @@ def build_audio_event_mapping(
         # 保存映射结果到文件
         if mapping_result[mapping_data_key]:
             mapping_file_base = mapping_save_dir / entity_data.entity_id
-            write_data(mapping_result, mapping_file_base)
-            logger.success(f"映射结果已保存: {mapping_file_base}")
+            write_data(mapping_result, mapping_file_base, dev_mode=ctx.config.dev_mode)
+            logger.debug(f"映射结果已保存: {mapping_file_base}")
         else:
             logger.warning(f"{entity_data.entity_name} 没有找到任何有效映射数据")
 
-        logger.success(f"完成 {entity_data.entity_name} 的事件映射构建")
+        summary_message = (
+            f"{entity_data.entity_name} 的事件映射统计：成功映射事件 {mapped_event_count} 个，"
+            f"异常事件 {errored_event_count} 个，未映射跳过 {skipped_event_count} 个"
+        )
+        if errored_event_count > 0:
+            if mapped_event_count > 0 or skipped_event_count > 0:
+                logger.warning(summary_message)
+            else:
+                logger.error(summary_message)
+        else:
+            logger.success(summary_message)
         return mapping_result
 
 
@@ -501,28 +592,31 @@ def integrate_entity_data(
     return integrated_data
 
 
-def build_champion_mapping(
+def build_champion_mapping(  # noqa: PLR0913
     champion_id: int,
     reader: DataReader,
     wwiser_manager: WwiserManager | None = None,
     integrate_data: bool = False,
     runtime_cache: MappingRuntimeCache | None = None,
+    *,
+    ctx: AppContext,
 ) -> dict[str, Any]:
     """构建单个英雄的事件映射。
 
     Args:
         champion_id: 英雄 ID。
         reader: 数据读取器实例。
-        wwiser_manager: 可复用的 wwiser 管理器；为 ``None`` 时内部创建。
+        wwiser_manager: 可复用的 wwiser 管理器；为 ``None`` 时按 ``ctx`` 自动选择后端。
         integrate_data: 是否输出整合数据。
         runtime_cache: 映射流程共享缓存。
+        ctx: 运行时上下文。
 
     Returns:
         英雄映射结果；失败时返回空字典。
     """
     try:
         # 创建包含事件数据的AudioEntityData实例
-        entity_data = AudioEntityData.from_champion(champion_id, reader, include_events=True)
+        entity_data = AudioEntityData.from_champion(champion_id, reader, include_events=True, ctx=ctx)
         # 构建映射
         return build_audio_event_mapping(
             entity_data,
@@ -530,34 +624,38 @@ def build_champion_mapping(
             wwiser_manager,
             integrate_data,
             runtime_cache=runtime_cache,
+            ctx=ctx,
         )
     except ValueError as e:
         logger.error(str(e))
         return {}
 
 
-def build_map_mapping(
+def build_map_mapping(  # noqa: PLR0913
     map_id: int,
     reader: DataReader,
     wwiser_manager: WwiserManager | None = None,
     integrate_data: bool = False,
     runtime_cache: MappingRuntimeCache | None = None,
+    *,
+    ctx: AppContext,
 ) -> dict[str, Any]:
     """构建单个地图的事件映射。
 
     Args:
         map_id: 地图 ID。
         reader: 数据读取器实例。
-        wwiser_manager: 可复用的 wwiser 管理器；为 ``None`` 时内部创建。
+        wwiser_manager: 可复用的 wwiser 管理器；为 ``None`` 时按 ``ctx`` 自动选择后端。
         integrate_data: 是否输出整合数据。
         runtime_cache: 映射流程共享缓存。
+        ctx: 运行时上下文。
 
     Returns:
         地图映射结果；失败时返回空字典。
     """
     try:
         # 创建包含事件数据的AudioEntityData实例
-        entity_data = AudioEntityData.from_map(map_id, reader, include_events=True)
+        entity_data = AudioEntityData.from_map(map_id, reader, include_events=True, ctx=ctx)
         # 构建映射
         return build_audio_event_mapping(
             entity_data,
@@ -565,14 +663,21 @@ def build_map_mapping(
             wwiser_manager,
             integrate_data,
             runtime_cache=runtime_cache,
+            ctx=ctx,
         )
     except ValueError as e:
         logger.error(str(e))
         return {}
 
 
-def execute_mapping_tasks(
-    tasks: list[tuple[str, int, str]], reader: DataReader, max_workers: int = 4, integrate_data: bool = False
+def execute_mapping_tasks(  # noqa: PLR0913
+    tasks: list[tuple[str, int, str]],
+    reader: DataReader,
+    max_workers: int = 4,
+    integrate_data: bool = False,
+    *,
+    ctx: AppContext,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
 ) -> None:
     """执行映射任务集
 
@@ -580,6 +685,7 @@ def execute_mapping_tasks(
     :param reader: 数据读取器
     :param max_workers: 最大工作线程数
     :param integrate_data: 是否生成整合数据
+    :param ctx: 运行时上下文。
     """
     if not tasks:
         logger.warning("没有任何任务需要执行")
@@ -597,14 +703,25 @@ def execute_mapping_tasks(
         summary_parts.append(f"{champion_count} 个英雄")
     if map_count > 0:
         summary_parts.append(f"{map_count} 个地图")
+    totals_by_type = {
+        "champion": champion_count,
+        "map": map_count,
+    }
+    finished_by_type = {
+        "champion": 0,
+        "map": 0,
+    }
 
     logger.info(
         f"开始构建 {total_tasks} 个实体的事件映射 ({' 和 '.join(summary_parts)})，"
         f"模式: {'多线程' if max_workers > 1 else '单线程'} (workers: {max_workers})"
     )
+    logger.info(f"HIRC 后端: {describe_hirc_backend(ctx)}")
+    failed_count = 0
+    show_exception = bool(getattr(ctx.config, "dev_mode", False))
 
-    # 初始化共享的Wwiser管理器（避免重复创建）
-    wwiser_manager = WwiserManager(config.WWISER_PATH)
+    # 初始化共享的可选 wwiser 管理器，避免重复创建。
+    wwiser_manager = _create_wwiser_manager(ctx)
     runtime_cache = MappingRuntimeCache(cache_lock=threading.Lock() if max_workers > 1 else None)
 
     def build_entity_mapping(entity_type: str, entity_id: int) -> None:
@@ -616,6 +733,7 @@ def execute_mapping_tasks(
                 wwiser_manager,
                 integrate_data,
                 runtime_cache=runtime_cache,
+                ctx=ctx,
             )
         elif entity_type == "map":
             build_map_mapping(
@@ -624,6 +742,7 @@ def execute_mapping_tasks(
                 wwiser_manager,
                 integrate_data,
                 runtime_cache=runtime_cache,
+                ctx=ctx,
             )
         else:
             raise ValueError(f"未知的实体类型: {entity_type}")
@@ -640,35 +759,72 @@ def execute_mapping_tasks(
             for future in as_completed(future_to_task):
                 entity_type, entity_id, description = future_to_task[future]
                 completed_count += 1
+                finished_by_type[entity_type] = finished_by_type.get(entity_type, 0) + 1
 
                 try:
                     future.result()  # 获取结果，如果函数中出现异常，这里会重新抛出
-                    logger.info(f"进度: {completed_count}/{total_tasks} - {description} 映射完成。")
+                    progress_message = f"{description} 映射完成"
+                    logger.info(f"进度: {completed_count}/{total_tasks} - {progress_message}。")
                 except Exception as exc:
-                    logger.error(f"{description} 映射时发生错误: {exc}")
-                    logger.debug(traceback.format_exc())
+                    failed_count += 1
+                    progress_message = f"{description} 映射失败"
+                    logger.opt(exception=show_exception).warning(
+                        f"{description} 映射失败，将继续后续任务: {exc}"
+                    )
+                if progress_callback is not None:
+                    progress_callback(
+                        entity_type,
+                        finished_by_type.get(entity_type, completed_count),
+                        max(totals_by_type.get(entity_type, total_tasks), 1),
+                        progress_message,
+                    )
     else:
         # --- 单线程模式 ---
         completed_count = 0
         for entity_type, entity_id, description in tasks:
             try:
                 build_entity_mapping(entity_type, entity_id)
+                progress_message = f"{description} 映射完成"
                 completed_count += 1
-                logger.info(f"进度: {completed_count}/{total_tasks} - {description} 映射完成。")
+                logger.info(f"进度: {completed_count}/{total_tasks} - {progress_message}。")
             except Exception as exc:
-                logger.error(f"{description} 映射时发生错误: {exc}")
-                logger.debug(traceback.format_exc())
+                failed_count += 1
+                progress_message = f"{description} 映射失败"
+                logger.opt(exception=show_exception).warning(
+                    f"{description} 映射失败，将继续后续任务: {exc}"
+                )
+            finished_by_type[entity_type] = finished_by_type.get(entity_type, 0) + 1
+            if progress_callback is not None:
+                progress_callback(
+                    entity_type,
+                    finished_by_type.get(entity_type, completed_count),
+                    max(totals_by_type.get(entity_type, total_tasks), 1),
+                    progress_message,
+                )
 
     end_time = time.time()
-    logger.success(f"映射完成: {' 和 '.join(summary_parts)}，耗时 {end_time - start_time:.2f}s")
+    summary_message = (
+        f"映射完成: {' 和 '.join(summary_parts)}，"
+        f"成功 {total_tasks - failed_count} 个，失败 {failed_count} 个，"
+        f"耗时 {end_time - start_time:.2f}s"
+    )
+    if failed_count == 0:
+        logger.success(summary_message)
+    elif failed_count < total_tasks:
+        logger.warning(summary_message)
+    else:
+        logger.error(summary_message)
 
 
-def build_mapping_all(
+def build_mapping_all(  # noqa: PLR0913
     reader: DataReader,
     max_workers: int = 4,
     include_champions: bool = True,
     include_maps: bool = True,
     integrate_data: bool = False,
+    *,
+    ctx: AppContext,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
 ) -> None:
     """使用线程池并发构建所有实体的事件映射
 
@@ -697,11 +853,24 @@ def build_mapping_all(
         return
 
     # 执行任务
-    execute_mapping_tasks(tasks, reader, max_workers, integrate_data)
+    execute_mapping_tasks(
+        tasks,
+        reader,
+        max_workers,
+        integrate_data,
+        ctx=ctx,
+        progress_callback=progress_callback,
+    )
 
 
-def build_champions_mapping(
-    reader: DataReader, champion_ids: list[int], max_workers: int = 4, integrate_data: bool = False
+def build_champions_mapping(  # noqa: PLR0913
+    reader: DataReader,
+    champion_ids: list[int],
+    max_workers: int = 4,
+    integrate_data: bool = False,
+    *,
+    ctx: AppContext,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
 ) -> None:
     """便捷函数：构建指定英雄的事件映射
 
@@ -712,11 +881,24 @@ def build_champions_mapping(
     :raises ValueError: 当指定的ID不存在时
     """
     tasks = generate_champion_tasks(reader, champion_ids)
-    execute_mapping_tasks(tasks, reader, max_workers, integrate_data)
+    execute_mapping_tasks(
+        tasks,
+        reader,
+        max_workers,
+        integrate_data,
+        ctx=ctx,
+        progress_callback=progress_callback,
+    )
 
 
-def build_maps_mapping(
-    reader: DataReader, map_ids: list[int], max_workers: int = 4, integrate_data: bool = False
+def build_maps_mapping(  # noqa: PLR0913
+    reader: DataReader,
+    map_ids: list[int],
+    max_workers: int = 4,
+    integrate_data: bool = False,
+    *,
+    ctx: AppContext,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
 ) -> None:
     """便捷函数：构建指定地图的事件映射
 
@@ -727,17 +909,26 @@ def build_maps_mapping(
     :raises ValueError: 当指定的ID不存在时
     """
     tasks = generate_map_tasks(reader, map_ids)
-    execute_mapping_tasks(tasks, reader, max_workers, integrate_data)
+    execute_mapping_tasks(
+        tasks,
+        reader,
+        max_workers,
+        integrate_data,
+        ctx=ctx,
+        progress_callback=progress_callback,
+    )
 
 
 def main():
     """示例：构建单个英雄的事件映射"""
-    setup_app(dev_mode=True, log_level="INFO")
+    from lol_audio_unpack import setup_app  # noqa: PLC0415
+
+    ctx = setup_app(dev_mode=True, log_level="INFO")
     logger.disable("league_tools")
 
-    reader = DataReader()
+    reader = DataReader(ctx=ctx)
     # 示例：构建安妮(ID=1)的事件映射
-    result = build_champion_mapping(1, reader)
+    result = build_champion_mapping(1, reader, ctx=ctx)
     logger.info(f"映射结果: {len(result.get('skins', {}))} 个皮肤")
 
 

@@ -1,0 +1,120 @@
+"""运行时路径语义测试。"""
+
+from pathlib import Path
+
+from lol_audio_unpack.utils.runtime_paths import (
+    apply_frozen_working_directory,
+    detect_runtime_paths,
+    get_default_output_root,
+    get_default_vgmstream_path,
+    get_default_wwiser_path,
+)
+
+
+def test_detect_runtime_paths_uses_cwd_for_source_runs(tmp_path: Path) -> None:
+    """源码运行时应以当前工作目录作为默认根目录。"""
+    source_cwd = tmp_path / "workspace"
+    source_cwd.mkdir(parents=True, exist_ok=True)
+    executable = tmp_path / "python" / "python.exe"
+
+    runtime_paths = detect_runtime_paths(
+        is_frozen=False,
+        cwd=source_cwd,
+        executable=executable,
+    )
+
+    assert runtime_paths.is_frozen is False
+    assert runtime_paths.launch_root == source_cwd.resolve()
+    assert runtime_paths.config_root == source_cwd.resolve()
+    assert runtime_paths.bundle_root == source_cwd.resolve()
+    assert runtime_paths.executable_path == executable.resolve(strict=False)
+
+
+def test_detect_runtime_paths_uses_executable_dir_for_frozen_runs(tmp_path: Path) -> None:
+    """冻结运行时应以可执行文件所在目录作为默认根目录。"""
+    source_cwd = tmp_path / "shortcut-workdir"
+    source_cwd.mkdir(parents=True, exist_ok=True)
+    executable = tmp_path / "bundle" / "LolAudioUnpack.exe"
+
+    runtime_paths = detect_runtime_paths(
+        is_frozen=True,
+        cwd=source_cwd,
+        executable=executable,
+    )
+
+    expected_root = executable.parent.resolve(strict=False)
+
+    assert runtime_paths.is_frozen is True
+    assert runtime_paths.launch_root == expected_root
+    assert runtime_paths.config_root == expected_root
+    assert runtime_paths.bundle_root == expected_root
+    assert runtime_paths.executable_path == executable.resolve(strict=False)
+
+
+def test_default_output_root_follows_launch_root(tmp_path: Path) -> None:
+    """未显式指定输出目录时应基于默认启动根目录派生 ``output``。"""
+    executable = tmp_path / "bundle" / "LolAudioUnpack.exe"
+    runtime_paths = detect_runtime_paths(
+        is_frozen=True,
+        cwd=tmp_path / "elsewhere",
+        executable=executable,
+    )
+
+    assert get_default_output_root(runtime_paths) == executable.parent.resolve(strict=False) / "output"
+
+
+def test_default_tool_paths_follow_launch_root_and_platform(tmp_path: Path) -> None:
+    """默认工具路径应跟随 launch_root，并按平台处理 vgmstream 后缀。"""
+    executable = tmp_path / "bundle" / "LolAudioUnpack.exe"
+    runtime_paths = detect_runtime_paths(
+        is_frozen=True,
+        cwd=tmp_path / "elsewhere",
+        executable=executable,
+    )
+    expected_root = executable.parent.resolve(strict=False)
+
+    assert get_default_wwiser_path(runtime_paths) == expected_root / "tools" / "wwiser" / "wwiser.pyz"
+    assert get_default_vgmstream_path(runtime_paths, platform="win32") == (
+        expected_root / "tools" / "vgmstream" / "vgmstream-cli.exe"
+    )
+    assert get_default_vgmstream_path(runtime_paths, platform="linux") == (
+        expected_root / "tools" / "vgmstream" / "vgmstream-cli"
+    )
+
+
+def test_apply_frozen_working_directory_switches_to_launch_root(tmp_path: Path) -> None:
+    """冻结态运行时应在 runtime hook 中切到 ``launch_root``。"""
+    executable = tmp_path / "bundle" / "LolAudioUnpack.exe"
+    runtime_paths = detect_runtime_paths(
+        is_frozen=True,
+        cwd=tmp_path / "shortcut-workdir",
+        executable=executable,
+    )
+    chdir_calls: list[Path] = []
+
+    target = apply_frozen_working_directory(
+        runtime_paths=runtime_paths,
+        chdir=lambda path: chdir_calls.append(Path(path)),
+    )
+
+    assert target == executable.parent.resolve(strict=False)
+    assert chdir_calls == [executable.parent.resolve(strict=False)]
+
+
+def test_apply_frozen_working_directory_keeps_source_runs_unchanged(tmp_path: Path) -> None:
+    """源码态运行时不应被 runtime hook 改写当前工作目录。"""
+    source_cwd = tmp_path / "workspace"
+    runtime_paths = detect_runtime_paths(
+        is_frozen=False,
+        cwd=source_cwd,
+        executable=tmp_path / "python" / "python.exe",
+    )
+    chdir_calls: list[Path] = []
+
+    target = apply_frozen_working_directory(
+        runtime_paths=runtime_paths,
+        chdir=lambda path: chdir_calls.append(Path(path)),
+    )
+
+    assert target is None
+    assert chdir_calls == []

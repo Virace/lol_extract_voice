@@ -1,20 +1,15 @@
-# 🐍 If the implementation is hard to explain, it's a bad idea.
-# 🐼 很难解释的，必然是坏方法
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2025/7/23 12:27
-# @Update  : 2025/8/7 11:28
-# @Detail  : 解包音频
+"""音频解包核心流程。"""
 
+from __future__ import annotations
 
 import os
+import shutil
 import threading
 import time
-import traceback
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from league_tools.formats import BNK, WAD, WPK
 from loguru import logger
@@ -22,7 +17,6 @@ from loguru import logger
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.model import AudioEntityData, generate_champion_tasks, generate_map_tasks
 from lol_audio_unpack.utils.common import sanitize_filename
-from lol_audio_unpack.utils.config import config
 from lol_audio_unpack.utils.logging import performance_monitor
 from lol_audio_unpack.utils.path_constants import (
     format_entity_folder_name,
@@ -31,8 +25,58 @@ from lol_audio_unpack.utils.path_constants import (
 )
 from lol_audio_unpack.utils.stats import FileProcessResult, ProcessingStatsContext
 
+if TYPE_CHECKING:
+    from lol_audio_unpack.app_context import AppContext
+
 # todo: ID6, 厄加特, 6009, 西部魔影 厄加特, ASSETS/Sounds/Wwise2016/SFX/Characters/Urgot/Skins/Skin09/Urgot_Skin09_VO_audio.bnk, 该文件在根WAD
 # todo: ID62, 孙悟空，62007, 战斗学院 孙悟空, ASSETS/Sounds/Wwise2016/SFX/Characters/MonkeyKing/Skins/Skin07/MonkeyKing_Skin07_VO_audio.bnk, 该文件在根WAD
+
+AUDIO_TYPE_VO = "VO"
+
+
+def _get_game_region(ctx: AppContext) -> str:
+    """获取当前运行语言区域。"""
+    return str(ctx.config.game_region or "zh_CN")
+
+
+def _get_audio_base_path(ctx: AppContext) -> Path:
+    """获取音频输出根目录。"""
+    return Path(ctx.paths.audio_path)
+
+
+def _get_report_base_path(ctx: AppContext) -> Path:
+    """获取报告输出根目录。"""
+    return Path(ctx.paths.report_path)
+
+
+def _get_manifest_base_path(ctx: AppContext) -> Path:
+    """获取 manifest 根目录。"""
+    return Path(ctx.paths.manifest_path)
+
+
+def _get_include_types(ctx: AppContext) -> list[str]:
+    """获取包含的音频类型列表。"""
+    return list(ctx.config.include_types)
+
+
+def _get_exclude_types(ctx: AppContext) -> list[str]:
+    """获取排除的音频类型列表。"""
+    return list(ctx.config.exclude_types)
+
+
+def _is_group_by_type(ctx: AppContext) -> bool:
+    """是否按音频类型优先分组输出。"""
+    return bool(ctx.config.group_by_type)
+
+
+def _is_bp_vo_enabled(ctx: AppContext) -> bool:
+    """是否启用大厅 BP 语音附加。"""
+    return bool(ctx.config.with_bp_vo)
+
+
+def _get_vo_audio_type(_ctx: AppContext) -> str:
+    """获取 VO 音频类型常量。"""
+    return AUDIO_TYPE_VO
 
 
 def _get_wad_instance(
@@ -71,6 +115,8 @@ def unpack_audio_entity(
     reader: DataReader,
     wad_cache: dict[Path, WAD] | None = None,
     cache_lock: threading.Lock | None = None,
+    *,
+    ctx: AppContext,
 ) -> None:
     """解包单个实体音频（英雄或地图）。
 
@@ -79,19 +125,21 @@ def unpack_audio_entity(
         reader: 已初始化的数据读取器。
         wad_cache: 本轮解包共享 WAD 缓存。
         cache_lock: 多线程场景下的缓存锁。
+        ctx: 运行时上下文。
 
     Raises:
         ValueError: 实体数据无效时抛出。
     """
-    language = config.GAME_REGION  # 决定解包哪种语言的音频
-    audio_path = config.AUDIO_PATH / reader.version
+    language = _get_game_region(ctx)  # 决定解包哪种语言的音频
+    audio_path = _get_audio_base_path(ctx) / reader.version
     if not audio_path.exists():
         audio_path.mkdir(parents=True, exist_ok=True)
 
+    include_types = _get_include_types(ctx)
+    exclude_types = _get_exclude_types(ctx)
+
     # 使用统计上下文管理器，自动处理统计的开始和结束
-    stats_context = ProcessingStatsContext(
-        entity_data, reader.version, language, config.INCLUDE_TYPE, config.EXCLUDE_TYPE
-    )
+    stats_context = ProcessingStatsContext(entity_data, reader.version, language, include_types, exclude_types)
     with stats_context as stats:
         logger.info(f"解包 {entity_data.entity_name} (ID:{entity_data.entity_id})")
 
@@ -125,14 +173,14 @@ def unpack_audio_entity(
                 # 通过类别名称判断音频类型（VO/SFX/MUSIC）
                 audio_type = reader.get_audio_type(category)
 
-                if audio_type in config.EXCLUDE_TYPE:
+                if audio_type in exclude_types:
                     continue
 
                 # 创建包含子实体信息和音频类型的字典，用于后续文件组织
                 sub_info_with_type = {"id": sub_id_int, "name": sub_name, "type": audio_type}
 
                 # 根据音频类型分别处理，VO文件和其他类型文件存储在不同WAD中
-                if audio_type == config.AUDIO_TYPE_VO:
+                if audio_type == _get_vo_audio_type(ctx):
                     for bank in banks_list:  # banks_list是合集列表
                         for path in bank:  # 每个合集包含多个文件路径
                             vo_paths_to_extract.add(path)
@@ -159,7 +207,7 @@ def unpack_audio_entity(
         path_to_raw_data_map = {}
 
         # 2.1 从特定语言的WAD文件中解包VO（语音）文件
-        lang_wad_path = entity_data.get_wad_path("VO")
+        lang_wad_path = entity_data.get_wad_path("VO", ctx=ctx)
         if lang_wad_path and vo_paths_to_extract:
             vo_path_list = list(vo_paths_to_extract)  # 无需排序（WAD.extract保证顺序）
             try:
@@ -170,8 +218,9 @@ def unpack_audio_entity(
                 # 记录VO WAD解包成功统计
                 stats.set_wad_info("VO", lang_wad_path, len(vo_path_list), len(file_raws))
             except Exception as e:
-                logger.error(f"解包语言WAD文件 '{lang_wad_path.name}' 时出错: {e}")
-                logger.debug(traceback.format_exc())
+                logger.opt(exception=bool(getattr(ctx.config, "dev_mode", False))).error(
+                    f"解包语言WAD文件 '{lang_wad_path.name}' 时出错: {e}"
+                )
                 # 记录VO WAD解包失败统计
                 stats.set_wad_info("VO", lang_wad_path, len(vo_path_list), 0, str(e))
         elif vo_paths_to_extract:
@@ -180,7 +229,7 @@ def unpack_audio_entity(
             stats.set_wad_info("VO", None, len(vo_paths_to_extract), 0, "WAD文件不存在")
 
         # 2.2 从根WAD文件中解包SFX（音效）和Music（音乐）文件
-        root_wad_path = entity_data.get_wad_path("SFX")
+        root_wad_path = entity_data.get_wad_path("SFX", ctx=ctx)
         if root_wad_path and other_paths_to_extract:
             other_path_list = list(other_paths_to_extract)  # 无需排序（WAD.extract保证顺序）
             try:
@@ -191,8 +240,9 @@ def unpack_audio_entity(
                 # 记录SFX/Music WAD解包成功统计
                 stats.set_wad_info("ROOT", root_wad_path, len(other_path_list), len(file_raws))
             except Exception as e:
-                logger.error(f"解包根WAD文件 '{root_wad_path.name}' 时出错: {e}")
-                logger.debug(traceback.format_exc())
+                logger.opt(exception=bool(getattr(ctx.config, "dev_mode", False))).error(
+                    f"解包根WAD文件 '{root_wad_path.name}' 时出错: {e}"
+                )
                 # 记录SFX/Music WAD解包失败统计
                 stats.set_wad_info("ROOT", root_wad_path, len(other_path_list), 0, str(e))
         elif other_paths_to_extract:
@@ -247,7 +297,7 @@ def unpack_audio_entity(
 
             # 遍历每种音频类型的文件组
             for audio_type, files_in_type in files_by_type.items():
-                output_path = generate_output_path(entity_data, sub_id_str, audio_type, audio_path)
+                output_path = generate_output_path(entity_data, sub_id_str, audio_type, audio_path, ctx=ctx)
                 output_path.mkdir(parents=True, exist_ok=True)
 
                 logger.debug(f"处理 {sub_name} ({audio_type}) - {len(files_in_type)} 个文件")
@@ -347,7 +397,7 @@ def unpack_audio_entity(
         report_filename = f"_{entity_data.entity_id}_metadata.yaml"
 
         report_path = (
-            config.REPORT_PATH / reader.version / get_output_dir_name(entity_data.entity_type) / report_filename
+            _get_report_base_path(ctx) / reader.version / get_output_dir_name(entity_data.entity_type) / report_filename
         )
         report_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -382,26 +432,32 @@ def _generate_relative_path(entity_data: AudioEntityData, sub_id: str) -> Path:
 
 
 def generate_output_path(
-    entity_data: AudioEntityData, sub_id: str, audio_type: str, base_path: Path | None = None
+    entity_data: AudioEntityData,
+    sub_id: str,
+    audio_type: str,
+    base_path: Path | None = None,
+    *,
+    ctx: AppContext,
 ) -> Path:
     """生成完整的输出路径
 
-    根据 config.GROUP_BY_TYPE 配置决定目录结构：
+    根据 ``ctx.config.group_by_type`` 配置决定目录结构：
     - True: audios/VO/champions/1·annie·黑暗之女·安妮/1000·基础皮肤
     - False: audios/champions/1·annie·黑暗之女·安妮/1000·基础皮肤/VO
 
     :param entity_data: 实体数据
     :param sub_id: 子实体ID（皮肤ID或地图ID）
     :param audio_type: 音频类型（VO/SFX/MUSIC）
-    :param base_path: 基础路径，默认使用 config.AUDIO_PATH
+    :param base_path: 基础路径，默认使用 ``ctx.paths.audio_path``。
+    :param ctx: 运行时上下文。
     :returns: 完整的输出路径
     """
     if base_path is None:
-        base_path = config.AUDIO_PATH
+        base_path = _get_audio_base_path(ctx)
 
     relative_path = _generate_relative_path(entity_data, sub_id)
 
-    if config.GROUP_BY_TYPE:
+    if _is_group_by_type(ctx):
         # 方案一：按音频类型优先分组 - audios/音频类型/相对路径
         return base_path / audio_type / relative_path
     else:
@@ -409,11 +465,102 @@ def generate_output_path(
         return base_path / relative_path / audio_type
 
 
+def _find_bp_vo_source_file(
+    reader: DataReader,
+    champion_id: str,
+    category: str,
+    ctx: AppContext,
+) -> Path | None:
+    """查找大厅 BP 语音源文件。"""
+    manifest_root = _get_manifest_base_path(ctx) / reader.version / "lobby_vo"
+    region = _get_game_region(ctx)
+    region_candidates: list[str] = []
+
+    if region:
+        region_candidates.append(region)
+        region_lower = region.lower()
+        if region_lower not in region_candidates:
+            region_candidates.append(region_lower)
+    if "default" not in region_candidates:
+        region_candidates.append("default")
+
+    for region_name in region_candidates:
+        candidate = manifest_root / region_name / category / f"{champion_id}.ogg"
+        if candidate.exists():
+            return candidate
+
+    return None
+
+
+def _link_or_copy_file(source: Path, target: Path) -> str:
+    """优先创建硬链接，失败时回退为复制。"""
+    if target.exists():
+        target.unlink()
+
+    try:
+        os.link(source, target)
+        return "hardlink"
+    except OSError:
+        shutil.copy2(source, target)
+        return "copy"
+
+
+def _attach_bp_vo_to_champion(
+    entity_data: AudioEntityData,
+    reader: DataReader,
+    ctx: AppContext,
+) -> None:
+    """将大厅选用/禁用语音附加到英雄输出目录。"""
+    if not _is_bp_vo_enabled(ctx):
+        return
+
+    audio_base = _get_audio_base_path(ctx)
+    entity_folder_name = format_entity_folder_name(
+        entity_data.entity_id, entity_data.entity_alias, entity_data.entity_name, entity_data.entity_title
+    )
+    if _is_group_by_type(ctx):
+        target_dir = (
+            audio_base
+            / reader.version
+            / _get_vo_audio_type(ctx)
+            / get_output_dir_name(entity_data.entity_type)
+            / entity_folder_name
+            / "BP_VO"
+        )
+    else:
+        target_dir = (
+            audio_base
+            / reader.version
+            / get_output_dir_name(entity_data.entity_type)
+            / entity_folder_name
+            / "BP_VO"
+        )
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    file_mapping = {
+        "champion-ban-vo": "ban.ogg",
+        "champion-choose-vo": "choose.ogg",
+    }
+    for category, target_name in file_mapping.items():
+        source_file = _find_bp_vo_source_file(reader, entity_data.entity_id, category, ctx=ctx)
+        if source_file is None:
+            logger.warning(
+                f"未找到英雄 {entity_data.entity_id} 的大厅语音文件: {category}/{entity_data.entity_id}.ogg"
+            )
+            continue
+
+        target_file = target_dir / target_name
+        mode = _link_or_copy_file(source_file, target_file)
+        logger.debug(f"大厅语音已写入: {target_file} (mode={mode})")
+
+
 def unpack_champion(
     champion_id: int,
     reader: DataReader,
     wad_cache: dict[Path, WAD] | None = None,
     cache_lock: threading.Lock | None = None,
+    *,
+    ctx: AppContext,
 ) -> None:
     """按英雄 ID 解包音频。
 
@@ -422,12 +569,14 @@ def unpack_champion(
         reader: 已初始化的数据读取器。
         wad_cache: 本轮解包共享 WAD 缓存。
         cache_lock: 多线程场景下的缓存锁。
+        ctx: 运行时上下文。
     """
     try:
         # 创建AudioEntityData实例
-        entity_data = AudioEntityData.from_champion(champion_id, reader)
+        entity_data = AudioEntityData.from_champion(champion_id, reader, ctx=ctx)
         # 调用通用解包函数
-        unpack_audio_entity(entity_data, reader, wad_cache=wad_cache, cache_lock=cache_lock)
+        unpack_audio_entity(entity_data, reader, wad_cache=wad_cache, cache_lock=cache_lock, ctx=ctx)
+        _attach_bp_vo_to_champion(entity_data, reader, ctx=ctx)
     except ValueError as e:
         # 保持与原始函数相同的错误处理方式
         logger.error(str(e))
@@ -439,6 +588,8 @@ def unpack_map_audio(
     reader: DataReader,
     wad_cache: dict[Path, WAD] | None = None,
     cache_lock: threading.Lock | None = None,
+    *,
+    ctx: AppContext,
 ) -> None:
     """按地图 ID 解包音频。
 
@@ -447,25 +598,35 @@ def unpack_map_audio(
         reader: 已初始化的数据读取器。
         wad_cache: 本轮解包共享 WAD 缓存。
         cache_lock: 多线程场景下的缓存锁。
+        ctx: 运行时上下文。
     """
     try:
         # 创建AudioEntityData实例
-        entity_data = AudioEntityData.from_map(map_id, reader)
+        entity_data = AudioEntityData.from_map(map_id, reader, ctx=ctx)
         # 调用通用解包函数
-        unpack_audio_entity(entity_data, reader, wad_cache=wad_cache, cache_lock=cache_lock)
+        unpack_audio_entity(entity_data, reader, wad_cache=wad_cache, cache_lock=cache_lock, ctx=ctx)
     except ValueError as e:
         # 保持一致的错误处理方式
         logger.error(str(e))
         return
 
 
-def execute_unpack_tasks(tasks: list[tuple[str, int, str]], reader: DataReader, max_workers: int = 4) -> None:
+def execute_unpack_tasks(
+    tasks: list[tuple[str, int, str]],
+    reader: DataReader,
+    max_workers: int = 4,
+    *,
+    ctx: AppContext,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
+) -> None:
     """执行批量解包任务。
 
     Args:
         tasks: 任务元组列表 ``[(entity_type, id, description), ...]``。
         reader: 数据读取器实例。
         max_workers: 最大并发线程数。
+        ctx: 运行时上下文。
+        progress_callback: 每个实体处理结束后的可选进度回调。
     """
     if not tasks:
         logger.warning("没有任何任务需要执行")
@@ -483,11 +644,22 @@ def execute_unpack_tasks(tasks: list[tuple[str, int, str]], reader: DataReader, 
         summary_parts.append(f"{champion_count} 个英雄")
     if map_count > 0:
         summary_parts.append(f"{map_count} 个地图")
+    totals_by_type = {
+        "champion": champion_count,
+        "map": map_count,
+    }
+    finished_by_type = {
+        "champion": 0,
+        "map": 0,
+    }
 
     logger.info(
         f"开始解包 {total_tasks} 个实体 ({' 和 '.join(summary_parts)})，"
         f"模式: {'多线程' if max_workers > 1 else '单线程'} (workers: {max_workers})"
     )
+
+    failed_count = 0
+    show_exception = bool(getattr(ctx.config, "dev_mode", False))
 
     wad_cache: dict[Path, WAD] = {}
     cache_lock = threading.Lock() if max_workers > 1 else None
@@ -495,9 +667,9 @@ def execute_unpack_tasks(tasks: list[tuple[str, int, str]], reader: DataReader, 
     def unpack_entity(entity_type: str, entity_id: int) -> None:
         """解包单个实体的辅助函数"""
         if entity_type == "champion":
-            unpack_champion(entity_id, reader, wad_cache=wad_cache, cache_lock=cache_lock)
+            unpack_champion(entity_id, reader, wad_cache=wad_cache, cache_lock=cache_lock, ctx=ctx)
         elif entity_type == "map":
-            unpack_map_audio(entity_id, reader, wad_cache=wad_cache, cache_lock=cache_lock)
+            unpack_map_audio(entity_id, reader, wad_cache=wad_cache, cache_lock=cache_lock, ctx=ctx)
         else:
             raise ValueError(f"未知的实体类型: {entity_type}")
 
@@ -508,49 +680,89 @@ def execute_unpack_tasks(tasks: list[tuple[str, int, str]], reader: DataReader, 
                 executor.submit(unpack_entity, entity_type, entity_id): (entity_type, entity_id, description)
                 for entity_type, entity_id, description in tasks
             }
-            completed_count = 0
+            finished_count = 0
 
             for future in as_completed(future_to_task):
-                entity_type, entity_id, description = future_to_task[future]
-                completed_count += 1
+                entity_type, _entity_id, description = future_to_task[future]
+                finished_count += 1
+                finished_by_type[entity_type] = finished_by_type.get(entity_type, 0) + 1
 
                 try:
                     future.result()  # 获取结果，如果函数中出现异常，这里会重新抛出
-                    logger.info(f"进度: {completed_count}/{total_tasks} - {description} 解包完成。")
+                    progress_message = f"{description} 解包完成"
+                    logger.info(f"进度: {finished_count}/{total_tasks} - {progress_message}。")
                 except Exception as exc:
-                    logger.error(f"{description} 解包时发生错误: {exc}")
-                    logger.debug(traceback.format_exc())
+                    failed_count += 1
+                    progress_message = f"{description} 解包失败"
+                    logger.opt(exception=show_exception).warning(
+                        f"{description} 解包失败，将继续后续任务: {exc}"
+                    )
+                if progress_callback is not None:
+                    progress_callback(
+                        entity_type,
+                        finished_by_type.get(entity_type, finished_count),
+                        max(totals_by_type.get(entity_type, total_tasks), 1),
+                        progress_message,
+                    )
     else:
         # --- 单线程模式 ---
-        completed_count = 0
+        finished_count = 0
         for entity_type, entity_id, description in tasks:
             try:
                 unpack_entity(entity_type, entity_id)
-                completed_count += 1
-                logger.info(f"进度: {completed_count}/{total_tasks} - {description} 解包完成。")
+                progress_message = f"{description} 解包完成"
+                logger.info(f"进度: {finished_count + 1}/{total_tasks} - {progress_message}。")
             except Exception as exc:
-                logger.error(f"{description} 解包时发生错误: {exc}")
-                logger.debug(traceback.format_exc())
+                failed_count += 1
+                progress_message = f"{description} 解包失败"
+                logger.opt(exception=show_exception).warning(
+                    f"{description} 解包失败，将继续后续任务: {exc}"
+                )
+            finished_count += 1
+            finished_by_type[entity_type] = finished_by_type.get(entity_type, 0) + 1
+            if progress_callback is not None:
+                progress_callback(
+                    entity_type,
+                    finished_by_type.get(entity_type, finished_count),
+                    max(totals_by_type.get(entity_type, total_tasks), 1),
+                    progress_message,
+                )
 
     end_time = time.time()
-    logger.success(f"解包完成: {' 和 '.join(summary_parts)}，耗时 {end_time - start_time:.2f}s")
+    summary_message = (
+        f"解包完成: {' 和 '.join(summary_parts)}，"
+        f"成功 {total_tasks - failed_count} 个，失败 {failed_count} 个，"
+        f"耗时 {end_time - start_time:.2f}s"
+    )
+    if failed_count == 0:
+        logger.success(summary_message)
+    elif failed_count < total_tasks:
+        logger.warning(summary_message)
+    else:
+        logger.error(summary_message)
 
     # 在所有操作完成后，将收集到的未知分类写入文件
     reader.write_unknown_categories_to_file()
 
 
-def unpack_audio_all(
-    reader: DataReader, max_workers: int = 4, include_champions: bool = True, include_maps: bool = True
+def unpack_audio_all(  # noqa: PLR0913
+    reader: DataReader,
+    max_workers: int = 4,
+    include_champions: bool = True,
+    include_maps: bool = True,
+    *,
+    ctx: AppContext,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
 ) -> None:
-    """使用线程池并发解包所有音频文件
+    """使用线程池并发解包全部实体。
 
-    解包所有可用的英雄和地图音频文件。
-    通过设置 max_workers=1 可以切换到单线程顺序执行模式。
-
-    :param reader: 一个已经初始化并加载了数据的DataReader实例
-    :param max_workers: 使用的最大线程数 (1: 单线程, >1: 多线程)
-    :param include_champions: 是否包含英雄解包
-    :param include_maps: 是否包含地图解包
+    Args:
+        reader: 已初始化的数据读取器。
+        max_workers: 最大并发线程数。
+        include_champions: 是否包含英雄。
+        include_maps: 是否包含地图。
+        ctx: 运行时上下文。
+        progress_callback: 每个实体处理结束后的可选进度回调。
     """
     tasks = []
 
@@ -571,28 +783,64 @@ def unpack_audio_all(
         return
 
     # 执行任务
-    execute_unpack_tasks(tasks, reader, max_workers)
+    execute_unpack_tasks(
+        tasks,
+        reader,
+        max_workers,
+        ctx=ctx,
+        progress_callback=progress_callback,
+    )
 
 
-def unpack_champions(reader: DataReader, champion_ids: list[int], max_workers: int = 4) -> None:
-    """便捷函数：解包指定英雄
+def unpack_champions(
+    reader: DataReader,
+    champion_ids: list[int],
+    max_workers: int = 4,
+    *,
+    ctx: AppContext,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
+) -> None:
+    """便捷函数：解包指定英雄。
 
-    :param reader: 数据读取器
-    :param champion_ids: 英雄ID列表
-    :param max_workers: 最大工作线程数
-    :raises ValueError: 当指定的ID不存在时
+    Args:
+        reader: 数据读取器。
+        champion_ids: 英雄 ID 列表。
+        max_workers: 最大并发线程数。
+        ctx: 运行时上下文。
+        progress_callback: 每个实体处理结束后的可选进度回调。
     """
     tasks = generate_champion_tasks(reader, champion_ids)
-    execute_unpack_tasks(tasks, reader, max_workers)
+    execute_unpack_tasks(
+        tasks,
+        reader,
+        max_workers,
+        ctx=ctx,
+        progress_callback=progress_callback,
+    )
 
 
-def unpack_maps(reader: DataReader, map_ids: list[int], max_workers: int = 4) -> None:
-    """便捷函数：解包指定地图
+def unpack_maps(
+    reader: DataReader,
+    map_ids: list[int],
+    max_workers: int = 4,
+    *,
+    ctx: AppContext,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
+) -> None:
+    """便捷函数：解包指定地图。
 
-    :param reader: 数据读取器
-    :param map_ids: 地图ID列表
-    :param max_workers: 最大工作线程数
-    :raises ValueError: 当指定的ID不存在时
+    Args:
+        reader: 数据读取器。
+        map_ids: 地图 ID 列表。
+        max_workers: 最大并发线程数。
+        ctx: 运行时上下文。
+        progress_callback: 每个实体处理结束后的可选进度回调。
     """
     tasks = generate_map_tasks(reader, map_ids)
-    execute_unpack_tasks(tasks, reader, max_workers)
+    execute_unpack_tasks(
+        tasks,
+        reader,
+        max_workers,
+        ctx=ctx,
+        progress_callback=progress_callback,
+    )

@@ -123,8 +123,14 @@ src/lol_audio_unpack/packer.py
 *.env.dev
 packer/
 .ai_memory/
+.CODING_STYLE.md
 benchmarks/
+.temp/
+.superpowers/
+.worktrees/
 
 
 !/params.json
 VERSIONING_GUIDE.md
+.serena/
+.envrc

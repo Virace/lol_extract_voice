@@ -1,13 +1,4 @@
-# 🐍 Explicit is better than implicit.
-# 🐼 明了胜于晦涩
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2025/1/15
-# @Update  : 2025/8/2 18:14
-# @Detail  : Loguru 日志配置工具（独立工具类，无外部依赖）
-
+"""集中管理项目的 Loguru 日志初始化与辅助能力。"""
 
 import sys
 import time
@@ -25,10 +16,38 @@ class LoggingConfiguration:
     """Loguru 日志配置工具（无外部依赖，可独立使用）"""
 
     @staticmethod
+    def _resolve_console_sink(stream: Any) -> Any:
+        """将标准流对象转换为可安全传给 Loguru 的 sink。
+
+        Args:
+            stream: 标准输出或错误流对象。
+
+        Returns:
+            Any: 原始流对象；若传入 ``None``，则返回一个丢弃消息的 callable sink，
+                用于兼容 PyInstaller ``windowed`` / ``noconsole`` 下标准流缺失的场景。
+        """
+
+        if stream is not None:
+            return stream
+        return lambda _message: None
+
+    @staticmethod
+    def _add_handler_with_enqueue_fallback(*args, **kwargs) -> None:
+        """优先启用 enqueue，失败时回退为非 enqueue。"""
+        try:
+            logger.add(*args, **kwargs)
+        except (OSError, PermissionError):
+            fallback_kwargs = dict(kwargs)
+            fallback_kwargs["enqueue"] = False
+            logger.add(*args, **fallback_kwargs)
+            logger.warning("日志队列初始化失败，已回退为非 enqueue 模式。")
+
+    @staticmethod
     def setup_logging(
         *,
         dev_mode: bool = False,
         log_level: str = "INFO",
+        file_log_level: str = "DEBUG",
         log_file_path: Path | str | None = None,
         show_function_info: bool = True,
     ) -> None:
@@ -37,6 +56,7 @@ class LoggingConfiguration:
 
         :param dev_mode: 是否为开发模式（影响diagnose参数）
         :param log_level: 控制台日志级别
+        :param file_log_level: 文件日志级别
         :param log_file_path: 日志文件路径，None表示不记录文件日志
         :param show_function_info: 是否显示函数名、行号等信息
         """
@@ -57,8 +77,8 @@ class LoggingConfiguration:
             )
 
         # 添加控制台日志处理器
-        logger.add(
-            sys.stderr,
+        LoggingConfiguration._add_handler_with_enqueue_fallback(
+            LoggingConfiguration._resolve_console_sink(sys.stderr),
             level=log_level.upper(),
             format=console_format,
             backtrace=True,
@@ -70,14 +90,21 @@ class LoggingConfiguration:
         # 如果指定了文件日志路径，添加文件日志处理器
         if log_file_path:
             log_path = Path(log_file_path)
-            log_path.parent.mkdir(parents=True, exist_ok=True)
+            explicit_log_file = log_path.suffix.lower() == ".log"
+            if explicit_log_file:
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                file_sink = log_path
+            else:
+                # log_path 指向目录（例如 output/logs），懒创建模式下需显式创建该目录。
+                log_path.mkdir(parents=True, exist_ok=True)
+                file_sink = log_path / "{time:YYYY-MM-DD_HH-mm-ss}.log"
 
             # 文件日志格式（更详细，包含完整路径信息）
             file_format = "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} | {message}"
 
-            logger.add(
-                log_path / "{time:YYYY-MM-DD_HH-mm-ss}.log",
-                level="DEBUG",  # 文件日志通常记录更详细的信息
+            LoggingConfiguration._add_handler_with_enqueue_fallback(
+                file_sink,
+                level=file_log_level.upper(),
                 format=file_format,
                 rotation="100 MB",  # 当文件达到100MB时轮转
                 retention=10,  # 保留最近10份日志文件
@@ -212,7 +239,7 @@ def log_level_context(level: str):
             # 临时修改级别
             logger.remove()
             logger.add(
-                sys.stderr,
+                LoggingConfiguration._resolve_console_sink(sys.stderr),
                 level=self.target_level,
                 format="<level>{level: <8}</level> | <level>{message}</level>",
                 colorize=True,

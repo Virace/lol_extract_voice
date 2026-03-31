@@ -1,296 +1,141 @@
-# lol_audio_unpack
-![](https://img.shields.io/badge/python-%3E%3D3.10-blue)
+<p align="center">
+  <img src="./src/lol_audio_unpack/gui/assets/app_icon.svg" alt="Lol Audio Unpack logo" width="160">
+</p>
 
-一个极简、高效的英雄联盟音频提取工具。
+<h1 align="center">Lol Audio Unpack</h1>
 
----
+<p align="center">
+  <img src="https://img.shields.io/badge/python-%3E%3D3.10-blue" alt="Python >= 3.10">
+  <a href="https://deepwiki.com/Virace/lol_extract_voice">
+    <img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki">
+  </a>
+</p>
 
-### **主要功能**
-
--   **全面支持**: 能够提取**英雄**和**地图**的所有音频类型（`VO`语音, `SFX`音效, `MUSIC`音乐）。
--   **不包含**: 游戏大厅内的英雄选择/禁用语音。
--   **数据纯粹**: 输出的音频文件为原始的 `.wem` 格式，文件名保留其在游戏数据中的ID，不进行重命名或分类。
--   **事件信息**: 数据更新时会包含音频事件信息，但目前解包功能**不支持**按事件对音频进行分类。
-
-对于需要按事件分类或进行自动转码的用户，请关注后续版本或使用其他配套工具。
+<p align="center">一个极简、高效的英雄联盟音频提取工具。</p>
 
 ---
 
 - [介绍](#介绍)
 - [使用方法](#使用方法)
-- [基准测试](#基准测试)
-- [设计哲学](#设计哲学)
-- [性能参考](#性能参考)
-- [后续处理：音频转码](#后续处理音频转码)
+- [后续处理](#后续处理)
 - [维护者](#维护者)
 - [感谢](#感谢)
 - [许可证](#许可证)
 
+## 介绍
 
-### 介绍
-提取联盟客户端中的**英雄**和**地图**音频文件，专注于提供原始、未处理的音频数据。
+- 支持提取英雄与地图的 `VO`、`SFX`、`MUSIC` 音频。
+- 默认输出原始 `.wem` 文件，文件名保留游戏数据中的原始 ID。
+- 数据更新阶段会携带事件信息，可进一步用于映射生成。
+- GUI 当前已完成：执行解包、生成映射、查看映射。
 
-### 使用方法
-1.  **克隆仓库**:
-    ```bash
-    git clone https://github.com/Virace/lol_audio_unpack.git
-    cd lol_audio_unpack
-    ```
+文档导航、GUI 当前状态、Remote 模式、基准测试与设计说明见：
 
-2.  **安装依赖**:
-    *   **方式一: 使用 `uv` (推荐)**
-        ```bash
-        # uv 会自动创建虚拟环境
-        uv sync
-        ```
-    *   **方式二: 使用 `pip`**
-        ```bash
-        pip install .
-        ```
+- [docs/README.md](./docs/README.md)
 
-3.  **编写配置文件**:
-    在项目根目录创建 `.lol.env` 文件。详见[配置（最简）](#配置最简)。
+## 使用方法
 
-4.  **运行脚本**:
-    所有命令都需要在项目根目录执行。
+### GUI
 
-    *   **方式一: 使用 `uv` (推荐)**
-        ```bash
-        # --- 数据更新 ---
-        # 首次运行或游戏更新后，需要更新数据
+方式一：直接使用 release 包。
 
-        # 更新所有数据 (英雄和地图)
-        uv run unpack --update
+- 从 GitHub Releases 下载对应平台的发布包。
+- 解压后直接运行其中的 GUI 可执行文件。
 
-        # 或，只更新所有英雄的数据
-        uv run unpack --update-champions
-
-        # 或，只更新指定ID的英雄 (例如：1,103,555)
-        uv run unpack --update-champions 1,103,555
-        
-        # 或，只更新所有地图的数据
-        uv run unpack --update-maps
-
-        # 或，只更新指定ID的地图 (例如：11,12)
-        uv run unpack --update-maps 11,12
-
-        # 快速更新模式 (跳过事件数据处理，大幅提升速度)
-        uv run unpack --update --skip-events
-
-        # --- 音频解包 ---
-        # 解包所有音频 (英雄和地图)，使用默认4线程
-        uv run unpack --extract
-
-        # 或，使用8个线程解包所有音频
-        uv run unpack --extract --max-workers 8
-
-        # 或，只解包所有英雄的音频
-        uv run unpack --extract-champions
-
-        # 或，只解包指定ID的英雄
-        uv run unpack --extract-champions 555,222
-        
-        # 或，只解包所有地图的音频
-        uv run unpack --extract-maps
-        
-        # 或，只解包指定ID的地图
-        uv run unpack --extract-maps 11,12
-
-        # update和extract可以一起使用
-        uv run unpack --update --extract --skip-events
-        ```
-
-    *   **方式二: 使用 `python -m` (传统方式)**
-        ```bash
-        # --- 数据更新 ---
-        python -m lol_audio_unpack --update
-        python -m lol_audio_unpack --update-champions 1,103,555
-        python -m lol_audio_unpack --update-maps 11,12
-        python -m lol_audio_unpack --update --skip-events
-
-        # --- 音频解包 ---
-        python -m lol_audio_unpack --extract
-        python -m lol_audio_unpack --extract-champions 555
-        python -m lol_audio_unpack --extract-maps 11
-        ```
-    
-    ##### 注意：在单独更新地图数据时候，如果使用了下列命令，则去重失效
-    ```
-    # 地图去重依赖于地图ID为0的Common数据，所以如果想正确处理地图数据，建议无论你单独处理哪个地图数据都带上 "0"
-    lol_audio_unpack --update-maps 11,12
-    ```
-    
-
-#### 配置（最简）
-新手只需要做一件事：在项目根目录创建 `.lol.env`。
-
-如果你使用 `--dev`，程序会优先读取 `.lol.env.dev`；不存在时回退到 `.lol.env`。
-
-配置优先级（从高到低）：
-1. 命令行显式参数（如 `--game-path`、`--output-path`）
-2. 系统环境变量（`LOL_*`）
-3. `.lol.env` / `.lol.env.dev`
-4. 内置默认值
-
-高级用户（CI、容器、远程环境）可直接用环境变量或 CLI 覆盖：
+方式二：从源码启动 GUI。
 
 ```bash
-export LOL_GAME_PATH=/path/to/game
-export LOL_OUTPUT_PATH=/path/to/output
-uv run unpack --update
-
-# 单次临时覆盖（优先级最高）
-uv run unpack --update --game-path /tmp/game --output-path /tmp/out
+git clone https://github.com/Virace/lol_audio_unpack.git
+cd lol_audio_unpack
+uv sync --extra gui
+uv run unpack-gui
 ```
 
-```dotenv
-# 游戏客户端根目录 (例如: D:\Games\League of Legends)
-LOL_GAME_PATH=''
+### CLI
 
-# 游戏语言区域 (例如: zh_CN, en_US, ko_KR)
-LOL_GAME_REGION='zh_CN'
-
-# 数据输出目录
-LOL_OUTPUT_PATH=''
-
-# 排除的音频类型 (VO: 语音, SFX: 特效, MUSIC: 音乐)
-# 使用英文逗号分割, 留空则全部解包
-LOL_EXCLUDE_TYPE='SFX,MUSIC'
-```
-
-### 基准测试
-项目内置基准脚本：`scripts/benchmark_cli.py`，用于评估 CLI 外部调用的真实耗时与稳定性。
-
-在 WSL 环境下，建议统一通过 `./scripts/_uv.sh` 运行，避免环境偏差：
+安装：
 
 ```bash
-./scripts/_uv.sh run python scripts/benchmark_cli.py --help
+git clone https://github.com/Virace/lol_audio_unpack.git
+cd lol_audio_unpack
+uv sync
 ```
 
-#### 基准模式
-- `--mode mock`：只跑轻量命令（`--version`、`--help`、无动作参数校验），不依赖本地游戏目录。
-- `--mode local_game`：使用本地客户端与输出目录做真实小样本测试。
-- `--mode both`：先跑 mock，再跑 local_game。
+全部解包示例：
 
-#### 常用参数
-- `--sample-size N`：`local_game` 抽样数量（默认 10）。
-- `--max-workers auto|N`：并发数，`auto` 使用 CPU 核心数。
-- `--output PATH`：结果 JSON 输出路径。
-- `--timeout SEC`：单条命令超时时间。
-- `--prepare-update/--no-prepare-update`：
-  - 默认 `--prepare-update`：`local_game` 前置执行 `unpack --update`，保证所需 `manifest/<version>/data.*` 可用。
-  - 若已准备好数据，可使用 `--no-prepare-update` 跳过更新。
-- `--game-path` / `--output-path` / `--wwiser-path`：显式覆盖运行路径，优先级高于环境变量。
-
-#### 示例 1：仅做 mock 自检
 ```bash
-./scripts/_uv.sh run python scripts/benchmark_cli.py \
-  --mode mock \
-  --output /tmp/bench_mock.json
+uv run unpack --update --extract --skip-events
 ```
 
-#### 示例 2：local_game 全流程（更新 + 解包 + 映射）
+CLI 参数总表：
+
+- 数据更新组
+  - `--update`
+  - `--update-champions [IDs|ALIASES]`
+  - `--update-maps [IDs]`
+  - `-f, --force`
+  - `--skip-events`
+- 音频解包组
+  - `--extract`
+  - `--extract-champions [IDs|ALIASES]`
+  - `--extract-maps [IDs]`
+- 映射组
+  - `--mapping`
+  - `--mapping-champions [IDs|ALIASES]`
+  - `--mapping-maps [IDs]`
+  - `--integrate-data`
+- 通用参数
+  - `--max-workers N`
+  - `-l, --log-level`
+  - `--dev`
+  - `--with-bp-vo` / `--no-with-bp-vo`
+  - `--enable-league-tools-log`
+  - `--cleanup-remote` / `--no-cleanup-remote`
+- 配置覆盖参数
+  - `-g, --game-path PATH`
+  - `-o, --output-path PATH`
+  - `-r, --game-region REGION`
+  - `-t, --exclude-type TYPES`
+  - `-w, --wwiser-path PATH`
+  - `-b, --group-by-type` / `--no-group-by-type`
+
+更详细的 CLI / 配置 / Remote 使用说明见：
+
+- [docs/README.md](./docs/README.md)
+- [docs/api/cli_api.md](./docs/api/cli_api.md)
+- [docs/api/config_api.md](./docs/api/config_api.md)
+- [docs/api/remote_mode.md](./docs/api/remote_mode.md)
+
+## 后续处理
+
+当前工具专注于更新、解包与映射生成；后处理仍建议独立完成。
+
+- 本工具输出原始 `.wem` 文件。
+- 音频试听、转码等能力当前未在 GUI 内完成。
+- 若需要转码，可使用配套的 [vgmstream-cli-build](https://github.com/Virace/vgmstream-cli-build/releases)。
+
+示例：
+
 ```bash
-./scripts/_uv.sh run python scripts/benchmark_cli.py \
-  --mode local_game \
-  --sample-size 10 \
-  --max-workers auto \
-  --game-path "/mnt/d/Games/Tencent/WeGameApps/英雄联盟" \
-  --output-path "/mnt/e/Temp/Scratch/lol" \
-  --wwiser-path "/path/to/wwiser.pyz" \
-  --output /tmp/bench_local.json
+.\vgmstream-cli.exe -o "?p?b.wav" "D:/audios"
 ```
 
-#### 示例 3：仅解包音频（不做映射）
-方式一（推荐）：直接使用 `unpack` 组合命令。
-```bash
-./scripts/_uv.sh run unpack \
-  --update --skip-events \
-  --extract-champions 122,804,62 \
-  --max-workers auto \
-  --game-path "/mnt/d/Games/Tencent/WeGameApps/英雄联盟" \
-  --output-path "/mnt/e/Temp/Scratch/lol"
-```
+## 维护者
 
-方式二（使用 benchmark_cli）：不给有效 `WWISER_PATH`，映射阶段会 `skip`，仅统计解包阶段。
-```bash
-./scripts/_uv.sh run python scripts/benchmark_cli.py \
-  --mode local_game \
-  --sample-size 3 \
-  --no-prepare-update \
-  --wwiser-path "/__not_exists__" \
-  --game-path "/mnt/d/Games/Tencent/WeGameApps/英雄联盟" \
-  --output-path "/mnt/e/Temp/Scratch/lol" \
-  --output /tmp/bench_extract_only.json
-```
-
-#### 输出说明
-结果为 JSON，核心结构：
-- `meta`：生成时间、模式、样本规模、并发数。
-- `results[]`：每个阶段的执行结果（`status`、`elapsed_sec`、`command`、`stdout_tail`、`stderr_tail`）。
-
-`status` 含义：
-- `ok`：阶段执行成功。
-- `skip`：前置条件不满足（如缺少路径、缺少 `manifest data`、无有效 `WWISER_PATH`）。
-- `fail`：返回码异常或命中关键错误标记。
-- `timeout`：阶段超时。
-
-### 设计哲学
--   **速度优先**: 通过简化的处理流程和优化的文件I/O，最大化解包效率。
--   **数据纯粹**: 不对文件进行任何形式的重命名或分类。文件名即ID，保留了数据的原始性，方便后续工具进行二次处理。
--   **责任分离**: 核心解包功能与音频转码等后处理步骤完全解耦。本工具只做一件事：快速解包。
-
-### 性能参考
-在典型的开发环境 (SSD, 多核CPU)下，测试数据如下：
-- **解包**: 使用4线程解包全部英雄语音，耗时约 **15 秒**。
-- **转码**: 将所有解包后的 `.wem` 文件转码为 `.wav`，耗时约 **15 分钟**。
-
-### 后续处理：音频转码
-本工具输出的音频文件为 `.wem` 格式。为了方便播放和使用，你可能需要将它们转换为 `.mp3` 或 `.wav` 等常见格式。
-
-我们现在提供了一个**魔改版的 [vgmstream-cli](https://github.com/Virace/vgmstream-cli-build)** 工具，它支持以下增强功能：
-
-1. **目录递归处理**：可以直接指定包含 `.wem` 文件的目录，工具会自动递归扫描并处理所有文件。
-2. **增强的输出路径通配符**：
-   * `?p`: 代表源文件的完整路径（包含最后的路径分隔符）。
-   * `?b`: 代表源文件的基础名称（不含扩展名）。
-3. **源文件删除选项**：通过 `-Y` 参数可以在转换成功后删除源文件。**⚠️ 注意：这是一个危险操作，请谨慎使用！**
-
-#### 使用方法
-- **命令行直接调用**:
-  假设你的音频文件位于 `D:/audios` 目录下：
-  ```bash
-  # 将所有 .wem 文件转换为 .wav 格式，并保持原始目录结构
-  .\vgmstream-cli.exe -o "?p?b.wav" "D:/audios"
-
-  # 转换并删除原始的 .wem 文件（谨慎使用！）
-  .\vgmstream-cli.exe -o "?p?b.wav" "D:/audios" -Y
-  ```
-- **使用测试脚本进行批量转码**:
-  项目提供了一个测试脚本，可以方便地进行批量转码并验证结果。
-  ```bash
-  python tests/test_transcode.py
-  ```
-  > **注意**: 脚本中的 `vgmstream-cli.exe` 路径是硬编码的。如果你的路径不同，请直接修改 `tests/test_transcode.py` 文件中的路径。
-
-你可以从 [Virace/vgmstream-cli-build](https://github.com/Virace/vgmstream-cli-build/releases) 下载最新版本的魔改工具。
-
-**注意**: 如果你准备将所有提取的英雄语音转码为WAV格式，请确保有足够的硬盘空间。15.14版本所有VO相关WEM音频总共大小接近3G，转码后文件大小接近**40G**。
-
-这种方式将转码与核心逻辑分离，让你可以自由选择是否需要以及如何进行格式转换。
-
-### 维护者
 **Virace**
+
 - blog: [孤独的未知数](https://x-item.com)
 
-### 感谢
+## 感谢
+
 - [@Morilli](https://github.com/Morilli/bnk-extract), **bnk-extract**
 - [@Pupix](https://github.com/Pupix/lol-file-parser), **lol-file-parser**
 - [@CommunityDragon](https://github.com/CommunityDragon/CDTB), **CDTB**
 - [@vgmstream](https://github.com/vgmstream/vgmstream), **vgmstream**
-- 以及**JetBrains**提供开发环境支持
+- 以及 **JetBrains** 提供开发环境支持
 
   <a href="https://www.jetbrains.com/?from=kratos-pe" target="_blank"><img src="https://cdn.jsdelivr.net/gh/virace/kratos-pe@main/jetbrains.svg"></a>
 
-### 许可证
+## 许可证
+
 [GPLv3](LICENSE)
