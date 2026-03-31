@@ -67,3 +67,20 @@ def apply_switch_button_safe_font(switch_button) -> None:
         )
         setCustomStyleSheet(switch_button, font_qss, font_qss)
         label.setFont(safe_font)
+
+
+def apply_tool_button_safe_font(tool_button) -> None:
+    """为 `ToolButton/TransparentToolButton` 补齐安全字体。
+
+    Args:
+        tool_button: 目标按钮实例。
+    """
+    if tool_button is None:
+        return
+
+    dpi = float(getattr(tool_button, "logicalDpiY", lambda: DEFAULT_DPI)())
+    safe_font = build_font_with_point_size(tool_button.font(), dpi=dpi)
+    if safe_font.pointSizeF() <= 0:
+        return
+
+    tool_button.setFont(safe_font)

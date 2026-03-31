@@ -78,6 +78,12 @@ class _FakeAudioSink:
         return self._error
 
 
+class _PendingStartAudioSink(_FakeAudioSink):
+    def start(self, device):
+        self.started_device = device
+        return device
+
+
 class _FakeAudioBuffer:
     def __init__(self) -> None:
         self.closed = False
@@ -92,6 +98,10 @@ class _FakeAudioBuffer:
 
 def _build_fake_audio_sink(device, audio_format: QAudioFormat, parent=None) -> _FakeAudioSink:
     return _FakeAudioSink(device, audio_format, parent)
+
+
+def _build_pending_start_audio_sink(device, audio_format: QAudioFormat, parent=None) -> _PendingStartAudioSink:
+    return _PendingStartAudioSink(device, audio_format, parent)
 
 
 def test_build_preview_audio_decode_plan_promotes_pcm24_to_pcm32() -> None:
@@ -188,6 +198,33 @@ def test_preview_playback_controller_emits_error_when_device_rejects_format() ->
         audio_path=None,
         progress=0.0,
         is_playing=False,
+        is_paused=False,
+    )
+
+
+def test_preview_playback_controller_marks_audio_active_during_backend_start_gap() -> None:
+    default_device = _FakeAudioDevice(b"default-device")
+    controller = PreviewPlaybackController(
+        decode_audio_fn=lambda path: PreparedPreviewAudio(
+            audio_path=Path(path),
+            pcm_bytes=b"\x01\x02",
+            audio_format=_build_qt_audio_format(),
+            duration_seconds=1.0,
+        ),
+        audio_sink_factory=_build_pending_start_audio_sink,
+        audio_outputs_provider=lambda: [],
+        default_audio_output_provider=lambda: default_device,
+    )
+    states: list[PreviewPlaybackState] = []
+    controller.playback_state_changed.connect(states.append)
+
+    controller.play(audio_id="1001", audio_path=Path("1001.wem"))
+
+    assert states[-1] == PreviewPlaybackState(
+        audio_id="1001",
+        audio_path=Path("1001.wem"),
+        progress=0.0,
+        is_playing=True,
         is_paused=False,
     )
 

@@ -781,8 +781,15 @@ class PreviewTreeView(QTreeView):
         painter.drawRoundedRect(row_rect, 6, 6)
         painter.restore()
 
+    def _stop_icon_rect(self, button_rect: QRect) -> QRect:
+        """返回播放中停止方块的居中矩形。"""
+        side = max(6, min(button_rect.width(), button_rect.height()) - 10)
+        rect = QRect(0, 0, side, side)
+        rect.moveCenter(button_rect.center())
+        return rect
+
     def _draw_audio_control(self, painter: QPainter, row_rect: QRect, index: QModelIndex) -> None:
-        """为可试听叶子行绘制播放/暂停按钮。"""
+        """为可试听叶子行绘制播放/停止按钮。"""
         button_rect = self._audio_control_rect(row_rect, index)
         if button_rect.isNull():
             return
@@ -799,13 +806,7 @@ class PreviewTreeView(QTreeView):
         painter.drawRoundedRect(button_rect, 5, 5)
         painter.setBrush(icon_color)
         if is_active_audio and self._active_audio_is_playing:
-            bar_width = max(2, button_rect.width() // 6)
-            gap = max(2, button_rect.width() // 8)
-            bar_height = max(8, button_rect.height() - 8)
-            top = button_rect.center().y() - bar_height // 2
-            left = button_rect.center().x() - gap // 2 - bar_width
-            painter.drawRoundedRect(QRect(left, top, bar_width, bar_height), 1, 1)
-            painter.drawRoundedRect(QRect(left + bar_width + gap, top, bar_width, bar_height), 1, 1)
+            painter.drawRoundedRect(self._stop_icon_rect(button_rect), 1, 1)
         else:
             points = QPolygonF(
                 (

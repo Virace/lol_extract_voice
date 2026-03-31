@@ -14,6 +14,16 @@ PREVIEW_AUDIO_READ_CHUNK_FRAMES = 4096
 DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY = "default"
 
 
+def _is_qt_audio_state(state, expected_name: str) -> bool:
+    """按名称兼容比较 Qt 音频状态枚举。"""
+    if state is None:
+        return False
+    name = getattr(state, "name", None)
+    if name:
+        return name == expected_name
+    return str(state).endswith(f".{expected_name}")
+
+
 @dataclass(frozen=True, slots=True)
 class PreviewAudioDecodePlan:
     """描述 Qt 播放前需要采用的解码策略。"""
@@ -198,6 +208,7 @@ class PreviewPlaybackController(QObject):
         self._audio_payload: QByteArray | None = None
         self._retired_audio_buffers: list[QBuffer] = []
         self._payload_size_bytes = 0
+        self._playback_start_pending = False
         self._progress_timer = QTimer(self)
         self._progress_timer.setInterval(50)
         self._progress_timer.timeout.connect(self._emit_state_from_sink)
@@ -254,11 +265,14 @@ class PreviewPlaybackController(QObject):
         self._audio_buffer.open(QIODevice.OpenModeFlag.ReadOnly)
 
         audio_sink = self._audio_sink_factory(target_device, prepared_audio.audio_format, self)
+        self._audio_sink = audio_sink
+        self._playback_start_pending = True
         audio_sink.stateChanged.connect(self._on_sink_state_changed)
         if hasattr(audio_sink, "setVolume"):
             audio_sink.setVolume(self._volume_percent / 100.0)
         audio_sink.start(self._audio_buffer)
-        self._audio_sink = audio_sink
+        if self._audio_sink is not audio_sink:
+            return
         self._progress_timer.start()
         self._emit_state_from_sink()
 
@@ -272,13 +286,22 @@ class PreviewPlaybackController(QObject):
 
     def _on_sink_state_changed(self, state) -> None:
         """同步底层 Qt 音频状态变化。"""
-        if state == QAudio.State.IdleState:
+        if _is_qt_audio_state(state, "ActiveState") or _is_qt_audio_state(state, "SuspendedState"):
+            self._playback_start_pending = False
+        if _is_qt_audio_state(state, "IdleState"):
+            self._playback_start_pending = False
             self._dispose_session(emit_state=True)
             return
-        if state == QAudio.State.StoppedState and self._audio_sink is not None:
+        if _is_qt_audio_state(state, "StoppedState") and self._audio_sink is not None:
             error = self._audio_sink.error()
             if error != QAudio.Error.NoError:
+                self._playback_start_pending = False
                 self.playback_error.emit("试听播放过程中发生底层输出错误。")
+                self._dispose_session(emit_state=True)
+                return
+            if self._playback_start_pending:
+                self._emit_state_from_sink()
+                return
             self._dispose_session(emit_state=True)
             return
         self._emit_state_from_sink()
@@ -290,13 +313,19 @@ class PreviewPlaybackController(QObject):
             return
 
         current_state = self._audio_sink.state()
+        if _is_qt_audio_state(current_state, "StoppedState") and self._playback_start_pending:
+            is_playing = True
+            is_paused = False
+        else:
+            is_playing = _is_qt_audio_state(current_state, "ActiveState")
+            is_paused = _is_qt_audio_state(current_state, "SuspendedState")
         self.playback_state_changed.emit(
             PreviewPlaybackState(
                 audio_id=self._active_audio_id,
                 audio_path=self._active_audio_path,
                 progress=self._current_progress(),
-                is_playing=current_state == QAudio.State.ActiveState,
-                is_paused=current_state == QAudio.State.SuspendedState,
+                is_playing=is_playing,
+                is_paused=is_paused,
             )
         )
 
@@ -354,6 +383,7 @@ class PreviewPlaybackController(QObject):
             self._audio_buffer = None
         self._audio_payload = None
         self._payload_size_bytes = 0
+        self._playback_start_pending = False
         self._active_audio_id = None
         self._active_audio_path = None
 

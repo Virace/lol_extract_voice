@@ -16,6 +16,7 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
+from lol_audio_unpack.gui.common.font_compat import apply_tool_button_safe_font
 from lol_audio_unpack.gui.view.overview.audio_preview_panel import OverviewAudioPreviewPanel
 
 
@@ -55,6 +56,7 @@ class OverviewPreviewPanel(QWidget):
         self.reveal_file_btn = TransparentToolButton(FIF.LINK, self)
         self.reveal_file_btn.setToolTip("打开文件所在位置")
         self.reveal_file_btn.setFixedSize(32, 32)
+        apply_tool_button_safe_font(self.reveal_file_btn)
         self.reveal_file_btn.setEnabled(False)
         header_layout.addWidget(self.preview_path_edit, 1)
         header_layout.addWidget(self.reveal_file_btn)

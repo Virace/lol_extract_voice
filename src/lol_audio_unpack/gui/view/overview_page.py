@@ -513,6 +513,7 @@ class OverviewPage(QWidget):
             group_label_map=preview_result.group_label_map,
             summary_text=build_tree_summary_text(stats),
         )
+        self._on_preview_mode_changed(self.preview_mode_pivot.currentRouteKey() or "audio")
         self._sync_audio_preview_playback_state()
         self.reveal_file_btn.setEnabled(True)
 
