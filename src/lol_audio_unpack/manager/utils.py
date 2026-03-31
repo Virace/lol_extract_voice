@@ -136,7 +136,7 @@ def read_data(path: Path, *, dev_mode: bool = False) -> dict:
         return result
 
     except Exception as e:
-        logger.error(f"读取文件时出错: {actual_file}, 错误: {e}")
+        logger.opt(exception=True).error(f"读取文件时出错: {actual_file}, 错误: {e}")
         total_time_ms = (time.time() - start_time) * 1000
         logger.debug(f"read_data 总耗时: {format_duration(total_time_ms)}")
         return {}
@@ -162,7 +162,7 @@ def write_data(data: dict, base_path: Path, *, dev_mode: bool) -> None:
             dump_msgpack(data, path)
         logger.trace(f"成功写入数据到: {path}")
     except Exception as e:
-        logger.error(f"写入文件失败: {path}, 错误: {e}")
+        logger.opt(exception=True).error(f"写入文件失败: {path}, 错误: {e}")
 
 
 def get_game_version(game_path: Path) -> str:

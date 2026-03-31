@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import threading
 import time
-import traceback
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -379,8 +378,9 @@ def build_audio_event_mapping(  # noqa: PLR0913
 
                 except Exception as e:
                     category_error_count += 1
-                    logger.error(f"处理路径组合 {path_group_idx + 1} 时出错: {e}")
-                    logger.debug(traceback.format_exc())
+                    logger.opt(exception=bool(getattr(ctx.config, "dev_mode", False))).warning(
+                        f"处理路径组合 {path_group_idx + 1} 时出错: {e}"
+                    )
                     continue
 
             # 保存最终的合并结果
@@ -429,10 +429,17 @@ def build_audio_event_mapping(  # noqa: PLR0913
             write_data(integrated_result, integration_file_base, dev_mode=ctx.config.dev_mode)
             logger.debug(f"整合数据已保存: {integration_file_base}")
 
-        logger.success(
+        summary_message = (
             f"{entity_data.entity_name} 的整合数据统计：成功映射事件 {mapped_event_count} 个，"
             f"异常事件 {errored_event_count} 个，未映射跳过 {skipped_event_count} 个"
         )
+        if errored_event_count > 0:
+            if mapped_event_count > 0 or skipped_event_count > 0:
+                logger.warning(summary_message)
+            else:
+                logger.error(summary_message)
+        else:
+            logger.success(summary_message)
         return integrated_result
     else:
         # 移除 languages 字段（映射文件不需要）
@@ -446,10 +453,17 @@ def build_audio_event_mapping(  # noqa: PLR0913
         else:
             logger.warning(f"{entity_data.entity_name} 没有找到任何有效映射数据")
 
-        logger.success(
+        summary_message = (
             f"{entity_data.entity_name} 的事件映射统计：成功映射事件 {mapped_event_count} 个，"
             f"异常事件 {errored_event_count} 个，未映射跳过 {skipped_event_count} 个"
         )
+        if errored_event_count > 0:
+            if mapped_event_count > 0 or skipped_event_count > 0:
+                logger.warning(summary_message)
+            else:
+                logger.error(summary_message)
+        else:
+            logger.success(summary_message)
         return mapping_result
 
 
@@ -703,6 +717,8 @@ def execute_mapping_tasks(  # noqa: PLR0913
         f"模式: {'多线程' if max_workers > 1 else '单线程'} (workers: {max_workers})"
     )
     logger.info(f"HIRC 后端: {describe_hirc_backend(ctx)}")
+    failed_count = 0
+    show_exception = bool(getattr(ctx.config, "dev_mode", False))
 
     # 初始化共享的可选 wwiser 管理器，避免重复创建。
     wwiser_manager = _create_wwiser_manager(ctx)
@@ -750,9 +766,11 @@ def execute_mapping_tasks(  # noqa: PLR0913
                     progress_message = f"{description} 映射完成"
                     logger.info(f"进度: {completed_count}/{total_tasks} - {progress_message}。")
                 except Exception as exc:
+                    failed_count += 1
                     progress_message = f"{description} 映射失败"
-                    logger.error(f"{description} 映射时发生错误: {exc}")
-                    logger.debug(traceback.format_exc())
+                    logger.opt(exception=show_exception).warning(
+                        f"{description} 映射失败，将继续后续任务: {exc}"
+                    )
                 if progress_callback is not None:
                     progress_callback(
                         entity_type,
@@ -770,9 +788,11 @@ def execute_mapping_tasks(  # noqa: PLR0913
                 completed_count += 1
                 logger.info(f"进度: {completed_count}/{total_tasks} - {progress_message}。")
             except Exception as exc:
+                failed_count += 1
                 progress_message = f"{description} 映射失败"
-                logger.error(f"{description} 映射时发生错误: {exc}")
-                logger.debug(traceback.format_exc())
+                logger.opt(exception=show_exception).warning(
+                    f"{description} 映射失败，将继续后续任务: {exc}"
+                )
             finished_by_type[entity_type] = finished_by_type.get(entity_type, 0) + 1
             if progress_callback is not None:
                 progress_callback(
@@ -783,7 +803,17 @@ def execute_mapping_tasks(  # noqa: PLR0913
                 )
 
     end_time = time.time()
-    logger.success(f"映射完成: {' 和 '.join(summary_parts)}，耗时 {end_time - start_time:.2f}s")
+    summary_message = (
+        f"映射完成: {' 和 '.join(summary_parts)}，"
+        f"成功 {total_tasks - failed_count} 个，失败 {failed_count} 个，"
+        f"耗时 {end_time - start_time:.2f}s"
+    )
+    if failed_count == 0:
+        logger.success(summary_message)
+    elif failed_count < total_tasks:
+        logger.warning(summary_message)
+    else:
+        logger.error(summary_message)
 
 
 def build_mapping_all(  # noqa: PLR0913

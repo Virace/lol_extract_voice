@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import traceback
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -314,8 +313,7 @@ class EntityDataLoader:
             version, raw_data = self._load_raw_entities(entity_type)
             self._ensure_bank_dataset_ready(entity_type)
         except Exception as e:
-            logger.warning(f"Error initializing data for {entity_type}: {e}")
-            logger.debug(traceback.format_exc())
+            logger.opt(exception=True).warning(f"Error initializing data for {entity_type}: {e}")
             raise
 
         result = []
@@ -323,8 +321,9 @@ class EntityDataLoader:
             try:
                 result.append(self._build_entity_row(entity_type, entity_dict, version))
             except Exception as e:
-                logger.warning(f"Error loading entity {entity_dict.get('id', 'unknown')}: {e}")
-                logger.debug(traceback.format_exc())
+                logger.opt(exception=True).warning(
+                    f"Error loading entity {entity_dict.get('id', 'unknown')}: {e}"
+                )
                 continue
 
         return result
@@ -339,8 +338,7 @@ class EntityDataLoader:
             version, raw_data = self._load_raw_entities(entity_type)
             self._ensure_bank_dataset_ready(entity_type)
         except Exception as e:
-            logger.warning(f"Error initializing data for {entity_type}: {e}")
-            logger.debug(traceback.format_exc())
+            logger.opt(exception=True).warning(f"Error initializing data for {entity_type}: {e}")
             raise
 
         result = []
@@ -351,8 +349,9 @@ class EntityDataLoader:
             try:
                 result.append(self._build_entity_row(entity_type, entity_dict, version))
             except Exception as e:
-                logger.warning(f"Error loading entity {entity_dict.get('id', 'unknown')}: {e}")
-                logger.debug(traceback.format_exc())
+                logger.opt(exception=True).warning(
+                    f"Error loading entity {entity_dict.get('id', 'unknown')}: {e}"
+                )
                 continue
 
         return result

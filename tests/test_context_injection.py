@@ -181,6 +181,109 @@ def test_execute_mapping_tasks_passes_wwiser_manager_and_ctx_to_runtime(
     assert captured["ctx"] == ctx
 
 
+def test_execute_unpack_tasks_uses_warning_summary_for_partial_failures(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ctx = _build_ctx(tmp_path)
+    infos: list[str] = []
+    warnings: list[str] = []
+    successes: list[str] = []
+    errors: list[str] = []
+    opt_calls: list[dict[str, object]] = []
+
+    def _record_warning(message: str) -> None:
+        warnings.append(message)
+
+    def _opt_logger(**kwargs):
+        opt_calls.append(kwargs)
+        return SimpleNamespace(warning=_record_warning)
+
+    fake_logger = SimpleNamespace(
+        info=infos.append,
+        debug=lambda _message: None,
+        success=successes.append,
+        warning=warnings.append,
+        error=errors.append,
+        opt=_opt_logger,
+    )
+
+    def _fake_unpack_champion(*_args, **_kwargs) -> None:
+        return None
+
+    def _fail_unpack_map(*_args, **_kwargs) -> None:
+        raise RuntimeError("map boom")
+
+    reader = SimpleNamespace(write_unknown_categories_to_file=lambda: None)
+
+    monkeypatch.setattr(m_unpack, "logger", fake_logger)
+    monkeypatch.setattr(m_unpack, "unpack_champion", _fake_unpack_champion)
+    monkeypatch.setattr(m_unpack, "unpack_map_audio", _fail_unpack_map)
+
+    m_unpack.execute_unpack_tasks(
+        [("champion", 1, "英雄ID 1"), ("map", 11, "地图ID 11")],
+        reader,
+        max_workers=1,
+        ctx=ctx,
+    )
+
+    assert opt_calls == [{"exception": False}]
+    assert any("地图ID 11 解包失败，将继续后续任务: map boom" in line for line in warnings)
+    assert any("成功 1 个，失败 1 个" in line for line in warnings)
+    assert successes == []
+    assert errors == []
+
+
+def test_execute_mapping_tasks_uses_warning_summary_for_partial_failures(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ctx = _build_ctx(tmp_path)
+    infos: list[str] = []
+    warnings: list[str] = []
+    successes: list[str] = []
+    errors: list[str] = []
+    opt_calls: list[dict[str, object]] = []
+
+    def _record_warning(message: str) -> None:
+        warnings.append(message)
+
+    def _opt_logger(**kwargs):
+        opt_calls.append(kwargs)
+        return SimpleNamespace(warning=_record_warning)
+
+    fake_logger = SimpleNamespace(
+        info=infos.append,
+        debug=lambda _message: None,
+        success=successes.append,
+        warning=warnings.append,
+        error=errors.append,
+        opt=_opt_logger,
+    )
+
+    def _fake_build_champion_mapping(*_args, **_kwargs) -> dict[str, object]:
+        return {}
+
+    def _fail_build_map_mapping(*_args, **_kwargs) -> dict[str, object]:
+        raise RuntimeError("map boom")
+
+    monkeypatch.setattr(m_mapping, "logger", fake_logger)
+    monkeypatch.setattr(m_mapping, "_create_wwiser_manager", lambda _ctx: None)
+    monkeypatch.setattr(m_mapping, "build_champion_mapping", _fake_build_champion_mapping)
+    monkeypatch.setattr(m_mapping, "build_map_mapping", _fail_build_map_mapping)
+
+    m_mapping.execute_mapping_tasks(
+        [("champion", 1, "英雄ID 1"), ("map", 11, "地图ID 11")],
+        SimpleNamespace(),
+        max_workers=1,
+        ctx=ctx,
+    )
+
+    assert opt_calls == [{"exception": False}]
+    assert any("地图ID 11 映射失败，将继续后续任务: map boom" in line for line in warnings)
+    assert any("成功 1 个，失败 1 个" in line for line in warnings)
+    assert successes == []
+    assert errors == []
+
+
 def test_get_cached_hirc_uses_native_hirc_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     bnk_path = tmp_path / "events.bnk"
     hirc_cache_dir = tmp_path / "cache"

@@ -46,5 +46,5 @@ class DataLoadWorker(QThread):
             if _is_expected_shared_data_control_flow_error(e):
                 logger.info(f"{self.entity_type} 共享实体数据暂不可用，交由后续流程决定是否自动准备: {e}")
             else:
-                logger.error(f"{self.entity_type} 实体扫描失败: {e}")
+                logger.opt(exception=True).error(f"{self.entity_type} 实体扫描失败: {e}")
             self.error.emit(str(e))

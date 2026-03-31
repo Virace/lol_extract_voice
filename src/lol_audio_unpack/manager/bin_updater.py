@@ -101,24 +101,39 @@ class BinUpdater:
             raise FileNotFoundError(f"数据文件不存在: {self.data_file_base}")
 
         self.languages = data.get("metadata", {}).get("languages", [])
+        local_bin_mode_enabled = self._is_local_bin_mode_enabled()
 
         # 根据传入的IDs构建筛选后的数据
         if champion_ids or map_ids:
             # 精确模式：根据具体ID筛选数据
             filtered_data = self._filter_data_by_ids(data, champion_ids, map_ids)
+            champion_count = len(filtered_data.get("champions", {}))
+            map_count = len(filtered_data.get("maps", {}))
+            logger.info(
+                f"开始更新 BIN 数据（精确模式）：英雄 {champion_count} 个，地图 {map_count} 个，"
+                f"事件处理={'开启' if self.process_events else '关闭'}，"
+                f"本地BIN模式={'开启' if local_bin_mode_enabled else '关闭'}"
+            )
             if champion_ids and filtered_data.get("champions"):
                 self._update_champions(filtered_data)
             if map_ids and filtered_data.get("maps"):
                 self._record_targeted_map_event_scope_note(map_ids)
                 self._update_maps(filtered_data)
-            logger.success(f"BinUpdater 更新完成 (精确模式: champions={champion_ids}, maps={map_ids})")
+            logger.success(f"BinUpdater 更新完成（精确模式）：英雄 {champion_count} 个，地图 {map_count} 个")
         else:
             # 批量模式：使用target控制
+            champion_count = len(data.get("champions", {})) if target in ["skin", "all"] else 0
+            map_count = len(data.get("maps", {})) if target in ["map", "all"] else 0
+            logger.info(
+                f"开始更新 BIN 数据（批量模式）：target={target}，英雄 {champion_count} 个，地图 {map_count} 个，"
+                f"事件处理={'开启' if self.process_events else '关闭'}，"
+                f"本地BIN模式={'开启' if local_bin_mode_enabled else '关闭'}"
+            )
             if target in ["skin", "all"]:
                 self._update_champions(data)
             if target in ["map", "all"]:
                 self._update_maps(data)
-            logger.success(f"BinUpdater 更新完成 (批量模式: {target})")
+            logger.success(f"BinUpdater 更新完成（批量模式）：英雄 {champion_count} 个，地图 {map_count} 个")
 
     def _record_targeted_map_event_scope_note(self, map_ids: list[str]) -> None:
         """记录精确地图更新在未包含 Common 地图时的事件差异说明。"""
@@ -193,6 +208,11 @@ class BinUpdater:
             else:
                 logger.warning(f"{entity_label} 缺少WAD路径信息，且未启用本地BIN模式")
             return []
+
+        if wad_path:
+            logger.debug(f"{entity_label} 的WAD文件不可用，回退到本地BIN模式: {wad_path}")
+        else:
+            logger.debug(f"{entity_label} 缺少WAD路径信息，回退到本地BIN模式")
 
         if not self.local_bin_input_dir.exists():
             raise FileNotFoundError(f"{entity_label} 启用了本地BIN模式，但目录不存在: {self.local_bin_input_dir}")
@@ -286,7 +306,7 @@ class BinUpdater:
             self._log_simple_progress("处理英雄", index, total_champions, champion_id)
             self._process_champion_skins(champion_data, champion_id)
 
-        logger.success("英雄Banks数据更新完成")
+        logger.success(f"英雄Banks数据更新完成，共处理 {total_champions} 个英雄")
 
     @performance_monitor(level="DEBUG")
     def _update_maps(self, data: dict) -> None:
@@ -331,7 +351,7 @@ class BinUpdater:
             self._log_simple_progress("处理地图", index, total_maps, map_id)
             self._process_single_map(map_id, map_data, common_event_sources, common_banks_set)
 
-        logger.success("地图Banks数据更新完成")
+        logger.success(f"地图Banks数据更新完成，共处理 {total_maps} 个地图")
 
     @performance_monitor(level="DEBUG")
     def _process_champion_skins(self, champion_data: ChampionData, champion_id: str) -> None:

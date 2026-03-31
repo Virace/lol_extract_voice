@@ -3,6 +3,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from loguru import logger
 
 from lol_audio_unpack.app_context import SourceMode
 from lol_audio_unpack.manager import data_updater as m_data_updater
@@ -222,6 +223,53 @@ def test_extract_wad_data_tries_champion_details_after_summary(tmp_path, monkeyp
     assert "plugins/rcp-be-lol-game-data/global/default/v1/champions/1.json" in all_requested_paths
 
 
+def test_extract_wad_data_logs_bin_metadata_preparation(tmp_path, monkeypatch):
+    wad_root = tmp_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data"
+    wad_root.mkdir(parents=True, exist_ok=True)
+    (wad_root / "default-assets.wad").write_bytes(b"")
+    (wad_root / "description.json").write_text(
+        json.dumps(
+            {
+                "riotMeta": {
+                    "globalAssetBundles": ["default-assets.wad"],
+                    "perLocaleAssetBundles": {},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeWAD:
+        def __init__(self, path):
+            self.path = Path(path)
+
+        def extract(self, hash_table, out_dir):
+            if any(path.endswith("champion-summary.json") for path in hash_table):
+                summary_virtual_path = next(path for path in hash_table if path.endswith("champion-summary.json"))
+                summary_output = out_dir(summary_virtual_path)
+                summary_output.parent.mkdir(parents=True, exist_ok=True)
+                summary_output.write_text(
+                    json.dumps([{"id": 1, "alias": "Annie", "name": "安妮"}, {"id": -1, "alias": "None", "name": ""}]),
+                    encoding="utf-8",
+                )
+            return []
+
+    monkeypatch.setattr(m_data_updater, "WAD", FakeWAD)
+
+    updater = _build_updater(tmp_path)
+    log_lines: list[str] = []
+    logger.enable("lol_audio_unpack")
+    sink_id = logger.add(lambda message: log_lines.append(str(message).rstrip()), format="{level}|{message}")
+
+    try:
+        updater._extract_wad_data(tmp_path / "out", "en_us")
+    finally:
+        logger.remove(sink_id)
+
+    assert any("DEBUG|准备提取 1 个英雄详细信息，用于后续 bin 元数据装配" in line for line in log_lines)
+    assert any("SUCCESS|英雄信息提取完成，共 1 个英雄，将进入 bin 元数据装配" in line for line in log_lines)
+
+
 def test_extract_wad_data_returns_when_region_wad_missing(tmp_path, monkeypatch):
     calls = []
 
@@ -317,3 +365,61 @@ def test_merge_and_build_data_keeps_remote_map_wad_info_without_local_files(tmp_
     result = captured["data"]
     assert captured["dev_mode"] is False
     assert result["maps"]["11"]["wad"]["root"] == "Game/DATA/FINAL/Maps/Shipping/Map11.wad.client"
+
+
+def test_merge_and_build_data_logs_bin_metadata_summary(tmp_path):
+    updater = _build_updater(tmp_path)
+    updater.ctx.config.source_mode = SourceMode.LOCAL_PATH
+    updater.process_languages = ["default"]
+    updater._is_dev_mode = lambda: False
+
+    base_path = tmp_path / updater.version / "default"
+    champions_path = base_path / "champions"
+    champions_path.mkdir(parents=True, exist_ok=True)
+    (base_path / "champion-summary.json").write_text(
+        json.dumps([{"id": 1, "alias": "Annie", "name": "安妮", "description": "desc"}]),
+        encoding="utf-8",
+    )
+    (champions_path / "1.json").write_text(
+        json.dumps(
+            {
+                "title": "黑暗之女",
+                "skins": [
+                    {
+                        "id": "1000",
+                        "name": "经典",
+                        "isBase": True,
+                        "chromas": [{"id": "1001", "name": "猩红"}],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (base_path / "maps.json").write_text(
+        json.dumps([{"id": 11, "mapStringId": "SR", "name": "召唤师峡谷"}]),
+        encoding="utf-8",
+    )
+
+    captured = {}
+    log_lines: list[str] = []
+
+    def fake_write_data(data: dict, _base: Path, *, dev_mode: bool) -> None:
+        captured["data"] = data
+        captured["dev_mode"] = dev_mode
+
+    original_write_data = m_data_updater.write_data
+    m_data_updater.write_data = fake_write_data
+    logger.enable("lol_audio_unpack")
+    sink_id = logger.add(lambda message: log_lines.append(str(message).rstrip()), format="{level}|{message}")
+    try:
+        updater._merge_and_build_data(tmp_path)
+    finally:
+        logger.remove(sink_id)
+        m_data_updater.write_data = original_write_data
+
+    assert captured["dev_mode"] is False
+    assert any("INFO|合并英雄数据并装配 bin 元数据..." in line for line in log_lines)
+    assert any("DEBUG|英雄 bin 元数据装配完成，共 1 个英雄，1 个皮肤 binPath，1 个炫彩 binPath" in line for line in log_lines)
+    assert any("INFO|合并地图数据并装配 bin 元数据..." in line for line in log_lines)
+    assert any("DEBUG|地图 bin 元数据装配完成，共 1 个地图 binPath" in line for line in log_lines)

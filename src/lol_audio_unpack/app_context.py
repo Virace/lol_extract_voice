@@ -298,7 +298,7 @@ def _select_env_file(env_dir: Path, dev_mode: bool) -> Path:
 def _load_prefixed_env_from_file(env_file: Path, env_prefix: str) -> dict[str, str]:
     """从环境文件读取前缀配置。"""
     if not env_file.exists():
-        logger.warning(f"环境变量文件不存在: {env_file}")
+        logger.debug(f"环境变量文件不存在: {env_file}")
         return {}
 
     settings: dict[str, str] = {}

@@ -370,6 +370,10 @@ class DataUpdater:
             return
 
         final_champions = {}
+        champion_skin_bin_count = 0
+        champion_chroma_bin_count = 0
+
+        logger.info("合并英雄数据并装配 bin 元数据...")
 
         # 使用 lazy 求值记录英雄处理统计
         logger.opt(lazy=True).debug(
@@ -416,6 +420,7 @@ class DataUpdater:
                     "skinNames": skin_names,
                     "binPath": f"data/characters/{alias}/skins/skin{skin_id_num}.bin",
                 }
+                champion_skin_bin_count += 1
 
                 processed_chromas = []
                 for chroma_idx, chroma_detail in enumerate(skin_detail.get("chromas", [])):
@@ -435,6 +440,7 @@ class DataUpdater:
                             "binPath": f"data/characters/{alias}/skins/skin{chroma_id_num}.bin",
                         }
                     )
+                    champion_chroma_bin_count += 1
 
                 if processed_chromas:
                     skin_data["chromas"] = processed_chromas
@@ -456,13 +462,20 @@ class DataUpdater:
         )
         final_result["champions"] = final_champions
 
+        logger.debug(
+            f"英雄 bin 元数据装配完成，共 {len(final_champions)} 个英雄，"
+            f"{champion_skin_bin_count} 个皮肤 binPath，"
+            f"{champion_chroma_bin_count} 个炫彩 binPath"
+        )
+
         # 记录英雄处理完成统计
         logger.success(f"英雄数据合并完成，共处理 {len(final_champions)} 个英雄")
 
-        logger.info("合并地图数据...")
+        logger.info("合并地图数据并装配 bin 元数据...")
         maps_by_lang = self._load_language_json(base_path, "maps.json")
         if "default" in maps_by_lang:
             final_maps = {}
+            map_bin_count = 0
             map_id_to_index_per_lang = {
                 lang: {m["id"]: i for i, m in enumerate(maps)} for lang, maps in maps_by_lang.items()
             }
@@ -491,6 +504,7 @@ class DataUpdater:
 
                 wad_prefix = f"Map{map_id}" if map_id != 0 else "Common"
                 map_data["binPath"] = f"data/maps/shipping/{wad_prefix.lower()}/{wad_prefix.lower()}.bin"
+                map_bin_count += 1
                 wad_info = self._build_map_wad_info(wad_prefix)
                 should_keep_wad_info = (
                     self.ctx.config.source_mode is SourceMode.REMOTE_SNAPSHOT
@@ -505,6 +519,8 @@ class DataUpdater:
 
                 final_maps[str(map_id)] = map_data
             final_result["maps"] = final_maps
+
+            logger.debug(f"地图 bin 元数据装配完成，共 {map_bin_count} 个地图 binPath")
 
             # 记录地图处理完成统计
             logger.success(f"地图数据合并完成，共处理 {len(final_maps)} 个地图")
@@ -564,14 +580,18 @@ class DataUpdater:
                     if item["id"] != -1
                 ]
 
-                logger.debug(f"准备提取 {len(champion_hashes)} 个英雄详细信息")
+                logger.debug(
+                    f"准备提取 {len(champion_hashes)} 个英雄详细信息，用于后续 bin 元数据装配"
+                )
                 (out_path / "champions").mkdir(exist_ok=True)
 
                 for wad_file in wad_files:
                     logger.trace(f"从 {wad_file.name} 提取英雄详细信息")
                     WAD(wad_file).extract(champion_hashes, output_file_name)
 
-                logger.success(f"英雄信息提取完成，共 {len(champion_hashes)} 个英雄")
+                logger.success(
+                    f"英雄信息提取完成，共 {len(champion_hashes)} 个英雄，将进入 bin 元数据装配"
+                )
 
                 if self._is_bp_vo_enabled():
                     bp_vo_hashes: list[str] = []

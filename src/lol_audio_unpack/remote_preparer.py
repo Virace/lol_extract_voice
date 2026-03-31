@@ -186,6 +186,15 @@ class RemoteSnapshotPreparer:
             logger.warning("远端 GAME 快照未规划到任何 BIN 提取目标，已跳过 BIN 输入准备。")
             return None
 
+        planned_wad_count = len(extraction_plan)
+        planned_bin_count = sum(len(bin_paths) for bin_paths in extraction_plan.values())
+        logger.info(
+            "开始准备远端 BIN 输入：target={}，WAD {} 个，BIN {} 个",
+            target,
+            planned_wad_count,
+            planned_bin_count,
+        )
+
         manifest_cache_path = self._ensure_manifest_cached(
             manifest_url=self.snapshot.game_manifest_url,
             manifest_cache_dir=self.game_manifest_cache_dir,
@@ -295,6 +304,13 @@ class RemoteSnapshotPreparer:
                     include_champions=include_champions,
                     include_maps=include_maps,
                 )
+            )
+        if wad_paths:
+            logger.info(
+                "开始准备远端 GAME WAD：extract={}，mapping={}，目标 {} 个",
+                "开启" if need_extract else "关闭",
+                "开启" if need_mapping else "关闭",
+                len(wad_paths),
             )
         return self._prepare_game_wads(wad_paths)
 

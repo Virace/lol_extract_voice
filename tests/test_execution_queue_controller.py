@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import lol_audio_unpack.gui.controllers.execution_queue_controller as queue_module
 from lol_audio_unpack.gui.controllers.execution_queue_controller import ExecutionQueueController
 from lol_audio_unpack.gui.task_models import (
     TASK_STATUS_COMPLETED,
@@ -86,6 +89,55 @@ def test_execution_queue_controller_on_task_finished_emits_refresh_request_for_l
     assert completed_payload.status == TASK_STATUS_COMPLETED
     assert controller.active_task_id is None
     assert refresh_requests == [OutputStateRefreshRequest(champion_ids=("1", "103"))]
+
+
+def test_execution_queue_controller_on_task_started_logs_info(qtbot, monkeypatch) -> None:
+    controller, _panel = _build_controller(qtbot)
+    info_messages: list[str] = []
+
+    monkeypatch.setattr(
+        queue_module,
+        "logger",
+        SimpleNamespace(info=lambda message: info_messages.append(str(message))),
+    )
+    monkeypatch.setattr(controller, "start_task_worker", lambda _task: None)
+
+    queued_task = controller.enqueue_task(
+        draft=ExecutionTaskDraft(source="manual_input", source_summary="手动输入"),
+        summary="测试任务",
+    )
+
+    controller.on_task_started(queued_task.task_id)
+
+    assert info_messages == [f"[队列] 任务 #{queued_task.task_id} 已开始执行"]
+
+
+def test_execution_queue_controller_on_task_finished_logs_success(qtbot, monkeypatch) -> None:
+    controller, _panel = _build_controller(qtbot)
+    success_messages: list[str] = []
+
+    monkeypatch.setattr(
+        queue_module,
+        "logger",
+        SimpleNamespace(success=lambda message: success_messages.append(str(message))),
+    )
+    monkeypatch.setattr(controller, "start_task_worker", lambda _task: None)
+
+    queued_task = controller.enqueue_task(
+        draft=ExecutionTaskDraft(source="manual_input", source_summary="手动输入"),
+        summary="测试任务",
+    )
+
+    controller.on_task_finished(
+        queued_task.task_id,
+        ExecutionTaskResult(
+            completed_steps=("音频解包",),
+            summary="执行完成",
+            duration_seconds=1.2,
+        ),
+    )
+
+    assert success_messages == [f"[队列] 任务 #{queued_task.task_id} 执行完成：执行完成"]
 
 
 def test_execution_queue_controller_shutdown_clears_active_state(qtbot) -> None:

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
+
 import lol_audio_unpack.gui.window as window_module
 from lol_audio_unpack.gui.service import task_runner
 from lol_audio_unpack.gui.task_models import (
@@ -72,3 +76,55 @@ def test_prepare_shared_entity_data_normalizes_source_mode_before_app_context(mo
     _prepare_shared_entity_data({"SOURCE_MODE": "remote_snapshot"})
 
     assert captured["SOURCE_MODE"] == "local_path"
+
+
+def test_run_execution_task_logs_task_start_and_summary(monkeypatch) -> None:
+    task = _build_task(source_mode="remote_snapshot")
+    infos: list[str] = []
+    debugs: list[str] = []
+    successes: list[str] = []
+
+    def _fail_exception(message: str) -> None:
+        pytest.fail(message)
+
+    def _fake_create_app_context(*, cli_overrides) -> object:
+        _ = cli_overrides
+        return object()
+
+    monkeypatch.setattr(
+        task_runner,
+        "normalize_app_context_overrides",
+        lambda overrides: {**overrides, "SOURCE_MODE": "local_path"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        task_runner,
+        "logger",
+        SimpleNamespace(
+            info=infos.append,
+            debug=debugs.append,
+            success=successes.append,
+            exception=_fail_exception,
+        ),
+    )
+    monkeypatch.setattr(task_runner, "create_app_context", _fake_create_app_context)
+
+    class FakeApp:
+        def __init__(self, _app_context) -> None:
+            pass
+
+        def extract(self, _options, **kwargs) -> None:
+            kwargs["progress_callback"]("champions", 1, 1, "音频解包完成")
+
+        def mapping(self, _options, **_kwargs) -> None:
+            return None
+
+    monkeypatch.setattr(task_runner, "LolAudioUnpackApp", FakeApp)
+    signals = SimpleNamespace(progress=SimpleNamespace(emit=lambda _payload: None))
+
+    result = task_runner.run_execution_task(task, signals)
+
+    assert infos[0] == "[执行中心] 任务 #1 开始执行: 音频解包 -> 事件映射"
+    assert debugs[0] == "[执行中心] 任务 #1 范围=英雄 + 地图, source_mode=local_path"
+    assert debugs.count("[执行中心] 任务 #1 创建运行时 AppContext") == 1
+    assert successes == [f"[执行中心] 任务 #1 {result.summary}"]
