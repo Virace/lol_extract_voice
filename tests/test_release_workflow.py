@@ -33,7 +33,7 @@ def test_release_build_gui_workflow_builds_windows_gui_and_publishes_release() -
     assert "actions/checkout@v6" in workflow_text
     assert "actions/setup-python@v6" in workflow_text
     assert "astral-sh/setup-uv@v6" in workflow_text
-    assert "python-version-file: .python-version" in workflow_text
+    assert "python-version: '3.13'" in workflow_text
     assert "python scripts/pyinstaller/build_gui.py --clean" in workflow_text
     assert "LolAudioUnpack-$tag-windows-x64.exe" in workflow_text
     assert "softprops/action-gh-release@v2" in workflow_text
