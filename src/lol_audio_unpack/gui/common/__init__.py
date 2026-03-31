@@ -17,6 +17,11 @@ from lol_audio_unpack.gui.common.log_bridge import (
     install_startup_log_buffer,
     remove_startup_log_buffer,
 )
+from lol_audio_unpack.gui.common.packaged_remote_mode_policy import (
+    available_source_mode_labels,
+    packaged_remote_mode_fallback_needed,
+    remote_source_panel_visible,
+)
 from lol_audio_unpack.gui.common.path_display import (
     format_default_relative_path,
     format_path_for_display,
@@ -27,6 +32,7 @@ __all__ = [
     "GUI_LOG_FORMAT",
     "GUI_LOG_MAX_LINES",
     "GuiConfig",
+    "available_source_mode_labels",
     "apply_smooth_scroll_enabled",
     "calculate_feedback_duration",
     "clear_buffered_log_lines",
@@ -38,6 +44,8 @@ __all__ = [
     "install_qt_message_bridge",
     "install_startup_log_buffer",
     "load_app_icon",
+    "packaged_remote_mode_fallback_needed",
     "remove_startup_log_buffer",
+    "remote_source_panel_visible",
     "show_feedback_infobar",
 ]

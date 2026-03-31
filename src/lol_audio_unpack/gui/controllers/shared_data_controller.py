@@ -18,11 +18,22 @@ from lol_audio_unpack.gui.task_models import OutputStateRefreshRequest
 SHARED_CONTEXT_BUILD_TIMEOUT_MS = 15000
 
 
+def _get_effective_source_mode(cfg, overrides: dict[str, str | bool] | None = None) -> str:
+    """返回共享数据控制器当前应使用的来源模式。"""
+    configured_mode = getattr(cfg, "effective_source_mode", None)
+    if configured_mode:
+        return str(configured_mode)
+    if overrides is not None:
+        return str(overrides.get("SOURCE_MODE", "local_path") or "local_path")
+    return str(getattr(cfg, "source_mode", "local_path") or "local_path")
+
+
 def build_shared_entity_reader_signature(cfg) -> tuple[str | bool, ...]:
     """构建影响共享实体数据读取上下文的配置签名。"""
     overrides = cfg.to_app_context_overrides()
+    source_mode = _get_effective_source_mode(cfg, overrides)
     return (
-        overrides["SOURCE_MODE"],
+        source_mode,
         overrides["GAME_PATH"],
         overrides["GAME_REGION"],
         overrides["REMOTE_LIVE_REGION"],
@@ -43,7 +54,7 @@ def build_shared_entity_scan_signature(cfg) -> tuple[str | bool, ...]:
 
 def build_shared_context_loading_message(cfg) -> str:
     """根据当前模式生成首页共享数据加载阶段文案。"""
-    if getattr(cfg, "source_mode", "local_path") != "remote_snapshot":
+    if _get_effective_source_mode(cfg) != "remote_snapshot":
         return "正在读取本地共享数据…"
 
     if getattr(cfg, "remote_snapshot_strategy", "latest") == "custom":
@@ -54,7 +65,7 @@ def build_shared_context_loading_message(cfg) -> str:
 
 def build_shared_context_timeout_message(cfg) -> str:
     """根据当前模式生成共享数据加载超时提示。"""
-    if cfg is None or getattr(cfg, "source_mode", "local_path") != "remote_snapshot":
+    if cfg is None or _get_effective_source_mode(cfg) != "remote_snapshot":
         return "读取共享数据超时，请重试。"
 
     if getattr(cfg, "remote_snapshot_strategy", "latest") == "custom":
@@ -188,7 +199,8 @@ class SharedDataController(QObject):
             )
         )
 
-        if getattr(current_cfg, "source_mode", "local_path") == "remote_snapshot":
+        effective_source_mode = _get_effective_source_mode(current_cfg)
+        if effective_source_mode == "remote_snapshot":
             strategy = getattr(current_cfg, "remote_snapshot_strategy", "latest")
             if strategy == "custom":
                 logger.debug(

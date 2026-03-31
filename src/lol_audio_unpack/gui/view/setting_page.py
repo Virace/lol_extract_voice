@@ -30,8 +30,11 @@ from qfluentwidgets import (
 from lol_audio_unpack.gui.common import (
     GuiConfig,
     apply_smooth_scroll_enabled,
+    available_source_mode_labels,
     format_default_relative_path,
     format_path_for_display,
+    packaged_remote_mode_fallback_needed,
+    remote_source_panel_visible,
 )
 from lol_audio_unpack.gui.common.style import (
     apply_page_content_margins,
@@ -209,10 +212,12 @@ class SettingPage(SmoothScrollArea):
     def _build_source_group(self):
         group_begin = perf_counter()
         group_mark = group_begin
+        available_mode_labels = available_source_mode_labels()
+        source_mode_map = {label: self._SOURCE_MODE_MAP[label] for label in available_mode_labels}
 
         self.sourceModePanel = SourceModePanel(
             parent=self.content_widget,
-            source_mode_map=self._SOURCE_MODE_MAP,
+            source_mode_map=source_mode_map,
         )
         self.sourceModeGroup = self.sourceModePanel.sourceModeGroup
         self.sourceModeCard = self.sourceModePanel.sourceModeCard
@@ -270,16 +275,18 @@ class SettingPage(SmoothScrollArea):
         """从 GuiConfig 读取保存的配置并应用到各控件。"""
         cfg = self._cfg
         cfg.load()
+        if packaged_remote_mode_fallback_needed(cfg.source_mode):
+            logger.warning("检测到当前为打包版本，远程模式已临时禁用，本次运行将使用本地模式。")
 
         # 来源模式
-        self.sourceModeCard.setValue(cfg.source_mode)
+        self.sourceModeCard.setValue(cfg.effective_source_mode)
 
         # 游戏路径
         apply_path_card_label(self.gamePathCard, cfg.game_path)
 
         # 远程配置
         remote_draft = self._remote_source_controller.draft_from_config(cfg)
-        self.remoteSourcePanel.set_source_mode(cfg.source_mode)
+        self.remoteSourcePanel.set_source_mode(cfg.effective_source_mode)
         self.remoteSourcePanel.apply_draft(remote_draft)
 
         # 基础设置
@@ -474,7 +481,7 @@ class SettingPage(SmoothScrollArea):
 
     def _on_source_mode_changed(self, label: str, persist: bool = True) -> None:
         """根据来源模式（显示文字）切换 local / remote 子组的可见性。"""
-        is_local = (label == "本地模式")
+        is_local = not remote_source_panel_visible(self.sourceModeCard.value())
         self.localGroup.setVisible(is_local)
         self.remoteSourcePanel.group.setVisible(not is_local)
         self.remoteSourcePanel.set_source_mode(self.sourceModeCard.value())

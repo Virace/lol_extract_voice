@@ -32,6 +32,9 @@ from lol_audio_unpack.gui.common import (
     load_app_icon,
     show_feedback_infobar,
 )
+from lol_audio_unpack.gui.common.packaged_remote_mode_policy import (
+    normalize_app_context_overrides,
+)
 from lol_audio_unpack.gui.components.log_drawer import (
     GlobalLogDrawer,
 )
@@ -85,6 +88,7 @@ def _prepare_shared_entity_data(cli_overrides: dict[str, str | bool]) -> None:
     """为实体列表准备后端共享数据。"""
     prepare_overrides = dict(cli_overrides)
     prepare_overrides["WITH_BP_VO"] = True
+    prepare_overrides = normalize_app_context_overrides(prepare_overrides)
     app_context = create_app_context(cli_overrides=prepare_overrides)
     app = LolAudioUnpackApp(app_context)
     app.update(OperationOptions(), target="all")

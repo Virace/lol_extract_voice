@@ -24,6 +24,7 @@ from time import sleep
 from dotenv import dotenv_values, set_key, unset_key
 from PySide6.QtCore import QSettings
 
+from lol_audio_unpack.gui.common.packaged_remote_mode_policy import effective_source_mode
 from lol_audio_unpack.gui.task_models import AppContextInputSnapshot
 from lol_audio_unpack.utils.runtime_paths import (
     detect_runtime_paths,
@@ -245,7 +246,7 @@ class GuiConfig:
         """构建供 ``create_app_context`` 使用的配置映射。"""
         snapshot_overrides = self._snapshot_overrides()
         return {
-            "SOURCE_MODE": self._source_mode,
+            "SOURCE_MODE": self.effective_source_mode,
             "GAME_PATH": self._game_path,
             "OUTPUT_PATH": self._output_path,
             "GAME_REGION": self._game_region,
@@ -313,6 +314,11 @@ class GuiConfig:
     def source_mode(self) -> str:
         """``"local_path"`` or ``"remote_snapshot"``."""
         return self._source_mode
+
+    @property
+    def effective_source_mode(self) -> str:
+        """返回 GUI 当前运行时应使用的来源模式。"""
+        return effective_source_mode(self._source_mode)
 
     @source_mode.setter
     def source_mode(self, v: str) -> None:

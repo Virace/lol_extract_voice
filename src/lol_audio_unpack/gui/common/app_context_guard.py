@@ -16,7 +16,11 @@ def get_app_context_block_reason(cfg: object | None) -> str | None:
     if cfg is None:
         return None
 
-    if getattr(cfg, "source_mode", "local_path") != "local_path":
+    source_mode = getattr(cfg, "effective_source_mode", None)
+    if not source_mode:
+        source_mode = getattr(cfg, "source_mode", "local_path")
+
+    if source_mode != "local_path":
         return None
 
     raw_game_path = str(getattr(cfg, "game_path", "") or "").strip()

@@ -5,7 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from lol_audio_unpack.gui.controllers.contracts import GuiNotice
-from lol_audio_unpack.gui.controllers.shared_data_controller import SharedDataController
+from lol_audio_unpack.gui.controllers.shared_data_controller import (
+    SharedDataController,
+    build_shared_context_loading_message,
+    build_shared_entity_reader_signature,
+)
 from lol_audio_unpack.gui.task_models import OutputStateRefreshRequest
 
 
@@ -13,6 +17,7 @@ class _FakeConfig:
     """最小可用的 GUI 配置替身。"""
 
     source_mode = "local_path"
+    effective_source_mode = "local_path"
     remote_snapshot_strategy = "latest"
     output_path = "output"
     game_path = "game"
@@ -149,6 +154,24 @@ def test_shared_data_controller_refresh_shared_output_state_uses_incremental_loa
             level="success",
         )
     ]
+
+
+def test_shared_entity_reader_signature_uses_effective_local_mode_when_packaged() -> None:
+    cfg = _FakeConfig()
+    cfg.source_mode = "remote_snapshot"
+    cfg.effective_source_mode = "local_path"
+
+    signature = build_shared_entity_reader_signature(cfg)
+
+    assert signature[0] == "local_path"
+
+
+def test_shared_context_loading_message_uses_effective_local_mode_when_packaged() -> None:
+    cfg = _FakeConfig()
+    cfg.source_mode = "remote_snapshot"
+    cfg.effective_source_mode = "local_path"
+
+    assert build_shared_context_loading_message(cfg) == "正在读取本地共享数据…"
 
 
 def test_shared_data_controller_load_initial_data_starts_worker_and_emits_loading_state() -> None:
