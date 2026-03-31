@@ -6,7 +6,6 @@ import os
 import shutil
 import threading
 import time
-import traceback
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -219,8 +218,9 @@ def unpack_audio_entity(
                 # 记录VO WAD解包成功统计
                 stats.set_wad_info("VO", lang_wad_path, len(vo_path_list), len(file_raws))
             except Exception as e:
-                logger.error(f"解包语言WAD文件 '{lang_wad_path.name}' 时出错: {e}")
-                logger.debug(traceback.format_exc())
+                logger.opt(exception=bool(getattr(ctx.config, "dev_mode", False))).error(
+                    f"解包语言WAD文件 '{lang_wad_path.name}' 时出错: {e}"
+                )
                 # 记录VO WAD解包失败统计
                 stats.set_wad_info("VO", lang_wad_path, len(vo_path_list), 0, str(e))
         elif vo_paths_to_extract:
@@ -240,8 +240,9 @@ def unpack_audio_entity(
                 # 记录SFX/Music WAD解包成功统计
                 stats.set_wad_info("ROOT", root_wad_path, len(other_path_list), len(file_raws))
             except Exception as e:
-                logger.error(f"解包根WAD文件 '{root_wad_path.name}' 时出错: {e}")
-                logger.debug(traceback.format_exc())
+                logger.opt(exception=bool(getattr(ctx.config, "dev_mode", False))).error(
+                    f"解包根WAD文件 '{root_wad_path.name}' 时出错: {e}"
+                )
                 # 记录SFX/Music WAD解包失败统计
                 stats.set_wad_info("ROOT", root_wad_path, len(other_path_list), 0, str(e))
         elif other_paths_to_extract:
@@ -657,6 +658,9 @@ def execute_unpack_tasks(
         f"模式: {'多线程' if max_workers > 1 else '单线程'} (workers: {max_workers})"
     )
 
+    failed_count = 0
+    show_exception = bool(getattr(ctx.config, "dev_mode", False))
+
     wad_cache: dict[Path, WAD] = {}
     cache_lock = threading.Lock() if max_workers > 1 else None
 
@@ -688,9 +692,11 @@ def execute_unpack_tasks(
                     progress_message = f"{description} 解包完成"
                     logger.info(f"进度: {finished_count}/{total_tasks} - {progress_message}。")
                 except Exception as exc:
+                    failed_count += 1
                     progress_message = f"{description} 解包失败"
-                    logger.error(f"{description} 解包时发生错误: {exc}")
-                    logger.debug(traceback.format_exc())
+                    logger.opt(exception=show_exception).warning(
+                        f"{description} 解包失败，将继续后续任务: {exc}"
+                    )
                 if progress_callback is not None:
                     progress_callback(
                         entity_type,
@@ -707,9 +713,11 @@ def execute_unpack_tasks(
                 progress_message = f"{description} 解包完成"
                 logger.info(f"进度: {finished_count + 1}/{total_tasks} - {progress_message}。")
             except Exception as exc:
+                failed_count += 1
                 progress_message = f"{description} 解包失败"
-                logger.error(f"{description} 解包时发生错误: {exc}")
-                logger.debug(traceback.format_exc())
+                logger.opt(exception=show_exception).warning(
+                    f"{description} 解包失败，将继续后续任务: {exc}"
+                )
             finished_count += 1
             finished_by_type[entity_type] = finished_by_type.get(entity_type, 0) + 1
             if progress_callback is not None:
@@ -721,7 +729,17 @@ def execute_unpack_tasks(
                 )
 
     end_time = time.time()
-    logger.success(f"解包完成: {' 和 '.join(summary_parts)}，耗时 {end_time - start_time:.2f}s")
+    summary_message = (
+        f"解包完成: {' 和 '.join(summary_parts)}，"
+        f"成功 {total_tasks - failed_count} 个，失败 {failed_count} 个，"
+        f"耗时 {end_time - start_time:.2f}s"
+    )
+    if failed_count == 0:
+        logger.success(summary_message)
+    elif failed_count < total_tasks:
+        logger.warning(summary_message)
+    else:
+        logger.error(summary_message)
 
     # 在所有操作完成后，将收集到的未知分类写入文件
     reader.write_unknown_categories_to_file()

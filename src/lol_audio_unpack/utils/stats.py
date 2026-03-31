@@ -277,7 +277,10 @@ class EntityUnpackStats:
         if self.vo_wad_info.failed or self.root_wad_info.failed:
             self.overall_result = StageResult.ERROR
         elif self.total_failed_files > 0:
-            self.overall_result = StageResult.ERROR
+            if self.total_success_files > 0 or self.total_skipped_files > 0 or self.skipped_sub_entities > 0:
+                self.overall_result = StageResult.WARNING
+            else:
+                self.overall_result = StageResult.ERROR
         elif self.total_skipped_files > 0 or self.skipped_sub_entities > 0:
             self.overall_result = StageResult.WARNING
         else:
@@ -295,6 +298,8 @@ class EntityUnpackStats:
             return f"✅ {self.entity_name} 解包完成 - 成功 {self.total_success_files} 个文件 ({duration_str})"
         elif self.overall_result == StageResult.WARNING:
             details = []
+            if self.total_failed_files > 0:
+                details.append(f"失败 {self.total_failed_files}")
             if self.total_skipped_files > 0:
                 details.append(f"跳过 {self.total_skipped_files}")
             if self.skipped_sub_entities > 0:

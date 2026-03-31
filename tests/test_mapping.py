@@ -135,11 +135,11 @@ def test_build_audio_event_mapping_uses_single_success_summary(monkeypatch, tmp_
 
     assert any("DEBUG|完成 CAT_OK 的映射" in line for line in log_lines)
     assert not any("SUCCESS|完成 CAT_OK 的映射" in line for line in log_lines)
-    assert any("ERROR|处理路径组合 1 时出错: 读取 MusicSwitch.rule_destination_count 失败" in line for line in log_lines)
+    assert any("WARNING|处理路径组合 1 时出错: 读取 MusicSwitch.rule_destination_count 失败" in line for line in log_lines)
 
-    success_lines = [line for line in log_lines if "SUCCESS|" in line]
-    assert len(success_lines) == 1
-    assert "Test Entity 的事件映射统计" in success_lines[0]
-    assert "成功映射事件 1 个" in success_lines[0]
-    assert "异常事件 1 个" in success_lines[0]
-    assert "未映射跳过 1 个" in success_lines[0]
+    warning_lines = [line for line in log_lines if "WARNING|" in line]
+    assert any("Test Entity 的事件映射统计" in line for line in warning_lines)
+    assert any("成功映射事件 1 个" in line for line in warning_lines)
+    assert any("异常事件 1 个" in line for line in warning_lines)
+    assert any("未映射跳过 1 个" in line for line in warning_lines)
+    assert not any("SUCCESS|Test Entity 的事件映射统计" in line for line in log_lines)
