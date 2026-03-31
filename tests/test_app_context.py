@@ -111,6 +111,24 @@ def test_create_app_context_applies_cli_overrides(tmp_path: Path) -> None:
     assert set(app_context.config.include_types) == {"SFX", "MUSIC"}
 
 
+def test_create_app_context_blank_exclude_type_override_clears_env_value(tmp_path: Path) -> None:
+    env_dir = tmp_path / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+
+    game_path = tmp_path / "game"
+    output_path = tmp_path / "output"
+    _write_env_file(env_dir, game_path, output_path)
+
+    app_context = create_app_context(
+        env_path=env_dir,
+        cli_overrides={"EXCLUDE_TYPE": ""},
+    )
+
+    assert isinstance(app_context, AppContext)
+    assert app_context.config.exclude_types == ()
+    assert set(app_context.config.include_types) == {"VO", "SFX", "MUSIC"}
+
+
 def test_create_app_context_default_mode_uses_dot_env_only(tmp_path: Path) -> None:
     env_dir = tmp_path / "env"
     env_dir.mkdir(parents=True, exist_ok=True)

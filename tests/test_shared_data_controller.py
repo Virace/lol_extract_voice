@@ -79,13 +79,14 @@ class _FakeTaskWorker:
         self.signals = _FakeTaskWorkerSignals()
 
 
-def _build_controller(
+def _build_controller(  # noqa: PLR0913
     *,
     has_incomplete_tasks=lambda: False,
     entity_data_loader_cls=object,
     create_app_context_fn=lambda **_kwargs: object(),
     task_worker_cls=object,
     start_worker_fn=lambda _worker: None,
+    app_context_block_reason_fn=lambda _cfg: None,
 ) -> SharedDataController:
     cfg = _FakeConfig()
     return SharedDataController(
@@ -98,7 +99,7 @@ def _build_controller(
         start_worker_fn=start_worker_fn,
         prepare_shared_entity_data_fn=lambda _overrides: None,
         reset_data_reader_singleton_fn=lambda: None,
-        app_context_block_reason_fn=lambda _cfg: None,
+        app_context_block_reason_fn=app_context_block_reason_fn,
     )
 
 
@@ -179,6 +180,29 @@ def test_shared_data_controller_refresh_shared_output_state_warns_before_full_re
 
     assert warnings == ["共享上下文尚未就绪，回退到完整共享数据刷新"]
     assert reload_calls == [{"show_notice": True, "allow_auto_prepare": True}]
+
+
+def test_shared_data_controller_refresh_shared_output_state_emits_notice_when_reload_is_blocked() -> None:
+    controller = _build_controller(
+        app_context_block_reason_fn=lambda _cfg: "请先在「全局设置」中配置游戏目录。"
+    )
+    notices = []
+    loading_states = []
+    controller.notice_requested.connect(notices.append)
+    controller.loading_state_changed.connect(loading_states.append)
+
+    controller.refresh_shared_output_state()
+
+    assert notices == [
+        GuiNotice(
+            title="无法刷新数据",
+            content="请先在「全局设置」中配置游戏目录。",
+            level="warning",
+        )
+    ]
+    assert loading_states[-1].message == "请先在「全局设置」中配置游戏目录。"
+    assert loading_states[-1].active is False
+    assert controller.pending_refresh_notice is False
 
 
 def test_shared_data_controller_on_shared_data_prepare_failed_logs_error(monkeypatch) -> None:

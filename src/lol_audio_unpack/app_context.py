@@ -378,6 +378,9 @@ def _build_raw_settings(
                 logger.debug(f"忽略空的CLI配置项: {key}=None")
                 continue
             if isinstance(value, str) and not value.strip():
+                if key == "EXCLUDE_TYPE":
+                    merged[key] = ""
+                    continue
                 logger.debug(f"忽略空白CLI配置项: {key}")
                 continue
             merged[key] = value
