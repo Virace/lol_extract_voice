@@ -114,7 +114,7 @@ class DataReader(metaclass=Singleton):
         self.unknown_categories: set[str] = set()
         self.initialized = True
 
-    def _validate_data_version(self):
+    def _validate_data_version(self) -> None:
         """
         校验加载的数据文件版本与当前游戏版本的兼容性。
 
@@ -128,26 +128,26 @@ class DataReader(metaclass=Singleton):
             logger.warning("数据文件中缺少 'gameVersion' 字段，无法进行版本校验。")
             return
 
+        # 分割版本号，例如 "15.14" -> ["15", "14"]
+        current_parts = self.version.split(".")
+        data_parts = data_version_str.split(".")
+
+        if len(current_parts) < self.CHECK_VERSION_DIFF or len(data_parts) < self.CHECK_VERSION_DIFF:
+            logger.error(f"版本号格式无效。当前游戏: '{self.version}', 数据文件: '{data_version_str}'")
+            return
+
+        # 1. 检查大版本 (Major version)
+        if current_parts[0] != data_parts[0]:
+            error_msg = (
+                f"数据版本与游戏版本严重不匹配 (大版本不同)！\n"
+                f"  - 当前游戏版本: {self.version}\n"
+                f"  - 数据文件版本: {data_version_str}\n"
+                f"请立即运行数据更新程序。"
+            )
+            logger.critical(error_msg)
+            raise ValueError(error_msg)
+
         try:
-            # 分割版本号，例如 "15.14" -> ["15", "14"]
-            current_parts = self.version.split(".")
-            data_parts = data_version_str.split(".")
-
-            if len(current_parts) < self.CHECK_VERSION_DIFF or len(data_parts) < self.CHECK_VERSION_DIFF:
-                logger.error(f"版本号格式无效。当前游戏: '{self.version}', 数据文件: '{data_version_str}'")
-                return
-
-            # 1. 检查大版本 (Major version)
-            if current_parts[0] != data_parts[0]:
-                error_msg = (
-                    f"数据版本与游戏版本严重不匹配 (大版本不同)！\n"
-                    f"  - 当前游戏版本: {self.version}\n"
-                    f"  - 数据文件版本: {data_version_str}\n"
-                    f"请立即运行数据更新程序。"
-                )
-                logger.critical(error_msg)
-                raise ValueError(error_msg)
-
             # 2. 检查小版本 (Minor version)
             current_minor = int(current_parts[1])
             data_minor = int(data_parts[1])
@@ -166,8 +166,10 @@ class DataReader(metaclass=Singleton):
                         f"{version_msg}\n小版本差距较小(≤{self.CHECK_VERSION_DIFF})，数据有可能不准确，建议更新数据。"
                     )
 
-        except (ValueError, IndexError) as e:
-            logger.error(f"解析版本号时出错: {e}。当前游戏: '{self.version}', 数据文件: '{data_version_str}'")
+        except ValueError:
+            logger.opt(exception=True).error(
+                f"解析版本号时出错。当前游戏: '{self.version}', 数据文件: '{data_version_str}'"
+            )
             return
 
     def get_audio_type(self, category: str) -> str:
@@ -190,7 +192,6 @@ class DataReader(metaclass=Singleton):
         languages_set.add("default")
         return list(languages_set)
 
-    @logger.catch
     @performance_monitor(level="DEBUG")
     def get_champion_banks(self, champion_id: int) -> dict | None:
         """
@@ -203,15 +204,18 @@ class DataReader(metaclass=Singleton):
         if champion_id in self._champion_banks_cache:
             return self._champion_banks_cache[champion_id]
 
-        banks_file_base = self.champion_banks_dir / str(champion_id)
-        banks_data = read_data(banks_file_base, dev_mode=self.ctx.config.dev_mode)
+        try:
+            banks_file_base = self.champion_banks_dir / str(champion_id)
+            banks_data = read_data(banks_file_base, dev_mode=self.ctx.config.dev_mode)
+        except Exception:
+            logger.opt(exception=True).error(f"读取英雄 banks 数据失败: champion_id={champion_id}")
+            return None
 
         if banks_data:
             self._champion_banks_cache[champion_id] = banks_data
 
         return banks_data
 
-    @logger.catch
     @performance_monitor(level="DEBUG")
     def write_unknown_categories_to_file(self) -> None:
         """将本次运行中收集到的所有未知分类写入到文件中"""
@@ -235,7 +239,6 @@ class DataReader(metaclass=Singleton):
         except Exception as e:
             logger.opt(exception=True).error(f"写入未知分类文件时出错: {e}")
 
-    @logger.catch
     @performance_monitor(level="DEBUG")
     def get_champion_events(self, champion_id: int) -> dict | None:
         """
@@ -248,15 +251,18 @@ class DataReader(metaclass=Singleton):
         if champion_id in self._champion_events_cache:
             return self._champion_events_cache[champion_id]
 
-        events_file_base = self.champion_events_dir / str(champion_id)
-        events_data = read_data(events_file_base, dev_mode=self.ctx.config.dev_mode)
+        try:
+            events_file_base = self.champion_events_dir / str(champion_id)
+            events_data = read_data(events_file_base, dev_mode=self.ctx.config.dev_mode)
+        except Exception:
+            logger.opt(exception=True).error(f"读取英雄 events 数据失败: champion_id={champion_id}")
+            return None
 
         if events_data:
             self._champion_events_cache[champion_id] = events_data
 
         return events_data
 
-    @logger.catch
     @performance_monitor(level="DEBUG")
     def get_map_banks(self, map_id: int) -> dict | None:
         """
@@ -269,15 +275,18 @@ class DataReader(metaclass=Singleton):
         if map_id in self._map_banks_cache:
             return self._map_banks_cache[map_id]
 
-        banks_file_base = self.map_banks_dir / str(map_id)
-        banks_data = read_data(banks_file_base, dev_mode=self.ctx.config.dev_mode)
+        try:
+            banks_file_base = self.map_banks_dir / str(map_id)
+            banks_data = read_data(banks_file_base, dev_mode=self.ctx.config.dev_mode)
+        except Exception:
+            logger.opt(exception=True).error(f"读取地图 banks 数据失败: map_id={map_id}")
+            return None
 
         if banks_data:
             self._map_banks_cache[map_id] = banks_data
 
         return banks_data
 
-    @logger.catch
     @performance_monitor(level="DEBUG")
     def get_map_events(self, map_id: int) -> dict | None:
         """读取并缓存指定地图的 events 数据。
@@ -291,9 +300,13 @@ class DataReader(metaclass=Singleton):
         if map_id in self._map_events_cache:
             return self._map_events_cache[map_id]
 
-        events_file_base = self.map_events_dir / str(map_id)
-        map_events_data = read_data(events_file_base, dev_mode=self.ctx.config.dev_mode)
-        result = map_events_data.get("map") if map_events_data else None
+        try:
+            events_file_base = self.map_events_dir / str(map_id)
+            map_events_data = read_data(events_file_base, dev_mode=self.ctx.config.dev_mode)
+            result = map_events_data.get("map") if map_events_data else None
+        except Exception:
+            logger.opt(exception=True).error(f"读取地图 events 数据失败: map_id={map_id}")
+            return None
 
         if result:
             self._map_events_cache[map_id] = result

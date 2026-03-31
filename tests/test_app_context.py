@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from loguru import logger
 
 import lol_audio_unpack as app_pkg
 import lol_audio_unpack.app_context as app_context_module
@@ -175,6 +176,36 @@ def test_create_app_context_non_dev_mode_does_not_read_dot_env_dev_alone(tmp_pat
 
     with pytest.raises(AppContextValidationError, match="GAME_PATH"):
         create_app_context(env_path=env_dir, dev_mode=False)
+
+
+def test_create_app_context_missing_env_file_logs_debug_not_warning(tmp_path: Path) -> None:
+    env_dir = tmp_path / "env"
+    env_dir.mkdir(parents=True, exist_ok=True)
+    game_path = tmp_path / "game"
+    output_path = tmp_path / "output"
+
+    log_lines: list[str] = []
+    logger.enable("lol_audio_unpack")
+    sink_id = logger.add(
+        lambda message: log_lines.append(str(message).rstrip()),
+        format="{level}|{message}",
+        level="DEBUG",
+    )
+    try:
+        create_app_context(
+            env_path=env_dir,
+            dev_mode=False,
+            cli_overrides={
+                "GAME_PATH": str(game_path),
+                "OUTPUT_PATH": str(output_path),
+            },
+        )
+    finally:
+        logger.remove(sink_id)
+        logger.disable("lol_audio_unpack")
+
+    assert any(line.startswith("DEBUG|环境变量文件不存在:") for line in log_lines)
+    assert not any(line.startswith("WARNING|环境变量文件不存在:") for line in log_lines)
 
 
 def test_create_app_context_system_env_overrides_dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
