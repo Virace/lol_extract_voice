@@ -1,5 +1,7 @@
 """PyInstaller 正式构建入口测试。"""
-
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -81,3 +83,28 @@ def test_runtime_hook_uses_runtime_paths_helper() -> None:
     assert "lol_audio_unpack" not in hook_text
     assert "sys.executable" in hook_text
     assert "os.chdir" in hook_text
+
+
+def test_pyinstaller_build_script_dry_run_supports_cp1252_output(tmp_path: Path) -> None:
+    """build script 在 cp1252 控制台下也应能完成 dry-run。"""
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "cp1252"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(PYINSTALLER_DIR / "build_gui.py"),
+            "--dry-run",
+            "--skip-sync",
+            "--clean",
+            "--output-root",
+            str(tmp_path / "pyinstaller-out"),
+        ],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="cp1252",
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
