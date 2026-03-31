@@ -13,6 +13,8 @@ from qfluentwidgets import Theme, qconfig, setTheme, setThemeColor
 
 from lol_audio_unpack.gui.common import (
     GuiConfig,
+    install_pyvgmstream_log_bridge,
+    install_qt_message_bridge,
     install_startup_log_buffer,
     remove_startup_log_buffer,
 )
@@ -56,6 +58,8 @@ def main() -> None:
         dev_mode=True,
         show_function_info=True,
     )
+    install_qt_message_bridge()
+    install_pyvgmstream_log_bridge()
     install_startup_log_buffer()
     logger.info("GUI 启动")
     previous_mark = _log_startup_stage("setup_logging 完成", startup_begin, previous_mark)

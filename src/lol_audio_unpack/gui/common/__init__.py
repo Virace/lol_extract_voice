@@ -12,6 +12,8 @@ from lol_audio_unpack.gui.common.log_bridge import (
     GUI_LOG_MAX_LINES,
     clear_buffered_log_lines,
     get_buffered_log_lines,
+    install_pyvgmstream_log_bridge,
+    install_qt_message_bridge,
     install_startup_log_buffer,
     remove_startup_log_buffer,
 )
@@ -32,6 +34,8 @@ __all__ = [
     "format_path_for_display",
     "get_app_context_block_reason",
     "get_buffered_log_lines",
+    "install_pyvgmstream_log_bridge",
+    "install_qt_message_bridge",
     "install_startup_log_buffer",
     "load_app_icon",
     "remove_startup_log_buffer",

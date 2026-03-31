@@ -63,6 +63,10 @@ from lol_audio_unpack.gui.controllers.overview_preview_controller import (
     AudioPreviewToggleResult,
     OverviewPreviewController,
 )
+from lol_audio_unpack.gui.controllers.preview_playback_controller import (
+    PreviewPlaybackController,
+    PreviewPlaybackState,
+)
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 from lol_audio_unpack.gui.view.overview.audio_preview_panel import OverviewAudioPreviewPanel
 from lol_audio_unpack.gui.view.overview.entity_list_panel import OverviewEntityListPanel
@@ -130,8 +134,16 @@ class OverviewPage(QWidget):
         self._entity_lists: dict[str, OverviewEntityListView] = {}
         self._audio_preview_placeholder = "请选择左侧实体以查看事件内容。"
         self._build_ui()
+        self._preview_playback_controller = PreviewPlaybackController(parent=self)
+        self._preview_playback_controller.playback_state_changed.connect(
+            self._apply_audio_preview_playback_state
+        )
+        self._preview_playback_controller.playback_error.connect(
+            self._show_audio_preview_playback_error
+        )
         self._setup_connections()
         self.destroyed.connect(self._disconnect_theme_refresh_listeners)
+        self.destroyed.connect(self._preview_playback_controller.shutdown)
 
     def showEvent(self, event):
         """页面首次展示时同步当前缓存。"""
@@ -160,12 +172,14 @@ class OverviewPage(QWidget):
         )
 
     def set_preview_audio_volume(self, value: int) -> None:
-        """缓存试听音量设置，后续可直接接回底层播放器。"""
+        """缓存试听音量设置并同步到底层播放器。"""
         self._preview_audio_volume_percent = int(value)
+        self._preview_playback_controller.set_volume_percent(self._preview_audio_volume_percent)
 
     def set_preview_audio_output_device(self, value: str) -> None:
-        """缓存试听输出设备设置，后续可直接接回底层播放器。"""
+        """缓存试听输出设备设置并同步到播放控制器。"""
         self._preview_audio_output_device_key = str(value or "").strip() or DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY
+        self._preview_playback_controller.set_output_device_key(self._preview_audio_output_device_key)
 
     def set_app_context(self, app_context) -> None:
         """注入应用上下文。
@@ -335,7 +349,6 @@ class OverviewPage(QWidget):
         self.audio_preview_summary_card = self.audioPreviewPanel.summary_card
         self.audio_preview_summary_label = self.audioPreviewPanel.summary_label
         self.audio_preview_tree = self.audioPreviewPanel.audio_preview_tree
-        # TODO: 后续若要接入试听，再单独评估 vgmstream 播放链路；当前事件树仅负责事件浏览。
 
         self.splitter.addWidget(self.entityListPanel)
         self.splitter.addWidget(self.previewPanel)
@@ -504,7 +517,7 @@ class OverviewPage(QWidget):
         self.reveal_file_btn.setEnabled(True)
 
     def _on_audio_preview_toggle_requested(self, audio_id: str) -> None:
-        """响应试听树叶子行点击并保留后续接回播放器所需的请求壳子。"""
+        """响应试听树叶子行点击并触发试听播放控制。"""
         result = self._preview_controller.resolve_audio_preview_toggle(
             requested_audio_id=audio_id,
             current_audio_id=self._current_audio_preview_audio_id,
@@ -523,12 +536,32 @@ class OverviewPage(QWidget):
             )
             return
 
-        self._current_audio_preview_audio_id = result.audio_id
-        self._current_audio_preview_path = result.audio_path
-        self._current_audio_preview_progress = result.progress
-        self._current_audio_preview_is_playing = result.is_playing
-        self._current_audio_preview_is_paused = result.is_paused
+        if result.audio_id is None or result.audio_path is None:
+            self._clear_audio_preview_request()
+            return
+
+        self._preview_playback_controller.play(
+            audio_id=result.audio_id,
+            audio_path=result.audio_path,
+        )
+
+    def _apply_audio_preview_playback_state(self, state: PreviewPlaybackState) -> None:
+        """同步播放控制器发出的最新试听状态。"""
+        self._current_audio_preview_audio_id = state.audio_id
+        self._current_audio_preview_path = state.audio_path
+        self._current_audio_preview_progress = state.progress
+        self._current_audio_preview_is_playing = state.is_playing
+        self._current_audio_preview_is_paused = state.is_paused
         self._sync_audio_preview_playback_state()
+
+    def _show_audio_preview_playback_error(self, message: str) -> None:
+        """显示试听播放链路的用户可见错误。"""
+        InfoBar.warning(
+            "试听播放失败",
+            message,
+            parent=self.window(),
+            position=InfoBarPosition.TOP,
+        )
 
     def _sync_audio_preview_playback_state(self) -> None:
         """把当前缓存的试听状态同步到试听树视图。"""
@@ -540,12 +573,17 @@ class OverviewPage(QWidget):
         )
 
     def _clear_audio_preview_request(self) -> None:
-        """清空当前试听请求，仅保留后续播放器接回所需的页面壳子。"""
-        self._current_audio_preview_audio_id = None
-        self._current_audio_preview_path = None
-        self._current_audio_preview_progress = 0.0
-        self._current_audio_preview_is_playing = False
-        self._current_audio_preview_is_paused = False
+        """清空当前试听请求并停止活跃中的播放器。"""
+        self._preview_playback_controller.stop()
+        self._apply_audio_preview_playback_state(
+            PreviewPlaybackState(
+                audio_id=None,
+                audio_path=None,
+                progress=0.0,
+                is_playing=False,
+                is_paused=False,
+            )
+        )
 
     def _show_placeholder(self, message: str) -> None:
         self._current_mapping_path = None

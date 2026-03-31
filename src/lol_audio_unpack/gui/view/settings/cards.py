@@ -19,6 +19,7 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
+from lol_audio_unpack.gui.common.font_compat import apply_switch_button_safe_font
 from lol_audio_unpack.gui.components.accordion_setting_card import FormAccordionCard
 
 
@@ -210,6 +211,7 @@ class LocalizedSwitchSettingCard(SwitchSettingCard):
         self._on_text = "开"
         self._off_text = "关"
         super().__init__(icon, title, content, configItem=configItem, parent=parent)
+        apply_switch_button_safe_font(self.switchButton)
         self._sync_switch_text(self.isChecked())
 
     def _sync_switch_text(self, is_checked: bool) -> None:
@@ -314,6 +316,7 @@ class SmoothScrollSettingCard(FormAccordionCard):
         switch_button.setOnText("开")
         switch_button.setOffText("关")
         switch_button.setText("关")
+        apply_switch_button_safe_font(switch_button)
         self.add_form_row(title, content, switch_button)
         return switch_button
 
