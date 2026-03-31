@@ -73,6 +73,7 @@ class HomeStatusController(QObject):
         self._cache_check = cache_check_fn
         self._task_worker_cls = task_worker_cls
         self._start_worker = start_worker_fn or QThreadPool.globalInstance().start
+        self._active_worker = None
 
     def run_check(self, *, game_path: Path | None, output_path: Path) -> HomeCheckResult:
         """执行一次首页状态检查。
@@ -164,11 +165,25 @@ class HomeStatusController(QObject):
 
         worker = self._task_worker_cls(_check)
         worker.signals.finished.connect(
-            lambda result, output_path=output_path: self.display_state_ready.emit(
-                self.build_display_state(result=result, output_path=output_path)
+            lambda result, output_path=output_path: self._emit_finished_state(
+                result=result,
+                output_path=output_path,
             )
         )
         worker.signals.failed.connect(
-            lambda _error: self.display_state_ready.emit(self.build_failure_state())
+            lambda _error: self._emit_failure_state()
         )
+        self._active_worker = worker
         self._start_worker(worker)
+
+    def _emit_finished_state(self, *, result: HomeCheckResult, output_path: Path) -> None:
+        """广播首页状态检查成功结果，并释放当前 worker 引用。"""
+        self._active_worker = None
+        self.display_state_ready.emit(
+            self.build_display_state(result=result, output_path=output_path)
+        )
+
+    def _emit_failure_state(self) -> None:
+        """广播首页状态检查失败结果，并释放当前 worker 引用。"""
+        self._active_worker = None
+        self.display_state_ready.emit(self.build_failure_state())

@@ -13,6 +13,7 @@ from lol_audio_unpack.gui.controllers.window_shell_controller import (
     bind_shared_data_controller_signals,
     forward_selection_sync_feedback,
     register_navigation_items,
+    sync_existing_runtime_logging,
 )
 
 
@@ -198,6 +199,26 @@ def test_bind_shared_data_controller_signals_wires_payload_consumers() -> None:
     assert ("notice", ("ok", "done", "success")) in events
 
 
+def test_sync_existing_runtime_logging_only_rebinds_gui_sink(monkeypatch) -> None:
+    events: list[tuple[str, object]] = []
+
+    class _FakeExecutionPage:
+        def attach_runtime_log_sink(self, level: str) -> None:
+            events.append(("attach", level))
+
+    monkeypatch.setattr(
+        "lol_audio_unpack.gui.controllers.window_shell_controller.setup_logging",
+        lambda **kwargs: events.append(("setup", kwargs)),
+    )
+
+    sync_existing_runtime_logging(
+        console_log_level="DEBUG",
+        execution_page=_FakeExecutionPage(),
+    )
+
+    assert events == [("attach", "DEBUG")]
+
+
 def test_main_window_initializes_log_drawer_controller_before_super_init() -> None:
     window_source = Path("src/lol_audio_unpack/gui/window.py").read_text(encoding="utf-8")
     init_match = re.search(
@@ -224,3 +245,16 @@ def test_main_window_resize_event_guards_missing_navigation_interface() -> None:
     body = resize_match.group("body")
 
     assert "navigation_interface = getattr(self, \"navigationInterface\", None)" in body
+
+
+def test_main_window_connect_pages_reuses_existing_runtime_logging_on_startup() -> None:
+    window_source = Path("src/lol_audio_unpack/gui/window.py").read_text(encoding="utf-8")
+    connect_pages_match = re.search(
+        r"def _connect_pages\(self\):(?P<body>.*?)(?:\n    def |\Z)",
+        window_source,
+        re.DOTALL,
+    )
+    assert connect_pages_match is not None
+    body = connect_pages_match.group("body")
+
+    assert "sync_existing_runtime_logging(" in body

@@ -62,3 +62,24 @@ def test_home_status_controller_builds_failure_display_state() -> None:
         cache_path="",
         cache_jump_enabled=False,
     )
+
+
+def test_home_status_controller_start_check_emits_display_state_ready(qtbot, tmp_path) -> None:
+    controller = HomeStatusController(
+        get_game_version_fn=lambda _path: "16.5",
+        cache_check_fn=lambda _output, _version: (True, "output/audios/16.5.2"),
+    )
+
+    with qtbot.waitSignal(controller.display_state_ready, timeout=1000) as blocker:
+        controller.start_check(game_path=tmp_path, output_path=tmp_path)
+
+    assert blocker.args == [
+        HomeStatusDisplayState(
+            current_version="16.5",
+            version_text="16.5",
+            version_jump_enabled=False,
+            cache_text="已找到 16.5",
+            cache_path="output/audios/16.5.2",
+            cache_jump_enabled=True,
+        )
+    ]

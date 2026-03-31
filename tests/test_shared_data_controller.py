@@ -105,7 +105,7 @@ def test_shared_data_controller_refresh_shared_output_state_warns_when_queue_bus
 
     controller.refresh_shared_output_state()
 
-    assert len(reconfigure_payloads) == 1
+    assert reconfigure_payloads == []
     assert notices == [
         GuiNotice(
             title="队列未清空",
@@ -130,13 +130,16 @@ def test_shared_data_controller_refresh_shared_output_state_uses_incremental_loa
     controller.data_app_context = object()
     updates = []
     notices = []
+    reconfigure_payloads = []
     controller.entity_rows_updated.connect(updates.append)
     controller.notice_requested.connect(notices.append)
+    controller.reconfigure_runtime_logging_requested.connect(reconfigure_payloads.append)
 
     controller.refresh_shared_output_state(
         OutputStateRefreshRequest(champion_ids=("1",), map_ids=("11",))
     )
 
+    assert reconfigure_payloads == []
     assert loader_calls[1:] == [("champions", ("1",)), ("maps", ("11",))]
     assert [payload.entity_type for payload in updates] == ["champions", "maps"]
     assert notices == [
@@ -252,3 +255,43 @@ def test_shared_data_controller_on_shared_context_build_timeout_resets_state_and
             level="error",
         )
     ]
+
+
+def test_shared_data_controller_reconfigures_logging_only_when_scan_signature_changes() -> None:
+    cfg = _FakeConfig()
+    controller = SharedDataController(
+        get_config=lambda: cfg,
+        has_incomplete_tasks=lambda: False,
+        create_app_context_fn=lambda **_kwargs: object(),
+        data_load_worker_cls=object,
+        task_worker_cls=object,
+        entity_data_loader_cls=object,
+        start_worker_fn=lambda _worker: None,
+        prepare_shared_entity_data_fn=lambda _overrides: None,
+        reset_data_reader_singleton_fn=lambda: None,
+        app_context_block_reason_fn=lambda _cfg: None,
+    )
+    controller.shared_entity_reader_signature = (
+        cfg.to_app_context_overrides()["SOURCE_MODE"],
+        cfg.to_app_context_overrides()["GAME_PATH"],
+        cfg.to_app_context_overrides()["GAME_REGION"],
+        cfg.to_app_context_overrides()["REMOTE_LIVE_REGION"],
+        cfg.to_app_context_overrides()["REMOTE_VERSION"],
+        cfg.to_app_context_overrides()["REMOTE_LCU_MANIFEST_URL"],
+        cfg.to_app_context_overrides()["REMOTE_GAME_MANIFEST_URL"],
+    )
+    controller.shared_entity_scan_signature = (
+        cfg.to_app_context_overrides()["OUTPUT_PATH"],
+        cfg.to_app_context_overrides()["GROUP_BY_TYPE"],
+    )
+    reconfigure_payloads = []
+    controller.reconfigure_runtime_logging_requested.connect(reconfigure_payloads.append)
+
+    controller.on_shared_context_input_changed()
+    assert reconfigure_payloads == []
+
+    cfg.output_path = "new-output"
+    controller.on_shared_context_input_changed()
+
+    assert len(reconfigure_payloads) == 1
+    assert reconfigure_payloads[0].log_dir == Path("logs/runtime")

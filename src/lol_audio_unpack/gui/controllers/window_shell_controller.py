@@ -46,6 +46,15 @@ def apply_runtime_logging(
     logger.debug(f"日志系统已重定向到输出目录: {payload.log_dir}")
 
 
+def sync_existing_runtime_logging(
+    *,
+    console_log_level: str,
+    execution_page,
+) -> None:
+    """在不重建文件 handler 的前提下重挂 GUI 日志 sink。"""
+    execution_page.attach_runtime_log_sink(console_log_level)
+
+
 def apply_smooth_scroll_settings(  # noqa: PLR0913
     *,
     setting_page,

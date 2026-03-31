@@ -339,10 +339,6 @@ class SharedDataController(QObject):
 
     def refresh_shared_output_state(self, refresh_request: object | None = None) -> None:
         """仅刷新解包产物对应的实体检测状态与输出扫描结果。"""
-        current_cfg = self._get_config()
-        self.reconfigure_runtime_logging_requested.emit(
-            RuntimeLoggingConfig.from_gui_config(current_cfg)
-        )
         if self._has_incomplete_tasks():
             logger.debug("执行中心仍有未完成任务，忽略共享刷新请求")
             self.notice_requested.emit(

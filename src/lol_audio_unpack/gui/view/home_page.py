@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QShowEvent
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
@@ -68,6 +68,7 @@ class HomePage(SmoothScrollArea):
         super().__init__(parent=parent)
         self._cfg = cfg
         self._current_version: str = ""  # filled in by worker
+        self._initial_status_check_started = False
         self._home_status_controller = HomeStatusController(parent=self)
         self._home_status_controller.display_state_ready.connect(self._apply_home_status_display_state)
 
@@ -79,10 +80,14 @@ class HomePage(SmoothScrollArea):
 
         self._build_ui()
         self._sync_from_config()
-        self._home_status_controller.start_check(
-            game_path=self._cfg.resolve_game_path(),
-            output_path=self._resolve_output_path(),
-        )
+
+    def showEvent(self, event: QShowEvent) -> None:
+        """在页面首次显示后再启动首页状态检查。"""
+        super().showEvent(event)
+        if self._initial_status_check_started:
+            return
+        self._initial_status_check_started = True
+        self._start_home_status_check()
 
     @staticmethod
     def _runtime_paths():
@@ -247,6 +252,13 @@ class HomePage(SmoothScrollArea):
         """Return the absolute output directory path."""
         return self._cfg.resolve_output_path()
 
+    def _start_home_status_check(self) -> None:
+        """启动首页版本与缓存状态检查。"""
+        self._home_status_controller.start_check(
+            game_path=self._cfg.resolve_game_path(),
+            output_path=self._resolve_output_path(),
+        )
+
     def _apply_home_status_display_state(self, state: HomeStatusDisplayState) -> None:
         """把首页状态控制器产出的显示状态应用到卡片。"""
         self._current_version = state.current_version
@@ -283,10 +295,7 @@ class HomePage(SmoothScrollArea):
             self.game_dir_card.setDisplayText("未设置")
             self.game_dir_card.setJumpEnabled(False)
         # Re-run background check with new game path
-        self._home_status_controller.start_check(
-            game_path=self._cfg.resolve_game_path(),
-            output_path=self._resolve_output_path(),
-        )
+        self._start_home_status_check()
 
     def update_output_dir(self, path: str) -> None:
         if path:
@@ -299,10 +308,7 @@ class HomePage(SmoothScrollArea):
             )
         # Re-check cache with new output path
         if self._current_version:
-            self._home_status_controller.start_check(
-                game_path=self._cfg.resolve_game_path(),
-                output_path=self._resolve_output_path(),
-            )
+            self._start_home_status_check()
 
     def update_wwiser(self, path: str) -> None:
         if path:

@@ -50,6 +50,7 @@ from lol_audio_unpack.gui.controllers.window_shell_controller import (
     bind_shared_data_controller_signals,
     forward_selection_sync_feedback,
     register_navigation_items,
+    sync_existing_runtime_logging,
 )
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 from lol_audio_unpack.gui.service.worker import DataLoadWorker
@@ -403,8 +404,8 @@ class MainWindow(FluentWindow):
             widget_enabled=cfg.widget_smooth_scroll_enabled,
         )
         self._log_drawer_controller.set_auto_collapse_enabled(cfg.log_drawer_auto_collapse_enabled)
-        apply_runtime_logging(
-            payload=RuntimeLoggingConfig.from_gui_config(cfg),
+        sync_existing_runtime_logging(
+            console_log_level=cfg.console_log_level,
             execution_page=self.executionInterface,
         )
 
