@@ -648,8 +648,14 @@ class LolAudioUnpackApp:
                 finally:
                     self.cleanup_remote_artifacts()
 
+        logger.success(f"remote 实体工作流完成：共处理 {total_work_items} 个实体工作项")
+
     def update(self, opts: OperationOptions, *, target: str = "all") -> None:
         """执行更新流程。"""
+        logger.info(
+            f"开始执行更新流程：target={target}，英雄 {len(opts.champion_ids or ())} 个，"
+            f"地图 {len(opts.map_ids or ())} 个，事件处理={'开启' if opts.process_events else '关闭'}"
+        )
         remote_preparer = self.prepare_update_data(force_update=opts.force_update)
         if remote_preparer is not None:
             remote_preparer.prepare_bin_inputs(
@@ -663,6 +669,9 @@ class LolAudioUnpackApp:
             target=target,
             champion_ids=self._to_str_ids(opts.champion_ids),
             map_ids=self._to_str_ids(opts.map_ids),
+        )
+        logger.success(
+            f"更新流程完成：target={target}，英雄 {len(opts.champion_ids or ())} 个，地图 {len(opts.map_ids or ())} 个"
         )
 
     def extract(

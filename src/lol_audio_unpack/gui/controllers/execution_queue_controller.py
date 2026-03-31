@@ -292,6 +292,7 @@ class ExecutionQueueController(QObject):
         payload = item.data(TASK_ITEM_ROLE)
         if not isinstance(payload, QueuedExecutionTask):
             return
+        logger.info(f"[队列] 任务 #{task_id} 已开始执行")
         self.progress_display_requested.emit(
             QueueProgressUpdate(
                 status_text="状态：任务执行中。",
@@ -374,6 +375,7 @@ class ExecutionQueueController(QObject):
             entry for entry in self._stage_completion_notifications if entry[0] != task_id
         }
         self.task_running_changed.emit(False)
+        logger.success(f"[队列] 任务 #{task_id} 执行完成：{task_result.summary}")
         next_item = self.start_next_waiting_task()
         self.task_queue_busy_changed.emit(self.has_incomplete_tasks())
         if next_item is None:

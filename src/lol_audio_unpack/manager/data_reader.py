@@ -233,7 +233,7 @@ class DataReader(metaclass=Singleton):
                     f.write(f"{category}\n")
             logger.info(f"已记录 {len(new_unknowns)} 个新的未知音频分类")
         except Exception as e:
-            logger.error(f"写入未知分类文件时出错: {e}")
+            logger.opt(exception=True).error(f"写入未知分类文件时出错: {e}")
 
     @logger.catch
     @performance_monitor(level="DEBUG")

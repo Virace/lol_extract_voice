@@ -76,6 +76,40 @@ def test_extract_bin_raws_reads_local_files_when_flag_enabled(tmp_path):
     assert result == [b"from-local"]
 
 
+def test_extract_bin_raws_logs_fallback_to_local_bin_when_wad_missing(tmp_path, monkeypatch):
+    """验证 WAD 缺失但启用本地 BIN 模式时会输出回退诊断日志。"""
+    updater = _build_updater(tmp_path)
+    updater.use_local_bin_flag_file.write_text("", encoding="utf-8")
+
+    target_file = updater.local_bin_input_dir / "data/characters/Annie/skins/skin0001.bin"
+    target_file.parent.mkdir(parents=True, exist_ok=True)
+    target_file.write_bytes(b"from-local")
+
+    debug_messages: list[str] = []
+    trace_messages: list[str] = []
+    monkeypatch.setattr(
+        m_bin_updater,
+        "logger",
+        SimpleNamespace(
+            debug=lambda message: debug_messages.append(str(message)),
+            trace=lambda message: trace_messages.append(str(message)),
+            warning=lambda _message: None,
+        ),
+    )
+
+    missing_wad = tmp_path / "missing.wad.client"
+    result = updater._extract_bin_raws(
+        wad_path=missing_wad,
+        bin_paths=["data/characters/Annie/skins/skin0001.bin"],
+        entity_label="英雄 1 (annie)",
+        local_required_dir=Path("data/characters/Annie"),
+    )
+
+    assert result == [b"from-local"]
+    assert debug_messages == [f"英雄 1 (annie) 的WAD文件不可用，回退到本地BIN模式: {missing_wad}"]
+    assert any(str(updater.local_bin_input_dir) in message for message in trace_messages)
+
+
 def test_extract_bin_raws_raises_when_flag_enabled_but_entity_dir_missing(tmp_path):
     """验证启用本地 BIN 模式但实体目录缺失时会抛出异常。"""
     updater = _build_updater(tmp_path)
@@ -224,6 +258,7 @@ def test_update_records_note_when_targeted_maps_exclude_common_map(tmp_path, mon
     updater.process_events = True
     updater.version = "16.3"
     updater.data_file_base = tmp_path / "data"
+    updater.use_local_bin_flag_file = tmp_path / ".use_local_bin"
 
     monkeypatch.setattr(
         m_bin_updater,
@@ -236,6 +271,49 @@ def test_update_records_note_when_targeted_maps_exclude_common_map(tmp_path, mon
 
     summary = get_or_create_run_summary(updater.ctx.runtime_cache)
     assert any("未包含 Common 地图 0" in note for note in summary.stages["update"].notes)
+
+
+def test_update_logs_stage_start_and_summary_for_targeted_mode(tmp_path, monkeypatch):
+    """验证 BinUpdater 顶层会输出精确模式开始和完成摘要。"""
+    updater = m_bin_updater.BinUpdater.__new__(m_bin_updater.BinUpdater)
+    updater.ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False), runtime_cache={}, paths=SimpleNamespace())
+    updater.force_update = False
+    updater.process_events = True
+    updater.version = "16.3"
+    updater.data_file_base = tmp_path / "data"
+    updater.languages = []
+
+    info_messages: list[str] = []
+    success_messages: list[str] = []
+
+    monkeypatch.setattr(
+        m_bin_updater,
+        "read_data",
+        lambda *args, **kwargs: {
+            "metadata": {"languages": ["zh_CN"]},
+            "champions": {"1": {"alias": "Annie"}},
+            "maps": {"11": {"id": 11}},
+        },
+    )
+    monkeypatch.setattr(
+        m_bin_updater,
+        "logger",
+        SimpleNamespace(
+            info=lambda message: info_messages.append(str(message)),
+            success=lambda message: success_messages.append(str(message)),
+        ),
+    )
+    monkeypatch.setattr(updater, "_is_local_bin_mode_enabled", lambda: True)
+    monkeypatch.setattr(updater, "_update_champions", lambda _data: None)
+    monkeypatch.setattr(updater, "_record_targeted_map_event_scope_note", lambda _map_ids: None)
+    monkeypatch.setattr(updater, "_update_maps", lambda _data: None)
+
+    updater.update(target="all", champion_ids=["1"], map_ids=["11"])
+
+    assert info_messages == [
+        "开始更新 BIN 数据（精确模式）：英雄 1 个，地图 1 个，事件处理=开启，本地BIN模式=开启"
+    ]
+    assert success_messages == ["BinUpdater 更新完成（精确模式）：英雄 1 个，地图 1 个"]
 
 
 def test_process_single_map_records_note_when_common_dedup_removes_all_events(tmp_path, monkeypatch):
@@ -322,7 +400,7 @@ def test_update_champions_logs_simple_progress_messages(tmp_path, monkeypatch):
     assert processed_ids == ["1", "2"]
     assert "处理英雄进度 1/2: 1" in info_messages
     assert "处理英雄进度 2/2: 2" in info_messages
-    assert success_messages == ["英雄Banks数据更新完成"]
+    assert success_messages == ["英雄Banks数据更新完成，共处理 2 个英雄"]
 
 
 def test_update_maps_logs_simple_progress_messages(tmp_path, monkeypatch):
@@ -360,4 +438,4 @@ def test_update_maps_logs_simple_progress_messages(tmp_path, monkeypatch):
     assert processed_ids == ["11", "12"]
     assert "处理地图进度 1/2: 11" in info_messages
     assert "处理地图进度 2/2: 12" in info_messages
-    assert success_messages == ["地图Banks数据更新完成"]
+    assert success_messages == ["地图Banks数据更新完成，共处理 2 个地图"]

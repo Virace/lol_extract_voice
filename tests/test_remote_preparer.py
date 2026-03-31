@@ -5,6 +5,7 @@ from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 
 import pytest
+from loguru import logger
 from riotmanifest import DownloadError
 
 import lol_audio_unpack.facade as m_facade
@@ -53,7 +54,7 @@ def _build_remote_ctx(tmp_path: Path, *, game_region: str = "zh_CN") -> AppConte
         game_maps_path=game_path / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping",
         game_lcu_path=game_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data",
     )
-    return AppContext(config=app_config, paths=app_paths, logger=None, runtime_cache={})
+    return AppContext(config=app_config, paths=app_paths, runtime_cache={})
 
 
 def test_remote_snapshot_preparer_downloads_description_and_required_bundles(
@@ -203,6 +204,51 @@ def test_facade_update_prepares_remote_snapshot_before_updaters(
     assert call_order == ["prepare_lcu", "data", "prepare_bin", "bin"]
 
 
+def test_facade_update_logs_start_and_summary(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    ctx = _build_remote_ctx(tmp_path)
+    app = LolAudioUnpackApp(ctx)
+    info_messages: list[str] = []
+    success_messages: list[str] = []
+
+    class FakePreparer:
+        def prepare_bin_inputs(self, **_kwargs) -> None:  # noqa: ANN003
+            return None
+
+    class FakeBinUpdater:
+        def __init__(self, force_update=False, process_events=True, ctx=None):  # noqa: ANN001, FBT002
+            assert force_update is False
+            assert process_events is True
+            assert ctx is not None
+
+        def update(self, *, target="all", champion_ids=None, map_ids=None) -> None:  # noqa: ANN001
+            assert target == "all"
+            assert champion_ids == ["1"]
+            assert map_ids == ["11"]
+
+    def _format_log(message: str, *args) -> str:
+        return message.format(*args) if args else message
+
+    def _fake_reader():
+        return SimpleNamespace()
+
+    monkeypatch.setattr(app, "prepare_update_data", lambda force_update=False: FakePreparer())  # type: ignore[method-assign]
+    monkeypatch.setattr(app, "_create_reader", _fake_reader)  # type: ignore[method-assign]
+    monkeypatch.setattr(m_facade, "BinUpdater", FakeBinUpdater)
+    monkeypatch.setattr(
+        m_facade,
+        "logger",
+        SimpleNamespace(
+            info=lambda message, *args: info_messages.append(_format_log(message, *args)),
+            success=lambda message, *args: success_messages.append(_format_log(message, *args)),
+        ),
+    )
+
+    app.update(OperationOptions(champion_ids=(1,), map_ids=(11,)))
+
+    assert info_messages == ["开始执行更新流程：target=all，英雄 1 个，地图 1 个，事件处理=开启"]
+    assert success_messages == ["更新流程完成：target=all，英雄 1 个，地图 1 个"]
+
+
 def test_prepare_update_data_warms_remote_data_once_per_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     ctx = _build_remote_ctx(tmp_path)
     app = LolAudioUnpackApp(ctx)
@@ -350,6 +396,105 @@ def test_remote_snapshot_preparer_extracts_bin_inputs_for_bin_updater(
     assert (bin_input_root / "data/characters/Annie/skins/skin1.bin").exists()
     assert (bin_input_root / "data/characters/Annie/skins/skin11.bin").exists()
     assert (bin_input_root / "data/maps/shipping/map11/map11.bin").exists()
+
+
+def test_remote_snapshot_preparer_logs_bin_input_plan_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _build_remote_ctx(tmp_path, game_region="zh_CN")
+    reader = SimpleNamespace()
+    preparer = RemoteSnapshotPreparer(ctx=ctx)
+    log_lines: list[str] = []
+
+    monkeypatch.setattr(
+        preparer,
+        "_build_bin_extraction_plan",
+        lambda **_kwargs: {
+            "Game/DATA/FINAL/Champions/Annie.wad.client": [
+                "data/characters/Annie/skins/skin0.bin",
+                "data/characters/Annie/skins/skin1.bin",
+            ],
+            "Game/DATA/FINAL/Maps/Shipping/Map11/Map11.wad.client": [
+                "data/maps/shipping/map11/map11.bin",
+            ],
+        },
+    )
+    monkeypatch.setattr(preparer, "_ensure_manifest_cached", lambda **_kwargs: tmp_path / "game.manifest")
+
+    class FakePatcherManifest:
+        def __init__(self, *, file: Path, path: Path) -> None:  # noqa: ARG002
+            self.path = Path(path)
+            self.files = {}
+
+    class FakeWADExtractor:
+        def __init__(self, manifest) -> None:  # noqa: ANN001
+            self.manifest = manifest
+
+        def extract_files(self, wad_file_paths: dict[str, list[str]]) -> dict[str, dict[str, bytes | None]]:
+            return {
+                wad_path: {bin_path: f"{wad_path}|{bin_path}".encode() for bin_path in bin_paths}
+                for wad_path, bin_paths in wad_file_paths.items()
+            }
+
+    monkeypatch.setattr(m_remote, "PatcherManifest", FakePatcherManifest)
+    monkeypatch.setattr(m_remote, "WADExtractor", FakeWADExtractor)
+
+    logger.enable("lol_audio_unpack")
+    sink_id = logger.add(lambda message: log_lines.append(str(message).rstrip()), format="{level}|{message}")
+    try:
+        result = preparer.prepare_bin_inputs(reader=reader, target="all")
+    finally:
+        logger.remove(sink_id)
+
+    assert result is not None
+    assert any("INFO|开始准备远端 BIN 输入：target=all，WAD 2 个，BIN 3 个" in line for line in log_lines)
+    assert any("INFO|远端 BIN 输入准备完成：共提取 3 个文件。" in line for line in log_lines)
+
+
+def test_remote_snapshot_preparer_logs_entity_wad_scope_before_prepare(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _build_remote_ctx(tmp_path, game_region="zh_CN")
+    preparer = RemoteSnapshotPreparer(ctx=ctx)
+    log_lines: list[str] = []
+
+    monkeypatch.setattr(
+        preparer,
+        "_build_extract_wad_plan",
+        lambda **_kwargs: {"Game/DATA/FINAL/Champions/Annie.wad.client"},
+    )
+    monkeypatch.setattr(
+        preparer,
+        "_build_mapping_wad_plan",
+        lambda **_kwargs: {"Game/DATA/FINAL/Maps/Shipping/Map11/Map11.wad.client"},
+    )
+    monkeypatch.setattr(preparer, "_prepare_game_wads", lambda wad_paths: ("prepared", tuple(sorted(wad_paths))))
+
+    logger.enable("lol_audio_unpack")
+    sink_id = logger.add(lambda message: log_lines.append(str(message).rstrip()), format="{level}|{message}")
+    try:
+        result = preparer.prepare_entity_wads(
+            reader=SimpleNamespace(),
+            champion_ids=(1,),
+            map_ids=(11,),
+            include_champions=True,
+            include_maps=True,
+            need_extract=True,
+            need_mapping=True,
+        )
+    finally:
+        logger.remove(sink_id)
+
+    assert result == (
+        "prepared",
+        (
+            "Game/DATA/FINAL/Champions/Annie.wad.client",
+            "Game/DATA/FINAL/Maps/Shipping/Map11/Map11.wad.client",
+        ),
+    )
+    assert any("INFO|开始准备远端 GAME WAD：extract=开启，mapping=开启，目标 2 个" in line for line in log_lines)
 
 
 def test_remote_snapshot_preparer_prepare_extract_wads_only_downloads_language_wad_for_vo_only(
@@ -642,6 +787,63 @@ def test_facade_run_remote_entity_workflow_runs_per_entity_and_cleans_between_en
     ]
 
 
+def test_facade_run_remote_entity_workflow_logs_completion_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    ctx = _build_remote_ctx(tmp_path)
+    app = LolAudioUnpackApp(ctx)
+    reader = SimpleNamespace(version="16.5", get_champions=lambda: [], get_maps=lambda: [])
+    info_messages: list[str] = []
+    success_messages: list[str] = []
+
+    class FakePreparer:
+        def __init__(self, *, ctx) -> None:  # noqa: ANN001
+            assert ctx is not None
+
+        def prepare_entity_wads(self, **_kwargs) -> None:  # noqa: ANN003
+            return None
+
+    def _format_log(message: str, *args) -> str:
+        return message.format(*args) if args else message
+
+    monkeypatch.setattr(
+        app,
+        "build_remote_entity_work_items",
+        lambda **_kwargs: [
+            RemoteEntityWorkItem(entity_type="champion", entity_id=1, need_extract=True, need_mapping=False)
+        ],
+    )
+    monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
+    monkeypatch.setattr(m_facade, "DataReader", lambda ctx: reader)
+    app._build_entity_data = lambda reader, **kwargs: SimpleNamespace(  # type: ignore[method-assign]
+        entity_id=str(kwargs["entity_id"]),
+        entity_name="测试实体",
+        entity_alias="test",
+        entity_title=None,
+        entity_type=kwargs["entity_type"],
+    )
+    app.extract = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
+    app.cleanup_remote_artifacts = lambda: None  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        m_facade,
+        "logger",
+        SimpleNamespace(
+            info=lambda message, *args: info_messages.append(_format_log(message, *args)),
+            warning=lambda message, *args: info_messages.append(_format_log(message, *args)),
+            success=lambda message, *args: success_messages.append(_format_log(message, *args)),
+        ),
+    )
+
+    app.run_remote_entity_workflow(
+        extract_options=OperationOptions(champion_ids=(1,)),
+        extract_include_champions=True,
+    )
+
+    assert any("remote 模式启用单位驱动执行，共 1 个实体工作项。" in line for line in info_messages)
+    assert success_messages == ["remote 实体工作流完成：共处理 1 个实体工作项"]
+
+
 def test_facade_run_remote_entity_workflow_invokes_callback_with_extract_and_mapping_paths(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -876,7 +1078,6 @@ def test_remote_snapshot_preparer_cleanup_tracked_artifacts_supports_dry_run(
     ctx = AppContext(
         config=replace(ctx.config, exclude_types=(), include_types=("VO", "SFX", "MUSIC")),
         paths=ctx.paths,
-        logger=ctx.logger,
         runtime_cache=ctx.runtime_cache,
     )
     monkeypatch.setattr(m_remote, "urlopen", lambda _url: io.BytesIO(b"manifest-data"))

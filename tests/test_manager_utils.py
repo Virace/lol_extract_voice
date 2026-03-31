@@ -130,3 +130,52 @@ def test_needs_update_behavior(tmp_path):
 
     # 强制更新始终为True
     assert mutils.needs_update(base, "16.3", force_update=True, dev_mode=False) is True
+
+
+def test_read_data_logs_error_with_exception_when_loader_fails(tmp_path, monkeypatch):
+    base = tmp_path / "broken"
+    actual_file = base.with_suffix(".json")
+    actual_file.write_text("{}", encoding="utf-8")
+
+    opt_calls: list[dict[str, object]] = []
+    errors: list[str] = []
+
+    monkeypatch.setattr(mutils, "find_data_file", lambda _path, dev_mode=False: actual_file)
+    monkeypatch.setattr(mutils, "load_json", lambda _path: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        mutils,
+        "logger",
+        SimpleNamespace(
+            trace=lambda _message: None,
+            debug=lambda _message: None,
+            opt=lambda **kwargs: opt_calls.append(kwargs) or SimpleNamespace(error=errors.append),
+        ),
+    )
+
+    result = mutils.read_data(base, dev_mode=False)
+
+    assert result == {}
+    assert opt_calls == [{"exception": True}]
+    assert errors == [f"读取文件时出错: {actual_file}, 错误: boom"]
+
+
+def test_write_data_logs_error_with_exception_when_dump_fails(tmp_path, monkeypatch):
+    base = tmp_path / "out" / "data"
+    base.parent.mkdir(parents=True, exist_ok=True)
+    opt_calls: list[dict[str, object]] = []
+    errors: list[str] = []
+
+    monkeypatch.setattr(mutils, "dump_msgpack", lambda _data, _path: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        mutils,
+        "logger",
+        SimpleNamespace(
+            trace=lambda _message: None,
+            opt=lambda **kwargs: opt_calls.append(kwargs) or SimpleNamespace(error=errors.append),
+        ),
+    )
+
+    mutils.write_data({"k": "v"}, base, dev_mode=False)
+
+    assert opt_calls == [{"exception": True}]
+    assert errors == [f"写入文件失败: {base.with_suffix('.msgpack')}, 错误: boom"]
