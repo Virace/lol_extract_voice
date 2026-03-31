@@ -142,8 +142,15 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     steps = task_params.selected_steps()
     completed_steps: list[str] = []
     runtime_app: LolAudioUnpackApp | None = None
+    runtime_overrides = _build_runtime_overrides(task)
+    source_mode = runtime_overrides.get("SOURCE_MODE", "local_path")
 
     try:
+        logger.info(f"[执行中心] 任务 #{task.task_id} 开始执行: {' -> '.join(steps)}")
+        logger.debug(
+            f"[执行中心] 任务 #{task.task_id} 范围={task_scope_label}, "
+            f"source_mode={source_mode}"
+        )
         for step_name in steps:
             stage_key = STAGE_KEY_BY_STEP_NAME.get(step_name, "unknown")
             logger.info(f"[执行中心] 任务 #{task.task_id} 开始{step_name}")
@@ -190,9 +197,10 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     )
 
                 if runtime_app is None:
+                    logger.debug(f"[执行中心] 任务 #{task.task_id} 创建运行时 AppContext")
                     runtime_app = LolAudioUnpackApp(
                         create_app_context(
-                            cli_overrides=_build_runtime_overrides(task),
+                            cli_overrides=runtime_overrides,
                         )
                     )
 
@@ -240,9 +248,10 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     )
 
                 if runtime_app is None:
+                    logger.debug(f"[执行中心] 任务 #{task.task_id} 创建运行时 AppContext")
                     runtime_app = LolAudioUnpackApp(
                         create_app_context(
-                            cli_overrides=_build_runtime_overrides(task),
+                            cli_overrides=runtime_overrides,
                         )
                     )
 
@@ -259,6 +268,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     progress_callback=emit_mapping_progress,
                 )
                 if not mapping_progress_seen:
+                    logger.debug(f"[执行中心] 任务 #{task.task_id} 事件映射未返回增量进度，补发单步完成进度")
                     _emit_stage_progress(
                         signals,
                         stage_key=stage_key,

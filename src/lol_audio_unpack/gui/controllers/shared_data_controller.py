@@ -386,7 +386,7 @@ class SharedDataController(QObject):
         request = refresh_request if isinstance(refresh_request, OutputStateRefreshRequest) else None
         self.pending_refresh_notice = True
         if self.data_app_context is None:
-            logger.info("共享上下文尚未就绪，回退到完整共享数据刷新")
+            logger.warning("共享上下文尚未就绪，回退到完整共享数据刷新")
             self.request_shared_data_reload(show_notice=True, allow_auto_prepare=True)
             return
 
@@ -543,6 +543,7 @@ class SharedDataController(QObject):
 
     def on_shared_data_prepare_started(self) -> None:
         """同步后台共享数据准备开始时的界面状态。"""
+        logger.info("开始后台共享数据准备")
         self.is_preparing_shared_data = True
         self.loading_state_changed.emit(
             SharedDataLoadingState(message="正在刷新基础数据…", active=True)
@@ -550,12 +551,14 @@ class SharedDataController(QObject):
 
     def on_shared_data_prepare_finished(self, cfg) -> None:
         """在后台数据准备结束后重新加载共享实体数据。"""
+        logger.info("后台共享数据准备完成，重新加载共享实体数据")
         self.is_preparing_shared_data = False
         self.shared_data_prepare_worker = None
         self.reload_unpack_data(cfg)
 
     def on_shared_data_prepare_failed(self, error: str) -> None:
         """处理后台共享数据准备失败后的界面状态。"""
+        logger.error(f"后台共享数据准备失败: {error}")
         self.is_preparing_shared_data = False
         self.shared_data_prepare_worker = None
         self.loading_state_changed.emit(

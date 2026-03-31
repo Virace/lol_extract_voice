@@ -77,10 +77,9 @@ def remove_startup_log_buffer() -> None:
 
 def _resolve_qt_log_level(message_type: QtMsgType) -> str:
     """将 Qt 消息等级映射为 loguru 等级名。"""
-    if message_type == QtMsgType.QtDebugMsg:
+    # Qt 属于外部日志源；桥接层仅做保守映射，避免占用业务 INFO 观察面。
+    if message_type in (QtMsgType.QtDebugMsg, QtMsgType.QtInfoMsg):
         return "DEBUG"
-    if message_type == QtMsgType.QtInfoMsg:
-        return "INFO"
     if message_type == QtMsgType.QtWarningMsg:
         return "WARNING"
     if message_type == QtMsgType.QtCriticalMsg:
@@ -114,8 +113,8 @@ def remove_qt_message_bridge() -> None:
 
 def _resolve_pyvgmstream_log_level(level: PyVGMStreamLogLevel | int) -> str:
     """将 `pyvgmstream` 日志等级映射为 loguru 等级名。"""
-    if level == PyVGMStreamLogLevel.INFO:
-        return "INFO"
+    # 当前策略：pyvgmstream 桥接日志统一进入诊断面，避免占用业务 INFO 观察面。
+    _ = level
     return "DEBUG"
 
 

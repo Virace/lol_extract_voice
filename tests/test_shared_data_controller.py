@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 from lol_audio_unpack.gui.controllers.contracts import GuiNotice
 from lol_audio_unpack.gui.controllers.shared_data_controller import (
@@ -154,6 +155,44 @@ def test_shared_data_controller_refresh_shared_output_state_uses_incremental_loa
             level="success",
         )
     ]
+
+
+def test_shared_data_controller_refresh_shared_output_state_warns_before_full_reload(
+    monkeypatch,
+) -> None:
+    controller = _build_controller()
+    warnings: list[str] = []
+    reload_calls = []
+
+    monkeypatch.setattr(
+        "lol_audio_unpack.gui.controllers.shared_data_controller.logger",
+        SimpleNamespace(
+            warning=warnings.append,
+            info=lambda *_args, **_kwargs: None,
+            debug=lambda *_args, **_kwargs: None,
+            error=lambda *_args, **_kwargs: None,
+        ),
+    )
+    controller.request_shared_data_reload = lambda **kwargs: reload_calls.append(kwargs)
+
+    controller.refresh_shared_output_state()
+
+    assert warnings == ["共享上下文尚未就绪，回退到完整共享数据刷新"]
+    assert reload_calls == [{"show_notice": True, "allow_auto_prepare": True}]
+
+
+def test_shared_data_controller_on_shared_data_prepare_failed_logs_error(monkeypatch) -> None:
+    controller = _build_controller()
+    errors: list[str] = []
+
+    monkeypatch.setattr(
+        "lol_audio_unpack.gui.controllers.shared_data_controller.logger",
+        SimpleNamespace(error=errors.append),
+    )
+
+    controller.on_shared_data_prepare_failed("boom")
+
+    assert errors == ["后台共享数据准备失败: boom"]
 
 
 def test_shared_entity_reader_signature_uses_effective_local_mode_when_packaged() -> None:

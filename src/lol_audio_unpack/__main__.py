@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-import traceback
 from pathlib import Path
 
 from loguru import logger
@@ -373,6 +372,42 @@ def _has_mapping_actions(args: argparse.Namespace) -> bool:
     return any([args.mapping, args.mapping_champions, args.mapping_maps])
 
 
+def _log_cli_stage_start(stage_label: str, detail: str | None = None) -> None:
+    """输出 CLI 阶段开始日志，并保持调用方归属。
+
+    Args:
+        stage_label: 阶段名称。
+        detail: 阶段详情摘要。
+    """
+    message = f"{stage_label}阶段开始"
+    if detail:
+        message = f"{message}: {detail}"
+    logger.opt(depth=1).info(message)
+
+
+def _log_cli_stage_complete(stage_label: str, detail: str | None = None) -> None:
+    """输出 CLI 阶段完成日志，并保持调用方归属。
+
+    Args:
+        stage_label: 阶段名称。
+        detail: 阶段详情摘要。
+    """
+    message = f"{stage_label}阶段完成"
+    if detail:
+        message = f"{message}: {detail}"
+    logger.opt(depth=1).success(message)
+
+
+def _log_cli_unhandled_error(error: Exception, *, dev_mode: bool) -> None:
+    """统一记录 CLI 顶层未处理异常。
+
+    Args:
+        error: 未处理异常对象。
+        dev_mode: 是否启用开发模式 traceback 输出。
+    """
+    logger.opt(depth=1, exception=dev_mode).error(f"执行过程中发生错误: {error}")
+
+
 def execute_remote_entity_workflow(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
     """仅在 remote 模式下使用的单位驱动执行器。"""
     update_options = None
@@ -446,24 +481,27 @@ def execute_update_operations(args: argparse.Namespace, app: LolAudioUnpackApp) 
         logger.warning("已启用强制更新模式，将忽略现有文件的版本检查。")
 
     if args.update:
-        logger.info("开始更新所有数据（英雄和地图）...")
+        detail = "所有数据（英雄和地图）"
+        _log_cli_stage_start("数据更新", detail)
         app.update(build_operation_options(args), target="all")
     elif args.update_champions:
         champion_ids = resolve_cli_champion_ids(args.update_champions, app=app, force_update=args.force)
         if champion_ids:
-            logger.info(f"开始更新指定英雄数据：{list(champion_ids)}")
+            detail = f"指定英雄数据: {list(champion_ids)}"
         else:
-            logger.info("开始更新所有英雄数据...")
+            detail = "所有英雄数据"
+        _log_cli_stage_start("数据更新", detail)
         app.update(build_operation_options(args, champion_ids=champion_ids), target="skin")
     elif args.update_maps:
         map_ids = parse_int_ids(args.update_maps)
         if map_ids:
-            logger.info(f"开始更新指定地图数据：{list(map_ids)}")
+            detail = f"指定地图数据: {list(map_ids)}"
         else:
-            logger.info("开始更新所有地图数据...")
+            detail = "所有地图数据"
+        _log_cli_stage_start("数据更新", detail)
         app.update(build_operation_options(args, map_ids=map_ids), target="map")
 
-    logger.success("数据更新完成！")
+    _log_cli_stage_complete("数据更新", detail)
 
 
 def execute_extract_operations(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
@@ -473,7 +511,8 @@ def execute_extract_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
         return
 
     if args.extract:
-        logger.info("开始解包所有音频（英雄和地图）...")
+        detail = "所有音频（英雄和地图）"
+        _log_cli_stage_start("音频解包", detail)
         app.extract(build_operation_options(args))
     elif args.extract_champions:
         try:
@@ -483,13 +522,15 @@ def execute_extract_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
             return
 
         if champion_ids:
-            logger.info(f"开始解包指定英雄音频：{list(champion_ids)}")
+            detail = f"指定英雄音频: {list(champion_ids)}"
+            _log_cli_stage_start("音频解包", detail)
             app.extract(
                 build_operation_options(args, champion_ids=champion_ids),
                 include_maps=False,
             )
         else:
-            logger.info("开始解包所有英雄音频...")
+            detail = "所有英雄音频"
+            _log_cli_stage_start("音频解包", detail)
             app.extract(build_operation_options(args), include_maps=False)
     elif args.extract_maps:
         try:
@@ -499,16 +540,18 @@ def execute_extract_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
             return
 
         if map_ids:
-            logger.info(f"开始解包指定地图音频：{list(map_ids)}")
+            detail = f"指定地图音频: {list(map_ids)}"
+            _log_cli_stage_start("音频解包", detail)
             app.extract(
                 build_operation_options(args, map_ids=map_ids),
                 include_champions=False,
             )
         else:
-            logger.info("开始解包所有地图音频...")
+            detail = "所有地图音频"
+            _log_cli_stage_start("音频解包", detail)
             app.extract(build_operation_options(args), include_champions=False)
 
-    logger.success("音频解包完成！")
+    _log_cli_stage_complete("音频解包", detail)
 
 
 def _log_mapping_runtime_error(error: ValueError) -> None:
@@ -536,7 +579,8 @@ def execute_mapping_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
         logger.info("启用整合数据功能，将生成包含完整实体信息的整合文件")
 
     if args.mapping:
-        logger.info("开始构建所有实体的事件映射（英雄和地图）...")
+        detail = "所有实体（英雄和地图）"
+        _log_cli_stage_start("事件映射", detail)
         mapping_options = build_operation_options(args)
         mapping_kwargs = {}
     elif args.mapping_champions:
@@ -547,11 +591,12 @@ def execute_mapping_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
             return
 
         if champion_ids:
-            logger.info(f"开始构建指定英雄的事件映射：{list(champion_ids)}")
+            detail = f"指定英雄事件映射: {list(champion_ids)}"
             mapping_options = build_operation_options(args, champion_ids=champion_ids)
         else:
-            logger.info("开始构建所有英雄的事件映射...")
+            detail = "所有英雄事件映射"
             mapping_options = build_operation_options(args)
+        _log_cli_stage_start("事件映射", detail)
         mapping_kwargs = {"include_maps": False}
     elif args.mapping_maps:
         try:
@@ -561,11 +606,12 @@ def execute_mapping_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
             return
 
         if map_ids:
-            logger.info(f"开始构建指定地图的事件映射：{list(map_ids)}")
+            detail = f"指定地图事件映射: {list(map_ids)}"
             mapping_options = build_operation_options(args, map_ids=map_ids)
         else:
-            logger.info("开始构建所有地图的事件映射...")
+            detail = "所有地图事件映射"
             mapping_options = build_operation_options(args)
+        _log_cli_stage_start("事件映射", detail)
         mapping_kwargs = {"include_champions": False}
     else:
         return
@@ -576,7 +622,7 @@ def execute_mapping_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
         _log_mapping_runtime_error(e)
         sys.exit(1)
 
-    logger.success("事件映射构建完成！")
+    _log_cli_stage_complete("事件映射", detail)
 
 
 def main() -> None:
@@ -617,12 +663,7 @@ def main() -> None:
         logger.warning("用户中断操作")
         sys.exit(1)
     except Exception as e:
-        logger.error(f"执行过程中发生错误: {e}")
-        try:
-            if "args" in locals() and args.dev:
-                logger.debug(traceback.format_exc())
-        except (NameError, AttributeError):
-            pass
+        _log_cli_unhandled_error(e, dev_mode=bool(getattr(locals().get("args"), "dev", False)))
         sys.exit(1)
     finally:
         if summary_sink_id is not None:

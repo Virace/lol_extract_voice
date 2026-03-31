@@ -42,6 +42,32 @@ def test_validate_args_integrate_data_with_mapping_allowed():
     cli.validate_args(args, parser)
 
 
+def test_log_cli_stage_start_uses_info_with_depth(monkeypatch) -> None:
+    opt_calls = []
+    infos: list[str] = []
+    fake_logger = SimpleNamespace(info=infos.append)
+
+    monkeypatch.setattr(cli.logger, "opt", lambda **kwargs: opt_calls.append(kwargs) or fake_logger)
+
+    cli._log_cli_stage_start("数据更新", detail="所有数据（英雄和地图）")
+
+    assert opt_calls == [{"depth": 1}]
+    assert infos == ["数据更新阶段开始: 所有数据（英雄和地图）"]
+
+
+def test_log_cli_stage_complete_uses_success_with_depth(monkeypatch) -> None:
+    opt_calls = []
+    successes: list[str] = []
+    fake_logger = SimpleNamespace(success=successes.append)
+
+    monkeypatch.setattr(cli.logger, "opt", lambda **kwargs: opt_calls.append(kwargs) or fake_logger)
+
+    cli._log_cli_stage_complete("数据更新", detail="所有数据（英雄和地图）")
+
+    assert opt_calls == [{"depth": 1}]
+    assert successes == ["数据更新阶段完成: 所有数据（英雄和地图）"]
+
+
 def test_execute_update_operations_all():
     parser = cli.create_parser()
     args = parser.parse_args(["--update"])
@@ -60,6 +86,46 @@ def test_execute_update_operations_all():
     assert calls["opts"].process_events is True
     assert calls["opts"].champion_ids is None
     assert calls["opts"].map_ids is None
+
+
+def test_execute_update_operations_uses_standard_stage_logs(monkeypatch) -> None:
+    parser = cli.create_parser()
+    args = parser.parse_args(["--update"])
+    stage_calls = []
+
+    monkeypatch.setattr(cli, "_log_cli_stage_start", lambda stage, detail=None: stage_calls.append(("start", stage, detail)))
+    monkeypatch.setattr(cli, "_log_cli_stage_complete", lambda stage, detail=None: stage_calls.append(("done", stage, detail)))
+
+    class FakeApp:
+        def update(self, _opts, *, target="all") -> None:
+            assert target == "all"
+
+    cli.execute_update_operations(args, FakeApp())
+
+    assert stage_calls == [
+        ("start", "数据更新", "所有数据（英雄和地图）"),
+        ("done", "数据更新", "所有数据（英雄和地图）"),
+    ]
+
+
+def test_execute_extract_operations_uses_standard_stage_logs(monkeypatch) -> None:
+    parser = cli.create_parser()
+    args = parser.parse_args(["--extract"])
+    stage_calls = []
+
+    monkeypatch.setattr(cli, "_log_cli_stage_start", lambda stage, detail=None: stage_calls.append(("start", stage, detail)))
+    monkeypatch.setattr(cli, "_log_cli_stage_complete", lambda stage, detail=None: stage_calls.append(("done", stage, detail)))
+
+    class FakeApp:
+        def extract(self, _opts, **_kwargs) -> None:
+            return None
+
+    cli.execute_extract_operations(args, FakeApp())
+
+    assert stage_calls == [
+        ("start", "音频解包", "所有音频（英雄和地图）"),
+        ("done", "音频解包", "所有音频（英雄和地图）"),
+    ]
 
 
 def test_execute_update_operations_targeted_champions():
@@ -149,6 +215,7 @@ def test_execute_mapping_operations_invalid_wwiser_path_shows_native_hint(monkey
         cli,
         "logger",
         SimpleNamespace(
+            opt=lambda **_kwargs: SimpleNamespace(info=lambda *_args, **_kwargs: None),
             error=errors.append,
             info=lambda *_args, **_kwargs: None,
             success=lambda *_args, **_kwargs: None,
@@ -165,6 +232,54 @@ def test_execute_mapping_operations_invalid_wwiser_path_shows_native_hint(monkey
     assert exc.value.code == 1
     assert any("默认 NativeHIRC" in message for message in errors)
     assert any("WWISER_PATH" in message for message in errors)
+
+
+def test_log_cli_unhandled_error_uses_exception_flag_in_dev_mode(monkeypatch) -> None:
+    opt_calls = []
+    errors: list[str] = []
+    fake_logger = SimpleNamespace(error=errors.append)
+
+    monkeypatch.setattr(cli.logger, "opt", lambda **kwargs: opt_calls.append(kwargs) or fake_logger)
+
+    cli._log_cli_unhandled_error(RuntimeError("boom"), dev_mode=True)
+
+    assert opt_calls == [{"depth": 1, "exception": True}]
+    assert errors == ["执行过程中发生错误: boom"]
+
+
+def test_main_passes_dev_mode_to_top_level_unhandled_error_logger(monkeypatch) -> None:
+    args = SimpleNamespace(dev=True)
+    captured = {}
+
+    class FakeParser:
+        def parse_args(self):
+            return args
+
+    def fake_create_parser() -> FakeParser:
+        return FakeParser()
+
+    def fake_validate_args(_args, _parser) -> None:
+        return None
+
+    def fake_initialize_app(_args):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(cli, "create_parser", fake_create_parser)
+    monkeypatch.setattr(cli, "validate_args", fake_validate_args)
+    monkeypatch.setattr(cli, "initialize_app", fake_initialize_app)
+    monkeypatch.setattr(
+        cli,
+        "_log_cli_unhandled_error",
+        lambda error, *, dev_mode: captured.update({"error": error, "dev_mode": dev_mode}),
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 1
+    assert isinstance(captured["error"], RuntimeError)
+    assert str(captured["error"]) == "boom"
+    assert captured["dev_mode"] is True
 
 
 def test_build_cli_overrides_only_keeps_explicit_values():
