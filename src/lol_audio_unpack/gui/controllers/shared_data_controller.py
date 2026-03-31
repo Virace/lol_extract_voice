@@ -116,6 +116,8 @@ class SharedDataController(QObject):
         self.shared_context_build_request_id = 0
         self.shared_entity_reader_signature: tuple[str | bool, ...] | None = None
         self.shared_entity_scan_signature: tuple[str | bool, ...] | None = None
+        self._champions_worker = None
+        self._maps_worker = None
 
         self.runtime_entity_refresh_timer = QTimer(self)
         self.runtime_entity_refresh_timer.setSingleShot(True)
@@ -126,6 +128,22 @@ class SharedDataController(QObject):
         self.shared_context_build_timeout_timer.setSingleShot(True)
         self.shared_context_build_timeout_timer.setInterval(SHARED_CONTEXT_BUILD_TIMEOUT_MS)
         self.shared_context_build_timeout_timer.timeout.connect(self.on_shared_context_build_timeout)
+
+    def has_active_background_work(self) -> bool:
+        """返回共享数据链路是否仍有后台工作未结束。"""
+        short_thread_running = any(
+            worker is not None and getattr(worker, "isRunning", lambda: False)()
+            for worker in (self._champions_worker, self._maps_worker)
+        )
+        return (
+            self.is_loading_shared_data
+            or self.is_preparing_shared_data
+            or self.shared_context_build_worker is not None
+            or self.shared_data_prepare_worker is not None
+            or short_thread_running
+            or self.runtime_entity_refresh_timer.isActive()
+            or self.shared_context_build_timeout_timer.isActive()
+        )
 
     def bootstrap(self, cfg=None) -> None:
         """初始化共享数据签名，并决定是否执行首轮加载。"""
@@ -551,3 +569,46 @@ class SharedDataController(QObject):
         )
         if self.pending_refresh_notice:
             self.pending_refresh_notice = False
+
+    @staticmethod
+    def _stop_thread(worker, *, wait_ms: int = 100) -> None:
+        """尽力停止一个短生命周期 ``QThread``。"""
+        if worker is None:
+            return
+        try:
+            is_running = getattr(worker, "isRunning", lambda: False)()
+        except RuntimeError:
+            return
+        if not is_running:
+            return
+        for method_name in ("requestInterruption", "quit"):
+            method = getattr(worker, method_name, None)
+            if callable(method):
+                method()
+        wait = getattr(worker, "wait", None)
+        if callable(wait):
+            try:
+                if wait(wait_ms):
+                    return
+            except RuntimeError:
+                return
+        terminate = getattr(worker, "terminate", None)
+        if callable(terminate):
+            terminate()
+
+    def shutdown_background_work(self) -> None:
+        """在窗口关闭前收尾共享数据链路持有的后台对象。"""
+        self.runtime_entity_refresh_timer.stop()
+        self.shared_context_build_timeout_timer.stop()
+        self.is_loading_shared_data = False
+        self.is_preparing_shared_data = False
+        self.pending_runtime_entity_refresh = False
+        self.pending_runtime_entity_refresh_allow_auto_prepare = False
+        self.pending_runtime_entity_refresh_reset_reader = False
+        self.pending_refresh_notice = False
+        self._stop_thread(self._champions_worker)
+        self._stop_thread(self._maps_worker)
+        self._champions_worker = None
+        self._maps_worker = None
+        self.shared_context_build_worker = None
+        self.shared_data_prepare_worker = None

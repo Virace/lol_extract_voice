@@ -48,6 +48,8 @@ from lol_audio_unpack.gui.controllers.window_shell_controller import (
     apply_smooth_scroll_settings,
     apply_task_queue_busy_state,
     bind_shared_data_controller_signals,
+    confirm_force_close_running_tasks,
+    force_quit_application,
     forward_selection_sync_feedback,
     register_navigation_items,
     sync_existing_runtime_logging,
@@ -274,9 +276,19 @@ class MainWindow(FluentWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """关闭窗口前解除 QApplication 级事件过滤器。"""
+        if (
+            getattr(self, "executionInterface", None) is not None
+            and self.executionInterface.is_task_running()
+            and not confirm_force_close_running_tasks(parent=self)
+        ):
+            event.ignore()
+            return
+        should_force_quit = self._has_active_background_work()
         self._disconnect_theme_material_listener()
         self._unregister_app_event_filter()
         super().closeEvent(event)
+        if should_force_quit:
+            force_quit_application(app=QApplication.instance())
 
     def _init_dev_console(self) -> None:
         """按需初始化隐藏开发控制台并连接日志标题触发入口。"""
@@ -414,6 +426,32 @@ class MainWindow(FluentWindow):
 
         # 首页初始化完成后加载数据
         self._shared_data_controller.load_initial_data(cfg)
+
+    def _has_active_background_work(self) -> bool:
+        """返回窗口关闭前是否仍存在后台工作。"""
+        home_page = getattr(self, "homeInterface", None)
+        execution_page = getattr(self, "executionInterface", None)
+        shared_controller = getattr(self, "_shared_data_controller", None)
+        return bool(
+            (home_page is not None and home_page.has_active_background_check())
+            or (execution_page is not None and execution_page.has_active_background_task())
+            or (
+                shared_controller is not None
+                and shared_controller.has_active_background_work()
+            )
+        )
+
+    def _shutdown_background_work(self) -> None:
+        """在窗口关闭前通知各后台 owner 收尾。"""
+        home_page = getattr(self, "homeInterface", None)
+        if home_page is not None:
+            home_page.shutdown_background_check()
+        execution_page = getattr(self, "executionInterface", None)
+        if execution_page is not None:
+            execution_page.shutdown_background_tasks()
+        shared_controller = getattr(self, "_shared_data_controller", None)
+        if shared_controller is not None:
+            shared_controller.shutdown_background_work()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         """在窗口尺寸变化时重排全局日志面板。"""

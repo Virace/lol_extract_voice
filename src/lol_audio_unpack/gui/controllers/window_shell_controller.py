@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import os
+import threading
 from collections.abc import Callable
 
 from loguru import logger
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QMessageBox
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets import NavigationItemPosition
 
 from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled
 from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
-from lol_audio_unpack.utils.logging import setup_logging
+from lol_audio_unpack.gui.controllers.runtime_logging_session import (
+    apply_runtime_logging_session,
+)
 
 
 def apply_task_queue_busy_state(
@@ -35,15 +41,14 @@ def apply_runtime_logging(
     execution_page,
 ) -> None:
     """重挂运行时日志输出并刷新 GUI sink。"""
-    setup_logging(
-        dev_mode=True,
-        log_level=payload.console_log_level,
-        file_log_level=payload.file_log_level,
-        log_file_path=payload.log_dir,
-        show_function_info=True,
-    )
+    update = apply_runtime_logging_session(payload)
     execution_page.attach_runtime_log_sink(payload.console_log_level)
-    logger.debug(f"日志系统已重定向到输出目录: {payload.log_dir}")
+    if not update.reconfigured:
+        return
+    if update.created_new_file:
+        logger.debug(f"日志系统已重定向到输出目录: {payload.log_dir}")
+        return
+    logger.debug(f"日志等级已更新，沿用当前日志文件: {update.log_file}")
 
 
 def sync_existing_runtime_logging(
@@ -53,6 +58,48 @@ def sync_existing_runtime_logging(
 ) -> None:
     """在不重建文件 handler 的前提下重挂 GUI 日志 sink。"""
     execution_page.attach_runtime_log_sink(console_log_level)
+
+
+def confirm_force_close_running_tasks(*, parent) -> bool:
+    """在执行中心仍有运行中任务时确认是否强制关闭。"""
+    dialog = QMessageBox(parent)
+    dialog.setIcon(QMessageBox.Icon.Warning)
+    dialog.setWindowTitle("任务仍在运行")
+    dialog.setText("当前仍有后台任务正在运行。")
+    dialog.setInformativeText("关闭窗口会直接结束当前进程，正在运行的任务不会继续在后台执行。")
+    dialog.setStandardButtons(
+        QMessageBox.StandardButton.Close | QMessageBox.StandardButton.Cancel
+    )
+    dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
+    dialog.button(QMessageBox.StandardButton.Close).setText("关闭")
+    dialog.button(QMessageBox.StandardButton.Cancel).setText("取消")
+    return dialog.exec() == int(QMessageBox.StandardButton.Close)
+
+
+def force_quit_application(
+    *,
+    app,
+    delay_ms: int = 250,
+    single_shot_fn: Callable[[int, Callable[[], None]], None] | None = None,
+    exit_fn: Callable[[int], None] = os._exit,
+) -> None:
+    """阻止 Qt 先触发解释器退出，并在短暂宽限后强制结束当前进程。"""
+    if app is not None:
+        try:
+            app.setQuitOnLastWindowClosed(False)
+        except AttributeError:
+            pass
+
+    def _exit_process() -> None:
+        exit_fn(0)
+
+    if single_shot_fn is not None:
+        single_shot_fn(delay_ms, _exit_process)
+        return
+
+    timer = threading.Timer(delay_ms / 1000, _exit_process)
+    timer.daemon = False
+    timer.start()
 
 
 def apply_smooth_scroll_settings(  # noqa: PLR0913

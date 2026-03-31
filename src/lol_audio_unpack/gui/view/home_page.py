@@ -259,6 +259,14 @@ class HomePage(SmoothScrollArea):
             output_path=self._resolve_output_path(),
         )
 
+    def has_active_background_check(self) -> bool:
+        """返回首页状态后台检查是否仍在运行。"""
+        return self._home_status_controller.has_active_background_check()
+
+    def shutdown_background_check(self) -> None:
+        """在窗口关闭前清理首页后台检查引用。"""
+        self._home_status_controller.shutdown()
+
     def _apply_home_status_display_state(self, state: HomeStatusDisplayState) -> None:
         """把首页状态控制器产出的显示状态应用到卡片。"""
         self._current_version = state.current_version

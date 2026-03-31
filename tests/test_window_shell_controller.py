@@ -11,10 +11,14 @@ from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
 from lol_audio_unpack.gui.controllers.window_shell_controller import (
     apply_task_queue_busy_state,
     bind_shared_data_controller_signals,
+    confirm_force_close_running_tasks,
+    force_quit_application,
     forward_selection_sync_feedback,
     register_navigation_items,
     sync_existing_runtime_logging,
 )
+
+FORCE_QUIT_DELAY_MS = 250
 
 
 def test_apply_task_queue_busy_state_updates_setting_and_refresh_widget() -> None:
@@ -206,17 +210,94 @@ def test_sync_existing_runtime_logging_only_rebinds_gui_sink(monkeypatch) -> Non
         def attach_runtime_log_sink(self, level: str) -> None:
             events.append(("attach", level))
 
-    monkeypatch.setattr(
-        "lol_audio_unpack.gui.controllers.window_shell_controller.setup_logging",
-        lambda **kwargs: events.append(("setup", kwargs)),
-    )
-
     sync_existing_runtime_logging(
         console_log_level="DEBUG",
         execution_page=_FakeExecutionPage(),
     )
 
     assert events == [("attach", "DEBUG")]
+
+
+def test_confirm_force_close_running_tasks_returns_true_for_close(monkeypatch) -> None:
+    button_texts: list[tuple[int, str]] = []
+
+    class _FakeButton:
+        def __init__(self, which: int) -> None:
+            self.which = which
+
+        def setText(self, text: str) -> None:
+            button_texts.append((self.which, text))
+
+    class _FakeMessageBox:
+        class StandardButton:
+            Close = 1
+            Cancel = 2
+
+        class Icon:
+            Warning = 1
+
+        def __init__(self, parent=None) -> None:
+            self.parent = parent
+
+        def setIcon(self, _icon) -> None:
+            pass
+
+        def setWindowTitle(self, _title: str) -> None:
+            pass
+
+        def setText(self, _text: str) -> None:
+            pass
+
+        def setInformativeText(self, _text: str) -> None:
+            pass
+
+        def setStandardButtons(self, _buttons) -> None:
+            pass
+
+        def setDefaultButton(self, _button) -> None:
+            pass
+
+        def button(self, which: int):
+            return _FakeButton(which)
+
+        def exec(self) -> int:
+            return int(self.StandardButton.Close)
+
+    monkeypatch.setattr(
+        "lol_audio_unpack.gui.controllers.window_shell_controller.QMessageBox",
+        _FakeMessageBox,
+    )
+
+    assert confirm_force_close_running_tasks(parent="host") is True
+    assert button_texts == [
+        (_FakeMessageBox.StandardButton.Close, "关闭"),
+        (_FakeMessageBox.StandardButton.Cancel, "取消"),
+    ]
+
+
+def test_force_quit_application_quits_app_and_schedules_fallback_exit() -> None:
+    events: list[object] = []
+
+    class _FakeApp:
+        def setQuitOnLastWindowClosed(self, enabled: bool) -> None:
+            events.append(("quit_on_last_window_closed", enabled))
+
+    scheduled = []
+
+    def _single_shot(delay_ms: int, callback) -> None:
+        scheduled.append((delay_ms, callback))
+
+    force_quit_application(
+        app=_FakeApp(),
+        delay_ms=FORCE_QUIT_DELAY_MS,
+        single_shot_fn=_single_shot,
+        exit_fn=lambda code: events.append(("exit", code)),
+    )
+
+    assert events == [("quit_on_last_window_closed", False)]
+    assert scheduled[0][0] == FORCE_QUIT_DELAY_MS
+    scheduled[0][1]()
+    assert events == [("quit_on_last_window_closed", False), ("exit", 0)]
 
 
 def test_main_window_initializes_log_drawer_controller_before_super_init() -> None:
@@ -258,3 +339,18 @@ def test_main_window_connect_pages_reuses_existing_runtime_logging_on_startup() 
     body = connect_pages_match.group("body")
 
     assert "sync_existing_runtime_logging(" in body
+
+
+def test_main_window_close_event_confirms_running_tasks_before_force_quit() -> None:
+    window_source = Path("src/lol_audio_unpack/gui/window.py").read_text(encoding="utf-8")
+    close_match = re.search(
+        r"def closeEvent\(self, event: QCloseEvent\) -> None:(?P<body>.*?)(?:\n    def |\Z)",
+        window_source,
+        re.DOTALL,
+    )
+    assert close_match is not None
+    body = close_match.group("body")
+
+    assert "confirm_force_close_running_tasks(parent=self)" in body
+    assert "event.ignore()" in body
+    assert "force_quit_application(" in body

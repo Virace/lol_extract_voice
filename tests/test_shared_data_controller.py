@@ -295,3 +295,50 @@ def test_shared_data_controller_reconfigures_logging_only_when_scan_signature_ch
 
     assert len(reconfigure_payloads) == 1
     assert reconfigure_payloads[0].log_dir == Path("logs/runtime")
+
+
+def test_shared_data_controller_shutdown_background_work_stops_short_workers() -> None:
+    controller = _build_controller()
+    controller.shared_context_build_worker = object()
+    controller.shared_data_prepare_worker = object()
+    controller.is_loading_shared_data = True
+    controller.is_preparing_shared_data = True
+    controller.runtime_entity_refresh_timer.start()
+
+    class _FakeThread:
+        def __init__(self) -> None:
+            self.request_interruption_called = False
+            self.quit_called = False
+            self.wait_calls = []
+            self.terminate_called = False
+
+        def isRunning(self) -> bool:
+            return True
+
+        def requestInterruption(self) -> None:
+            self.request_interruption_called = True
+
+        def quit(self) -> None:
+            self.quit_called = True
+
+        def wait(self, timeout_ms: int) -> bool:
+            self.wait_calls.append(timeout_ms)
+            return True
+
+        def terminate(self) -> None:
+            self.terminate_called = True
+
+    controller._champions_worker = _FakeThread()
+    controller._maps_worker = _FakeThread()
+    champions_worker = controller._champions_worker
+    maps_worker = controller._maps_worker
+
+    assert controller.has_active_background_work() is True
+
+    controller.shutdown_background_work()
+
+    assert controller.has_active_background_work() is False
+    assert champions_worker.request_interruption_called is True
+    assert champions_worker.quit_called is True
+    assert maps_worker.request_interruption_called is True
+    assert maps_worker.quit_called is True

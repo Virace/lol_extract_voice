@@ -295,6 +295,10 @@ class ExecutionPage(SmoothScrollArea):
         """返回当前是否存在正在执行的任务。"""
         return self._queue_controller.is_task_running()
 
+    def has_active_background_task(self) -> bool:
+        """返回执行中心是否仍持有运行中的后台任务。"""
+        return self._queue_controller.has_active_background_work()
+
     def has_incomplete_tasks(self) -> bool:
         """返回队列中是否仍存在等待或运行中的任务。"""
         return self._queue_controller.has_incomplete_tasks()
@@ -439,6 +443,10 @@ class ExecutionPage(SmoothScrollArea):
             progress_card_height=self.progress_card.height(),
             builder_card_height=self.task_builder_card.height(),
         )
+
+    def shutdown_background_tasks(self) -> None:
+        """在窗口关闭前清理执行中心后台任务引用。"""
+        self._queue_controller.shutdown()
 
     def current_log_text(self) -> str:
         """返回执行中心当前累计日志文本。

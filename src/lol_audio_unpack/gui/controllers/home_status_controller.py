@@ -75,6 +75,10 @@ class HomeStatusController(QObject):
         self._start_worker = start_worker_fn or QThreadPool.globalInstance().start
         self._active_worker = None
 
+    def has_active_background_check(self) -> bool:
+        """返回首页状态后台检查是否仍在运行。"""
+        return self._active_worker is not None
+
     def run_check(self, *, game_path: Path | None, output_path: Path) -> HomeCheckResult:
         """执行一次首页状态检查。
 
@@ -187,3 +191,7 @@ class HomeStatusController(QObject):
         """广播首页状态检查失败结果，并释放当前 worker 引用。"""
         self._active_worker = None
         self.display_state_ready.emit(self.build_failure_state())
+
+    def shutdown(self) -> None:
+        """清理首页状态检查的运行期引用。"""
+        self._active_worker = None

@@ -83,3 +83,17 @@ def test_home_status_controller_start_check_emits_display_state_ready(qtbot, tmp
             cache_jump_enabled=True,
         )
     ]
+
+
+def test_home_status_controller_shutdown_clears_active_worker() -> None:
+    controller = HomeStatusController(
+        get_game_version_fn=lambda _path: "16.5",
+        cache_check_fn=lambda _output, _version: (False, ""),
+    )
+    controller._active_worker = object()
+
+    assert controller.has_active_background_check() is True
+
+    controller.shutdown()
+
+    assert controller.has_active_background_check() is False

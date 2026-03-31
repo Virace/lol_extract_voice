@@ -86,3 +86,16 @@ def test_execution_queue_controller_on_task_finished_emits_refresh_request_for_l
     assert completed_payload.status == TASK_STATUS_COMPLETED
     assert controller.active_task_id is None
     assert refresh_requests == [OutputStateRefreshRequest(champion_ids=("1", "103"))]
+
+
+def test_execution_queue_controller_shutdown_clears_active_state(qtbot) -> None:
+    controller, _panel = _build_controller(qtbot)
+    controller._active_task_id = 1
+    controller._active_worker = object()
+
+    assert controller.has_active_background_work() is True
+
+    controller.shutdown()
+
+    assert controller.has_active_background_work() is False
+    assert controller.active_task_id is None

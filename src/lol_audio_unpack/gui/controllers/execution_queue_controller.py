@@ -107,6 +107,10 @@ class ExecutionQueueController(QObject):
         """返回当前是否存在运行中的任务。"""
         return self._active_task_id is not None
 
+    def has_active_background_work(self) -> bool:
+        """返回执行中心是否仍持有运行中的后台任务。"""
+        return self._active_task_id is not None or self._active_worker is not None
+
     def has_incomplete_tasks(self) -> bool:
         """返回当前队列中是否仍有未完成任务。"""
         counts = self.queue_status_counts()
@@ -574,6 +578,12 @@ class ExecutionQueueController(QObject):
         self.task_queue_busy_changed.emit(self.has_incomplete_tasks())
         self.progress_display_requested.emit(QueueProgressUpdate())
         return "已清空当前队列。"
+
+    def shutdown(self) -> None:
+        """清理执行中心后台任务引用。"""
+        self._active_task_id = None
+        self._active_worker = None
+        self._stage_completion_notifications.clear()
 
     def inspect_queue(self, *, progress_card_height: int, builder_card_height: int) -> str:
         """返回当前队列列表与卡片尺寸信息。"""
