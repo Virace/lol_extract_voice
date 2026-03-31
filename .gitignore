@@ -127,6 +127,7 @@ packer/
 benchmarks/
 .temp/
 .superpowers/
+.worktrees/
 
 
 !/params.json
