@@ -179,7 +179,6 @@ def main() -> int:
     dist_path = output_root / "dist"
     work_path = output_root / "build"
     runtime_version = _resolve_build_version()
-    version_file = _write_windows_version_file(work_path, runtime_version=runtime_version)
 
     print(f"RepoRoot   : {PROJECT_ROOT}")
     print(f"SpecPath   : {SPEC_PATH}")
@@ -193,6 +192,8 @@ def main() -> int:
         print(f"Cleaning previous PyInstaller output directory: {output_root}")
         if not args.dry_run:
             shutil.rmtree(output_root)
+
+    version_file = _write_windows_version_file(work_path, runtime_version=runtime_version)
 
     if not args.skip_sync:
         _run_command(["uv", "sync", "--extra", "gui", "--group", "build"], dry_run=args.dry_run)
