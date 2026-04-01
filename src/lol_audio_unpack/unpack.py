@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 # todo: ID62, 孙悟空，62007, 战斗学院 孙悟空, ASSETS/Sounds/Wwise2016/SFX/Characters/MonkeyKing/Skins/Skin07/MonkeyKing_Skin07_VO_audio.bnk, 该文件在根WAD
 
 AUDIO_TYPE_VO = "VO"
+WAV_SIDECAR_INTERNAL_ERROR_NOTE = "已启用 WAV 转码，但 sidecar 内部异常，已自动降级为仅保留 WEM。"
 
 
 def _persist_wem_and_maybe_submit(
@@ -53,6 +54,36 @@ def _persist_wem_and_maybe_submit(
     file.save_file(destination_path)
     if wav_submitter is not None:
         wav_submitter(destination_path)
+
+
+def _record_wav_sidecar_internal_error(
+    ctx: AppContext,
+    error: Exception,
+    *,
+    phase: str,
+    show_exception: bool,
+) -> str:
+    """记录 WAV sidecar 内部异常并返回调试细节。
+
+    Args:
+        ctx: 运行时上下文。
+        error: 捕获到的异常对象。
+        phase: 异常发生阶段。
+        show_exception: 是否在日志中附带 traceback。
+
+    Returns:
+        写入运行时总结的 detail 文本。
+    """
+    detail = f"phase={phase}, error_type={type(error).__name__}, error={error}"
+    logger.opt(exception=show_exception).warning(f"WAV sidecar {phase} 失败，已自动降级为仅保留 WEM: {error}")
+    record_runtime_note(
+        ctx.runtime_cache,
+        "extract",
+        WAV_SIDECAR_INTERNAL_ERROR_NOTE,
+        label="音频解包",
+        detail=detail,
+    )
+    return detail
 
 
 def _get_game_region(ctx: AppContext) -> str:
@@ -707,18 +738,47 @@ def execute_unpack_tasks(  # noqa: PLR0913
 
     failed_count = 0
     show_exception = bool(getattr(ctx.config, "dev_mode", False))
+    wav_sidecar_internal_error_detail: str | None = None
 
     wad_cache: dict[Path, WAD] = {}
     cache_lock = threading.Lock() if max_workers > 1 else None
     coordinator = None
     if wav_output and wav_output.enabled:
-        coordinator = WavTranscodeCoordinator(
-            options=wav_output,
-            audio_root=Path(ctx.paths.audio_path) / reader.version,
-            wav_root=Path(ctx.paths.wav_path) / reader.version,
-            report_root=Path(ctx.paths.report_path) / reader.version / "transcode_wav",
-        )
-    wav_submitter = None if coordinator is None else coordinator.submit_persisted_wem
+        try:
+            coordinator = WavTranscodeCoordinator(
+                options=wav_output,
+                audio_root=Path(ctx.paths.audio_path) / reader.version,
+                wav_root=Path(ctx.paths.wav_path) / reader.version,
+                report_root=Path(ctx.paths.report_path) / reader.version / "transcode_wav",
+            )
+        except Exception as exc:  # noqa: BLE001
+            wav_sidecar_internal_error_detail = _record_wav_sidecar_internal_error(
+                ctx,
+                exc,
+                phase="initialize",
+                show_exception=show_exception,
+            )
+
+    def safe_wav_submitter(wem_path: Path) -> None:
+        """安全提交 WAV sidecar 任务。
+
+        Args:
+            wem_path: 已成功落盘的 ``.wem`` 路径。
+        """
+        nonlocal wav_sidecar_internal_error_detail
+        if coordinator is None or wav_sidecar_internal_error_detail is not None:
+            return
+        try:
+            coordinator.submit_persisted_wem(wem_path)
+        except Exception as exc:  # noqa: BLE001
+            wav_sidecar_internal_error_detail = _record_wav_sidecar_internal_error(
+                ctx,
+                exc,
+                phase="submit",
+                show_exception=show_exception,
+            )
+
+    wav_submitter = None if coordinator is None else safe_wav_submitter
 
     def unpack_entity(entity_type: str, entity_id: int) -> None:
         """解包单个实体的辅助函数"""
@@ -807,9 +867,28 @@ def execute_unpack_tasks(  # noqa: PLR0913
 
     transcode_summary = None
     if coordinator is not None:
-        coordinator.mark_extract_finished()
-        transcode_summary = coordinator.finalize()
-        if transcode_summary.breaker_open:
+        try:
+            coordinator.mark_extract_finished()
+        except Exception as exc:  # noqa: BLE001
+            if wav_sidecar_internal_error_detail is None:
+                wav_sidecar_internal_error_detail = _record_wav_sidecar_internal_error(
+                    ctx,
+                    exc,
+                    phase="mark_extract_finished",
+                    show_exception=show_exception,
+                )
+        try:
+            transcode_summary = coordinator.finalize()
+        except Exception as exc:  # noqa: BLE001
+            if wav_sidecar_internal_error_detail is None:
+                wav_sidecar_internal_error_detail = _record_wav_sidecar_internal_error(
+                    ctx,
+                    exc,
+                    phase="finalize",
+                    show_exception=show_exception,
+                )
+            transcode_summary = None
+        if transcode_summary is not None and transcode_summary.breaker_open:
             record_runtime_note(
                 ctx.runtime_cache,
                 "extract",
@@ -817,11 +896,14 @@ def execute_unpack_tasks(  # noqa: PLR0913
                 label="音频解包",
                 detail=f"breaker_reason={transcode_summary.breaker_reason}",
             )
-        summary_message = (
-            f"{summary_message}；WAV 成功 {transcode_summary.completed_wav_job_count} 个，"
-            f"失败 {transcode_summary.failed_wav_job_count} 个，"
-            f"跳过 {transcode_summary.skipped_wav_job_count} 个"
-        )
+        if transcode_summary is not None:
+            summary_message = (
+                f"{summary_message}；WAV 成功 {transcode_summary.completed_wav_job_count} 个，"
+                f"失败 {transcode_summary.failed_wav_job_count} 个，"
+                f"跳过 {transcode_summary.skipped_wav_job_count} 个"
+            )
+    if wav_sidecar_internal_error_detail is not None:
+        summary_message = f"{summary_message}；WAV sidecar 内部异常，已降级为仅保留 WEM"
 
     has_wav_issue = (
         transcode_summary is not None
@@ -829,7 +911,7 @@ def execute_unpack_tasks(  # noqa: PLR0913
     )
     if failed_count == total_tasks:
         logger.error(summary_message)
-    elif failed_count > 0 or has_wav_issue:
+    elif failed_count > 0 or has_wav_issue or wav_sidecar_internal_error_detail is not None:
         logger.warning(summary_message)
     else:
         logger.success(summary_message)
