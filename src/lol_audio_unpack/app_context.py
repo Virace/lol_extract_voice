@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
@@ -292,109 +291,27 @@ def _build_remote_snapshot_config(
     return _resolve_latest_remote_snapshot_config(live_region=live_region)
 
 
-def _resolve_env_dir(env_path: StrPath | None) -> Path:
-    """解析环境文件目录。"""
-    if env_path is None:
-        return detect_runtime_paths().config_root
-    return Path(env_path)
-
-
-def _select_env_file(env_dir: Path, dev_mode: bool) -> Path:
-    """选择实际加载的环境文件。"""
-    env_file = env_dir / ".lol.env"
-    env_dev_file = env_dir / ".lol.env.dev"
-    if dev_mode and env_dev_file.exists():
-        return env_dev_file
-    return env_file
-
-
-def _load_prefixed_env_from_file(env_file: Path, env_prefix: str) -> dict[str, str]:
-    """从环境文件读取前缀配置。"""
-    if not env_file.exists():
-        logger.debug(f"环境变量文件不存在: {env_file}")
-        return {}
-
-    settings: dict[str, str] = {}
-    prefix_len = len(env_prefix)
-    min_quoted_length = len("''")
-    for raw_line in env_file.read_text(encoding="utf-8").splitlines():
-        stripped_line = raw_line.strip()
-        if not stripped_line or stripped_line.startswith("#"):
-            continue
-
-        normalized_line = stripped_line[7:] if stripped_line.startswith("export ") else stripped_line
-        env_name, separator, env_value = normalized_line.partition("=")
-        if not separator:
-            continue
-
-        env_name = env_name.strip()
-        env_value = env_value.strip()
-        if (
-            len(env_value) >= min_quoted_length
-            and env_value[0] == env_value[-1]
-            and env_value[0] in {"'", '"'}
-        ):
-            env_value = env_value[1:-1]
-        if not env_name.startswith(env_prefix):
-            continue
-        key = env_name[prefix_len:]
-        if key not in SUPPORTED_KEYS:
-            logger.warning(f"忽略未知配置项: {env_name}")
-            continue
-        if not env_value.strip():
-            logger.debug(f"忽略空白环境文件配置项: {env_name}")
-            continue
-        settings[key] = env_value
-    return settings
-
-
-def _load_prefixed_env_from_system(env_prefix: str) -> dict[str, str]:
-    """从系统环境变量读取前缀配置。"""
-    settings: dict[str, str] = {}
-    prefix_len = len(env_prefix)
-    for env_name, env_value in os.environ.items():
-        if not env_name.startswith(env_prefix):
-            continue
-        key = env_name[prefix_len:]
-        if key not in SUPPORTED_KEYS:
-            logger.warning(f"忽略未知配置项: {env_name}")
-            continue
-        if not str(env_value).strip():
-            logger.debug(f"忽略空白系统环境配置项: {env_name}")
-            continue
-        settings[key] = env_value
-    return settings
-
-
 def _build_raw_settings(
     *,
-    env_path: StrPath | None,
-    env_prefix: str,
-    dev_mode: bool,
-    cli_overrides: Mapping[str, Any] | None,
+    settings: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    """按优先级合并原始配置。"""
+    """按默认值和显式输入合并原始配置。"""
     merged: dict[str, Any] = dict(DEFAULT_VALUES)
     merged["OUTPUT_PATH"] = get_default_output_root(detect_runtime_paths())
 
-    env_dir = _resolve_env_dir(env_path)
-    env_file = _select_env_file(env_dir, dev_mode=dev_mode)
-    merged.update(_load_prefixed_env_from_file(env_file, env_prefix=env_prefix))
-    merged.update(_load_prefixed_env_from_system(env_prefix=env_prefix))
-
-    if cli_overrides:
-        for key, value in cli_overrides.items():
+    if settings:
+        for key, value in settings.items():
             if key not in SUPPORTED_KEYS:
-                logger.warning(f"忽略未知CLI配置项: {key}")
+                logger.warning(f"忽略未知配置项: {key}")
                 continue
             if value is None:
-                logger.debug(f"忽略空的CLI配置项: {key}=None")
+                logger.debug(f"忽略空的配置项: {key}=None")
                 continue
             if isinstance(value, str) and not value.strip():
                 if key == "EXCLUDE_TYPE":
                     merged[key] = ""
                     continue
-                logger.debug(f"忽略空白CLI配置项: {key}")
+                logger.debug(f"忽略空白配置项: {key}")
                 continue
             merged[key] = value
 
@@ -474,22 +391,19 @@ def _build_app_paths(app_config: AppConfig) -> AppPaths:
     )
 
 
-def create_app_context(  # noqa: PLR0913
-    env_path: StrPath | None = None,
-    env_prefix: str = "LOL_",
+def create_app_context(
+    *,
+    settings: Mapping[str, Any] | None = None,
     force_reload: bool = False,
     dev_mode: bool = False,
-    cli_overrides: dict[str, Any] | None = None,
     runtime_cache: dict[str, Any] | None = None,
 ) -> AppContext:
     """构建 ``AppContext``。
 
     Args:
-        env_path: 环境变量文件目录。
-        env_prefix: 环境变量前缀。
+        settings: 已解析完成的共享配置输入。
         force_reload: 兼容参数，当前仅保留签名，不影响行为。
         dev_mode: 是否启用开发模式。
-        cli_overrides: CLI 显式覆盖项。
         runtime_cache: 可选运行时缓存。
 
     Returns:
@@ -500,32 +414,10 @@ def create_app_context(  # noqa: PLR0913
     """
     _ = force_reload
 
-    raw_settings = _build_raw_settings(
-        env_path=env_path,
-        env_prefix=env_prefix,
-        dev_mode=dev_mode,
-        cli_overrides=cli_overrides,
-    )
+    raw_settings = _build_raw_settings(settings=settings)
     app_config = _build_app_config(settings=raw_settings, dev_mode=dev_mode)
     app_paths = _build_app_paths(app_config)
     return AppContext(config=app_config, paths=app_paths, runtime_cache=runtime_cache or {})
-
-
-def initialize_context_from_env(
-    env_path: StrPath | None = None,
-    env_prefix: str = "LOL_",
-    force_reload: bool = False,
-    dev_mode: bool = False,
-    cli_overrides: dict[str, Any] | None = None,
-) -> AppContext:
-    """兼容入口：从环境构建 ``AppContext``。"""
-    return create_app_context(
-        env_path=env_path,
-        env_prefix=env_prefix,
-        force_reload=force_reload,
-        dev_mode=dev_mode,
-        cli_overrides=cli_overrides,
-    )
 
 
 __all__ = [
@@ -538,5 +430,4 @@ __all__ = [
     "SourceMode",
     "WavOutputOptions",
     "create_app_context",
-    "initialize_context_from_env",
 ]

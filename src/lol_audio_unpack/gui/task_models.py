@@ -19,14 +19,14 @@ class AppContextInputSnapshot:
     """任务创建时记录的共享上下文输入快照。
 
     Args:
-        overrides: 创建 ``AppContext`` 时需要使用的输入覆盖配置。
+        settings: 创建 ``AppContext`` 时需要使用的共享输入配置。
     """
 
-    overrides: tuple[tuple[str, str | bool], ...] = ()
+    settings: tuple[tuple[str, str | bool], ...] = ()
 
-    def to_cli_overrides(self) -> dict[str, str | bool]:
-        """转换为 ``create_app_context`` 可直接消费的覆盖配置。"""
-        return dict(self.overrides)
+    def to_settings(self) -> dict[str, str | bool]:
+        """转换为 ``create_app_context`` 可直接消费的共享配置。"""
+        return dict(self.settings)
 
 
 @dataclass(slots=True, frozen=True)

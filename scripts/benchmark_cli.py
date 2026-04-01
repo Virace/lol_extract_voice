@@ -691,7 +691,7 @@ def create_api_app(
         cli_overrides["WITH_BP_VO"] = with_bp_vo
 
     _ = log_level
-    app_context = create_app_context(dev_mode=False, cli_overrides=cli_overrides)
+    app_context = create_app_context(dev_mode=False, settings=cli_overrides)
     return LolAudioUnpackApp(app_context)
 
 

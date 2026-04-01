@@ -9,9 +9,7 @@ from loguru import logger
 
 from lol_audio_unpack.app_context import create_app_context
 from lol_audio_unpack.facade import LolAudioUnpackApp
-from lol_audio_unpack.gui.common.packaged_remote_mode_policy import (
-    normalize_app_context_overrides,
-)
+from lol_audio_unpack.gui.common.packaged_remote_mode_policy import normalize_app_context_settings
 from lol_audio_unpack.gui.task_models import (
     ExecutionTaskProgress,
     ExecutionTaskResult,
@@ -63,7 +61,7 @@ def _resolve_task_scope(task: QueuedExecutionTask) -> tuple[str, bool, bool]:
     return "all", include_champions, include_maps
 
 
-def _build_runtime_overrides(
+def _build_runtime_settings(
     task: QueuedExecutionTask,
     *,
     force_bp_vo: bool = False,
@@ -75,13 +73,13 @@ def _build_runtime_overrides(
         force_bp_vo: 是否在当前阶段强制准备 BP 语音资源。
 
     Returns:
-        可直接传给 ``create_app_context`` 的配置映射。
+        可直接传给 ``create_app_context`` 的共享配置映射。
     """
-    overrides = task.draft.context_input.to_cli_overrides()
-    overrides.update(task.draft.task_params.to_runtime_overrides())
+    settings = task.draft.context_input.to_settings()
+    settings.update(task.draft.task_params.to_runtime_overrides())
     if force_bp_vo:
-        overrides["WITH_BP_VO"] = True
-    return normalize_app_context_overrides(overrides)
+        settings["WITH_BP_VO"] = True
+    return normalize_app_context_settings(settings)
 
 
 def _build_scope_label(*, include_champions: bool, include_maps: bool) -> str:
@@ -142,8 +140,8 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     steps = task_params.selected_steps()
     completed_steps: list[str] = []
     runtime_app: LolAudioUnpackApp | None = None
-    runtime_overrides = _build_runtime_overrides(task)
-    source_mode = runtime_overrides.get("SOURCE_MODE", "local_path")
+    runtime_settings = _build_runtime_settings(task)
+    source_mode = runtime_settings.get("SOURCE_MODE", "local_path")
 
     try:
         logger.info(f"[执行中心] 任务 #{task.task_id} 开始执行: {' -> '.join(steps)}")
@@ -166,7 +164,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                 )
                 update_app = LolAudioUnpackApp(
                     create_app_context(
-                        cli_overrides=_build_runtime_overrides(task, force_bp_vo=True),
+                        settings=_build_runtime_settings(task, force_bp_vo=True),
                     )
                 )
                 update_app.update(options, target=target)
@@ -200,7 +198,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     logger.debug(f"[执行中心] 任务 #{task.task_id} 创建运行时 AppContext")
                     runtime_app = LolAudioUnpackApp(
                         create_app_context(
-                            cli_overrides=runtime_overrides,
+                            settings=runtime_settings,
                         )
                     )
 
@@ -251,7 +249,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     logger.debug(f"[执行中心] 任务 #{task.task_id} 创建运行时 AppContext")
                     runtime_app = LolAudioUnpackApp(
                         create_app_context(
-                            cli_overrides=runtime_overrides,
+                            settings=runtime_settings,
                         )
                     )
 

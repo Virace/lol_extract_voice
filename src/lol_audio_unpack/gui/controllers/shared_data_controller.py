@@ -30,7 +30,7 @@ def _get_effective_source_mode(cfg, overrides: dict[str, str | bool] | None = No
 
 def build_shared_entity_reader_signature(cfg) -> tuple[str | bool, ...]:
     """构建影响共享实体数据读取上下文的配置签名。"""
-    overrides = cfg.to_app_context_overrides()
+    overrides = cfg.to_app_context_settings()
     source_mode = _get_effective_source_mode(cfg, overrides)
     return (
         source_mode,
@@ -45,7 +45,7 @@ def build_shared_entity_reader_signature(cfg) -> tuple[str | bool, ...]:
 
 def build_shared_entity_scan_signature(cfg) -> tuple[str | bool, ...]:
     """构建仅影响输出扫描结果的配置签名。"""
-    overrides = cfg.to_app_context_overrides()
+    overrides = cfg.to_app_context_settings()
     return (
         overrides["OUTPUT_PATH"],
         overrides["GROUP_BY_TYPE"],
@@ -219,7 +219,7 @@ class SharedDataController(QObject):
             )
 
         worker = self._task_worker_cls(
-            lambda: self._create_app_context(cli_overrides=current_cfg.to_app_context_overrides())
+            lambda: self._create_app_context(settings=current_cfg.to_app_context_settings())
         )
         worker.signals.finished.connect(
             lambda app_context, request_id=current_request_id: self.on_shared_context_build_finished(
@@ -527,7 +527,7 @@ class SharedDataController(QObject):
         if self.shared_data_prepare_worker is not None:
             return
 
-        overrides = dict(current_cfg.to_app_context_overrides())
+        overrides = dict(current_cfg.to_app_context_settings())
 
         def run_prepare() -> None:
             self._prepare_shared_entity_data(overrides)

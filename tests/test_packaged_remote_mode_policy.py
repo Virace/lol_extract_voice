@@ -3,7 +3,7 @@
 from lol_audio_unpack.gui.common.packaged_remote_mode_policy import (
     available_source_mode_labels,
     effective_source_mode,
-    normalize_app_context_overrides,
+    normalize_app_context_settings,
     packaged_remote_mode_disabled,
     packaged_remote_mode_fallback_needed,
     remote_source_panel_visible,
@@ -31,15 +31,15 @@ def test_available_source_mode_items_hide_remote_in_packaged_build() -> None:
     assert available_source_mode_labels(is_frozen=True) == ["本地模式"]
 
 
-def test_normalize_app_context_overrides_forces_local_path_when_frozen() -> None:
-    """打包版 GUI overrides 应在运行时强制使用本地模式。"""
-    overrides = normalize_app_context_overrides(
+def test_normalize_app_context_settings_forces_local_path_when_frozen() -> None:
+    """打包版 GUI settings 应在运行时强制使用本地模式。"""
+    settings = normalize_app_context_settings(
         {"SOURCE_MODE": "remote_snapshot", "GAME_PATH": "game"},
         is_frozen=True,
     )
 
-    assert overrides["SOURCE_MODE"] == "local_path"
-    assert overrides["GAME_PATH"] == "game"
+    assert settings["SOURCE_MODE"] == "local_path"
+    assert settings["GAME_PATH"] == "game"
 
 
 def test_packaged_remote_mode_fallback_needed_only_for_packaged_remote_runtime() -> None:

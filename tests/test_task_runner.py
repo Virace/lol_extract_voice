@@ -1,4 +1,4 @@
-"""执行中心运行时 overrides 归一测试。"""
+"""执行中心运行时 settings 归一测试。"""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def _build_task(*, source_mode: str) -> QueuedExecutionTask:
             source="manual_input",
             source_summary="manual",
             context_input=AppContextInputSnapshot(
-                overrides=(
+                settings=(
                     ("SOURCE_MODE", source_mode),
                     ("GAME_PATH", "game"),
                     ("OUTPUT_PATH", "output"),
@@ -37,17 +37,17 @@ def _build_task(*, source_mode: str) -> QueuedExecutionTask:
     )
 
 
-def test_build_runtime_overrides_forces_local_path_when_packaged(monkeypatch) -> None:
+def test_build_runtime_settings_forces_local_path_when_packaged(monkeypatch) -> None:
     monkeypatch.setattr(
         task_runner,
-        "normalize_app_context_overrides",
-        lambda overrides: {**overrides, "SOURCE_MODE": "local_path"},
+        "normalize_app_context_settings",
+        lambda settings: {**settings, "SOURCE_MODE": "local_path"},
         raising=False,
     )
 
-    overrides = task_runner._build_runtime_overrides(_build_task(source_mode="remote_snapshot"))
+    settings = task_runner._build_runtime_settings(_build_task(source_mode="remote_snapshot"))
 
-    assert overrides["SOURCE_MODE"] == "local_path"
+    assert settings["SOURCE_MODE"] == "local_path"
 
 
 def test_prepare_shared_entity_data_normalizes_source_mode_before_app_context(monkeypatch) -> None:
@@ -60,14 +60,14 @@ def test_prepare_shared_entity_data_normalizes_source_mode_before_app_context(mo
         def update(self, _options, *, target: str) -> None:
             assert target == "all"
 
-    def _fake_create_app_context(*, cli_overrides):
-        captured.update(cli_overrides)
+    def _fake_create_app_context(*, settings):
+        captured.update(settings)
         return object()
 
     monkeypatch.setattr(
         window_module,
-        "normalize_app_context_overrides",
-        lambda overrides: {**overrides, "SOURCE_MODE": "local_path"},
+        "normalize_app_context_settings",
+        lambda settings: {**settings, "SOURCE_MODE": "local_path"},
         raising=False,
     )
     monkeypatch.setattr(window_module, "create_app_context", _fake_create_app_context)
@@ -87,14 +87,14 @@ def test_run_execution_task_logs_task_start_and_summary(monkeypatch) -> None:
     def _fail_exception(message: str) -> None:
         pytest.fail(message)
 
-    def _fake_create_app_context(*, cli_overrides) -> object:
-        _ = cli_overrides
+    def _fake_create_app_context(*, settings) -> object:
+        _ = settings
         return object()
 
     monkeypatch.setattr(
         task_runner,
-        "normalize_app_context_overrides",
-        lambda overrides: {**overrides, "SOURCE_MODE": "local_path"},
+        "normalize_app_context_settings",
+        lambda settings: {**settings, "SOURCE_MODE": "local_path"},
         raising=False,
     )
     monkeypatch.setattr(
