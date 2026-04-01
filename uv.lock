@@ -578,6 +578,7 @@ dependencies = [
     { name = "league-tools" },
     { name = "msgpack" },
     { name = "python-dotenv" },
+    { name = "pyvgmstream" },
     { name = "riotmanifest" },
     { name = "ruamel-yaml" },
 ]
@@ -586,7 +587,6 @@ dependencies = [
 gui = [
     { name = "pyside6" },
     { name = "pyside6-fluent-widgets" },
-    { name = "pyvgmstream" },
 ]
 
 [package.dev-dependencies]
@@ -607,7 +607,7 @@ requires-dist = [
     { name = "pyside6", marker = "extra == 'gui'", specifier = ">=6" },
     { name = "pyside6-fluent-widgets", marker = "extra == 'gui'", specifier = ">=1.7.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
-    { name = "pyvgmstream", marker = "extra == 'gui'", specifier = ">=0.1.0" },
+    { name = "pyvgmstream", specifier = ">=0.1.0" },
     { name = "riotmanifest", specifier = ">=2.4.0" },
     { name = "ruamel-yaml", specifier = ">=0.18.14" },
 ]

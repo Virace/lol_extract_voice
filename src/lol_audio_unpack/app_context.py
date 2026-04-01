@@ -89,10 +89,21 @@ class AppConfig:
 
 
 @dataclass(frozen=True)
+class WavOutputOptions:
+    """WAV sidecar 派生输出配置。"""
+
+    enabled: bool = False
+    worker_count: int = 2
+    timeout_seconds: int = 5
+    max_retries: int = 3
+
+
+@dataclass(frozen=True)
 class AppPaths:
     """派生路径快照。"""
 
     audio_path: Path
+    wav_path: Path
     temp_path: Path
     log_path: Path
     cache_path: Path
@@ -115,6 +126,7 @@ class OperationOptions:
     integrate_data: bool = False
     champion_ids: tuple[int, ...] | None = None
     map_ids: tuple[int, ...] | None = None
+    wav_output: WavOutputOptions = field(default_factory=WavOutputOptions)
 
 
 @dataclass
@@ -437,6 +449,7 @@ def _build_app_paths(app_config: AppConfig) -> AppPaths:
 
     # 仅派生路径，不在初始化阶段统一创建目录（按需懒创建）。
     audio_path = output_path / "audios"
+    wav_path = output_path / "wavs"
     temp_path = output_path / "temps"
     log_path = output_path / "logs"
     cache_path = output_path / "cache"
@@ -446,6 +459,7 @@ def _build_app_paths(app_config: AppConfig) -> AppPaths:
 
     return AppPaths(
         audio_path=audio_path,
+        wav_path=wav_path,
         temp_path=temp_path,
         log_path=log_path,
         cache_path=cache_path,
@@ -521,6 +535,7 @@ __all__ = [
     "OperationOptions",
     "RemoteSnapshotConfig",
     "SourceMode",
+    "WavOutputOptions",
     "create_app_context",
     "initialize_context_from_env",
 ]

@@ -646,9 +646,28 @@ def test_create_app_context_rejects_partial_remote_snapshot_override(tmp_path: P
         )
 
 
+def test_create_app_context_derives_wav_path(tmp_path: Path) -> None:
+    env_dir = tmp_path / "env"
+    game_path = tmp_path / "game"
+    output_path = tmp_path / "output"
+    env_dir.mkdir()
+    game_path.mkdir()
+    _write_env_file(env_dir, game_path, output_path)
+
+    app_context = create_app_context(env_path=env_dir)
+
+    assert app_context.paths.audio_path == output_path / "audios"
+    assert app_context.paths.wav_path == output_path / "wavs"
+    assert not app_context.paths.wav_path.exists()
+
+
 def test_operation_options_defaults() -> None:
     options = OperationOptions()
 
     assert options.max_workers == DEFAULT_MAX_WORKERS
     assert options.process_events is True
     assert options.integrate_data is False
+    assert options.wav_output.enabled is False
+    assert options.wav_output.worker_count == 2
+    assert options.wav_output.timeout_seconds == 5
+    assert options.wav_output.max_retries == 3
