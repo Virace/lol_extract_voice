@@ -392,10 +392,10 @@ def build_operation_options(
         champion_ids=champion_ids,
         map_ids=map_ids,
         wav_output=WavOutputOptions(
-            enabled=args.wav,
-            worker_count=2 if args.wav_workers is None else args.wav_workers,
-            timeout_seconds=5 if args.wav_timeout is None else args.wav_timeout,
-            max_retries=3 if args.wav_retries is None else args.wav_retries,
+            enabled=getattr(args, "wav", False),
+            worker_count=2 if getattr(args, "wav_workers", None) is None else args.wav_workers,
+            timeout_seconds=5 if getattr(args, "wav_timeout", None) is None else args.wav_timeout,
+            max_retries=3 if getattr(args, "wav_retries", None) is None else args.wav_retries,
         ),
     )
 

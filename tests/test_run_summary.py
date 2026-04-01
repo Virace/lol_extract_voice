@@ -33,3 +33,26 @@ def test_emit_cli_run_summary_separates_clean_issue_and_explanatory_notes(tmp_pa
     assert any("可解释差异: 数据更新 -> 地图 33 的事件因公共地图去重被省略。" in message for message in info_messages)
     assert any("构建地图映射失败" in message for message in debug_messages)
     assert any("category=AMB_SFX" in message for message in debug_messages)
+
+
+def test_emit_cli_run_summary_includes_extract_wav_breaker_note(tmp_path: Path) -> None:
+    """验证 extraction 阶段的 WAV breaker 说明会出现在执行总结中。"""
+    summary = CliRunSummary()
+
+    with summary.stage_context("extract", label="音频解包"):
+        summary.record_note(
+            "extract",
+            "已启用 WAV 转码，但因系统性失败自动降级为仅保留 WEM。",
+            detail="breaker=recent_failures, failed=12, skipped=1772",
+        )
+
+    info_messages: list[str] = []
+    debug_messages: list[str] = []
+    fake_logger = SimpleNamespace(info=info_messages.append, debug=debug_messages.append)
+
+    emit_cli_run_summary(summary, log=fake_logger, log_path=tmp_path / "logs")
+
+    assert any(
+        "可解释差异: 音频解包 -> 已启用 WAV 转码，但因系统性失败自动降级为仅保留 WEM。" in msg
+        for msg in info_messages
+    )

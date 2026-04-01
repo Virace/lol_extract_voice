@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from multiprocessing.queues import Queue
 from pathlib import Path
@@ -81,3 +82,31 @@ def test_breaker_opens_after_repeated_final_failures(tmp_path: Path) -> None:
 
     assert summary.breaker_open is True
     assert summary.failed_wav_job_count >= BREAKER_FAILURE_THRESHOLD
+
+
+def test_finalize_writes_summary_and_failures_reports(tmp_path: Path) -> None:
+    options = WavOutputOptions(enabled=True, worker_count=1, timeout_seconds=1, max_retries=1)
+    report_root = tmp_path / "reports" / "15.8" / "transcode_wav"
+    coordinator = WavTranscodeCoordinator(
+        options=options,
+        audio_root=tmp_path / "audios" / "15.8",
+        wav_root=tmp_path / "wavs" / "15.8",
+        report_root=report_root,
+        worker_entry=always_fail_worker_entry,
+    )
+
+    for index in range(BREAKER_FAILURE_THRESHOLD + 1):
+        coordinator.submit_persisted_wem(tmp_path / "audios" / "15.8" / f"{index}.wem")
+
+    coordinator.mark_extract_finished()
+    summary = coordinator.finalize()
+
+    summary_path = report_root / "summary.json"
+    failures_path = report_root / "failures.jsonl"
+
+    assert summary_path.exists()
+    assert failures_path.exists()
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert payload["failed_wav_job_count"] == summary.failed_wav_job_count
+    assert payload["skipped_wav_job_count"] == summary.skipped_wav_job_count
+    assert len(failures_path.read_text(encoding="utf-8").strip().splitlines()) == summary.failed_wav_job_count

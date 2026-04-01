@@ -23,6 +23,7 @@ from lol_audio_unpack.utils.path_constants import (
     format_sub_entity_folder_name,
     get_output_dir_name,
 )
+from lol_audio_unpack.utils.run_summary import record_runtime_note
 from lol_audio_unpack.utils.stats import FileProcessResult, ProcessingStatsContext
 from lol_audio_unpack.wav_sidecar import WavTranscodeCoordinator
 
@@ -803,16 +804,35 @@ def execute_unpack_tasks(  # noqa: PLR0913
         f"成功 {total_tasks - failed_count} 个，失败 {failed_count} 个，"
         f"耗时 {end_time - start_time:.2f}s"
     )
-    if failed_count == 0:
-        logger.success(summary_message)
-    elif failed_count < total_tasks:
-        logger.warning(summary_message)
-    else:
-        logger.error(summary_message)
 
+    transcode_summary = None
     if coordinator is not None:
         coordinator.mark_extract_finished()
-        coordinator.finalize()
+        transcode_summary = coordinator.finalize()
+        if transcode_summary.breaker_open:
+            record_runtime_note(
+                ctx.runtime_cache,
+                "extract",
+                "已启用 WAV 转码，但因系统性失败自动降级为仅保留 WEM。",
+                label="音频解包",
+                detail=f"breaker_reason={transcode_summary.breaker_reason}",
+            )
+        summary_message = (
+            f"{summary_message}；WAV 成功 {transcode_summary.completed_wav_job_count} 个，"
+            f"失败 {transcode_summary.failed_wav_job_count} 个，"
+            f"跳过 {transcode_summary.skipped_wav_job_count} 个"
+        )
+
+    has_wav_issue = (
+        transcode_summary is not None
+        and (transcode_summary.failed_wav_job_count > 0 or transcode_summary.skipped_wav_job_count > 0)
+    )
+    if failed_count == total_tasks:
+        logger.error(summary_message)
+    elif failed_count > 0 or has_wav_issue:
+        logger.warning(summary_message)
+    else:
+        logger.success(summary_message)
 
     # 在所有操作完成后，将收集到的未知分类写入文件
     reader.write_unknown_categories_to_file()
