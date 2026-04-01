@@ -9,7 +9,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from league_tools.formats import BNK, WAD, WPK
 from loguru import logger
@@ -24,14 +24,34 @@ from lol_audio_unpack.utils.path_constants import (
     get_output_dir_name,
 )
 from lol_audio_unpack.utils.stats import FileProcessResult, ProcessingStatsContext
+from lol_audio_unpack.wav_sidecar import WavTranscodeCoordinator
 
 if TYPE_CHECKING:
-    from lol_audio_unpack.app_context import AppContext
+    from lol_audio_unpack.app_context import AppContext, WavOutputOptions
 
 # todo: ID6, 厄加特, 6009, 西部魔影 厄加特, ASSETS/Sounds/Wwise2016/SFX/Characters/Urgot/Skins/Skin09/Urgot_Skin09_VO_audio.bnk, 该文件在根WAD
 # todo: ID62, 孙悟空，62007, 战斗学院 孙悟空, ASSETS/Sounds/Wwise2016/SFX/Characters/MonkeyKing/Skins/Skin07/MonkeyKing_Skin07_VO_audio.bnk, 该文件在根WAD
 
 AUDIO_TYPE_VO = "VO"
+
+
+def _persist_wem_and_maybe_submit(
+    file: Any,
+    destination_path: Path,
+    *,
+    wav_submitter: Callable[[Path], None] | None = None,
+) -> None:
+    """保存 ``.wem`` 文件，并在成功后通知 WAV sidecar。
+
+    Args:
+        file: 具备 ``save_file`` 方法的提取结果对象。
+        destination_path: 落盘目标路径。
+        wav_submitter: 可选的 WAV sidecar 提交回调。
+    """
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    file.save_file(destination_path)
+    if wav_submitter is not None:
+        wav_submitter(destination_path)
 
 
 def _get_game_region(ctx: AppContext) -> str:
@@ -110,13 +130,14 @@ def _get_wad_instance(
 
 @logger.catch
 @performance_monitor(level="DEBUG")
-def unpack_audio_entity(
+def unpack_audio_entity(  # noqa: PLR0913
     entity_data: AudioEntityData,
     reader: DataReader,
     wad_cache: dict[Path, WAD] | None = None,
     cache_lock: threading.Lock | None = None,
     *,
     ctx: AppContext,
+    wav_submitter: Callable[[Path], None] | None = None,
 ) -> None:
     """解包单个实体音频（英雄或地图）。
 
@@ -327,7 +348,11 @@ def unpack_audio_entity(
                                     )
                                     continue
 
-                                file.save_file(output_path / f"{file.id}.wem")
+                                _persist_wem_and_maybe_submit(
+                                    file,
+                                    output_path / f"{file.id}.wem",
+                                    wav_submitter=wav_submitter,
+                                )
                                 # 记录成功统计
                                 stats.record_file_result(sub_id, sub_name, audio_type, FileProcessResult.SUCCESS)
                         except Exception as e:
@@ -341,7 +366,11 @@ def unpack_audio_entity(
                         try:
                             wpk = WPK(file_info["raw"])
                             for file in wpk.extract_files():
-                                file.save_file(output_path / f"{file.filename}")
+                                _persist_wem_and_maybe_submit(
+                                    file,
+                                    output_path / f"{file.filename}",
+                                    wav_submitter=wav_submitter,
+                                )
                                 # 记录成功统计
                                 stats.record_file_result(sub_id, sub_name, audio_type, FileProcessResult.SUCCESS)
                         except Exception as e:
@@ -554,13 +583,14 @@ def _attach_bp_vo_to_champion(
         logger.debug(f"大厅语音已写入: {target_file} (mode={mode})")
 
 
-def unpack_champion(
+def unpack_champion(  # noqa: PLR0913
     champion_id: int,
     reader: DataReader,
     wad_cache: dict[Path, WAD] | None = None,
     cache_lock: threading.Lock | None = None,
     *,
     ctx: AppContext,
+    wav_submitter: Callable[[Path], None] | None = None,
 ) -> None:
     """按英雄 ID 解包音频。
 
@@ -575,7 +605,14 @@ def unpack_champion(
         # 创建AudioEntityData实例
         entity_data = AudioEntityData.from_champion(champion_id, reader, ctx=ctx)
         # 调用通用解包函数
-        unpack_audio_entity(entity_data, reader, wad_cache=wad_cache, cache_lock=cache_lock, ctx=ctx)
+        unpack_audio_entity(
+            entity_data,
+            reader,
+            wad_cache=wad_cache,
+            cache_lock=cache_lock,
+            ctx=ctx,
+            wav_submitter=wav_submitter,
+        )
         _attach_bp_vo_to_champion(entity_data, reader, ctx=ctx)
     except ValueError as e:
         # 保持与原始函数相同的错误处理方式
@@ -583,13 +620,14 @@ def unpack_champion(
         return
 
 
-def unpack_map_audio(
+def unpack_map_audio(  # noqa: PLR0913
     map_id: int,
     reader: DataReader,
     wad_cache: dict[Path, WAD] | None = None,
     cache_lock: threading.Lock | None = None,
     *,
     ctx: AppContext,
+    wav_submitter: Callable[[Path], None] | None = None,
 ) -> None:
     """按地图 ID 解包音频。
 
@@ -604,20 +642,28 @@ def unpack_map_audio(
         # 创建AudioEntityData实例
         entity_data = AudioEntityData.from_map(map_id, reader, ctx=ctx)
         # 调用通用解包函数
-        unpack_audio_entity(entity_data, reader, wad_cache=wad_cache, cache_lock=cache_lock, ctx=ctx)
+        unpack_audio_entity(
+            entity_data,
+            reader,
+            wad_cache=wad_cache,
+            cache_lock=cache_lock,
+            ctx=ctx,
+            wav_submitter=wav_submitter,
+        )
     except ValueError as e:
         # 保持一致的错误处理方式
         logger.error(str(e))
         return
 
 
-def execute_unpack_tasks(
+def execute_unpack_tasks(  # noqa: PLR0913
     tasks: list[tuple[str, int, str]],
     reader: DataReader,
     max_workers: int = 4,
     *,
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
+    wav_output: WavOutputOptions | None = None,
 ) -> None:
     """执行批量解包任务。
 
@@ -663,13 +709,36 @@ def execute_unpack_tasks(
 
     wad_cache: dict[Path, WAD] = {}
     cache_lock = threading.Lock() if max_workers > 1 else None
+    coordinator = None
+    if wav_output and wav_output.enabled:
+        coordinator = WavTranscodeCoordinator(
+            options=wav_output,
+            audio_root=Path(ctx.paths.audio_path) / reader.version,
+            wav_root=Path(ctx.paths.wav_path) / reader.version,
+            report_root=Path(ctx.paths.report_path) / reader.version / "transcode_wav",
+        )
+    wav_submitter = None if coordinator is None else coordinator.submit_persisted_wem
 
     def unpack_entity(entity_type: str, entity_id: int) -> None:
         """解包单个实体的辅助函数"""
         if entity_type == "champion":
-            unpack_champion(entity_id, reader, wad_cache=wad_cache, cache_lock=cache_lock, ctx=ctx)
+            unpack_champion(
+                entity_id,
+                reader,
+                wad_cache=wad_cache,
+                cache_lock=cache_lock,
+                ctx=ctx,
+                wav_submitter=wav_submitter,
+            )
         elif entity_type == "map":
-            unpack_map_audio(entity_id, reader, wad_cache=wad_cache, cache_lock=cache_lock, ctx=ctx)
+            unpack_map_audio(
+                entity_id,
+                reader,
+                wad_cache=wad_cache,
+                cache_lock=cache_lock,
+                ctx=ctx,
+                wav_submitter=wav_submitter,
+            )
         else:
             raise ValueError(f"未知的实体类型: {entity_type}")
 
@@ -741,6 +810,10 @@ def execute_unpack_tasks(
     else:
         logger.error(summary_message)
 
+    if coordinator is not None:
+        coordinator.mark_extract_finished()
+        coordinator.finalize()
+
     # 在所有操作完成后，将收集到的未知分类写入文件
     reader.write_unknown_categories_to_file()
 
@@ -753,6 +826,7 @@ def unpack_audio_all(  # noqa: PLR0913
     *,
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
+    wav_output: WavOutputOptions | None = None,
 ) -> None:
     """使用线程池并发解包全部实体。
 
@@ -789,16 +863,18 @@ def unpack_audio_all(  # noqa: PLR0913
         max_workers,
         ctx=ctx,
         progress_callback=progress_callback,
+        wav_output=wav_output,
     )
 
 
-def unpack_champions(
+def unpack_champions(  # noqa: PLR0913
     reader: DataReader,
     champion_ids: list[int],
     max_workers: int = 4,
     *,
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
+    wav_output: WavOutputOptions | None = None,
 ) -> None:
     """便捷函数：解包指定英雄。
 
@@ -816,16 +892,18 @@ def unpack_champions(
         max_workers,
         ctx=ctx,
         progress_callback=progress_callback,
+        wav_output=wav_output,
     )
 
 
-def unpack_maps(
+def unpack_maps(  # noqa: PLR0913
     reader: DataReader,
     map_ids: list[int],
     max_workers: int = 4,
     *,
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
+    wav_output: WavOutputOptions | None = None,
 ) -> None:
     """便捷函数：解包指定地图。
 
@@ -843,4 +921,5 @@ def unpack_maps(
         max_workers,
         ctx=ctx,
         progress_callback=progress_callback,
+        wav_output=wav_output,
     )
