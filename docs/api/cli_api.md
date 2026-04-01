@@ -5,13 +5,13 @@
 ## 1. 基础命令
 
 ```bash
-uv run unpack <update|extract|mapping> [OPTIONS]
+uv run unpack <ACTION...> [OPTIONS]
 ```
 
 兼容模块入口仍可用：
 
 ```bash
-python -m lol_audio_unpack <update|extract|mapping> [OPTIONS]
+python -m lol_audio_unpack <ACTION...> [OPTIONS]
 ```
 
 ## 2. 配置来源语义
@@ -27,7 +27,8 @@ CLI 当前只有两种模式：
 示例：
 
 ```bash
-uv run unpack update \
+uv run unpack update extract \
+  --champions Annie,Ahri \
   --game-path "D:/Games/Tencent/WeGameApps/英雄联盟" \
   --output-path "./output"
 ```
@@ -37,7 +38,7 @@ uv run unpack update \
 - 带 `-c` 或 `--config-file`
 - `-c` 不带路径：读取默认配置文件
 - `-c <PATH>`：读取指定 INI 配置文件
-- 启用 `-c` 后，除动作子命令和配置文件路径外，不能再手工追加任何其他参数
+- 启用 `-c` 后，除动作列表和配置文件路径外，不允许再手工追加任何其他参数
 
 默认配置文件名：
 
@@ -47,14 +48,15 @@ uv run unpack update \
 配置文件结构：
 
 - `[app]`：共享配置
-- `[update]`：`update` 子命令参数
-- `[extract]`：`extract` 子命令参数
-- `[mapping]`：`mapping` 子命令参数
+- `[targets]`：多个动作共享的实体范围
+- `[update]`：`update` 动作参数
+- `[extract]`：`extract` 动作参数
+- `[mapping]`：`mapping` 动作参数
 
 其中：
 
 - `GUI` 只读取 `[app]`
-- 动作分组仅在 CLI 的 `-c` 模式下生效
+- `[targets]` 与动作分组仅在 CLI 的 `-c` 模式下生效
 
 示例配置文件中的约定：
 
@@ -65,7 +67,7 @@ uv run unpack update \
 
 ```bash
 uv run unpack extract -c
-uv run unpack mapping -c ./config/custom.ini
+uv run unpack update extract mapping -c ./config/custom.ini
 ```
 
 ## 3. 共享配置参数
@@ -94,69 +96,76 @@ uv run unpack mapping -c ./config/custom.ini
 - `--dev`
 - `--enable-league-tools-log`
 
-## 4. 子命令参数
+## 4. 动作与参数
 
-### 4.1 `update`
+### 4.1 动作列表
+
+可以顺序提供多个动作：
+
+```bash
+uv run unpack update extract --champions Annie,Ahri --game-path "./game" --output-path "./output"
+```
+
+实际执行顺序固定为：
+
+1. `update`
+2. `extract`
+3. `mapping`
+
+因此只要同次命令里包含 `update`，运行时一定会先执行 `update`。
+
+### 4.2 共享实体选择
 
 - `--champions [IDs|ALIASES]`
 - `--maps [IDs]`
+
+它们会对本次命令中出现的所有动作同时生效。
+
+在 `-c` 模式下，应写入 `[targets]`：
+
+```ini
+[targets]
+champions = Annie,Ahri
+maps =
+```
+
+### 4.3 `update`
+
 - `-f, --force`
 - `--skip-events`
 
-在 `-c` 模式下，上述参数应写入 `[update]` section：
+在 `-c` 模式下，上述参数应写入 `[update]`：
 
 ```ini
 [update]
-champions = Annie,Ahri
-maps =
 force = false
 skip_events = false
 ```
 
-示例：
+### 4.4 `extract`
 
-```bash
-uv run unpack update --game-path "D:/Games/Tencent/WeGameApps/英雄联盟" --output-path "./output"
-uv run unpack update -c
-```
-
-### 4.2 `extract`
-
-- `--champions [IDs|ALIASES]`
-- `--maps [IDs]`
 - `--wav`
 - `--wav-workers N`
 - `--wav-timeout SECONDS`
 - `--wav-retries N`
 - `--wav-format {auto,pcm16,pcm24,pcm32,float}`
 
-在 `-c` 模式下，上述参数应写入 `[extract]` section。
+在 `-c` 模式下，当前推荐只写 `[extract].wav`，其余 WAV 调优参数继续优先用纯 CLI 模式按次显式传入。
 
-示例：
+### 4.5 `mapping`
 
-```bash
-uv run unpack extract --game-path "D:/Games/Tencent/WeGameApps/英雄联盟" --output-path "./output" --champions Annie,Ahri
-uv run unpack extract -c
-```
-
-### 4.3 `mapping`
-
-- `--champions [IDs|ALIASES]`
-- `--maps [IDs]`
 - `--integrate-data` / `--no-integrate-data`
 
-在 `-c` 模式下，上述参数应写入 `[mapping]` section。
+在 `-c` 模式下，应写入 `[mapping]`：
 
-示例：
-
-```bash
-uv run unpack mapping --game-path "D:/Games/Tencent/WeGameApps/英雄联盟" --output-path "./output" --champions Annie --wwiser-path "./tools/wwiser.pyz"
-uv run unpack mapping -c
+```ini
+[mapping]
+integrate_data = true
 ```
 
 ## 5. 执行与校验规则
 
-- 必须提供一个动作子命令：`update` / `extract` / `mapping`
+- 必须提供至少一个动作：`update` / `extract` / `mapping`
 - `--wav*` 仅允许和 `extract` 一起使用
 - `--integrate-data` 仅允许和 `mapping` 一起使用
 - `local_path` 模式会校验 `game_path` 是否存在
@@ -169,7 +178,7 @@ uv run unpack mapping -c
 纯 CLI 显式参数：
 
 ```bash
-uv run unpack update \
+uv run unpack update extract \
   --output-path "/tmp/lol-remote" \
   --game-region zh_CN \
   --source-mode remote_snapshot \

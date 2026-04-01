@@ -70,17 +70,12 @@ uv run scripts/benchmark_cli.py \
 
 ### 4.3 仅解包音频（不做映射）
 
-方式一：直接使用动作式 CLI。
+方式一：直接使用多动作 CLI。
 
 ```bash
-uv run unpack update \
-  --skip-events \
-  --max-workers auto \
-  --game-path "/mnt/d/Games/Tencent/WeGameApps/英雄联盟" \
-  --output-path "/mnt/e/Temp/Scratch/lol"
-
-uv run unpack extract \
+uv run unpack update extract \
   --champions 122,804,62 \
+  --skip-events \
   --max-workers auto \
   --game-path "/mnt/d/Games/Tencent/WeGameApps/英雄联盟" \
   --output-path "/mnt/e/Temp/Scratch/lol"

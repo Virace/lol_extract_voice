@@ -41,6 +41,6 @@ def test_unpack_cli_requires_action_arg() -> None:
 
 
 def test_unpack_cli_rejects_extra_args_in_config_mode() -> None:
-    result = _run_unpack_cli("extract", "-c", "--champions", "Annie")
+    result = _run_unpack_cli("update", "extract", "-c", "--champions", "Annie")
 
     assert result.returncode == 1

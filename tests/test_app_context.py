@@ -231,25 +231,30 @@ def test_load_settings_from_config_file_requires_existing_file(tmp_path: Path) -
         load_settings_from_config_file(config_file)
 
 
-def test_load_command_config_from_file_reads_extract_section(tmp_path: Path) -> None:
+def test_load_command_config_from_file_reads_targets_and_extract_sections(tmp_path: Path) -> None:
     config_file = tmp_path / "lol-audio-unpack.ini"
     config_file.write_text(
-        "[app]\n"
-        "game_path = ./game\n"
-        "\n"
-        "[extract]\n"
-        "champions = Annie,Ahri\n"
-        "wav = true\n"
-        "wav_format = auto\n",
+        (
+            "[app]\n"
+            "game_path = ./game\n"
+            "\n"
+            "[targets]\n"
+            "champions = Annie,Ahri\n"
+            "\n"
+            "[extract]\n"
+            "wav = true\n"
+        ),
         encoding="utf-8",
     )
 
-    command_config = load_command_config_from_file(config_file, command="extract")
+    target_config = load_command_config_from_file(config_file, command="targets")
+    extract_config = load_command_config_from_file(config_file, command="extract")
 
-    assert command_config == {
-        "extract_champions": "Annie,Ahri",
+    assert target_config == {
+        "champions": "Annie,Ahri",
+    }
+    assert extract_config == {
         "wav": True,
-        "wav_format": "auto",
     }
 
 

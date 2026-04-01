@@ -97,14 +97,15 @@ def write_settings_to_config_file(
 标准 section：
 
 - `[app]`：共享配置
-- `[update]`：`update` 子命令参数
-- `[extract]`：`extract` 子命令参数
-- `[mapping]`：`mapping` 子命令参数
+- `[targets]`：多个动作共享的实体范围
+- `[update]`：`update` 动作参数
+- `[extract]`：`extract` 动作参数
+- `[mapping]`：`mapping` 动作参数
 
 GUI 语义：
 
 - GUI 只读取 `[app]`
-- `[update] / [extract] / [mapping]` 仅供 CLI 的配置文件模式使用
+- `[targets] / [update] / [extract] / [mapping]` 仅供 CLI 的配置文件模式使用
 
 建议示例风格：
 

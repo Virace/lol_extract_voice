@@ -36,7 +36,7 @@
 ### 3.1 纯 CLI 显式参数
 
 ```bash
-uv run unpack update \
+uv run unpack update extract \
   --output-path "/tmp/lol-remote" \
   --game-region zh_CN \
   --source-mode remote_snapshot \
@@ -54,7 +54,7 @@ output_path = /tmp/lol-remote
 game_region = zh_CN
 remote_live_region = EUW
 
-[extract]
+[targets]
 champions = 1,103,555
 ```
 
@@ -82,7 +82,7 @@ uv run unpack mapping \
 ### 4.1 典型命令
 
 ```bash
-uv run unpack update \
+uv run unpack update extract \
   --output-path "/tmp/lol-remote" \
   --game-region zh_CN \
   --source-mode remote_snapshot \

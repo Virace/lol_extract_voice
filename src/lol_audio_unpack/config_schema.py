@@ -39,6 +39,7 @@ class ConfigSection:
     """标准 INI section 名。"""
 
     APP = "app"
+    TARGETS = "targets"
     UPDATE = "update"
     EXTRACT = "extract"
     MAPPING = "mapping"
@@ -112,28 +113,18 @@ DEFAULT_SHARED_SETTINGS: dict[str, Any] = {
 BASE_CONTEXT_OPTION_ATTRS: tuple[str, ...] = tuple(SHARED_SETTING_FIELD_BY_CLI_ATTR)
 
 COMMAND_CONFIG_FIELDS: dict[str, tuple[CommandConfigField, ...]] = {
+    ConfigSection.TARGETS: (
+        CommandConfigField("champions", "champions", "text"),
+        CommandConfigField("maps", "maps", "text"),
+    ),
     ConfigSection.UPDATE: (
-        CommandConfigField("update_champions", "champions", "text"),
-        CommandConfigField("update_maps", "maps", "text"),
         CommandConfigField("force", "force", "bool"),
         CommandConfigField("skip_events", "skip_events", "bool"),
     ),
     ConfigSection.EXTRACT: (
-        CommandConfigField("extract_champions", "champions", "text"),
-        CommandConfigField("extract_maps", "maps", "text"),
-        CommandConfigField("force", "force", "bool"),
-        CommandConfigField("max_workers", "max_workers", "int"),
         CommandConfigField("wav", "wav", "bool"),
-        CommandConfigField("wav_workers", "wav_workers", "int"),
-        CommandConfigField("wav_timeout", "wav_timeout", "int"),
-        CommandConfigField("wav_retries", "wav_retries", "int"),
-        CommandConfigField("wav_format", "wav_format", "text"),
     ),
     ConfigSection.MAPPING: (
-        CommandConfigField("mapping_champions", "champions", "text"),
-        CommandConfigField("mapping_maps", "maps", "text"),
-        CommandConfigField("force", "force", "bool"),
-        CommandConfigField("max_workers", "max_workers", "int"),
         CommandConfigField("integrate_data", "integrate_data", "bool"),
     ),
 }

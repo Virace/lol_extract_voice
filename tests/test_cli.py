@@ -29,6 +29,15 @@ def test_validate_args_requires_action_subcommand() -> None:
     assert exc.value.code == 1
 
 
+def test_validate_args_deduplicates_action_order() -> None:
+    parser = cli.create_parser()
+    args = parser.parse_args(["extract", "update", "extract"])
+
+    cli.validate_args(args, parser)
+
+    assert args.actions == ["extract", "update"]
+
+
 def test_validate_config_mode_rejects_any_extra_manual_args() -> None:
     with pytest.raises(SystemExit) as exc:
         cli._validate_config_mode_raw_argv(["update", "-c", "--game-path", "game-root"])
@@ -166,7 +175,7 @@ def test_initialize_app_passes_settings_to_setup_app(monkeypatch, tmp_path: Path
 def test_apply_config_profile_to_args_loads_command_section(monkeypatch, tmp_path: Path) -> None:
     parser = cli.create_parser()
     config_file = tmp_path / "lol-audio-unpack.ini"
-    args = parser.parse_args(["extract", "-c", str(config_file)])
+    args = parser.parse_args(["update", "extract", "-c", str(config_file)])
 
     monkeypatch.setattr(
         cli,
@@ -177,17 +186,17 @@ def test_apply_config_profile_to_args_loads_command_section(monkeypatch, tmp_pat
         cli,
         "load_command_config_from_file",
         lambda path, command, require_exists=True: {
-            "extract_champions": "Annie,Ahri",
-            "wav": True,
-            "wav_format": "auto",
-        },
+            "targets": {"champions": "Annie,Ahri"},
+            "update": {"skip_events": True},
+            "extract": {"wav": True},
+        }.get(command, {}),
     )
 
     cli._apply_config_profile_to_args(args)
 
-    assert args.extract_champions == "Annie,Ahri"
+    assert args.champions == "Annie,Ahri"
+    assert args.skip_events is True
     assert args.wav is True
-    assert args.wav_format == "auto"
     assert args._loaded_settings == {"GAME_PATH": str(tmp_path / "game")}
 
 
@@ -265,6 +274,23 @@ def test_execute_update_operations_all() -> None:
     assert calls["opts"].process_events is True
 
 
+def test_execute_update_operations_shared_targets_cover_both_entity_types(monkeypatch) -> None:
+    parser = cli.create_parser()
+    args = parser.parse_args(["update", "--champions", "Annie,Ahri", "--maps", "11,12"])
+    monkeypatch.setattr(cli, "resolve_cli_champion_ids", lambda *_args, **_kwargs: (1, 2))
+
+    class FakeApp:
+        def update(self, opts, *, target="all"):
+            assert target == "all"
+            assert opts.champion_ids == (1, 2)
+            assert opts.map_ids == (11, 12)
+
+    cli.execute_update_operations(
+        args,
+        FakeApp(),
+    )
+
+
 def test_execute_extract_operations_uses_standard_stage_logs(monkeypatch) -> None:
     parser = cli.create_parser()
     args = parser.parse_args(["extract"])
@@ -292,7 +318,7 @@ def test_execute_mapping_operations_defaults_to_native_hirc_without_wwiser(monke
     class FakeApp:
         def mapping(self, opts, **kwargs):
             assert opts.wwiser_path is None if hasattr(opts, "wwiser_path") else True
-            assert kwargs == {}
+            assert kwargs == {"include_champions": True, "include_maps": True}
 
     monkeypatch.setattr(cli, "_log_cli_stage_start", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(cli, "_log_cli_stage_complete", lambda *_args, **_kwargs: None)

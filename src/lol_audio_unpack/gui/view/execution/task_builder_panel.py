@@ -316,27 +316,6 @@ class TaskBuilderPanel(CardWidget):
             ),
         )
 
-    def _append_target_operation_args(
-        self,
-        args: list[str],
-        *,
-        operation_name: str,
-        champion_ids: tuple[str, ...],
-        map_ids: tuple[str, ...],
-    ) -> None:
-        """按当前目标范围追加 CLI 任务参数。"""
-        all_flag = f"--{operation_name}"
-        champion_flag = f"--{operation_name}-champions"
-        map_flag = f"--{operation_name}-maps"
-        if champion_ids or map_ids:
-            if champion_ids:
-                args.extend([champion_flag, ",".join(champion_ids)])
-            if map_ids:
-                args.extend([map_flag, ",".join(map_ids)])
-            return
-
-        args.append(all_flag)
-
     def build_cli_command_text(self) -> str | None:
         """根据当前表单状态构造可复制的 CLI 命令。"""
         state = self._state
@@ -347,31 +326,22 @@ class TaskBuilderPanel(CardWidget):
         args = ["uv", "run", "unpack"]
 
         if state.force_update:
-            self._append_target_operation_args(
-                args,
-                operation_name="update",
-                champion_ids=champion_ids,
-                map_ids=map_ids,
-            )
-            args.append("--force")
+            args.append("update")
 
         if state.include_extract:
-            self._append_target_operation_args(
-                args,
-                operation_name="extract",
-                champion_ids=champion_ids,
-                map_ids=map_ids,
-            )
+            args.append("extract")
 
         if state.include_mapping:
-            self._append_target_operation_args(
-                args,
-                operation_name="mapping",
-                champion_ids=champion_ids,
-                map_ids=map_ids,
-            )
+            args.append("mapping")
+
+        if champion_ids:
+            args.extend(["--champions", ",".join(champion_ids)])
+        if map_ids:
+            args.extend(["--maps", ",".join(map_ids)])
 
         args.extend(["--max-workers", state.max_workers_text])
+        if state.force_update:
+            args.append("--force")
         args.append("--with-bp-vo" if state.with_bp_vo else "--no-with-bp-vo")
         if state.vo_filter_key == "VO":
             args.extend(["--exclude-type", "SFX,MUSIC"])

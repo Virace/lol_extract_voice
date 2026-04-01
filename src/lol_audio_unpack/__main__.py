@@ -19,7 +19,7 @@ from .config_loading import (
     load_settings_from_config_file,
     resolve_default_config_file_path,
 )
-from .config_schema import BASE_CONTEXT_OPTION_ATTRS, SettingKey, build_settings_from_namespace
+from .config_schema import BASE_CONTEXT_OPTION_ATTRS, ConfigSection, SettingKey, build_settings_from_namespace
 from .facade import LolAudioUnpackApp
 from .utils.run_summary import attach_run_summary_sink, emit_cli_run_summary, get_or_create_run_summary
 
@@ -76,6 +76,22 @@ def _create_shared_parser() -> argparse.ArgumentParser:
         const="",
         metavar="PATH",
         help="启用配置文件模式；仅写 -c 时读取默认 INI，写 -c PATH 时读取指定 INI。",
+    )
+
+    target_group = parser.add_argument_group("实体选择", "多个动作共享的目标范围选择")
+    target_group.add_argument(
+        "--champions",
+        nargs="?",
+        const="all",
+        metavar="IDs|ALIASES",
+        help="指定英雄范围；无参数时表示所有英雄。",
+    )
+    target_group.add_argument(
+        "--maps",
+        nargs="?",
+        const="all",
+        metavar="IDs",
+        help="指定地图范围；无参数时表示所有地图。",
     )
 
     config_group = parser.add_argument_group("共享配置", "纯 CLI 模式下显式提供的共享配置")
@@ -232,7 +248,7 @@ def _add_mapping_subcommand(
 
 
 def create_parser() -> argparse.ArgumentParser:
-    """创建动作式命令行参数解析器。"""
+    """创建支持多动作的命令行参数解析器。"""
     shared_parser = _create_shared_parser()
     parser = argparse.ArgumentParser(
         description="一个极简、高效的英雄联盟音频提取工具 (v3)",
@@ -246,29 +262,51 @@ def create_parser() -> argparse.ArgumentParser:
         version=f"%(prog)s {__version__}",
         help="显示当前脚本的版本号。",
     )
+    parser.add_argument(
+        "actions",
+        nargs="*",
+        metavar="ACTION",
+        help="要执行的动作列表，支持顺序提供多个动作，如 `update extract`。",
+    )
     parser.set_defaults(
-        command=None,
-        update=False,
-        extract=False,
-        mapping=False,
-        update_champions=None,
-        update_maps=None,
-        extract_champions=None,
-        extract_maps=None,
-        mapping_champions=None,
-        mapping_maps=None,
-        integrate_data=False,
+        actions=[],
+        champions=None,
+        maps=None,
+        integrate_data=None,
         wav=False,
         wav_workers=None,
         wav_timeout=None,
         wav_retries=None,
         wav_format=None,
     )
-
-    subparsers = parser.add_subparsers(dest="command", metavar="ACTION")
-    _add_update_subcommand(subparsers, shared_parser)
-    _add_extract_subcommand(subparsers, shared_parser)
-    _add_mapping_subcommand(subparsers, shared_parser)
+    parser.add_argument(
+        "--integrate-data",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="mapping 阶段是否生成整合数据文件；未显式指定时默认开启。",
+    )
+    parser.add_argument("--wav", action="store_true", help="在解包后并行派生 WAV 输出。")
+    parser.add_argument("--wav-workers", type=int, default=None, metavar="N", help="设置 WAV 转码并发进程数。")
+    parser.add_argument(
+        "--wav-timeout",
+        type=int,
+        default=None,
+        metavar="SECONDS",
+        help="设置单个 WAV 转码任务的超时时间（秒）。",
+    )
+    parser.add_argument(
+        "--wav-retries",
+        type=int,
+        default=None,
+        metavar="N",
+        help="设置单个 WAV 转码任务的最大重试次数。",
+    )
+    parser.add_argument(
+        "--wav-format",
+        choices=("auto", "pcm16", "pcm24", "pcm32", "float"),
+        default=None,
+        help="设置 WAV 输出格式。",
+    )
     return parser
 
 
@@ -278,24 +316,37 @@ def _validate_config_mode_raw_argv(argv: list[str]) -> None:
         return
 
     config_flag_tokens = {"-c", "--config-file"}
-    command_seen = False
-    previous_token: str | None = None
+    waiting_config_path = False
+    config_seen = False
+    option_phase = False
     for token in argv:
-        if not command_seen and not token.startswith("-"):
-            command_seen = True
-            previous_token = token
-            continue
+        if waiting_config_path:
+            if not token.startswith("-"):
+                waiting_config_path = False
+                config_seen = True
+                option_phase = True
+                continue
+            waiting_config_path = False
 
         if token in config_flag_tokens:
-            previous_token = token
+            waiting_config_path = True
+            config_seen = True
+            option_phase = True
             continue
 
-        if previous_token in config_flag_tokens and not token.startswith("-"):
-            previous_token = token
+        if not token.startswith("-") and not option_phase:
+            # 允许在前面连续提供多个动作，如 `update extract -c`
             continue
 
-        logger.error("错误：-c/--config-file 模式下不允许再手工传递其他参数。")
-        sys.exit(1)
+        if config_seen:
+            logger.error("错误：-c/--config-file 模式下不允许再手工传递其他参数。")
+            sys.exit(1)
+
+        if token.startswith("-"):
+            option_phase = True
+            continue
+
+        option_phase = True
 
 
 def _apply_config_profile_to_args(args: argparse.Namespace) -> None:
@@ -306,23 +357,33 @@ def _apply_config_profile_to_args(args: argparse.Namespace) -> None:
 
     try:
         loaded_settings = load_settings_from_config_file(config_file, require_exists=True)
-        command_options = load_command_config_from_file(config_file, command=args.command, require_exists=True)
     except FileNotFoundError:
         logger.error(f"配置文件不存在: {config_file}")
         logger.error("请先创建标准 INI 配置文件，或移除 -c 改为纯 CLI 显式参数模式。")
         sys.exit(1)
 
     args._loaded_settings = loaded_settings
-    for attr_name, value in command_options.items():
+    merged_options = load_command_config_from_file(config_file, command=ConfigSection.TARGETS, require_exists=True)
+    for action in args.actions:
+        merged_options.update(load_command_config_from_file(config_file, command=action, require_exists=True))
+    for attr_name, value in merged_options.items():
         setattr(args, attr_name, value)
 
 
 def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     """验证动作式 CLI 参数的有效性。"""
-    if args.command is None:
-        logger.error("错误：必须提供一个动作子命令：update / extract / mapping。")
+    if not args.actions:
+        logger.error("错误：必须提供至少一个动作：update / extract / mapping。")
         parser.print_help()
         sys.exit(1)
+
+    invalid_actions = [action for action in args.actions if action not in {"update", "extract", "mapping"}]
+    if invalid_actions:
+        logger.error(f"错误：存在不支持的动作: {invalid_actions}")
+        parser.print_help()
+        sys.exit(1)
+
+    args.actions = list(dict.fromkeys(args.actions))
 
     if args.config_file is not None and any(getattr(args, attr) is not None for attr in BASE_CONTEXT_OPTION_ATTRS):
         logger.error("错误：-c/--config-file 模式不能与共享配置参数同时使用。")
@@ -331,18 +392,18 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
     wav_tuning_explicit = any(
         value is not None for value in (args.wav_workers, args.wav_timeout, args.wav_retries, args.wav_format)
     )
-    if getattr(args, "wav", False) and args.command != "extract":
-        logger.error("错误：--wav 只能与 extract 子命令一起使用。")
+    if getattr(args, "wav", False) and "extract" not in args.actions:
+        logger.error("错误：--wav 只能与 extract 动作一起使用。")
         sys.exit(1)
 
     if wav_tuning_explicit and not getattr(args, "wav", False):
         logger.error("错误：--wav-workers / --wav-timeout / --wav-retries / --wav-format 只能与 --wav 一起使用。")
         sys.exit(1)
 
-    if getattr(args, "integrate_data", False) and args.command != "mapping":
-        logger.error("错误：--integrate-data 只能与 mapping 子命令一起使用。")
+    if getattr(args, "integrate_data", False) and "mapping" not in args.actions:
+        logger.error("错误：--integrate-data 只能与 mapping 动作一起使用。")
         sys.exit(1)
-    if getattr(args, "integrate_data", False):
+    if args.integrate_data is True and "mapping" in args.actions:
         logger.info("检测到 --integrate-data 参数，将生成整合数据文件")
 
 
@@ -460,11 +521,15 @@ def build_operation_options(
     map_ids: tuple[int, ...] | None = None,
 ) -> OperationOptions:
     """从命令行参数构建操作选项对象。"""
+    integrate_data = False
+    if "mapping" in getattr(args, "actions", []):
+        integrate_data = True if args.integrate_data is None else args.integrate_data
+
     return OperationOptions(
         max_workers=args.max_workers,
         force_update=args.force,
         process_events=not args.skip_events,
-        integrate_data=getattr(args, "integrate_data", False),
+        integrate_data=integrate_data,
         champion_ids=champion_ids,
         map_ids=map_ids,
         wav_output=WavOutputOptions(
@@ -479,17 +544,61 @@ def build_operation_options(
 
 def _has_update_actions(args: argparse.Namespace) -> bool:
     """是否存在 update 操作。"""
-    return any([args.update, args.update_champions, args.update_maps])
+    return "update" in getattr(args, "actions", [])
 
 
 def _has_extract_actions(args: argparse.Namespace) -> bool:
     """是否存在 extract 操作。"""
-    return any([args.extract, args.extract_champions, args.extract_maps])
+    return "extract" in getattr(args, "actions", [])
 
 
 def _has_mapping_actions(args: argparse.Namespace) -> bool:
     """是否存在 mapping 操作。"""
-    return any([args.mapping, args.mapping_champions, args.mapping_maps])
+    return "mapping" in getattr(args, "actions", [])
+
+
+def _resolve_cli_targets(
+    args: argparse.Namespace,
+    *,
+    app: LolAudioUnpackApp,
+) -> tuple[tuple[int, ...] | None, tuple[int, ...] | None]:
+    """解析共享的 CLI 实体选择。"""
+    champion_ids = resolve_cli_champion_ids(args.champions, app=app, force_update=args.force)
+    map_ids = parse_int_ids(args.maps)
+    return champion_ids, map_ids
+
+
+def _resolve_target_scope(
+    *,
+    champion_ids: tuple[int, ...] | None,
+    map_ids: tuple[int, ...] | None,
+) -> tuple[str, bool, bool]:
+    """根据共享目标选择推导门面目标范围。"""
+    if champion_ids is None and map_ids is None:
+        return "all", True, True
+    if champion_ids is not None and map_ids is not None:
+        return "all", True, True
+    if champion_ids is not None:
+        return "skin", True, False
+    return "map", False, True
+
+
+def _build_target_detail(
+    *,
+    champion_ids: tuple[int, ...] | None,
+    map_ids: tuple[int, ...] | None,
+    all_detail: str,
+    champion_detail: str,
+    map_detail: str,
+) -> str:
+    """根据共享目标范围构建日志详情。"""
+    if champion_ids is None and map_ids is None:
+        return all_detail
+    if champion_ids is not None and map_ids is not None:
+        return f"指定英雄和地图: champions={list(champion_ids)}, maps={list(map_ids)}"
+    if champion_ids is not None:
+        return f"{champion_detail}: {list(champion_ids)}"
+    return f"{map_detail}: {list(map_ids) if map_ids is not None else []}"
 
 
 def _build_extract_stage_detail(base_detail: str, *, wav_enabled: bool) -> str:
@@ -545,52 +654,23 @@ def _log_cli_unhandled_error(error: Exception, *, dev_mode: bool) -> None:
 
 def execute_remote_entity_workflow(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
     """仅在 remote 模式下使用的单位驱动执行器。"""
+    champion_ids, map_ids = _resolve_cli_targets(args, app=app)
+    update_target, extract_include_champions, extract_include_maps = _resolve_target_scope(
+        champion_ids=champion_ids,
+        map_ids=map_ids,
+    )
+
     update_options = None
-    update_target = "all"
-    if args.update:
-        update_options = build_operation_options(args)
-    elif args.update_champions:
-        champion_ids = resolve_cli_champion_ids(args.update_champions, app=app, force_update=args.force)
-        update_options = build_operation_options(args, champion_ids=champion_ids)
-        update_target = "skin"
-    elif args.update_maps:
-        map_ids = parse_int_ids(args.update_maps)
-        update_options = build_operation_options(args, map_ids=map_ids)
-        update_target = "map"
+    if _has_update_actions(args):
+        update_options = build_operation_options(args, champion_ids=champion_ids, map_ids=map_ids)
 
     extract_options = None
-    extract_include_champions = False
-    extract_include_maps = False
-    if args.extract:
-        extract_options = build_operation_options(args)
-        extract_include_champions = True
-        extract_include_maps = True
-    elif args.extract_champions:
-        extract_options = build_operation_options(
-            args,
-            champion_ids=resolve_cli_champion_ids(args.extract_champions, app=app, force_update=args.force),
-        )
-        extract_include_champions = True
-    elif args.extract_maps:
-        extract_options = build_operation_options(args, map_ids=parse_int_ids(args.extract_maps))
-        extract_include_maps = True
+    if _has_extract_actions(args):
+        extract_options = build_operation_options(args, champion_ids=champion_ids, map_ids=map_ids)
 
     mapping_options = None
-    mapping_include_champions = False
-    mapping_include_maps = False
-    if args.mapping:
-        mapping_options = build_operation_options(args)
-        mapping_include_champions = True
-        mapping_include_maps = True
-    elif args.mapping_champions:
-        mapping_options = build_operation_options(
-            args,
-            champion_ids=resolve_cli_champion_ids(args.mapping_champions, app=app, force_update=args.force),
-        )
-        mapping_include_champions = True
-    elif args.mapping_maps:
-        mapping_options = build_operation_options(args, map_ids=parse_int_ids(args.mapping_maps))
-        mapping_include_maps = True
+    if _has_mapping_actions(args):
+        mapping_options = build_operation_options(args, champion_ids=champion_ids, map_ids=map_ids)
 
     app.run_remote_entity_workflow(
         update_options=update_options,
@@ -599,92 +679,65 @@ def execute_remote_entity_workflow(args: argparse.Namespace, app: LolAudioUnpack
         mapping_options=mapping_options,
         extract_include_champions=extract_include_champions,
         extract_include_maps=extract_include_maps,
-        mapping_include_champions=mapping_include_champions,
-        mapping_include_maps=mapping_include_maps,
+        mapping_include_champions=extract_include_champions,
+        mapping_include_maps=extract_include_maps,
     )
 
 
 def execute_update_operations(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
     """执行数据更新操作。"""
-    update_actions = [args.update, args.update_champions, args.update_maps]
-    if not any(update_actions):
+    if not _has_update_actions(args):
         return
+
+    champion_ids, map_ids = _resolve_cli_targets(args, app=app)
+    target, _, _ = _resolve_target_scope(champion_ids=champion_ids, map_ids=map_ids)
 
     if args.skip_events:
         logger.info("已启用快速模式：跳过事件数据处理")
     if args.force:
         logger.warning("已启用强制更新模式，将忽略现有文件的版本检查。")
 
-    if args.update:
-        detail = "所有数据（英雄和地图）"
-        _log_cli_stage_start("数据更新", detail)
-        app.update(build_operation_options(args), target="all")
-    elif args.update_champions:
-        champion_ids = resolve_cli_champion_ids(args.update_champions, app=app, force_update=args.force)
-        if champion_ids:
-            detail = f"指定英雄数据: {list(champion_ids)}"
-        else:
-            detail = "所有英雄数据"
-        _log_cli_stage_start("数据更新", detail)
-        app.update(build_operation_options(args, champion_ids=champion_ids), target="skin")
-    elif args.update_maps:
-        map_ids = parse_int_ids(args.update_maps)
-        if map_ids:
-            detail = f"指定地图数据: {list(map_ids)}"
-        else:
-            detail = "所有地图数据"
-        _log_cli_stage_start("数据更新", detail)
-        app.update(build_operation_options(args, map_ids=map_ids), target="map")
+    detail = _build_target_detail(
+        champion_ids=champion_ids,
+        map_ids=map_ids,
+        all_detail="所有数据（英雄和地图）",
+        champion_detail="指定英雄数据",
+        map_detail="指定地图数据",
+    )
+    _log_cli_stage_start("数据更新", detail)
+    app.update(build_operation_options(args, champion_ids=champion_ids, map_ids=map_ids), target=target)
 
     _log_cli_stage_complete("数据更新", detail)
 
 
 def execute_extract_operations(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
     """执行音频解包操作。"""
-    extract_actions = [args.extract, args.extract_champions, args.extract_maps]
-    if not any(extract_actions):
+    if not _has_extract_actions(args):
         return
 
-    if args.extract:
-        detail = _build_extract_stage_detail("所有音频（英雄和地图）", wav_enabled=args.wav)
-        _log_cli_stage_start("音频解包", detail)
-        app.extract(build_operation_options(args))
-    elif args.extract_champions:
-        try:
-            champion_ids = resolve_cli_champion_ids(args.extract_champions, app=app, force_update=args.force)
-        except ValueError as e:
-            logger.error(f"解包英雄失败: {e}")
-            return
+    try:
+        champion_ids, map_ids = _resolve_cli_targets(args, app=app)
+    except ValueError as e:
+        logger.error(f"解包目标失败: {e}")
+        return
 
-        if champion_ids:
-            detail = _build_extract_stage_detail(f"指定英雄音频: {list(champion_ids)}", wav_enabled=args.wav)
-            _log_cli_stage_start("音频解包", detail)
-            app.extract(
-                build_operation_options(args, champion_ids=champion_ids),
-                include_maps=False,
-            )
-        else:
-            detail = _build_extract_stage_detail("所有英雄音频", wav_enabled=args.wav)
-            _log_cli_stage_start("音频解包", detail)
-            app.extract(build_operation_options(args), include_maps=False)
-    elif args.extract_maps:
-        try:
-            map_ids = parse_int_ids(args.extract_maps)
-        except ValueError as e:
-            logger.error(f"解包地图失败: {e}")
-            return
-
-        if map_ids:
-            detail = _build_extract_stage_detail(f"指定地图音频: {list(map_ids)}", wav_enabled=args.wav)
-            _log_cli_stage_start("音频解包", detail)
-            app.extract(
-                build_operation_options(args, map_ids=map_ids),
-                include_champions=False,
-            )
-        else:
-            detail = _build_extract_stage_detail("所有地图音频", wav_enabled=args.wav)
-            _log_cli_stage_start("音频解包", detail)
-            app.extract(build_operation_options(args), include_champions=False)
+    _, include_champions, include_maps = _resolve_target_scope(champion_ids=champion_ids, map_ids=map_ids)
+    detail = _build_extract_stage_detail(
+        _build_target_detail(
+            champion_ids=champion_ids,
+            map_ids=map_ids,
+            all_detail="所有音频（英雄和地图）",
+            champion_detail="指定英雄音频",
+            map_detail="指定地图音频",
+        ),
+        wav_enabled=args.wav,
+    )
+    _log_cli_stage_start("音频解包", detail)
+    app.extract(
+        build_operation_options(args, champion_ids=champion_ids, map_ids=map_ids),
+        include_champions=include_champions,
+        include_maps=include_maps,
+    )
 
     _log_cli_stage_complete("音频解包", detail)
 
@@ -705,50 +758,32 @@ def _log_mapping_runtime_error(error: ValueError) -> None:
 
 def execute_mapping_operations(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
     """执行事件映射操作。"""
-    mapping_actions = [args.mapping, args.mapping_champions, args.mapping_maps]
-    if not any(mapping_actions):
+    if not _has_mapping_actions(args):
         return
 
-    if getattr(args, "integrate_data", False):
+    if build_operation_options(args).integrate_data:
         logger.info("启用整合数据功能，将生成包含完整实体信息的整合文件")
 
-    if args.mapping:
-        detail = "所有实体（英雄和地图）"
-        _log_cli_stage_start("事件映射", detail)
-        mapping_options = build_operation_options(args)
-        mapping_kwargs = {}
-    elif args.mapping_champions:
-        try:
-            champion_ids = resolve_cli_champion_ids(args.mapping_champions, app=app, force_update=args.force)
-        except ValueError as e:
-            logger.error(f"构建英雄映射失败: {e}")
-            return
-
-        if champion_ids:
-            detail = f"指定英雄事件映射: {list(champion_ids)}"
-            mapping_options = build_operation_options(args, champion_ids=champion_ids)
-        else:
-            detail = "所有英雄事件映射"
-            mapping_options = build_operation_options(args)
-        _log_cli_stage_start("事件映射", detail)
-        mapping_kwargs = {"include_maps": False}
-    elif args.mapping_maps:
-        try:
-            map_ids = parse_int_ids(args.mapping_maps)
-        except ValueError as e:
-            logger.error(f"构建地图映射失败: {e}")
-            return
-
-        if map_ids:
-            detail = f"指定地图事件映射: {list(map_ids)}"
-            mapping_options = build_operation_options(args, map_ids=map_ids)
-        else:
-            detail = "所有地图事件映射"
-            mapping_options = build_operation_options(args)
-        _log_cli_stage_start("事件映射", detail)
-        mapping_kwargs = {"include_champions": False}
-    else:
+    try:
+        champion_ids, map_ids = _resolve_cli_targets(args, app=app)
+    except ValueError as e:
+        logger.error(f"构建映射目标失败: {e}")
         return
+
+    _, include_champions, include_maps = _resolve_target_scope(champion_ids=champion_ids, map_ids=map_ids)
+    detail = _build_target_detail(
+        champion_ids=champion_ids,
+        map_ids=map_ids,
+        all_detail="所有实体（英雄和地图）",
+        champion_detail="指定英雄事件映射",
+        map_detail="指定地图事件映射",
+    )
+    _log_cli_stage_start("事件映射", detail)
+    mapping_options = build_operation_options(args, champion_ids=champion_ids, map_ids=map_ids)
+    mapping_kwargs = {
+        "include_champions": include_champions,
+        "include_maps": include_maps,
+    }
 
     try:
         app.mapping(mapping_options, **mapping_kwargs)

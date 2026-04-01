@@ -149,12 +149,12 @@ def _parse_command_value(
 def load_command_config_from_file(
     config_file: StrPath,
     *,
-    command: str,
+    command: str | None,
     require_exists: bool = True,
 ) -> dict[str, Any]:
     """从标准 INI 读取指定子命令的运行参数。"""
     parser = _load_config_parser(config_file, require_exists=require_exists)
-    if parser is None or command not in COMMAND_CONFIG_FIELDS or not parser.has_section(command):
+    if parser is None or command is None or command not in COMMAND_CONFIG_FIELDS or not parser.has_section(command):
         return {}
 
     section = parser[command]

@@ -82,9 +82,16 @@ uv run unpack <update|extract|mapping> [OPTIONS]
 方式一：纯 CLI 显式参数。
 
 ```bash
-uv run unpack update --game-path "D:/Games/Tencent/WeGameApps/英雄联盟" --output-path "./output"
-uv run unpack extract --game-path "D:/Games/Tencent/WeGameApps/英雄联盟" --output-path "./output" --champions Annie,Ahri
-uv run unpack mapping --game-path "D:/Games/Tencent/WeGameApps/英雄联盟" --output-path "./output" --champions Annie --wwiser-path "./tools/wwiser.pyz"
+uv run unpack update extract \
+  --champions Annie,Ahri \
+  --game-path "D:/Games/Tencent/WeGameApps/英雄联盟" \
+  --output-path "./output"
+
+uv run unpack update extract mapping \
+  --champions Annie \
+  --wwiser-path "./tools/wwiser.pyz" \
+  --game-path "D:/Games/Tencent/WeGameApps/英雄联盟" \
+  --output-path "./output"
 ```
 
 方式二：显式配置文件模式。
@@ -157,7 +164,7 @@ CLI 参数总表：
 
 - 不写 `-c` 时，本次命令只使用内建默认值和 CLI 显式参数。
 - 写了 `-c` 后，当前命令会进入完整配置文件模式，除动作子命令和配置文件路径外，不允许再手工追加其他参数。
-- `update` / `extract` / `mapping` 的目标选择与运行参数需要写在 INI 对应 section 中。
+- `champions` / `maps` 需要写在 `[targets]` 中；动作自己的运行参数写在对应 section 中。
 - 旧 `.lol.env` / `LOL_*` 方式已经不再是当前主线用法。
 
 更详细的 CLI / 配置 / Remote 使用说明见：
