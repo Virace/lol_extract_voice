@@ -11,30 +11,23 @@ from typing import Any
 
 from loguru import logger
 
+from lol_audio_unpack.config_schema import (
+    COMMAND_CONFIG_FIELDS,
+    SHARED_SETTING_FIELD_BY_INI_KEY,
+    SHARED_SETTING_FIELDS,
+    ConfigSection,
+)
 from lol_audio_unpack.utils.runtime_paths import RuntimePaths, detect_runtime_paths
 from lol_audio_unpack.utils.type_hints import StrPath
 
-CONFIG_SECTION = "app"
 DEFAULT_CONFIG_FILENAME = "lol-audio-unpack.ini"
 DEFAULT_DEV_CONFIG_FILENAME = "lol-audio-unpack.dev.ini"
+CONFIG_SECTION = ConfigSection.APP
 
-SETTING_KEY_TO_CONFIG_KEY: dict[str, str] = {
-    "SOURCE_MODE": "source_mode",
-    "GAME_PATH": "game_path",
-    "OUTPUT_PATH": "output_path",
-    "GAME_REGION": "game_region",
-    "EXCLUDE_TYPE": "exclude_type",
-    "CLEANUP_REMOTE": "cleanup_remote",
-    "GROUP_BY_TYPE": "group_by_type",
-    "REMOTE_LIVE_REGION": "remote_live_region",
-    "REMOTE_VERSION": "remote_version",
-    "REMOTE_LCU_MANIFEST_URL": "remote_lcu_manifest_url",
-    "REMOTE_GAME_MANIFEST_URL": "remote_game_manifest_url",
-    "WWISER_PATH": "wwiser_path",
-}
-CONFIG_KEY_TO_SETTING_KEY: dict[str, str] = {
-    config_key: setting_key for setting_key, config_key in SETTING_KEY_TO_CONFIG_KEY.items()
-}
+_MISSING = object()
+
+
+
 def resolve_default_config_file_path(
     *,
     dev_mode: bool = False,
@@ -54,6 +47,24 @@ def resolve_default_config_file_path(
     return runtime.config_root / filename
 
 
+def _load_config_parser(
+    config_file: StrPath,
+    *,
+    require_exists: bool,
+) -> configparser.ConfigParser | None:
+    """读取 INI 配置文件并返回 parser。"""
+    config_path = Path(config_file)
+    if not config_path.exists():
+        if require_exists:
+            raise FileNotFoundError(f"配置文件不存在: {config_path}")
+        return None
+
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.optionxform = str
+    parser.read(config_path, encoding="utf-8")
+    return parser
+
+
 def load_settings_from_config_file(
     config_file: StrPath,
     *,
@@ -71,25 +82,19 @@ def load_settings_from_config_file(
     Raises:
         FileNotFoundError: 需要文件存在但实际不存在时抛出。
     """
-    config_path = Path(config_file)
-    if not config_path.exists():
-        if require_exists:
-            raise FileNotFoundError(f"配置文件不存在: {config_path}")
+    parser = _load_config_parser(config_file, require_exists=require_exists)
+    if parser is None:
         return {}
-
-    parser = configparser.ConfigParser(interpolation=None)
-    parser.optionxform = str
-    parser.read(config_path, encoding="utf-8")
-    if not parser.has_section(CONFIG_SECTION):
+    if not parser.has_section(ConfigSection.APP):
         return {}
 
     settings: dict[str, str] = {}
-    for raw_key, raw_value in parser.items(CONFIG_SECTION):
-        setting_key = CONFIG_KEY_TO_SETTING_KEY.get(raw_key.strip().lower())
-        if setting_key is None:
+    for raw_key, raw_value in parser.items(ConfigSection.APP):
+        field = SHARED_SETTING_FIELD_BY_INI_KEY.get(raw_key.strip().lower())
+        if field is None:
             logger.warning(f"忽略未知配置项: {raw_key}")
             continue
-        settings[setting_key] = raw_value.strip()
+        settings[field.key] = raw_value.strip()
     return settings
 
 
@@ -108,16 +113,55 @@ def write_settings_to_config_file(
 
     parser = configparser.ConfigParser(interpolation=None)
     parser.optionxform = str
-    parser[CONFIG_SECTION] = {}
-    section = parser[CONFIG_SECTION]
+    parser[ConfigSection.APP] = {}
+    section = parser[ConfigSection.APP]
 
-    for setting_key, config_key in SETTING_KEY_TO_CONFIG_KEY.items():
-        if setting_key not in settings:
+    for field in SHARED_SETTING_FIELDS:
+        if field.key not in settings:
             continue
-        value = settings[setting_key]
+        value = settings[field.key]
         if value is None:
             continue
-        section[config_key] = str(value).lower() if isinstance(value, bool) else str(value)
+        section[field.ini_key] = str(value).lower() if isinstance(value, bool) else str(value)
 
     with config_path.open("w", encoding="utf-8") as handle:
         parser.write(handle)
+
+
+def _parse_command_value(
+    section: configparser.SectionProxy,
+    *,
+    ini_key: str,
+    value_kind: str,
+) -> Any:
+    """按字段定义解析命令配置值。"""
+    if ini_key not in section:
+        return _MISSING
+    if value_kind == "bool":
+        return section.getboolean(ini_key)
+    if value_kind == "int":
+        return section.getint(ini_key)
+
+    value = section.get(ini_key, fallback="").strip()
+    return None if not value else value
+
+
+def load_command_config_from_file(
+    config_file: StrPath,
+    *,
+    command: str,
+    require_exists: bool = True,
+) -> dict[str, Any]:
+    """从标准 INI 读取指定子命令的运行参数。"""
+    parser = _load_config_parser(config_file, require_exists=require_exists)
+    if parser is None or command not in COMMAND_CONFIG_FIELDS or not parser.has_section(command):
+        return {}
+
+    section = parser[command]
+    values: dict[str, Any] = {}
+    for field in COMMAND_CONFIG_FIELDS[command]:
+        value = _parse_command_value(section, ini_key=field.ini_key, value_kind=field.value_kind)
+        if value is _MISSING:
+            continue
+        values[field.attr] = value
+    return values

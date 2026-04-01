@@ -11,6 +11,12 @@ from typing import Any
 from loguru import logger
 from riotmanifest import LeagueManifestError, LeagueManifestResolver
 
+from lol_audio_unpack.config_schema import (
+    DEFAULT_REMOTE_LIVE_REGION,
+    DEFAULT_SHARED_SETTINGS,
+    SUPPORTED_SETTING_KEYS,
+    SettingKey,
+)
 from lol_audio_unpack.utils.runtime_paths import (
     detect_runtime_paths,
     get_default_output_root,
@@ -20,33 +26,6 @@ from lol_audio_unpack.utils.type_hints import StrPath
 from lol_audio_unpack.utils.versioning import normalize_patch_version
 
 KNOWN_AUDIO_TYPES: tuple[str, ...] = ("VO", "SFX", "MUSIC")
-DEFAULT_REMOTE_LIVE_REGION = "EUW"
-SUPPORTED_KEYS: frozenset[str] = frozenset(
-    {
-        "GAME_PATH",
-        "OUTPUT_PATH",
-        "GAME_REGION",
-        "EXCLUDE_TYPE",
-        "CLEANUP_REMOTE",
-        "GROUP_BY_TYPE",
-        "SOURCE_MODE",
-        "REMOTE_LIVE_REGION",
-        "REMOTE_VERSION",
-        "REMOTE_LCU_MANIFEST_URL",
-        "REMOTE_GAME_MANIFEST_URL",
-        "WITH_BP_VO",
-        "WWISER_PATH",
-    }
-)
-DEFAULT_VALUES: dict[str, Any] = {
-    "GAME_REGION": "zh_CN",
-    "EXCLUDE_TYPE": "SFX,MUSIC",
-    "CLEANUP_REMOTE": True,
-    "GROUP_BY_TYPE": False,
-    "SOURCE_MODE": "local_path",
-    "REMOTE_LIVE_REGION": DEFAULT_REMOTE_LIVE_REGION,
-    "WITH_BP_VO": False,
-}
 
 
 class AppContextValidationError(ValueError):
@@ -155,7 +134,7 @@ def _normalize_types(values: Iterable[Any] | None) -> tuple[str, ...]:
 
 
 def _parse_exclude_types(value: Any) -> tuple[str, ...]:
-    """解析 EXCLUDE_TYPE。"""
+    """解析排除音频类型设置。"""
     if value is None:
         return ()
     if isinstance(value, str):
@@ -175,7 +154,7 @@ def _parse_source_mode(value: Any) -> SourceMode:
         return SourceMode(raw_value)
     except ValueError as exc:
         valid_modes = ", ".join(mode.value for mode in SourceMode)
-        raise AppContextValidationError(f"SOURCE_MODE 无效: {raw_value}，可选值: {valid_modes}") from exc
+        raise AppContextValidationError(f"{SettingKey.SOURCE_MODE} 无效: {raw_value}，可选值: {valid_modes}") from exc
 
 
 def _normalize_remote_live_region(value: Any) -> str:
@@ -245,11 +224,11 @@ def _resolve_game_path(
 ) -> Path:
     """根据来源模式解析游戏根目录。"""
     if source_mode is SourceMode.REMOTE_SNAPSHOT:
-        explicit_path = _to_optional_text(settings.get("GAME_PATH"))
+        explicit_path = _to_optional_text(settings.get(SettingKey.GAME_PATH))
         if explicit_path is not None:
             return resolve_runtime_path(explicit_path, relative_to=runtime_root)
         return output_path / "_prepared_game"
-    return _to_runtime_path(settings.get("GAME_PATH"), "GAME_PATH", runtime_root=runtime_root)
+    return _to_runtime_path(settings.get(SettingKey.GAME_PATH), SettingKey.GAME_PATH, runtime_root=runtime_root)
 
 
 def _build_remote_snapshot_config(
@@ -261,13 +240,13 @@ def _build_remote_snapshot_config(
     if source_mode is not SourceMode.REMOTE_SNAPSHOT:
         return None
 
-    version = _to_optional_text(settings.get("REMOTE_VERSION"))
-    lcu_manifest_url = _to_optional_text(settings.get("REMOTE_LCU_MANIFEST_URL"))
-    game_manifest_url = _to_optional_text(settings.get("REMOTE_GAME_MANIFEST_URL"))
+    version = _to_optional_text(settings.get(SettingKey.REMOTE_VERSION))
+    lcu_manifest_url = _to_optional_text(settings.get(SettingKey.REMOTE_LCU_MANIFEST_URL))
+    game_manifest_url = _to_optional_text(settings.get(SettingKey.REMOTE_GAME_MANIFEST_URL))
     snapshot_fields = {
-        "REMOTE_VERSION": version,
-        "REMOTE_LCU_MANIFEST_URL": lcu_manifest_url,
-        "REMOTE_GAME_MANIFEST_URL": game_manifest_url,
+        SettingKey.REMOTE_VERSION: version,
+        SettingKey.REMOTE_LCU_MANIFEST_URL: lcu_manifest_url,
+        SettingKey.REMOTE_GAME_MANIFEST_URL: game_manifest_url,
     }
     provided_fields = {key: value for key, value in snapshot_fields.items() if value is not None}
 
@@ -276,7 +255,8 @@ def _build_remote_snapshot_config(
         missing_text = ", ".join(missing_fields)
         raise AppContextValidationError(
             "REMOTE_SNAPSHOT 模式下若显式指定远端快照，"
-            "REMOTE_VERSION、REMOTE_LCU_MANIFEST_URL、REMOTE_GAME_MANIFEST_URL 必须同时提供；"
+            f"{SettingKey.REMOTE_VERSION}、{SettingKey.REMOTE_LCU_MANIFEST_URL}、"
+            f"{SettingKey.REMOTE_GAME_MANIFEST_URL} 必须同时提供；"
             f"当前缺少: {missing_text}"
         )
 
@@ -287,7 +267,7 @@ def _build_remote_snapshot_config(
             game_manifest_url=game_manifest_url,
         )
 
-    live_region = _normalize_remote_live_region(settings.get("REMOTE_LIVE_REGION"))
+    live_region = _normalize_remote_live_region(settings.get(SettingKey.REMOTE_LIVE_REGION))
     return _resolve_latest_remote_snapshot_config(live_region=live_region)
 
 
@@ -296,19 +276,19 @@ def _build_raw_settings(
     settings: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
     """按默认值和显式输入合并原始配置。"""
-    merged: dict[str, Any] = dict(DEFAULT_VALUES)
-    merged["OUTPUT_PATH"] = get_default_output_root(detect_runtime_paths())
+    merged: dict[str, Any] = dict(DEFAULT_SHARED_SETTINGS)
+    merged[SettingKey.OUTPUT_PATH] = get_default_output_root(detect_runtime_paths())
 
     if settings:
         for key, value in settings.items():
-            if key not in SUPPORTED_KEYS:
+            if key not in SUPPORTED_SETTING_KEYS:
                 logger.warning(f"忽略未知配置项: {key}")
                 continue
             if value is None:
                 logger.debug(f"忽略空的配置项: {key}=None")
                 continue
             if isinstance(value, str) and not value.strip():
-                if key == "EXCLUDE_TYPE":
+                if key == SettingKey.EXCLUDE_TYPE:
                     merged[key] = ""
                     continue
                 logger.debug(f"忽略空白配置项: {key}")
@@ -321,8 +301,12 @@ def _build_raw_settings(
 def _build_app_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConfig:
     """从原始配置构建 ``AppConfig``。"""
     runtime_root = detect_runtime_paths().launch_root
-    output_path = _to_runtime_path(settings.get("OUTPUT_PATH"), "OUTPUT_PATH", runtime_root=runtime_root)
-    source_mode = _parse_source_mode(settings.get("SOURCE_MODE"))
+    output_path = _to_runtime_path(
+        settings.get(SettingKey.OUTPUT_PATH),
+        SettingKey.OUTPUT_PATH,
+        runtime_root=runtime_root,
+    )
+    source_mode = _parse_source_mode(settings.get(SettingKey.SOURCE_MODE))
     game_path = _resolve_game_path(
         settings=settings,
         output_path=output_path,
@@ -331,14 +315,14 @@ def _build_app_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConf
     )
     remote_snapshot = _build_remote_snapshot_config(settings=settings, source_mode=source_mode)
 
-    game_region = str(settings.get("GAME_REGION", "zh_CN") or "zh_CN")
+    game_region = str(settings.get(SettingKey.GAME_REGION, "zh_CN") or "zh_CN")
     if game_region.lower() == "en_us":
         game_region = "default"
 
-    exclude_types = _parse_exclude_types(settings.get("EXCLUDE_TYPE"))
+    exclude_types = _parse_exclude_types(settings.get(SettingKey.EXCLUDE_TYPE))
     include_types = tuple(audio_type for audio_type in KNOWN_AUDIO_TYPES if audio_type not in set(exclude_types))
 
-    wwiser_path_raw = settings.get("WWISER_PATH")
+    wwiser_path_raw = settings.get(SettingKey.WWISER_PATH)
 
     return AppConfig(
         game_path=game_path,
@@ -346,11 +330,11 @@ def _build_app_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConf
         game_region=game_region,
         exclude_types=exclude_types,
         include_types=include_types,
-        cleanup_remote=_parse_bool(settings.get("CLEANUP_REMOTE", True)),
+        cleanup_remote=_parse_bool(settings.get(SettingKey.CLEANUP_REMOTE, True)),
         source_mode=source_mode,
         remote_snapshot=remote_snapshot,
-        group_by_type=_parse_bool(settings.get("GROUP_BY_TYPE", False)),
-        with_bp_vo=_parse_bool(settings.get("WITH_BP_VO", False)),
+        group_by_type=_parse_bool(settings.get(SettingKey.GROUP_BY_TYPE, False)),
+        with_bp_vo=_parse_bool(settings.get(SettingKey.WITH_BP_VO, False)),
         wwiser_path=(
             resolve_runtime_path(str(wwiser_path_raw).strip(), relative_to=runtime_root)
             if wwiser_path_raw

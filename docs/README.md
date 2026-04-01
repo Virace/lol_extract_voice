@@ -4,6 +4,8 @@
 
 ## 1. 使用与接入入口
 
+- [根目录 README（快速上手、GUI/CLI、配置文件示例）](../README.md)
+- [示例配置文件](../config/lol-audio-unpack.example.ini)
 - [API 总览](./API.md)
 - [CLI 参数与执行语义](./api/cli_api.md)
 - [配置与数据读写 API](./api/config_api.md)

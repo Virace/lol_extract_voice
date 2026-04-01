@@ -38,3 +38,9 @@ def test_unpack_cli_requires_action_arg() -> None:
     output = f"{result.stdout}\n{result.stderr}"
     assert "usage: unpack" in output
     assert "ACTION" in output
+
+
+def test_unpack_cli_rejects_extra_args_in_config_mode() -> None:
+    result = _run_unpack_cli("extract", "-c", "--champions", "Annie")
+
+    assert result.returncode == 1

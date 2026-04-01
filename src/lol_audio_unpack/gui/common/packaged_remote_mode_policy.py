@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from lol_audio_unpack.config_schema import SettingKey
 from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
 
 LOCAL_SOURCE_MODE_LABEL = "本地模式"
@@ -127,8 +128,8 @@ def normalize_app_context_settings(
     """
 
     normalized = dict(settings)
-    normalized["SOURCE_MODE"] = effective_source_mode(
-        str(normalized.get("SOURCE_MODE", LOCAL_SOURCE_MODE_VALUE) or LOCAL_SOURCE_MODE_VALUE),
+    normalized[SettingKey.SOURCE_MODE] = effective_source_mode(
+        str(normalized.get(SettingKey.SOURCE_MODE, LOCAL_SOURCE_MODE_VALUE) or LOCAL_SOURCE_MODE_VALUE),
         is_frozen=is_frozen,
     )
     return normalized

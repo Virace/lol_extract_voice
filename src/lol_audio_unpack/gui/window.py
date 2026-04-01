@@ -25,6 +25,7 @@ from qfluentwidgets import (
 
 from lol_audio_unpack import __version__
 from lol_audio_unpack.app_context import OperationOptions, create_app_context
+from lol_audio_unpack.config_schema import SettingKey
 from lol_audio_unpack.facade import LolAudioUnpackApp
 from lol_audio_unpack.gui.common import (
     apply_smooth_scroll_enabled,
@@ -85,7 +86,7 @@ def _log_window_stage(stage: str, startup_begin: float, previous_mark: float) ->
 def _prepare_shared_entity_data(shared_settings: dict[str, str | bool]) -> None:
     """为实体列表准备后端共享数据。"""
     prepare_settings = dict(shared_settings)
-    prepare_settings["WITH_BP_VO"] = True
+    prepare_settings[SettingKey.WITH_BP_VO] = True
     prepare_settings = normalize_app_context_settings(prepare_settings)
     app_context = create_app_context(settings=prepare_settings)
     app = LolAudioUnpackApp(app_context)

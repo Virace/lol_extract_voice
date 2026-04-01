@@ -9,6 +9,7 @@ from lol_audio_unpack import setup_app
 from lol_audio_unpack.app_context import AppContext, AppContextValidationError, SourceMode, create_app_context
 from lol_audio_unpack.config_loading import (
     CONFIG_SECTION,
+    load_command_config_from_file,
     load_settings_from_config_file,
     resolve_default_config_file_path,
     write_settings_to_config_file,
@@ -228,6 +229,28 @@ def test_load_settings_from_config_file_requires_existing_file(tmp_path: Path) -
 
     with pytest.raises(FileNotFoundError, match="配置文件不存在"):
         load_settings_from_config_file(config_file)
+
+
+def test_load_command_config_from_file_reads_extract_section(tmp_path: Path) -> None:
+    config_file = tmp_path / "lol-audio-unpack.ini"
+    config_file.write_text(
+        "[app]\n"
+        "game_path = ./game\n"
+        "\n"
+        "[extract]\n"
+        "champions = Annie,Ahri\n"
+        "wav = true\n"
+        "wav_format = auto\n",
+        encoding="utf-8",
+    )
+
+    command_config = load_command_config_from_file(config_file, command="extract")
+
+    assert command_config == {
+        "extract_champions": "Annie,Ahri",
+        "wav": True,
+        "wav_format": "auto",
+    }
 
 
 def test_resolve_default_config_file_path_uses_runtime_config_root() -> None:

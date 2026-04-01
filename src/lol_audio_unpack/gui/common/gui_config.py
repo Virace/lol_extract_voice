@@ -11,6 +11,7 @@ from lol_audio_unpack.config_loading import (
     resolve_default_config_file_path,
     write_settings_to_config_file,
 )
+from lol_audio_unpack.config_schema import DEFAULT_REMOTE_LIVE_REGION, SettingKey
 from lol_audio_unpack.gui.common.packaged_remote_mode_policy import effective_source_mode
 from lol_audio_unpack.gui.task_models import AppContextInputSnapshot
 from lol_audio_unpack.utils.runtime_paths import (
@@ -74,17 +75,17 @@ class GuiConfig:
             return default if file_value is None else str(file_value)
 
         # 1. 读取共享配置
-        self._source_mode = _shared_value("SOURCE_MODE", "local_path")
-        self._game_path = _shared_value("GAME_PATH", "")
-        self._remote_live_region = _shared_value("REMOTE_LIVE_REGION", "EUW")
-        self._cleanup_remote = self._to_bool(_shared_value("CLEANUP_REMOTE", "true"))
-        self._snapshot_version = _shared_value("REMOTE_VERSION", "")
-        self._snapshot_lcu_url = _shared_value("REMOTE_LCU_MANIFEST_URL", "")
-        self._snapshot_game_url = _shared_value("REMOTE_GAME_MANIFEST_URL", "")
-        self._output_path = _shared_value("OUTPUT_PATH", "")
-        self._game_region = _shared_value("GAME_REGION", "zh_CN")
-        self._group_by_type = self._to_bool(_shared_value("GROUP_BY_TYPE", "false"))
-        self._wwiser_path = _shared_value("WWISER_PATH", "")
+        self._source_mode = _shared_value(SettingKey.SOURCE_MODE, "local_path")
+        self._game_path = _shared_value(SettingKey.GAME_PATH, "")
+        self._remote_live_region = _shared_value(SettingKey.REMOTE_LIVE_REGION, DEFAULT_REMOTE_LIVE_REGION)
+        self._cleanup_remote = self._to_bool(_shared_value(SettingKey.CLEANUP_REMOTE, "true"))
+        self._snapshot_version = _shared_value(SettingKey.REMOTE_VERSION, "")
+        self._snapshot_lcu_url = _shared_value(SettingKey.REMOTE_LCU_MANIFEST_URL, "")
+        self._snapshot_game_url = _shared_value(SettingKey.REMOTE_GAME_MANIFEST_URL, "")
+        self._output_path = _shared_value(SettingKey.OUTPUT_PATH, "")
+        self._game_region = _shared_value(SettingKey.GAME_REGION, "zh_CN")
+        self._group_by_type = self._to_bool(_shared_value(SettingKey.GROUP_BY_TYPE, "false"))
+        self._wwiser_path = _shared_value(SettingKey.WWISER_PATH, "")
 
         # 2. GUI 专有配置只走 QSettings
         stored_vgmstream_path = self._qs.value("vgmstream_path", _UNSET)
@@ -149,17 +150,17 @@ class GuiConfig:
         write_settings_to_config_file(
             self._config_file,
             {
-                "SOURCE_MODE": self._source_mode,
-                "GAME_PATH": self._game_path,
-                "REMOTE_LIVE_REGION": self._remote_live_region,
-                "CLEANUP_REMOTE": self._cleanup_remote,
-                "REMOTE_VERSION": snapshot_overrides["REMOTE_VERSION"],
-                "REMOTE_LCU_MANIFEST_URL": snapshot_overrides["REMOTE_LCU_MANIFEST_URL"],
-                "REMOTE_GAME_MANIFEST_URL": snapshot_overrides["REMOTE_GAME_MANIFEST_URL"],
-                "OUTPUT_PATH": self._output_path,
-                "GAME_REGION": self._game_region,
-                "GROUP_BY_TYPE": self._group_by_type,
-                "WWISER_PATH": self._wwiser_path,
+                SettingKey.SOURCE_MODE: self._source_mode,
+                SettingKey.GAME_PATH: self._game_path,
+                SettingKey.REMOTE_LIVE_REGION: self._remote_live_region,
+                SettingKey.CLEANUP_REMOTE: self._cleanup_remote,
+                SettingKey.REMOTE_VERSION: snapshot_overrides[SettingKey.REMOTE_VERSION],
+                SettingKey.REMOTE_LCU_MANIFEST_URL: snapshot_overrides[SettingKey.REMOTE_LCU_MANIFEST_URL],
+                SettingKey.REMOTE_GAME_MANIFEST_URL: snapshot_overrides[SettingKey.REMOTE_GAME_MANIFEST_URL],
+                SettingKey.OUTPUT_PATH: self._output_path,
+                SettingKey.GAME_REGION: self._game_region,
+                SettingKey.GROUP_BY_TYPE: self._group_by_type,
+                SettingKey.WWISER_PATH: self._wwiser_path,
             },
         )
 
@@ -189,17 +190,17 @@ class GuiConfig:
         """构建供 ``create_app_context`` 使用的共享配置映射。"""
         snapshot_overrides = self._snapshot_overrides()
         return {
-            "SOURCE_MODE": self.effective_source_mode,
-            "GAME_PATH": self._game_path,
-            "OUTPUT_PATH": self._output_path,
-            "GAME_REGION": self._game_region,
-            "GROUP_BY_TYPE": self._group_by_type,
-            "REMOTE_LIVE_REGION": self._remote_live_region,
-            "CLEANUP_REMOTE": self._cleanup_remote,
-            "REMOTE_VERSION": snapshot_overrides["REMOTE_VERSION"],
-            "REMOTE_LCU_MANIFEST_URL": snapshot_overrides["REMOTE_LCU_MANIFEST_URL"],
-            "REMOTE_GAME_MANIFEST_URL": snapshot_overrides["REMOTE_GAME_MANIFEST_URL"],
-            "WWISER_PATH": self._wwiser_path,
+            SettingKey.SOURCE_MODE: self.effective_source_mode,
+            SettingKey.GAME_PATH: self._game_path,
+            SettingKey.OUTPUT_PATH: self._output_path,
+            SettingKey.GAME_REGION: self._game_region,
+            SettingKey.GROUP_BY_TYPE: self._group_by_type,
+            SettingKey.REMOTE_LIVE_REGION: self._remote_live_region,
+            SettingKey.CLEANUP_REMOTE: self._cleanup_remote,
+            SettingKey.REMOTE_VERSION: snapshot_overrides[SettingKey.REMOTE_VERSION],
+            SettingKey.REMOTE_LCU_MANIFEST_URL: snapshot_overrides[SettingKey.REMOTE_LCU_MANIFEST_URL],
+            SettingKey.REMOTE_GAME_MANIFEST_URL: snapshot_overrides[SettingKey.REMOTE_GAME_MANIFEST_URL],
+            SettingKey.WWISER_PATH: self._wwiser_path,
         }
 
     def to_app_context_input_snapshot(self) -> AppContextInputSnapshot:
@@ -508,13 +509,13 @@ class GuiConfig:
         """根据当前远端快照策略构建实际生效的快照覆盖项。"""
         if self._source_mode != "remote_snapshot" or self._remote_snapshot_strategy != "custom":
             return {
-                "REMOTE_VERSION": "",
-                "REMOTE_LCU_MANIFEST_URL": "",
-                "REMOTE_GAME_MANIFEST_URL": "",
+                SettingKey.REMOTE_VERSION: "",
+                SettingKey.REMOTE_LCU_MANIFEST_URL: "",
+                SettingKey.REMOTE_GAME_MANIFEST_URL: "",
             }
 
         return {
-            "REMOTE_VERSION": self._snapshot_version,
-            "REMOTE_LCU_MANIFEST_URL": self._snapshot_lcu_url,
-            "REMOTE_GAME_MANIFEST_URL": self._snapshot_game_url,
+            SettingKey.REMOTE_VERSION: self._snapshot_version,
+            SettingKey.REMOTE_LCU_MANIFEST_URL: self._snapshot_lcu_url,
+            SettingKey.REMOTE_GAME_MANIFEST_URL: self._snapshot_game_url,
         }

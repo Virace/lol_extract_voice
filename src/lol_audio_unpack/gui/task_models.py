@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from lol_audio_unpack.app_context import OperationOptions
+from lol_audio_unpack.config_schema import SettingKey
 
 TASK_STATUS_WAITING = "等待中"
 TASK_STATUS_RUNNING = "运行中"
@@ -53,7 +54,7 @@ class ExecutionTaskParamsSnapshot:
     max_workers: int = 4
     with_bp_vo: bool = True
     exclude_types: tuple[str, ...] = ("SFX", "MUSIC")
-    integrate_data: bool = False
+    integrate_data: bool = True
 
     def selected_steps(self) -> tuple[str, ...]:
         """返回当前任务参数实际勾选的执行步骤。
@@ -88,8 +89,8 @@ class ExecutionTaskParamsSnapshot:
     def to_runtime_overrides(self) -> dict[str, str | bool]:
         """构造只属于单次任务的运行时覆盖配置。"""
         return {
-            "WITH_BP_VO": self.with_bp_vo,
-            "EXCLUDE_TYPE": ",".join(self.exclude_types),
+            SettingKey.WITH_BP_VO: self.with_bp_vo,
+            SettingKey.EXCLUDE_TYPE: ",".join(self.exclude_types),
         }
 
 

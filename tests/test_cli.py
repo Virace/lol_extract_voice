@@ -29,12 +29,9 @@ def test_validate_args_requires_action_subcommand() -> None:
     assert exc.value.code == 1
 
 
-def test_validate_args_rejects_config_file_with_shared_context_args() -> None:
-    parser = cli.create_parser()
-    args = parser.parse_args(["update", "-c", "--game-path", "game-root"])
-
+def test_validate_config_mode_rejects_any_extra_manual_args() -> None:
     with pytest.raises(SystemExit) as exc:
-        cli.validate_args(args, parser)
+        cli._validate_config_mode_raw_argv(["update", "-c", "--game-path", "game-root"])
 
     assert exc.value.code == 1
 
@@ -54,6 +51,15 @@ def test_validate_args_mapping_allows_integrate_data() -> None:
     args = parser.parse_args(["mapping", "--integrate-data"])
 
     cli.validate_args(args, parser)
+
+
+def test_mapping_defaults_integrate_data_to_true() -> None:
+    parser = cli.create_parser()
+    args = parser.parse_args(["mapping"])
+
+    opts = cli.build_operation_options(args)
+
+    assert opts.integrate_data is True
 
 
 def test_build_context_settings_only_keeps_explicit_values() -> None:
@@ -157,22 +163,45 @@ def test_initialize_app_passes_settings_to_setup_app(monkeypatch, tmp_path: Path
     }
 
 
-def test_initialize_app_in_config_mode_loads_file_settings(monkeypatch, tmp_path: Path) -> None:
+def test_apply_config_profile_to_args_loads_command_section(monkeypatch, tmp_path: Path) -> None:
     parser = cli.create_parser()
     config_file = tmp_path / "lol-audio-unpack.ini"
-    game_path = tmp_path / "game"
-    game_path.mkdir(parents=True, exist_ok=True)
-    args = parser.parse_args(["update", "-c", str(config_file), "--with-bp-vo"])
+    args = parser.parse_args(["extract", "-c", str(config_file)])
 
     monkeypatch.setattr(
         cli,
         "load_settings_from_config_file",
-        lambda path, require_exists=True: {
-            "GAME_PATH": str(game_path),
-            "OUTPUT_PATH": str(tmp_path / "output"),
-            "SOURCE_MODE": "local_path",
+        lambda path, require_exists=True: {"GAME_PATH": str(tmp_path / "game")},
+    )
+    monkeypatch.setattr(
+        cli,
+        "load_command_config_from_file",
+        lambda path, command, require_exists=True: {
+            "extract_champions": "Annie,Ahri",
+            "wav": True,
+            "wav_format": "auto",
         },
     )
+
+    cli._apply_config_profile_to_args(args)
+
+    assert args.extract_champions == "Annie,Ahri"
+    assert args.wav is True
+    assert args.wav_format == "auto"
+    assert args._loaded_settings == {"GAME_PATH": str(tmp_path / "game")}
+
+
+def test_initialize_app_in_config_mode_uses_loaded_settings(monkeypatch, tmp_path: Path) -> None:
+    parser = cli.create_parser()
+    config_file = tmp_path / "lol-audio-unpack.ini"
+    game_path = tmp_path / "game"
+    game_path.mkdir(parents=True, exist_ok=True)
+    args = parser.parse_args(["update", "-c", str(config_file)])
+    args._loaded_settings = {
+        "GAME_PATH": str(game_path),
+        "OUTPUT_PATH": str(tmp_path / "output"),
+        "SOURCE_MODE": "local_path",
+    }
 
     captured = {}
     fake_context = SimpleNamespace(config=SimpleNamespace(game_path=game_path, source_mode=SourceMode.LOCAL_PATH))
@@ -189,7 +218,6 @@ def test_initialize_app_in_config_mode_loads_file_settings(monkeypatch, tmp_path
         "GAME_PATH": str(game_path),
         "OUTPUT_PATH": str(tmp_path / "output"),
         "SOURCE_MODE": "local_path",
-        "WITH_BP_VO": True,
     }
 
 

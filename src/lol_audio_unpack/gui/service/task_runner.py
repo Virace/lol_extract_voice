@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from lol_audio_unpack.app_context import create_app_context
+from lol_audio_unpack.config_schema import SettingKey
 from lol_audio_unpack.facade import LolAudioUnpackApp
 from lol_audio_unpack.gui.common.packaged_remote_mode_policy import normalize_app_context_settings
 from lol_audio_unpack.gui.task_models import (
@@ -78,7 +79,7 @@ def _build_runtime_settings(
     settings = task.draft.context_input.to_settings()
     settings.update(task.draft.task_params.to_runtime_overrides())
     if force_bp_vo:
-        settings["WITH_BP_VO"] = True
+        settings[SettingKey.WITH_BP_VO] = True
     return normalize_app_context_settings(settings)
 
 
@@ -141,7 +142,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     completed_steps: list[str] = []
     runtime_app: LolAudioUnpackApp | None = None
     runtime_settings = _build_runtime_settings(task)
-    source_mode = runtime_settings.get("SOURCE_MODE", "local_path")
+    source_mode = runtime_settings.get(SettingKey.SOURCE_MODE, "local_path")
 
     try:
         logger.info(f"[执行中心] 任务 #{task.task_id} 开始执行: {' -> '.join(steps)}")

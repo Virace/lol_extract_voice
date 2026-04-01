@@ -73,16 +73,14 @@ def test_default_worker_entry_passes_resolved_decode_config(monkeypatch: pytest.
     class FakeDecodeResult:
         byte_count = 123
 
-    class FakeModule:
-        @staticmethod
-        def decode_to_wav_file(in_path, out_path, *, config=None):
-            captured["in_path"] = in_path
-            captured["out_path"] = out_path
-            captured["config"] = config
-            return FakeDecodeResult()
+    def fake_decode_to_wav_file(in_path, out_path, *, config=None):
+        captured["in_path"] = in_path
+        captured["out_path"] = out_path
+        captured["config"] = config
+        return FakeDecodeResult()
 
     queue: Queue[Any] = SimpleQueueAdapter()
-    monkeypatch.setattr("lol_audio_unpack.wav_sidecar_runtime.import_module", lambda _name: FakeModule)
+    monkeypatch.setattr("lol_audio_unpack.wav_sidecar_runtime.decode_to_wav_file", fake_decode_to_wav_file)
 
     job = WavJob(
         wem_path=tmp_path / "sample.wem",

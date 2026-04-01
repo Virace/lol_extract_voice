@@ -7,6 +7,7 @@ from collections.abc import Callable
 from loguru import logger
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from lol_audio_unpack.config_schema import SettingKey
 from lol_audio_unpack.gui.controllers.contracts import (
     EntityRowsPayload,
     GuiNotice,
@@ -24,7 +25,7 @@ def _get_effective_source_mode(cfg, overrides: dict[str, str | bool] | None = No
     if configured_mode:
         return str(configured_mode)
     if overrides is not None:
-        return str(overrides.get("SOURCE_MODE", "local_path") or "local_path")
+        return str(overrides.get(SettingKey.SOURCE_MODE, "local_path") or "local_path")
     return str(getattr(cfg, "source_mode", "local_path") or "local_path")
 
 
@@ -34,12 +35,12 @@ def build_shared_entity_reader_signature(cfg) -> tuple[str | bool, ...]:
     source_mode = _get_effective_source_mode(cfg, overrides)
     return (
         source_mode,
-        overrides["GAME_PATH"],
-        overrides["GAME_REGION"],
-        overrides["REMOTE_LIVE_REGION"],
-        overrides["REMOTE_VERSION"],
-        overrides["REMOTE_LCU_MANIFEST_URL"],
-        overrides["REMOTE_GAME_MANIFEST_URL"],
+        overrides[SettingKey.GAME_PATH],
+        overrides[SettingKey.GAME_REGION],
+        overrides[SettingKey.REMOTE_LIVE_REGION],
+        overrides[SettingKey.REMOTE_VERSION],
+        overrides[SettingKey.REMOTE_LCU_MANIFEST_URL],
+        overrides[SettingKey.REMOTE_GAME_MANIFEST_URL],
     )
 
 
@@ -47,8 +48,8 @@ def build_shared_entity_scan_signature(cfg) -> tuple[str | bool, ...]:
     """构建仅影响输出扫描结果的配置签名。"""
     overrides = cfg.to_app_context_settings()
     return (
-        overrides["OUTPUT_PATH"],
-        overrides["GROUP_BY_TYPE"],
+        overrides[SettingKey.OUTPUT_PATH],
+        overrides[SettingKey.GROUP_BY_TYPE],
     )
 
 

@@ -14,24 +14,14 @@ from loguru import logger
 
 from . import __version__, setup_app
 from .app_context import AppContext, AppContextValidationError, OperationOptions, SourceMode, WavOutputOptions
-from .config_loading import load_settings_from_config_file, resolve_default_config_file_path
+from .config_loading import (
+    load_command_config_from_file,
+    load_settings_from_config_file,
+    resolve_default_config_file_path,
+)
+from .config_schema import BASE_CONTEXT_OPTION_ATTRS, SettingKey, build_settings_from_namespace
 from .facade import LolAudioUnpackApp
 from .utils.run_summary import attach_run_summary_sink, emit_cli_run_summary, get_or_create_run_summary
-
-BASE_CONTEXT_OPTION_ATTRS: tuple[str, ...] = (
-    "source_mode",
-    "game_path",
-    "output_path",
-    "game_region",
-    "exclude_type",
-    "wwiser_path",
-    "group_by_type",
-    "remote_live_region",
-    "cleanup_remote",
-    "remote_version",
-    "remote_lcu_manifest_url",
-    "remote_game_manifest_url",
-)
 
 
 def _create_shared_parser() -> argparse.ArgumentParser:
@@ -235,7 +225,8 @@ def _add_mapping_subcommand(
     )
     parser.add_argument(
         "--integrate-data",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help="生成整合数据文件（包含完整实体信息、banks 和 mapping 数据）。",
     )
 
@@ -281,6 +272,51 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _validate_config_mode_raw_argv(argv: list[str]) -> None:
+    """校验 `-c` 模式下是否混入了额外手工参数。"""
+    if "-c" not in argv and "--config-file" not in argv:
+        return
+
+    config_flag_tokens = {"-c", "--config-file"}
+    command_seen = False
+    previous_token: str | None = None
+    for token in argv:
+        if not command_seen and not token.startswith("-"):
+            command_seen = True
+            previous_token = token
+            continue
+
+        if token in config_flag_tokens:
+            previous_token = token
+            continue
+
+        if previous_token in config_flag_tokens and not token.startswith("-"):
+            previous_token = token
+            continue
+
+        logger.error("错误：-c/--config-file 模式下不允许再手工传递其他参数。")
+        sys.exit(1)
+
+
+def _apply_config_profile_to_args(args: argparse.Namespace) -> None:
+    """将配置文件中的命令参数注入 argparse 结果。"""
+    config_file = _resolve_config_file_path(args)
+    if config_file is None:
+        return
+
+    try:
+        loaded_settings = load_settings_from_config_file(config_file, require_exists=True)
+        command_options = load_command_config_from_file(config_file, command=args.command, require_exists=True)
+    except FileNotFoundError:
+        logger.error(f"配置文件不存在: {config_file}")
+        logger.error("请先创建标准 INI 配置文件，或移除 -c 改为纯 CLI 显式参数模式。")
+        sys.exit(1)
+
+    args._loaded_settings = loaded_settings
+    for attr_name, value in command_options.items():
+        setattr(args, attr_name, value)
+
+
 def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     """验证动作式 CLI 参数的有效性。"""
     if args.command is None:
@@ -312,22 +348,7 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
 
 def build_context_settings(args: argparse.Namespace) -> dict[str, object]:
     """从命令行参数构建显式共享配置。"""
-    mapping = {
-        "SOURCE_MODE": args.source_mode,
-        "GAME_PATH": args.game_path,
-        "OUTPUT_PATH": args.output_path,
-        "GAME_REGION": args.game_region,
-        "EXCLUDE_TYPE": args.exclude_type,
-        "WWISER_PATH": args.wwiser_path,
-        "GROUP_BY_TYPE": args.group_by_type,
-        "REMOTE_LIVE_REGION": args.remote_live_region,
-        "CLEANUP_REMOTE": args.cleanup_remote,
-        "REMOTE_VERSION": args.remote_version,
-        "REMOTE_LCU_MANIFEST_URL": args.remote_lcu_manifest_url,
-        "REMOTE_GAME_MANIFEST_URL": args.remote_game_manifest_url,
-        "WITH_BP_VO": args.with_bp_vo,
-    }
-    return {key: value for key, value in mapping.items() if value is not None}
+    return build_settings_from_namespace(args)
 
 
 def _resolve_config_file_path(args: argparse.Namespace) -> Path | None:
@@ -347,13 +368,15 @@ def initialize_app(args: argparse.Namespace) -> AppContext:
     context_settings = build_context_settings(args)
     config_file = _resolve_config_file_path(args)
     if config_file is not None:
-        try:
-            file_settings = load_settings_from_config_file(config_file, require_exists=True)
-        except FileNotFoundError:
-            logger.error(f"配置文件不存在: {config_file}")
-            logger.error("请先创建标准 INI 配置文件，或移除 -c 改为纯 CLI 显式参数模式。")
-            sys.exit(1)
-        context_settings = {**file_settings, **context_settings}
+        loaded_settings = getattr(args, "_loaded_settings", None)
+        if loaded_settings is None:
+            try:
+                loaded_settings = load_settings_from_config_file(config_file, require_exists=True)
+            except FileNotFoundError:
+                logger.error(f"配置文件不存在: {config_file}")
+                logger.error("请先创建标准 INI 配置文件，或移除 -c 改为纯 CLI 显式参数模式。")
+                sys.exit(1)
+        context_settings = dict(loaded_settings)
 
     try:
         app_context = setup_app(dev_mode=args.dev, log_level=args.log_level.upper(), settings=context_settings)
@@ -671,7 +694,7 @@ def _log_mapping_runtime_error(error: ValueError) -> None:
     message = str(error)
     logger.error(f"构建事件映射失败: {message}")
 
-    if "Wwiser 工具路径" not in message and "WWISER_PATH" not in message:
+    if "Wwiser 工具路径" not in message and SettingKey.WWISER_PATH not in message:
         return
 
     logger.error("如果需要使用 WwiserHIRC 回退路径，请通过 --wwiser-path 显式传入，或在 -c 指定的 INI 中配置 wwiser_path。")
@@ -743,7 +766,10 @@ def main() -> None:
     summary_sink_id: int | None = None
     try:
         parser = create_parser()
-        args = parser.parse_args()
+        argv = sys.argv[1:]
+        args = parser.parse_args(argv)
+        _validate_config_mode_raw_argv(argv)
+        _apply_config_profile_to_args(args)
 
         validate_args(args, parser)
 
