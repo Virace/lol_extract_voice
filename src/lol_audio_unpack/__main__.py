@@ -13,7 +13,7 @@ from pathlib import Path
 from loguru import logger
 
 from . import __version__, setup_app
-from .app_context import AppContext, AppContextValidationError, OperationOptions, SourceMode
+from .app_context import AppContext, AppContextValidationError, OperationOptions, SourceMode, WavOutputOptions
 from .facade import LolAudioUnpackApp
 from .utils.run_summary import attach_run_summary_sink, emit_cli_run_summary, get_or_create_run_summary
 
@@ -79,6 +79,32 @@ def create_parser() -> argparse.ArgumentParser:
         const="all",
         metavar="IDs",
         help="解包地图音频。无参数时解包所有地图，有参数时解包指定ID（逗号分隔）。例如: --extract-maps 11,12",
+    )
+    extract_group.add_argument(
+        "--wav",
+        action="store_true",
+        help="在音频解包后并行派生 WAV 输出。保留原始 WEM，WAV 输出到 wavs/<version>/...",
+    )
+    extract_group.add_argument(
+        "--wav-workers",
+        type=int,
+        default=None,
+        metavar="N",
+        help="设置 WAV 转码并发进程数。默认 2（仅在启用 --wav 时生效）。",
+    )
+    extract_group.add_argument(
+        "--wav-timeout",
+        type=int,
+        default=None,
+        metavar="SECONDS",
+        help="设置单个 WAV 转码任务的超时时间（秒）。默认 5（仅在启用 --wav 时生效）。",
+    )
+    extract_group.add_argument(
+        "--wav-retries",
+        type=int,
+        default=None,
+        metavar="N",
+        help="设置单个 WAV 转码任务的最大重试次数。默认 3（仅在启用 --wav 时生效）。",
     )
 
     # 事件映射参数组
@@ -236,6 +262,17 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
     if len(active_operations) > 1:
         logger.info(f"检测到同时指定了多个操作，将按顺序执行：{' -> '.join(active_operations)}。")
 
+    wav_tuning_explicit = any(
+        value is not None for value in (args.wav_workers, args.wav_timeout, args.wav_retries)
+    )
+    if args.wav and not any(extract_actions):
+        logger.error("错误：--wav 只能与解包参数一起使用（--extract, --extract-champions, --extract-maps）")
+        sys.exit(1)
+
+    if wav_tuning_explicit and not args.wav:
+        logger.error("错误：--wav-workers / --wav-timeout / --wav-retries 只能与 --wav 一起使用")
+        sys.exit(1)
+
     if getattr(args, "integrate_data", False):
         if not any(mapping_actions):
             logger.error(
@@ -354,6 +391,12 @@ def build_operation_options(
         integrate_data=getattr(args, "integrate_data", False),
         champion_ids=champion_ids,
         map_ids=map_ids,
+        wav_output=WavOutputOptions(
+            enabled=args.wav,
+            worker_count=2 if args.wav_workers is None else args.wav_workers,
+            timeout_seconds=5 if args.wav_timeout is None else args.wav_timeout,
+            max_retries=3 if args.wav_retries is None else args.wav_retries,
+        ),
     )
 
 
@@ -370,6 +413,21 @@ def _has_extract_actions(args: argparse.Namespace) -> bool:
 def _has_mapping_actions(args: argparse.Namespace) -> bool:
     """是否存在 mapping 操作。"""
     return any([args.mapping, args.mapping_champions, args.mapping_maps])
+
+
+def _build_extract_stage_detail(base_detail: str, *, wav_enabled: bool) -> str:
+    """构建音频解包阶段摘要。
+
+    Args:
+        base_detail: 原始解包范围描述。
+        wav_enabled: 是否启用 WAV sidecar。
+
+    Returns:
+        拼接后的阶段摘要文本。
+    """
+    if not wav_enabled:
+        return base_detail
+    return f"{base_detail} + WAV sidecar"
 
 
 def _log_cli_stage_start(stage_label: str, detail: str | None = None) -> None:
@@ -511,7 +569,7 @@ def execute_extract_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
         return
 
     if args.extract:
-        detail = "所有音频（英雄和地图）"
+        detail = _build_extract_stage_detail("所有音频（英雄和地图）", wav_enabled=args.wav)
         _log_cli_stage_start("音频解包", detail)
         app.extract(build_operation_options(args))
     elif args.extract_champions:
@@ -522,14 +580,14 @@ def execute_extract_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
             return
 
         if champion_ids:
-            detail = f"指定英雄音频: {list(champion_ids)}"
+            detail = _build_extract_stage_detail(f"指定英雄音频: {list(champion_ids)}", wav_enabled=args.wav)
             _log_cli_stage_start("音频解包", detail)
             app.extract(
                 build_operation_options(args, champion_ids=champion_ids),
                 include_maps=False,
             )
         else:
-            detail = "所有英雄音频"
+            detail = _build_extract_stage_detail("所有英雄音频", wav_enabled=args.wav)
             _log_cli_stage_start("音频解包", detail)
             app.extract(build_operation_options(args), include_maps=False)
     elif args.extract_maps:
@@ -540,14 +598,14 @@ def execute_extract_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
             return
 
         if map_ids:
-            detail = f"指定地图音频: {list(map_ids)}"
+            detail = _build_extract_stage_detail(f"指定地图音频: {list(map_ids)}", wav_enabled=args.wav)
             _log_cli_stage_start("音频解包", detail)
             app.extract(
                 build_operation_options(args, map_ids=map_ids),
                 include_champions=False,
             )
         else:
-            detail = "所有地图音频"
+            detail = _build_extract_stage_detail("所有地图音频", wav_enabled=args.wav)
             _log_cli_stage_start("音频解包", detail)
             app.extract(build_operation_options(args), include_champions=False)
 

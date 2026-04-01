@@ -42,6 +42,52 @@ def test_validate_args_integrate_data_with_mapping_allowed():
     cli.validate_args(args, parser)
 
 
+def test_validate_args_wav_requires_extract() -> None:
+    parser = cli.create_parser()
+    args = parser.parse_args(["--update", "--wav"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.validate_args(args, parser)
+
+    assert exc.value.code == 1
+
+
+def test_validate_args_wav_tuning_requires_wav_flag() -> None:
+    parser = cli.create_parser()
+    args = parser.parse_args(["--extract", "--wav-workers", "4"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.validate_args(args, parser)
+
+    assert exc.value.code == 1
+
+
+def test_build_operation_options_includes_wav_settings() -> None:
+    parser = cli.create_parser()
+    worker_count = 4
+    timeout_seconds = 7
+    max_retries = 5
+    args = parser.parse_args(
+        [
+            "--extract",
+            "--wav",
+            "--wav-workers",
+            str(worker_count),
+            "--wav-timeout",
+            str(timeout_seconds),
+            "--wav-retries",
+            str(max_retries),
+        ]
+    )
+
+    opts = cli.build_operation_options(args)
+
+    assert opts.wav_output.enabled is True
+    assert opts.wav_output.worker_count == worker_count
+    assert opts.wav_output.timeout_seconds == timeout_seconds
+    assert opts.wav_output.max_retries == max_retries
+
+
 def test_log_cli_stage_start_uses_info_with_depth(monkeypatch) -> None:
     opt_calls = []
     infos: list[str] = []
