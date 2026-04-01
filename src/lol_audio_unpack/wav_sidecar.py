@@ -116,6 +116,7 @@ class WavTranscodeCoordinator:
         job = WavJob(
             wem_path=wem_path,
             wav_path=build_wav_output_path(wem_path, audio_root=self.audio_root, wav_root=self.wav_root),
+            wav_format=self.options.format,
             entity_type=entity_type,
             entity_id=entity_id,
             sub_id=sub_id,

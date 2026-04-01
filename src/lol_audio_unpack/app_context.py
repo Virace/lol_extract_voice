@@ -96,6 +96,7 @@ class WavOutputOptions:
     worker_count: int = 2
     timeout_seconds: int = 5
     max_retries: int = 3
+    format: str = "pcm16"
 
 
 @dataclass(frozen=True)

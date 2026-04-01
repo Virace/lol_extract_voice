@@ -62,6 +62,16 @@ def test_validate_args_wav_tuning_requires_wav_flag() -> None:
     assert exc.value.code == 1
 
 
+def test_validate_args_wav_format_requires_wav_flag() -> None:
+    parser = cli.create_parser()
+    args = parser.parse_args(["--extract", "--wav-format", "auto"])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.validate_args(args, parser)
+
+    assert exc.value.code == 1
+
+
 def test_build_operation_options_includes_wav_settings() -> None:
     parser = cli.create_parser()
     worker_count = 4
@@ -86,6 +96,24 @@ def test_build_operation_options_includes_wav_settings() -> None:
     assert opts.wav_output.worker_count == worker_count
     assert opts.wav_output.timeout_seconds == timeout_seconds
     assert opts.wav_output.max_retries == max_retries
+
+
+def test_build_operation_options_defaults_wav_format_to_pcm16() -> None:
+    parser = cli.create_parser()
+    args = parser.parse_args(["--extract", "--wav"])
+
+    opts = cli.build_operation_options(args)
+
+    assert opts.wav_output.format == "pcm16"
+
+
+def test_build_operation_options_accepts_explicit_wav_format() -> None:
+    parser = cli.create_parser()
+    args = parser.parse_args(["--extract", "--wav", "--wav-format", "auto"])
+
+    opts = cli.build_operation_options(args)
+
+    assert opts.wav_output.format == "auto"
 
 
 def test_log_cli_stage_start_uses_info_with_depth(monkeypatch) -> None:

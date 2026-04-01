@@ -23,6 +23,7 @@ DEFAULT_MAX_WORKERS = 4
 DEFAULT_WAV_WORKER_COUNT = 2
 DEFAULT_WAV_TIMEOUT_SECONDS = 5
 DEFAULT_WAV_MAX_RETRIES = 3
+DEFAULT_WAV_FORMAT = "pcm16"
 
 
 def _write_env_file(env_dir: Path, game_path: Path, output_path: Path) -> None:
@@ -674,3 +675,4 @@ def test_operation_options_defaults() -> None:
     assert options.wav_output.worker_count == DEFAULT_WAV_WORKER_COUNT
     assert options.wav_output.timeout_seconds == DEFAULT_WAV_TIMEOUT_SECONDS
     assert options.wav_output.max_retries == DEFAULT_WAV_MAX_RETRIES
+    assert options.wav_output.format == DEFAULT_WAV_FORMAT

@@ -9,9 +9,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pyvgmstream import SampleFormat
 
 from lol_audio_unpack.app_context import WavOutputOptions
 from lol_audio_unpack.wav_sidecar import WavTranscodeCoordinator, build_wav_output_path
+from lol_audio_unpack.wav_sidecar_runtime import WavJob, default_worker_entry, resolve_wav_decode_config
 
 pytestmark = pytest.mark.unit
 
@@ -43,6 +45,65 @@ def test_build_wav_output_path_mirrors_audio_tree(tmp_path: Path) -> None:
     wav_path = build_wav_output_path(wem_path, audio_root=audio_root, wav_root=wav_root)
 
     assert wav_path == wav_root / "champions" / "1·annie" / "1000·base" / "VO" / "123456.wav"
+
+
+def test_resolve_wav_decode_config_returns_none_for_auto() -> None:
+    assert resolve_wav_decode_config("auto") is None
+
+
+@pytest.mark.parametrize(
+    ("raw_format", "sample_format"),
+    [
+        ("pcm16", SampleFormat.PCM16),
+        ("pcm24", SampleFormat.PCM24),
+        ("pcm32", SampleFormat.PCM32),
+        ("float", SampleFormat.FLOAT),
+    ],
+)
+def test_resolve_wav_decode_config_maps_known_formats(raw_format: str, sample_format: SampleFormat) -> None:
+    config = resolve_wav_decode_config(raw_format)
+
+    assert config is not None
+    assert config.sample_format is sample_format
+
+
+def test_default_worker_entry_passes_resolved_decode_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeDecodeResult:
+        byte_count = 123
+
+    class FakeModule:
+        @staticmethod
+        def decode_to_wav_file(in_path, out_path, *, config=None):
+            captured["in_path"] = in_path
+            captured["out_path"] = out_path
+            captured["config"] = config
+            return FakeDecodeResult()
+
+    queue: Queue[Any] = SimpleQueueAdapter()
+    monkeypatch.setattr("lol_audio_unpack.wav_sidecar_runtime.import_module", lambda _name: FakeModule)
+
+    job = WavJob(
+        wem_path=tmp_path / "sample.wem",
+        wav_path=tmp_path / "sample.wav",
+        wav_format="pcm24",
+    )
+
+    default_worker_entry(job, queue)
+
+    assert captured["config"] is not None
+    assert captured["config"].sample_format is SampleFormat.PCM24
+
+
+class SimpleQueueAdapter:
+    """提供与进程队列兼容的最小 put 接口。"""
+
+    def __init__(self) -> None:
+        self.payloads: list[dict[str, Any]] = []
+
+    def put(self, payload: dict[str, Any]) -> None:
+        self.payloads.append(payload)
 
 
 def test_timeout_attempt_is_retried_and_final_failure_is_recorded(tmp_path: Path) -> None:

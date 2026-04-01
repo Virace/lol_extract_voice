@@ -12,6 +12,8 @@ from pathlib import Path
 from queue import Empty
 from typing import Any
 
+from pyvgmstream import DecodeConfig, SampleFormat
+
 
 @dataclass(frozen=True)
 class WavJob:
@@ -19,6 +21,7 @@ class WavJob:
 
     wem_path: Path
     wav_path: Path
+    wav_format: str = "pcm16"
     entity_type: str | None = None
     entity_id: str | None = None
     sub_id: str | None = None
@@ -115,6 +118,35 @@ def build_wav_output_path(wem_path: Path, *, audio_root: Path, wav_root: Path) -
     return (wav_root / relative_path).with_suffix(".wav")
 
 
+def resolve_wav_decode_config(raw_format: str) -> DecodeConfig | None:
+    """将 CLI 格式名映射为 `pyvgmstream` 解码配置。
+
+    Args:
+        raw_format: 用户传入的 WAV 输出格式名。
+
+    Returns:
+        对应的 `DecodeConfig`；当格式为 `auto` 时返回 `None`。
+
+    Raises:
+        ValueError: 当格式名不受支持时抛出。
+    """
+    normalized = raw_format.strip().lower()
+    if normalized == "auto":
+        return None
+
+    sample_format_map = {
+        "pcm16": SampleFormat.PCM16,
+        "pcm24": SampleFormat.PCM24,
+        "pcm32": SampleFormat.PCM32,
+        "float": SampleFormat.FLOAT,
+    }
+    try:
+        sample_format = sample_format_map[normalized]
+    except KeyError as exc:
+        raise ValueError(f"unsupported wav format: {raw_format}") from exc
+    return DecodeConfig(sample_format=sample_format)
+
+
 def default_worker_entry(job: WavJob, queue: Queue[Any]) -> None:
     """执行单个 WAV 转码任务。
 
@@ -125,7 +157,7 @@ def default_worker_entry(job: WavJob, queue: Queue[Any]) -> None:
     try:
         decode_to_wav_file = import_module("pyvgmstream").decode_to_wav_file
         job.wav_path.parent.mkdir(parents=True, exist_ok=True)
-        result = decode_to_wav_file(job.wem_path, job.wav_path)
+        result = decode_to_wav_file(job.wem_path, job.wav_path, config=resolve_wav_decode_config(job.wav_format))
         queue.put({"ok": True, "byte_count": result.byte_count})
     except Exception as exc:  # noqa: BLE001
         queue.put(
@@ -201,4 +233,5 @@ __all__ = [
     "WavSidecarSummary",
     "build_wav_output_path",
     "default_worker_entry",
+    "resolve_wav_decode_config",
 ]

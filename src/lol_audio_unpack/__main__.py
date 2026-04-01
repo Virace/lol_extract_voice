@@ -106,6 +106,12 @@ def create_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="设置单个 WAV 转码任务的最大重试次数。默认 3（仅在启用 --wav 时生效）。",
     )
+    extract_group.add_argument(
+        "--wav-format",
+        choices=("auto", "pcm16", "pcm24", "pcm32", "float"),
+        default=None,
+        help="设置 WAV 输出格式。默认 pcm16；auto 表示按源格式输出（仅在启用 --wav 时生效）。",
+    )
 
     # 事件映射参数组
     mapping_group = parser.add_argument_group("事件映射", "构建音频事件哈希映射")
@@ -263,7 +269,7 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         logger.info(f"检测到同时指定了多个操作，将按顺序执行：{' -> '.join(active_operations)}。")
 
     wav_tuning_explicit = any(
-        value is not None for value in (args.wav_workers, args.wav_timeout, args.wav_retries)
+        value is not None for value in (args.wav_workers, args.wav_timeout, args.wav_retries, args.wav_format)
     )
     if args.wav and not any(extract_actions):
         logger.error("错误：--wav 只能与解包参数一起使用（--extract, --extract-champions, --extract-maps）")
@@ -396,6 +402,7 @@ def build_operation_options(
             worker_count=2 if getattr(args, "wav_workers", None) is None else args.wav_workers,
             timeout_seconds=5 if getattr(args, "wav_timeout", None) is None else args.wav_timeout,
             max_retries=3 if getattr(args, "wav_retries", None) is None else args.wav_retries,
+            format="pcm16" if getattr(args, "wav_format", None) is None else args.wav_format,
         ),
     )
 
