@@ -322,13 +322,19 @@ class ExecutionQueueController(QObject):
                 self._stage_completion_notifications.add(notification_key)
                 payload = item.data(TASK_ITEM_ROLE)
                 if isinstance(payload, QueuedExecutionTask):
-                    content = f"任务 #{task_id} 已结束音频解包阶段。"
+                    stage_label = (
+                        "音频解包与 WAV 转码阶段"
+                        if payload.draft.task_params.wav_enabled
+                        else "音频解包阶段"
+                    )
+                    content = f"任务 #{task_id} 已结束{stage_label}。"
                     if payload.draft.task_params.run_mapping:
                         content = f"{content} 正在继续事件映射。"
                 else:
-                    content = f"任务 #{task_id} 已结束音频解包阶段。"
+                    stage_label = "音频解包阶段"
+                    content = f"任务 #{task_id} 已结束{stage_label}。"
                 self.feedback_requested.emit(
-                    GuiNotice(title="音频解包阶段已结束", content=content, level="info")
+                    GuiNotice(title=f"{stage_label}已结束", content=content, level="info")
                 )
         if self._active_task_id == task_id:
             self.progress_display_requested.emit(QueueProgressUpdate())

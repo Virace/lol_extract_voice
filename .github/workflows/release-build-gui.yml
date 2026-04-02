@@ -1,0 +1,102 @@
+name: release-build-gui
+
+on:
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: write
+
+jobs:
+  verify-tag-target:
+    runs-on: ubuntu-latest
+    outputs:
+      on_main: ${{ steps.main_gate.outputs.on_main }}
+      is_prerelease: ${{ steps.main_gate.outputs.is_prerelease }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check tag commit belongs to origin/main
+        id: main_gate
+        shell: bash
+        run: |
+          tag_name="${GITHUB_REF_NAME}"
+          git fetch origin main --tags --force
+          if git branch -r --contains "$GITHUB_SHA" | grep -q 'origin/main'; then
+            echo "on_main=true" >> "$GITHUB_OUTPUT"
+            echo "Tag commit is contained in origin/main. Release build will continue." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "on_main=false" >> "$GITHUB_OUTPUT"
+            echo "Tag commit is not contained in origin/main. Skip build and release." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [[ "$tag_name" =~ -pre\.[0-9]+$ ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $tag_name is marked as a pre-release." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "Tag $tag_name is treated as a stable release." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  build-gui-release:
+    needs: verify-tag-target
+    if: needs.verify-tag-target.outputs.on_main == 'true'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Build GUI package
+        shell: pwsh
+        run: |
+          python scripts/pyinstaller/build_gui.py --clean
+
+      - name: Prepare release assets
+        id: assets
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $releaseDir = Join-Path $PWD "release"
+          $distExe = Join-Path $PWD ".temp/pyinstaller/dist/LolAudioUnpack.exe"
+
+          if (-not (Test-Path $distExe)) {
+              throw "未找到 GUI 构建产物: $distExe"
+          }
+
+          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+
+          $assetName = "LolAudioUnpack-$tag-windows-x64.exe"
+          $assetPath = Join-Path $releaseDir $assetName
+          Copy-Item -LiteralPath $distExe -Destination $assetPath -Force
+
+          $hashLine = "{0} *{1}" -f (Get-FileHash -Algorithm SHA256 -Path $assetPath).Hash.ToLowerInvariant(), $assetName
+          $hashPath = "$assetPath.sha256"
+          Set-Content -LiteralPath $hashPath -Value $hashLine -Encoding utf8
+
+          "asset_path=$assetPath" >> $env:GITHUB_OUTPUT
+          "hash_path=$hashPath" >> $env:GITHUB_OUTPUT
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          files: |
+            ${{ steps.assets.outputs.asset_path }}
+            ${{ steps.assets.outputs.hash_path }}
+          prerelease: ${{ needs.verify-tag-target.outputs.is_prerelease == 'true' }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true

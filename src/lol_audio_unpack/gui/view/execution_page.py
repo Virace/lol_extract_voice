@@ -6,7 +6,6 @@ from typing import Any
 
 from loguru import logger
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QVBoxLayout,
@@ -114,7 +113,7 @@ class ExecutionPage(SmoothScrollArea):
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(4)
         title_label = SubtitleLabel("执行中心", header_widget)
-        subtitle_label = CaptionLabel("在这里创建任务、查看进度，也可以复制当前任务命令。", header_widget)
+        subtitle_label = CaptionLabel("在这里创建任务并查看进度。", header_widget)
         subtitle_label.setWordWrap(True)
         header_layout.addWidget(title_label)
         header_layout.addWidget(subtitle_label)
@@ -135,7 +134,6 @@ class ExecutionPage(SmoothScrollArea):
         self.mapping_task_cb = self.taskBuilderPanel.mapping_task_cb
         self.task_builder_summary_label = self.taskBuilderPanel.task_builder_summary_label
         self.create_task_btn = self.taskBuilderPanel.create_task_btn
-        self.copy_cli_btn = self.taskBuilderPanel.copy_cli_btn
 
         self.progressPanel = ProgressPanel(self.view)
         self.progress_card = self.progressPanel
@@ -190,7 +188,6 @@ class ExecutionPage(SmoothScrollArea):
             )
         )
         self.create_task_btn.clicked.connect(self._queue_task_draft)
-        self.copy_cli_btn.clicked.connect(self._copy_cli_command)
         self.taskBuilderPanel.connect_form_signals(self.taskBuilderPanel.sync_state_from_widgets)
         self.draft_list.setContextMenuPolicy(Qt.CustomContextMenu)
         self.draft_list.customContextMenuRequested.connect(self._open_task_queue_context_menu)
@@ -200,6 +197,8 @@ class ExecutionPage(SmoothScrollArea):
     def set_gui_config(self, cfg) -> None:
         """注入 GUI 配置并刷新默认值。"""
         self.gui_config = cfg
+        self.taskBuilderPanel.apply_gui_config_defaults(cfg)
+        self.taskBuilderPanel.apply_defaults()
         self.taskBuilderPanel.sync_state_from_widgets()
         self.taskBuilderPanel.refresh_summary()
         fallback_enabled = bool(getattr(cfg, "smooth_scroll_enabled", False))
@@ -361,30 +360,6 @@ class ExecutionPage(SmoothScrollArea):
             progress_total=progress_total,
         )
         self.progressPanel.apply_display_state(state)
-
-    def _copy_cli_command(self) -> None:
-        """复制当前配置对应的 CLI 命令。"""
-        command_text = self.taskBuilderPanel.build_cli_command_text()
-        if command_text is None:
-            self._log_gui_event("warning", "[CLI] 未勾选任何执行步骤，无法复制命令。")
-            show_feedback_infobar(
-                title="无法复制 CLI 命令",
-                content="请至少勾选音频解包或事件映射中的一个步骤。",
-                parent=self._feedback_parent(),
-                level="warning",
-                position=InfoBarPosition.TOP,
-            )
-            return
-
-        QGuiApplication.clipboard().setText(command_text)
-        self._log_gui_event("info", f"[CLI] 已复制命令：{command_text}")
-        show_feedback_infobar(
-            title="已复制 CLI 命令",
-            content=command_text,
-            parent=self._feedback_parent(),
-            level="success",
-            position=InfoBarPosition.TOP,
-        )
 
     def _queue_task_draft(self) -> None:
         """将当前界面参数写入任务队列，并自动开始首个任务。"""

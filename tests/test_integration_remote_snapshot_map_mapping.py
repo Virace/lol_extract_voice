@@ -36,7 +36,7 @@ def _build_remote_context(
 ):
     """构建远端快照上下文。"""
     return create_app_context(
-        cli_overrides={
+        settings={
             "OUTPUT_PATH": str(output_path),
             "GAME_REGION": GAME_REGION,
             "SOURCE_MODE": "remote_snapshot",
@@ -65,7 +65,7 @@ def _ensure_remote_map_update_ready(
     _reset_data_reader_singleton()
     try:
         ctx = create_app_context(
-            cli_overrides={
+            settings={
                 "OUTPUT_PATH": str(output_path),
                 "GAME_REGION": GAME_REGION,
                 "SOURCE_MODE": "remote_snapshot",

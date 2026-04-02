@@ -272,7 +272,7 @@ def _build_app(
 ) -> LolAudioUnpackApp:
     """构建远端 benchmark 专用 app。"""
     ctx = create_app_context(
-        cli_overrides={
+        settings={
             "OUTPUT_PATH": str(output_path),
             "GAME_REGION": config.game_region,
             "SOURCE_MODE": "remote_snapshot",

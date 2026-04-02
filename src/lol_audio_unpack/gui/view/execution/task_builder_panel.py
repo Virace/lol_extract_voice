@@ -12,7 +12,6 @@ from qfluentwidgets import (
     CardWidget,
     CheckBox,
     PrimaryPushButton,
-    PushButton,
     StrongBodyLabel,
 )
 
@@ -50,25 +49,23 @@ def _build_target_summary(champion_ids: tuple[str, ...], map_ids: tuple[str, ...
     return f"目标：英雄 {len(champion_ids)} 个，地图 {len(map_ids)} 个"
 
 
-def _build_task_scope_summary(*, include_extract: bool, include_mapping: bool) -> str:
+def _build_task_scope_summary(
+    *,
+    include_preflight_update: bool,
+    include_extract: bool,
+    include_mapping: bool,
+) -> str:
     """构造当前任务包含的执行步骤摘要。"""
     parts: list[str] = []
     if include_extract:
         parts.append("音频解包")
     if include_mapping:
         parts.append("事件映射")
-    return " + ".join(parts) if parts else "未选择执行内容"
-
-
-def _quote_cli_arg(arg: str) -> str:
-    """按 PowerShell 习惯格式化单个命令行参数。"""
-    if not arg:
-        return "''"
-
-    safe_chars = "-_./,:=\\"
-    if all(char.isalnum() or char in safe_chars for char in arg):
-        return arg
-    return "'" + arg.replace("'", "''") + "'"
+    if not parts:
+        return "未选择执行内容"
+    if include_preflight_update:
+        parts.insert(0, "前置强制更新")
+    return " + ".join(parts)
 
 
 @dataclass(slots=True, frozen=True)
@@ -80,6 +77,8 @@ class _ExecutionTaskFormDefaults:
     with_bp_vo: bool = True
     force_update: bool = False
     integrate_data: bool = True
+    wav_enabled: bool = False
+    wav_format: str = "pcm16"
 
 
 @dataclass(slots=True, frozen=True)
@@ -95,6 +94,8 @@ class _ExecutionTaskFormState:
     with_bp_vo: bool = True
     force_update: bool = False
     integrate_data: bool = True
+    wav_enabled: bool = False
+    wav_format: str = "pcm16"
 
     def target_summary(self) -> str:
         """返回当前目标范围摘要。"""
@@ -103,6 +104,7 @@ class _ExecutionTaskFormState:
     def task_scope_summary(self) -> str:
         """返回当前勾选的任务步骤摘要。"""
         return _build_task_scope_summary(
+            include_preflight_update=self.force_update,
             include_extract=self.include_extract,
             include_mapping=self.include_mapping,
         )
@@ -128,7 +130,7 @@ class TaskBuilderPanel(CardWidget):
         builder_layout.setSpacing(12)
 
         builder_title = StrongBodyLabel("创建任务", self)
-        builder_hint = CaptionLabel("确认当前目标后就能创建任务；如果想在命令行执行，也可以先复制命令。", self)
+        builder_hint = CaptionLabel("确认当前目标后就能创建任务。", self)
         builder_hint.setWordWrap(True)
         builder_layout.addWidget(builder_title)
         builder_layout.addWidget(builder_hint)
@@ -175,10 +177,8 @@ class TaskBuilderPanel(CardWidget):
         builder_button_row.setContentsMargins(0, 0, 0, 0)
         builder_button_row.setSpacing(8)
         self.create_task_btn = PrimaryPushButton("创建任务", self)
-        self.copy_cli_btn = PushButton("复制 CLI 命令", self)
         builder_button_row.addStretch(1)
         builder_button_row.addWidget(self.create_task_btn)
-        builder_button_row.addWidget(self.copy_cli_btn)
         action_layout.addLayout(builder_button_row)
 
         builder_layout.addWidget(action_widget)
@@ -208,6 +208,8 @@ class TaskBuilderPanel(CardWidget):
         self._advanced_panel.vo_filter.currentItemChanged.connect(callback)
         self._advanced_panel.max_workers_combo.currentTextChanged.connect(callback)
         self._advanced_panel.bp_voice_cb.stateChanged.connect(callback)
+        self._advanced_panel.wav_output_cb.stateChanged.connect(callback)
+        self._advanced_panel.wav_format_combo.currentTextChanged.connect(callback)
         self._advanced_panel.force_update_cb.stateChanged.connect(callback)
         self._advanced_panel.integrate_data_cb.stateChanged.connect(callback)
 
@@ -222,24 +224,60 @@ class TaskBuilderPanel(CardWidget):
         self._advanced_panel.vo_filter.setCurrentItem(defaults.vo_filter_key)
         self._advanced_panel.max_workers_combo.setCurrentText(defaults.max_workers_text)
         self._advanced_panel.bp_voice_cb.setChecked(defaults.with_bp_vo)
+        self._advanced_panel.wav_output_cb.setChecked(defaults.wav_enabled)
+        self._advanced_panel.wav_format_combo.setCurrentText(defaults.wav_format)
         self._advanced_panel.force_update_cb.setChecked(defaults.force_update)
         self._advanced_panel.integrate_data_cb.setChecked(defaults.integrate_data)
+        self._sync_wav_control_state(extract_enabled=True)
+
+    def apply_gui_config_defaults(self, gui_config) -> None:
+        """根据当前 GUI 配置更新任务表单默认值。"""
+        self._defaults = _ExecutionTaskFormDefaults(
+            vo_filter_key=self._defaults.vo_filter_key,
+            max_workers_text=self._defaults.max_workers_text,
+            with_bp_vo=self._defaults.with_bp_vo,
+            force_update=self._defaults.force_update,
+            integrate_data=self._defaults.integrate_data,
+            wav_enabled=bool(getattr(gui_config, "extract_wav_enabled", False)),
+            wav_format=str(getattr(gui_config, "wav_format", "pcm16") or "pcm16"),
+        )
+
+    def _sync_wav_control_state(self, *, extract_enabled: bool) -> bool:
+        """同步 WAV 控件状态，并返回当前是否启用 WAV。"""
+        if self._advanced_panel is None:
+            raise RuntimeError("TaskBuilderPanel 尚未绑定 AdvancedInputPanel。")
+
+        if not extract_enabled and self._advanced_panel.wav_output_cb.isChecked():
+            self._advanced_panel.wav_output_cb.blockSignals(True)
+            self._advanced_panel.wav_output_cb.setChecked(False)
+            self._advanced_panel.wav_output_cb.blockSignals(False)
+
+        wav_enabled = bool(extract_enabled and self._advanced_panel.wav_output_cb.isChecked())
+        self._advanced_panel.set_wav_control_state(
+            extract_enabled=extract_enabled,
+            wav_enabled=wav_enabled,
+        )
+        return wav_enabled
 
     def sync_state_from_widgets(self) -> None:
         """从当前控件值同步内部任务表单状态。"""
         if self._advanced_panel is None:
             raise RuntimeError("TaskBuilderPanel 尚未绑定 AdvancedInputPanel。")
 
+        include_extract = self.extract_task_cb.isChecked()
+        wav_enabled = self._sync_wav_control_state(extract_enabled=include_extract)
         self._state = _ExecutionTaskFormState(
             champion_ids=_parse_csv_ids(self._advanced_panel.champion_ids_input.text()),
             map_ids=_parse_csv_ids(self._advanced_panel.map_ids_input.text()),
-            include_extract=self.extract_task_cb.isChecked(),
+            include_extract=include_extract,
             include_mapping=self.mapping_task_cb.isChecked(),
             vo_filter_key=self._advanced_panel.vo_filter.currentRouteKey() or self._defaults.vo_filter_key,
             max_workers_text=self._advanced_panel.max_workers_combo.currentText(),
             with_bp_vo=self._advanced_panel.bp_voice_cb.isChecked(),
             force_update=self._advanced_panel.force_update_cb.isChecked(),
             integrate_data=self._advanced_panel.integrate_data_cb.isChecked(),
+            wav_enabled=wav_enabled,
+            wav_format=self._advanced_panel.wav_format_combo.currentText() or self._defaults.wav_format,
         )
         self.refresh_summary()
 
@@ -250,9 +288,7 @@ class TaskBuilderPanel(CardWidget):
         if task_scope_summary == "未选择执行内容":
             self.task_builder_summary_label.setText("请至少勾选一个执行步骤后再创建任务。")
         else:
-            self.task_builder_summary_label.setText(
-                f"将创建：{task_scope_summary.replace(' + ', '和')}。"
-            )
+            self.task_builder_summary_label.setText(f"将创建：{task_scope_summary.replace(' + ', '、')}。")
 
     def current_target_ids(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """返回当前任务目标中的英雄和地图 ID。"""
@@ -284,7 +320,8 @@ class TaskBuilderPanel(CardWidget):
             f"{task_scope_summary} · {draft_summary} · "
             f"VO={state.vo_filter_key} · "
             f"BP={state.with_bp_vo} · "
-            f"刷新缓存={state.force_update} · "
+            f"WAV={state.wav_format if state.wav_enabled else '关闭'} · "
+            f"前置强制更新={state.force_update} · "
             f"整合={state.integrate_data} · "
             f"并发={state.max_workers_text}"
         )
@@ -295,17 +332,17 @@ class TaskBuilderPanel(CardWidget):
         champion_ids = _parse_csv_int_ids(",".join(state.champion_ids), label="英雄 ID")
         map_ids = _parse_csv_int_ids(",".join(state.map_ids), label="地图 ID")
         exclude_types = ("SFX", "MUSIC") if state.vo_filter_key == "VO" else ()
+        wav_workers = int(getattr(gui_config, "wav_workers", 2) if gui_config else 2)
+        wav_timeout = int(getattr(gui_config, "wav_timeout", 5) if gui_config else 5)
+        wav_retries = int(getattr(gui_config, "wav_retries", 3) if gui_config else 3)
         return ExecutionTaskDraft(
             source=self.current_selection_source(),
             source_summary=state.target_summary(),
-            context_input=(
-                gui_config.to_app_context_input_snapshot()
-                if gui_config
-                else AppContextInputSnapshot()
-            ),
+            context_input=(gui_config.to_app_context_input_snapshot() if gui_config else AppContextInputSnapshot()),
             task_params=ExecutionTaskParamsSnapshot(
                 champion_ids=champion_ids,
                 map_ids=map_ids,
+                # GUI 的该开关表示任务前置一次 `update --force`，而不是独立的常规 update 步骤。
                 run_update=state.force_update,
                 run_extract=state.include_extract,
                 run_mapping=state.include_mapping,
@@ -313,72 +350,13 @@ class TaskBuilderPanel(CardWidget):
                 with_bp_vo=state.with_bp_vo,
                 exclude_types=exclude_types,
                 integrate_data=state.integrate_data,
+                wav_enabled=state.wav_enabled,
+                wav_workers=wav_workers,
+                wav_timeout=wav_timeout,
+                wav_retries=wav_retries,
+                wav_format=state.wav_format,
             ),
         )
-
-    def _append_target_operation_args(
-        self,
-        args: list[str],
-        *,
-        operation_name: str,
-        champion_ids: tuple[str, ...],
-        map_ids: tuple[str, ...],
-    ) -> None:
-        """按当前目标范围追加 CLI 任务参数。"""
-        all_flag = f"--{operation_name}"
-        champion_flag = f"--{operation_name}-champions"
-        map_flag = f"--{operation_name}-maps"
-        if champion_ids or map_ids:
-            if champion_ids:
-                args.extend([champion_flag, ",".join(champion_ids)])
-            if map_ids:
-                args.extend([map_flag, ",".join(map_ids)])
-            return
-
-        args.append(all_flag)
-
-    def build_cli_command_text(self) -> str | None:
-        """根据当前表单状态构造可复制的 CLI 命令。"""
-        state = self._state
-        if state.task_scope_summary() == "未选择执行内容":
-            return None
-
-        champion_ids, map_ids = state.champion_ids, state.map_ids
-        args = ["uv", "run", "unpack"]
-
-        if state.force_update:
-            self._append_target_operation_args(
-                args,
-                operation_name="update",
-                champion_ids=champion_ids,
-                map_ids=map_ids,
-            )
-            args.append("--force")
-
-        if state.include_extract:
-            self._append_target_operation_args(
-                args,
-                operation_name="extract",
-                champion_ids=champion_ids,
-                map_ids=map_ids,
-            )
-
-        if state.include_mapping:
-            self._append_target_operation_args(
-                args,
-                operation_name="mapping",
-                champion_ids=champion_ids,
-                map_ids=map_ids,
-            )
-
-        args.extend(["--max-workers", state.max_workers_text])
-        args.append("--with-bp-vo" if state.with_bp_vo else "--no-with-bp-vo")
-        if state.vo_filter_key == "VO":
-            args.extend(["--exclude-type", "SFX,MUSIC"])
-        if state.include_mapping and state.integrate_data:
-            args.append("--integrate-data")
-
-        return " ".join(_quote_cli_arg(arg) for arg in args)
 
     def reset_custom_inputs_to_defaults(self) -> None:
         """将自定义输入恢复到默认状态，同时保留执行步骤选择。"""
@@ -398,6 +376,8 @@ class TaskBuilderPanel(CardWidget):
             with_bp_vo=defaults.with_bp_vo,
             force_update=defaults.force_update,
             integrate_data=defaults.integrate_data,
+            wav_enabled=defaults.wav_enabled,
+            wav_format=defaults.wav_format,
         )
         self._advanced_panel.champion_ids_input.setText("")
         self._advanced_panel.map_ids_input.setText("")
@@ -406,8 +386,11 @@ class TaskBuilderPanel(CardWidget):
         self._advanced_panel.vo_filter.setCurrentItem(self._state.vo_filter_key)
         self._advanced_panel.max_workers_combo.setCurrentText(self._state.max_workers_text)
         self._advanced_panel.bp_voice_cb.setChecked(self._state.with_bp_vo)
+        self._advanced_panel.wav_output_cb.setChecked(self._state.wav_enabled)
+        self._advanced_panel.wav_format_combo.setCurrentText(self._state.wav_format)
         self._advanced_panel.force_update_cb.setChecked(self._state.force_update)
         self._advanced_panel.integrate_data_cb.setChecked(self._state.integrate_data)
+        self._sync_wav_control_state(extract_enabled=self._state.include_extract)
         self.refresh_summary()
 
     def apply_selected_entities(

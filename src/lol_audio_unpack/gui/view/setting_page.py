@@ -65,6 +65,7 @@ from lol_audio_unpack.gui.view.settings.source_mode_panel import SourceModePanel
 from lol_audio_unpack.gui.view.settings.tool_path_panel import (
     BaseSettingsPanel,
     ToolPathPanel,
+    WavSettingsPanel,
 )
 from lol_audio_unpack.utils.runtime_paths import (
     get_default_output_relative_path,
@@ -199,7 +200,9 @@ class SettingPage(SmoothScrollArea):
         build_mark = _log_setting_stage("_build_base_group 完成", build_begin, build_mark)
         self._build_tools_group()    # 3. 工具配置
         build_mark = _log_setting_stage("_build_tools_group 完成", build_begin, build_mark)
-        self._build_personal_group() # 4. 个性化
+        self._build_wav_group()      # 4. WAV 默认参数
+        build_mark = _log_setting_stage("_build_wav_group 完成", build_begin, build_mark)
+        self._build_personal_group() # 5. 个性化
         _log_setting_stage("_build_personal_group 完成", build_begin, build_mark)
 
     # 1. 数据来源 -------------------------------------------------------
@@ -247,7 +250,17 @@ class SettingPage(SmoothScrollArea):
         self.vgmstreamCard = self.toolPathPanel.vgmstreamCard
         self.expandLayout.addWidget(self.toolsGroup)
 
-    # 4. 个性化 ---------------------------------------------------------
+    # 4. WAV 默认参数 ---------------------------------------------------
+
+    def _build_wav_group(self):
+        self.wavSettingsPanel = WavSettingsPanel(parent=self.content_widget)
+        self.wavGroup = self.wavSettingsPanel.group
+        self.wavWorkersCard = self.wavSettingsPanel.wavWorkersCard
+        self.wavTimeoutCard = self.wavSettingsPanel.wavTimeoutCard
+        self.wavRetriesCard = self.wavSettingsPanel.wavRetriesCard
+        self.expandLayout.addWidget(self.wavGroup)
+
+    # 5. 个性化 ---------------------------------------------------------
 
     def _build_personal_group(self):
         audio_output_device_options = get_preview_audio_output_device_options()
@@ -297,6 +310,9 @@ class SettingPage(SmoothScrollArea):
         # 工具配置
         apply_path_card_label(self.wwiserCard, cfg.wwiser_path, f"./{get_default_wwiser_relative_path()}")
         apply_path_card_label(self.vgmstreamCard, cfg.vgmstream_path, f"./{get_default_vgmstream_relative_path()}")
+        self.wavWorkersCard.setValue(str(cfg.wav_workers))
+        self.wavTimeoutCard.setValue(str(cfg.wav_timeout))
+        self.wavRetriesCard.setValue(str(cfg.wav_retries))
 
         # 个性化 — 应用已保存的主题
         self._apply_theme_from_config()
@@ -330,6 +346,9 @@ class SettingPage(SmoothScrollArea):
         )
         cfg.game_region = self.gameRegionCard.value()
         cfg.group_by_type = self.groupByTypeCard.isChecked()
+        cfg.wav_workers = int(self.wavWorkersCard.value())
+        cfg.wav_timeout = int(self.wavTimeoutCard.value())
+        cfg.wav_retries = int(self.wavRetriesCard.value())
         cfg.page_smooth_scroll_enabled = self.smoothScrollCard.pageScrollEnabled()
         cfg.widget_smooth_scroll_enabled = self.smoothScrollCard.widgetScrollEnabled()
         cfg.log_drawer_auto_collapse_enabled = self.logDrawerAutoCollapseCard.isChecked()
@@ -442,6 +461,15 @@ class SettingPage(SmoothScrollArea):
         # 基础设置
         self.gameRegionCard.comboBox.currentTextChanged.connect(self._save_config)
         self.groupByTypeCard.checkedChanged.connect(self._save_config)
+        self.wavWorkersCard.comboBox.currentTextChanged.connect(
+            lambda _value: self._save_wav_defaults()
+        )
+        self.wavTimeoutCard.comboBox.currentTextChanged.connect(
+            lambda _value: self._save_wav_defaults()
+        )
+        self.wavRetriesCard.comboBox.currentTextChanged.connect(
+            lambda _value: self._save_wav_defaults()
+        )
         self.smoothScrollCard.pageSwitchButton.checkedChanged.connect(self._on_smooth_scroll_changed)
         self.smoothScrollCard.widgetSwitchButton.checkedChanged.connect(self._on_smooth_scroll_changed)
         self.previewAudioOutputDeviceCard.comboBox.currentTextChanged.connect(
@@ -548,6 +576,7 @@ class SettingPage(SmoothScrollArea):
         self.baseGroup.setEnabled(enabled)
         self.wwiserCard.setEnabled(enabled)
         self.vgmstreamCard.setEnabled(True)
+        self.wavGroup.setEnabled(True)
         self.toolsGroup.setEnabled(True)
         self.personalGroup.setEnabled(True)
 
@@ -595,6 +624,13 @@ class SettingPage(SmoothScrollArea):
         """保存文件日志等级并广播配置变更。"""
         self._save_config(emit_shared_context_input_change=False)
         self.log_levels_changed.emit(RuntimeLoggingConfig.from_gui_config(self._cfg))
+
+    def _save_wav_defaults(self) -> None:
+        """保存 WAV 转码默认参数，不触发共享实体刷新。"""
+        self._cfg.wav_workers = int(self.wavWorkersCard.value())
+        self._cfg.wav_timeout = int(self.wavTimeoutCard.value())
+        self._cfg.wav_retries = int(self.wavRetriesCard.value())
+        self._cfg.save()
 
     # ------------------------------------------------------------------
     # 公共值读取（供其他页面或 Worker 调用）

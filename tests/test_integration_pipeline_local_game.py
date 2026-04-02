@@ -352,15 +352,16 @@ def pipeline_output_root(tmp_path_factory) -> Path:
 
 @pytest.fixture
 def app_context(local_game_path: Path, pipeline_output_root: Path, monkeypatch) -> AppContext:
-    monkeypatch.setenv("LOL_GAME_PATH", str(local_game_path))
-    monkeypatch.setenv("LOL_OUTPUT_PATH", str(pipeline_output_root))
-    monkeypatch.setenv("LOL_GAME_REGION", "zh_CN")
-    monkeypatch.setenv("LOL_EXCLUDE_TYPE", "")
     monkeypatch.setenv("LOL_LOCAL_GAME_TEST_LOG_LEVEL", os.environ.get("LOL_LOCAL_GAME_TEST_LOG_LEVEL", "DEBUG"))
     _configure_pipeline_logging()
 
     return create_app_context(
-        env_path=pipeline_output_root,
+        settings={
+            "GAME_PATH": str(local_game_path),
+            "OUTPUT_PATH": str(pipeline_output_root),
+            "GAME_REGION": "zh_CN",
+            "EXCLUDE_TYPE": "",
+        },
         force_reload=True,
         dev_mode=False,
     )

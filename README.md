@@ -51,6 +51,16 @@ uv sync --extra gui
 uv run unpack-gui
 ```
 
+GUI 会始终围绕默认配置文件工作：
+
+- 源码运行：当前工作目录下的 `lol-audio-unpack.ini`
+- 打包运行：可执行文件同目录下的 `lol-audio-unpack.ini`
+- GUI 只消费 `[app]` 分组；动作分组仅供 CLI 的 profile 模式使用
+
+可直接参考仓库内示例文件：
+
+- [config/lol-audio-unpack.example.ini](./config/lol-audio-unpack.example.ini)
+
 ### CLI
 
 安装：
@@ -61,43 +71,101 @@ cd lol_audio_unpack
 uv sync
 ```
 
-全部解包示例：
+当前 CLI 已改为动作式子命令：
 
 ```bash
-uv run unpack --update --extract --skip-events
+uv run unpack <update|extract|mapping> [OPTIONS]
+```
+
+推荐两种使用方式。
+
+方式一：纯 CLI 显式参数。
+
+```bash
+uv run unpack update extract \
+  --champions Annie,Ahri \
+  --game-path "D:/Games/Tencent/WeGameApps/英雄联盟" \
+  --output-path "./output"
+
+uv run unpack update extract mapping \
+  --champions Annie \
+  --wwiser-path "./tools/wwiser.pyz" \
+  --game-path "D:/Games/Tencent/WeGameApps/英雄联盟" \
+  --output-path "./output"
+```
+
+方式二：显式配置文件模式。
+
+1. 复制示例配置文件并按需修改：
+
+```bash
+cp config/lol-audio-unpack.example.ini ./lol-audio-unpack.ini
+```
+
+示例文件里：
+
+- 未注释的项：通常是必填或最重要的项
+- 被注释的项：表示当前默认值，可按需取消注释覆盖
+
+2. 使用 `-c` 启用配置文件模式：
+
+```bash
+uv run unpack update -c
+uv run unpack extract -c
+uv run unpack mapping -c
+```
+
+若要指定其他配置文件路径：
+
+```bash
+uv run unpack extract -c ./config/custom.ini
 ```
 
 CLI 参数总表：
 
-- 数据更新组
-  - `--update`
-  - `--update-champions [IDs|ALIASES]`
-  - `--update-maps [IDs]`
-  - `-f, --force`
-  - `--skip-events`
-- 音频解包组
-  - `--extract`
-  - `--extract-champions [IDs|ALIASES]`
-  - `--extract-maps [IDs]`
-- 映射组
-  - `--mapping`
-  - `--mapping-champions [IDs|ALIASES]`
-  - `--mapping-maps [IDs]`
-  - `--integrate-data`
 - 通用参数
+  - `-c, --config-file [PATH]`
+  - `--game-path PATH`
+  - `--output-path PATH`
+  - `--game-region REGION`
+  - `--source-mode {local_path,remote_snapshot}`
+  - `--exclude-type TYPES`
+  - `--wwiser-path PATH`
+  - `--group-by-type` / `--no-group-by-type`
+  - `--remote-live-region REGION`
+  - `--cleanup-remote` / `--no-cleanup-remote`
+  - `--remote-version VERSION`
+  - `--remote-lcu-manifest-url URL`
+  - `--remote-game-manifest-url URL`
+  - `--with-bp-vo` / `--no-with-bp-vo`
   - `--max-workers N`
   - `-l, --log-level`
   - `--dev`
-  - `--with-bp-vo` / `--no-with-bp-vo`
   - `--enable-league-tools-log`
-  - `--cleanup-remote` / `--no-cleanup-remote`
-- 配置覆盖参数
-  - `-g, --game-path PATH`
-  - `-o, --output-path PATH`
-  - `-r, --game-region REGION`
-  - `-t, --exclude-type TYPES`
-  - `-w, --wwiser-path PATH`
-  - `-b, --group-by-type` / `--no-group-by-type`
+- `update` 子命令
+  - `--champions [IDs|ALIASES]`
+  - `--maps [IDs]`
+  - `-f, --force`
+  - `--skip-events`
+- `extract` 子命令
+  - `--champions [IDs|ALIASES]`
+  - `--maps [IDs]`
+  - `--wav`
+  - `--wav-workers N`
+  - `--wav-timeout SECONDS`
+  - `--wav-retries N`
+  - `--wav-format {auto,pcm16,pcm24,pcm32,float}`
+- `mapping` 子命令
+  - `--champions [IDs|ALIASES]`
+  - `--maps [IDs]`
+  - `--integrate-data`
+
+注意：
+
+- 不写 `-c` 时，本次命令只使用内建默认值和 CLI 显式参数。
+- 写了 `-c` 后，当前命令会进入完整配置文件模式，除动作子命令和配置文件路径外，不允许再手工追加其他参数。
+- `champions` / `maps` 需要写在 `[targets]` 中；`max_workers` 写在 `[runtime]` 中；`wav` 开关写在 `[extract]` 中，`wav_*` 细节参数写在 `[wav]` 中；其余动作参数写在对应 section 中。
+- 旧 `.lol.env` / `LOL_*` 方式已经不再是当前主线用法。
 
 更详细的 CLI / 配置 / Remote 使用说明见：
 

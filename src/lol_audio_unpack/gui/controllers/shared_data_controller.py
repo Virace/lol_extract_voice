@@ -7,6 +7,7 @@ from collections.abc import Callable
 from loguru import logger
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from lol_audio_unpack.config_schema import SettingKey
 from lol_audio_unpack.gui.controllers.contracts import (
     EntityRowsPayload,
     GuiNotice,
@@ -24,31 +25,31 @@ def _get_effective_source_mode(cfg, overrides: dict[str, str | bool] | None = No
     if configured_mode:
         return str(configured_mode)
     if overrides is not None:
-        return str(overrides.get("SOURCE_MODE", "local_path") or "local_path")
+        return str(overrides.get(SettingKey.SOURCE_MODE, "local_path") or "local_path")
     return str(getattr(cfg, "source_mode", "local_path") or "local_path")
 
 
 def build_shared_entity_reader_signature(cfg) -> tuple[str | bool, ...]:
     """构建影响共享实体数据读取上下文的配置签名。"""
-    overrides = cfg.to_app_context_overrides()
+    overrides = cfg.to_app_context_settings()
     source_mode = _get_effective_source_mode(cfg, overrides)
     return (
         source_mode,
-        overrides["GAME_PATH"],
-        overrides["GAME_REGION"],
-        overrides["REMOTE_LIVE_REGION"],
-        overrides["REMOTE_VERSION"],
-        overrides["REMOTE_LCU_MANIFEST_URL"],
-        overrides["REMOTE_GAME_MANIFEST_URL"],
+        overrides[SettingKey.GAME_PATH],
+        overrides[SettingKey.GAME_REGION],
+        overrides[SettingKey.REMOTE_LIVE_REGION],
+        overrides[SettingKey.REMOTE_VERSION],
+        overrides[SettingKey.REMOTE_LCU_MANIFEST_URL],
+        overrides[SettingKey.REMOTE_GAME_MANIFEST_URL],
     )
 
 
 def build_shared_entity_scan_signature(cfg) -> tuple[str | bool, ...]:
     """构建仅影响输出扫描结果的配置签名。"""
-    overrides = cfg.to_app_context_overrides()
+    overrides = cfg.to_app_context_settings()
     return (
-        overrides["OUTPUT_PATH"],
-        overrides["GROUP_BY_TYPE"],
+        overrides[SettingKey.OUTPUT_PATH],
+        overrides[SettingKey.GROUP_BY_TYPE],
     )
 
 
@@ -219,7 +220,7 @@ class SharedDataController(QObject):
             )
 
         worker = self._task_worker_cls(
-            lambda: self._create_app_context(cli_overrides=current_cfg.to_app_context_overrides())
+            lambda: self._create_app_context(settings=current_cfg.to_app_context_settings())
         )
         worker.signals.finished.connect(
             lambda app_context, request_id=current_request_id: self.on_shared_context_build_finished(
@@ -527,7 +528,7 @@ class SharedDataController(QObject):
         if self.shared_data_prepare_worker is not None:
             return
 
-        overrides = dict(current_cfg.to_app_context_overrides())
+        overrides = dict(current_cfg.to_app_context_settings())
 
         def run_prepare() -> None:
             self._prepare_shared_entity_data(overrides)

@@ -31,7 +31,7 @@ class _FakeConfig:
     console_log_level = "INFO"
     file_log_level = "DEBUG"
 
-    def to_app_context_overrides(self) -> dict[str, str | bool]:
+    def to_app_context_settings(self) -> dict[str, str | bool]:
         return {
             "SOURCE_MODE": self.source_mode,
             "GAME_PATH": self.game_path,
@@ -267,8 +267,8 @@ def test_shared_data_controller_load_initial_data_starts_worker_and_emits_loadin
     worker.func()
 
     assert len(create_calls) == 1
-    assert create_calls[0]["cli_overrides"]["SOURCE_MODE"] == "local_path"
-    assert create_calls[0]["cli_overrides"]["OUTPUT_PATH"] == "output"
+    assert create_calls[0]["settings"]["SOURCE_MODE"] == "local_path"
+    assert create_calls[0]["settings"]["OUTPUT_PATH"] == "output"
 
 
 def test_shared_data_controller_load_initial_data_failed_callback_clears_state_and_notifies() -> None:
@@ -358,17 +358,17 @@ def test_shared_data_controller_reconfigures_logging_only_when_scan_signature_ch
         app_context_block_reason_fn=lambda _cfg: None,
     )
     controller.shared_entity_reader_signature = (
-        cfg.to_app_context_overrides()["SOURCE_MODE"],
-        cfg.to_app_context_overrides()["GAME_PATH"],
-        cfg.to_app_context_overrides()["GAME_REGION"],
-        cfg.to_app_context_overrides()["REMOTE_LIVE_REGION"],
-        cfg.to_app_context_overrides()["REMOTE_VERSION"],
-        cfg.to_app_context_overrides()["REMOTE_LCU_MANIFEST_URL"],
-        cfg.to_app_context_overrides()["REMOTE_GAME_MANIFEST_URL"],
+        cfg.to_app_context_settings()["SOURCE_MODE"],
+        cfg.to_app_context_settings()["GAME_PATH"],
+        cfg.to_app_context_settings()["GAME_REGION"],
+        cfg.to_app_context_settings()["REMOTE_LIVE_REGION"],
+        cfg.to_app_context_settings()["REMOTE_VERSION"],
+        cfg.to_app_context_settings()["REMOTE_LCU_MANIFEST_URL"],
+        cfg.to_app_context_settings()["REMOTE_GAME_MANIFEST_URL"],
     )
     controller.shared_entity_scan_signature = (
-        cfg.to_app_context_overrides()["OUTPUT_PATH"],
-        cfg.to_app_context_overrides()["GROUP_BY_TYPE"],
+        cfg.to_app_context_settings()["OUTPUT_PATH"],
+        cfg.to_app_context_settings()["GROUP_BY_TYPE"],
     )
     reconfigure_payloads = []
     controller.reconfigure_runtime_logging_requested.connect(reconfigure_payloads.append)

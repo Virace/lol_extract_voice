@@ -1,0 +1,84 @@
+"""GUI 配置中的 WAV 默认值回归测试。"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from lol_audio_unpack.config_loading import load_command_config_from_file
+from lol_audio_unpack.gui.common.gui_config import GuiConfig
+
+EXPECTED_WAV_WORKERS = 6
+EXPECTED_WAV_TIMEOUT = 9
+EXPECTED_WAV_RETRIES = 4
+
+
+def test_gui_config_load_reads_extract_and_wav_command_defaults(tmp_path: Path) -> None:
+    """应从标准 INI 的命令分组读取 WAV 相关默认值。"""
+    config_file = tmp_path / "lol-audio-unpack.ini"
+    config_file.write_text(
+        (
+            "[app]\n"
+            "game_path = ./game\n"
+            "\n"
+            "[extract]\n"
+            "wav = true\n"
+            "\n"
+            "[wav]\n"
+            f"wav_workers = {EXPECTED_WAV_WORKERS}\n"
+            f"wav_timeout = {EXPECTED_WAV_TIMEOUT}\n"
+            f"wav_retries = {EXPECTED_WAV_RETRIES}\n"
+            "wav_format = float\n"
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = GuiConfig()
+    cfg._config_file = config_file
+
+    cfg.load()
+
+    assert cfg.extract_wav_enabled is True
+    assert cfg.wav_workers == EXPECTED_WAV_WORKERS
+    assert cfg.wav_timeout == EXPECTED_WAV_TIMEOUT
+    assert cfg.wav_retries == EXPECTED_WAV_RETRIES
+    assert cfg.wav_format == "float"
+
+
+def test_gui_config_save_updates_wav_tuning_without_clobbering_extract_or_format(tmp_path: Path) -> None:
+    """保存 GUI 配置时不应覆盖已有的 extract/wav 语义。"""
+    config_file = tmp_path / "lol-audio-unpack.ini"
+    config_file.write_text(
+        (
+            "[app]\n"
+            "game_path = ./game\n"
+            "\n"
+            "[extract]\n"
+            "wav = true\n"
+            "\n"
+            "[wav]\n"
+            "wav_workers = 2\n"
+            "wav_timeout = 5\n"
+            "wav_retries = 3\n"
+            "wav_format = auto\n"
+        ),
+        encoding="utf-8",
+    )
+
+    cfg = GuiConfig()
+    cfg._config_file = config_file
+    cfg.load()
+    cfg.wav_workers = 8
+    cfg.wav_timeout = 11
+    cfg.wav_retries = 5
+
+    cfg.save()
+
+    assert load_command_config_from_file(config_file, command="extract") == {
+        "wav": True,
+    }
+    assert load_command_config_from_file(config_file, command="wav") == {
+        "wav_workers": 8,
+        "wav_timeout": 11,
+        "wav_retries": 5,
+        "wav_format": "auto",
+    }

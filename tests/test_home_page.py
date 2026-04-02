@@ -38,8 +38,8 @@ class _FakeHomeStatusController:
 class _FakeConfig:
     """首页页面测试使用的最小配置对象。"""
 
-    game_path = "D:/Games/Tencent/WeGameApps/英雄联盟"
-    output_path = "E:/Temp/Scratch/lol"
+    game_path = "game-client"
+    output_path = "output-root"
     wwiser_path = ""
     vgmstream_path = ""
 
@@ -63,5 +63,5 @@ def test_home_page_defers_initial_status_check_until_show(qtbot, monkeypatch) ->
     qtbot.waitUntil(lambda: len(_FakeHomeStatusController.calls) == 1, timeout=1000)
 
     assert _FakeHomeStatusController.calls == [
-        (Path("D:/Games/Tencent/WeGameApps/英雄联盟"), Path("E:/Temp/Scratch/lol"))
+        (Path("game-client"), Path("output-root"))
     ]

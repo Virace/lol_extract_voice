@@ -3,6 +3,7 @@ import os
 import pytest
 
 import lol_audio_unpack.app_context as app_context_module
+import lol_audio_unpack.config_loading as config_loading_module
 from lol_audio_unpack.gui.common import gui_config as gui_config_module
 from lol_audio_unpack.manager.data_reader import DataReader
 from lol_audio_unpack.utils.common import Singleton
@@ -41,9 +42,18 @@ def _reset_config_state(monkeypatch, tmp_path):
     isolated_work_dir.mkdir(parents=True, exist_ok=True)
     FakeQSettings._store = {}
 
-    # 强制把默认配置目录切换到临时目录，避免读取项目根目录 .lol.env*
+    # 强制把默认配置目录切换到临时目录，避免读取真实配置文件
     monkeypatch.setattr(
         app_context_module,
+        "detect_runtime_paths",
+        lambda: detect_runtime_paths(
+            is_frozen=False,
+            cwd=isolated_work_dir,
+            executable=isolated_work_dir / "python.exe",
+        ),
+    )
+    monkeypatch.setattr(
+        config_loading_module,
         "detect_runtime_paths",
         lambda: detect_runtime_paths(
             is_frozen=False,

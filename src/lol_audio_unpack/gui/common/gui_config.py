@@ -1,29 +1,19 @@
-"""GUI configuration persistence layer.
-
-Uses QSettings (INI format, stored in the OS-default user config directory)
-to save and restore all user-facing settings shown on SettingPage.
-
-Key design decisions
---------------------
-- **No coupling to CLI AppConfig**: The GUI config is its own source-of-truth
-  for UI state.  When an unpack/mapping task is launched, the caller is
-  responsible for reading these values and constructing the appropriate
-  ``AppContext`` / ``OperationOptions``.
-- **Flat, typed API**: Each setting is exposed as a typed Python property
-  with a sensible default so call-sites never see raw QSettings strings.
-- **Atomic save**: ``save()`` writes every known setting in one pass so
-  partial-writes cannot leave the file inconsistent.
-"""
+"""GUI 配置持久化层。"""
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from time import sleep
 
-from dotenv import dotenv_values, set_key, unset_key
 from PySide6.QtCore import QSettings
 
+from lol_audio_unpack.config_loading import (
+    load_command_config_from_file,
+    load_settings_from_config_file,
+    resolve_default_config_file_path,
+    write_command_config_to_file,
+    write_settings_to_config_file,
+)
+from lol_audio_unpack.config_schema import DEFAULT_REMOTE_LIVE_REGION, ConfigSection, SettingKey
 from lol_audio_unpack.gui.common.packaged_remote_mode_policy import effective_source_mode
 from lol_audio_unpack.gui.task_models import AppContextInputSnapshot
 from lol_audio_unpack.utils.runtime_paths import (
@@ -39,43 +29,15 @@ from lol_audio_unpack.utils.runtime_paths import (
 _UNSET = object()  # distinguishes "not in file" from ""
 
 
-def _set_key_with_retry(env_file: Path, key: str, value: str) -> None:
-    """在 Windows 瞬时文件锁场景下重试写入 env 配置。"""
-    last_error: PermissionError | None = None
-    for _ in range(3):
-        try:
-            set_key(env_file, key, value)
-            return
-        except PermissionError as exc:
-            last_error = exc
-            sleep(0.05)
-    if last_error is not None:
-        raise last_error
-
-
-def _unset_key_with_retry(env_file: Path, key: str) -> None:
-    """在 Windows 瞬时文件锁场景下重试删除 env 配置。"""
-    last_error: PermissionError | None = None
-    for _ in range(3):
-        try:
-            unset_key(env_file, key)
-            return
-        except PermissionError as exc:
-            last_error = exc
-            sleep(0.05)
-    if last_error is not None:
-        raise last_error
-
-
 class GuiConfig:
-    """Configuration manager for GUI, sharing CLI config via .lol.env."""
+    """GUI 配置管理器。"""
 
     def __init__(self, dev_mode: bool = False) -> None:
         # 共享 runtime 层负责决定默认配置目录，GUI 仅消费结果。
         self._env_dir = detect_runtime_paths().config_root
 
         self._dev_mode = dev_mode
-        self._env_file = self._env_dir / (".lol.env.dev" if dev_mode else ".lol.env")
+        self._config_file = resolve_default_config_file_path(dev_mode=dev_mode)
 
         # QSettings 用于 GUI 独有配置
         self._qs = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, "ViraceLab", "LolAudioUnpack")
@@ -94,6 +56,11 @@ class GuiConfig:
         self._group_by_type: bool = False
         self._wwiser_path: str = ""
         self._vgmstream_path: str = ""
+        self._extract_wav_enabled: bool = False
+        self._wav_workers: int = 2
+        self._wav_timeout: int = 5
+        self._wav_retries: int = 3
+        self._wav_format: str = "pcm16"
 
         # GUI 专有配置
         self._theme_mode: str = "Auto"  # Light, Dark, Auto
@@ -107,39 +74,47 @@ class GuiConfig:
         self._preview_audio_output_device_key: str = "default"
 
     def load(self) -> None:
-        """从 .lol.env 和 QSettings 加载配置。"""
-        env_values = dotenv_values(self._env_file) if self._env_file.exists() else {}
+        """从标准 INI 和 QSettings 加载配置。"""
+        shared_settings = load_settings_from_config_file(self._config_file, require_exists=False)
+        extract_settings = load_command_config_from_file(
+            self._config_file,
+            command=ConfigSection.EXTRACT,
+            require_exists=False,
+        )
+        wav_settings = load_command_config_from_file(
+            self._config_file,
+            command=ConfigSection.WAV,
+            require_exists=False,
+        )
 
         def _shared_value(key: str, default: str) -> str:
-            system_value = os.getenv(key)
-            if system_value is not None:
-                return system_value
-            file_value = env_values.get(key)
+            file_value = shared_settings.get(key)
             return default if file_value is None else str(file_value)
 
-        # 1. 读取 CLI 共享配置，保持系统环境变量优先于 .lol.env
-        self._source_mode = _shared_value("LOL_SOURCE_MODE", "local_path")
-        self._game_path = _shared_value("LOL_GAME_PATH", "")
-        self._remote_live_region = _shared_value("LOL_REMOTE_LIVE_REGION", "EUW")
-        self._cleanup_remote = self._to_bool(_shared_value("LOL_CLEANUP_REMOTE", "true"))
-        self._snapshot_version = _shared_value("LOL_REMOTE_VERSION", "")
-        self._snapshot_lcu_url = _shared_value("LOL_REMOTE_LCU_MANIFEST_URL", "")
-        self._snapshot_game_url = _shared_value("LOL_REMOTE_GAME_MANIFEST_URL", "")
-        self._output_path = _shared_value("LOL_OUTPUT_PATH", "")
-        self._game_region = _shared_value("LOL_GAME_REGION", "zh_CN")
-        self._group_by_type = self._to_bool(_shared_value("LOL_GROUP_BY_TYPE", "false"))
-        self._wwiser_path = _shared_value("LOL_WWISER_PATH", "")
+        # 1. 读取共享配置
+        self._source_mode = _shared_value(SettingKey.SOURCE_MODE, "local_path")
+        self._game_path = _shared_value(SettingKey.GAME_PATH, "")
+        self._remote_live_region = _shared_value(SettingKey.REMOTE_LIVE_REGION, DEFAULT_REMOTE_LIVE_REGION)
+        self._cleanup_remote = self._to_bool(_shared_value(SettingKey.CLEANUP_REMOTE, "true"))
+        self._snapshot_version = _shared_value(SettingKey.REMOTE_VERSION, "")
+        self._snapshot_lcu_url = _shared_value(SettingKey.REMOTE_LCU_MANIFEST_URL, "")
+        self._snapshot_game_url = _shared_value(SettingKey.REMOTE_GAME_MANIFEST_URL, "")
+        self._output_path = _shared_value(SettingKey.OUTPUT_PATH, "")
+        self._game_region = _shared_value(SettingKey.GAME_REGION, "zh_CN")
+        self._group_by_type = self._to_bool(_shared_value(SettingKey.GROUP_BY_TYPE, "false"))
+        self._wwiser_path = _shared_value(SettingKey.WWISER_PATH, "")
+        self._extract_wav_enabled = bool(extract_settings.get("wav", False))
+        self._wav_workers = int(wav_settings.get("wav_workers", 2))
+        self._wav_timeout = int(wav_settings.get("wav_timeout", 5))
+        self._wav_retries = int(wav_settings.get("wav_retries", 3))
+        self._wav_format = str(wav_settings.get("wav_format", "pcm16") or "pcm16")
 
-        # 2. GUI 专有配置优先走 QSettings，兼容一次性迁移旧的 .lol.env 值
+        # 2. GUI 专有配置只走 QSettings
         stored_vgmstream_path = self._qs.value("vgmstream_path", _UNSET)
         if stored_vgmstream_path is _UNSET:
-            self._vgmstream_path = _shared_value("LOL_VGMSTREAM_PATH", "")
+            self._vgmstream_path = ""
         else:
             self._vgmstream_path = str(stored_vgmstream_path or "")
-
-        if env_values.get("LOL_VGMSTREAM_PATH") is not None:
-            self._qs.setValue("vgmstream_path", self._vgmstream_path)
-            unset_key(self._env_file, "LOL_VGMSTREAM_PATH")
 
         inferred_snapshot_strategy = (
             "custom"
@@ -192,35 +167,35 @@ class GuiConfig:
         )
 
     def save(self) -> None:
-        """保存配置到 .lol.env。"""
-        # 确保目录存在
-        self._env_file.parent.mkdir(parents=True, exist_ok=True)
-
-        # 写入 CLI 共享配置到 .lol.env
-        _set_key_with_retry(self._env_file, "LOL_SOURCE_MODE", self._source_mode)
-        _set_key_with_retry(self._env_file, "LOL_GAME_PATH", self._game_path)
-        _set_key_with_retry(self._env_file, "LOL_REMOTE_LIVE_REGION", self._remote_live_region)
-        _set_key_with_retry(self._env_file, "LOL_CLEANUP_REMOTE", str(self._cleanup_remote).lower())
+        """保存配置到标准 INI 与 QSettings。"""
         snapshot_overrides = self._snapshot_overrides()
-        _set_key_with_retry(self._env_file, "LOL_REMOTE_VERSION", str(snapshot_overrides["REMOTE_VERSION"]))
-        _set_key_with_retry(
-            self._env_file,
-            "LOL_REMOTE_LCU_MANIFEST_URL",
-            str(snapshot_overrides["REMOTE_LCU_MANIFEST_URL"]),
+        write_settings_to_config_file(
+            self._config_file,
+            {
+                SettingKey.SOURCE_MODE: self._source_mode,
+                SettingKey.GAME_PATH: self._game_path,
+                SettingKey.REMOTE_LIVE_REGION: self._remote_live_region,
+                SettingKey.CLEANUP_REMOTE: self._cleanup_remote,
+                SettingKey.REMOTE_VERSION: snapshot_overrides[SettingKey.REMOTE_VERSION],
+                SettingKey.REMOTE_LCU_MANIFEST_URL: snapshot_overrides[SettingKey.REMOTE_LCU_MANIFEST_URL],
+                SettingKey.REMOTE_GAME_MANIFEST_URL: snapshot_overrides[SettingKey.REMOTE_GAME_MANIFEST_URL],
+                SettingKey.OUTPUT_PATH: self._output_path,
+                SettingKey.GAME_REGION: self._game_region,
+                SettingKey.GROUP_BY_TYPE: self._group_by_type,
+                SettingKey.WWISER_PATH: self._wwiser_path,
+            },
         )
-        _set_key_with_retry(
-            self._env_file,
-            "LOL_REMOTE_GAME_MANIFEST_URL",
-            str(snapshot_overrides["REMOTE_GAME_MANIFEST_URL"]),
+        write_command_config_to_file(
+            self._config_file,
+            command=ConfigSection.WAV,
+            values={
+                "wav_workers": self._wav_workers,
+                "wav_timeout": self._wav_timeout,
+                "wav_retries": self._wav_retries,
+            },
         )
-        _set_key_with_retry(self._env_file, "LOL_OUTPUT_PATH", self._output_path)
-        _set_key_with_retry(self._env_file, "LOL_GAME_REGION", self._game_region)
-        _set_key_with_retry(self._env_file, "LOL_GROUP_BY_TYPE", str(self._group_by_type).lower())
-        _set_key_with_retry(self._env_file, "LOL_WWISER_PATH", self._wwiser_path)
 
         # 保存 GUI 专有配置到 QSettings
-        if dotenv_values(self._env_file).get("LOL_VGMSTREAM_PATH") is not None:
-            _unset_key_with_retry(self._env_file, "LOL_VGMSTREAM_PATH")
         self._qs.setValue("vgmstream_path", self._vgmstream_path)
         self._qs.setValue("remote_snapshot_strategy", self._remote_snapshot_strategy)
         self._qs.setValue("remote_snapshot_version", self._snapshot_version)
@@ -242,27 +217,27 @@ class GuiConfig:
         self._qs.setValue("theme_mode", self._theme_mode)
         self._qs.setValue("theme_color", self._theme_color)
 
-    def to_app_context_overrides(self) -> dict[str, str | bool]:
-        """构建供 ``create_app_context`` 使用的配置映射。"""
+    def to_app_context_settings(self) -> dict[str, str | bool]:
+        """构建供 ``create_app_context`` 使用的共享配置映射。"""
         snapshot_overrides = self._snapshot_overrides()
         return {
-            "SOURCE_MODE": self.effective_source_mode,
-            "GAME_PATH": self._game_path,
-            "OUTPUT_PATH": self._output_path,
-            "GAME_REGION": self._game_region,
-            "GROUP_BY_TYPE": self._group_by_type,
-            "REMOTE_LIVE_REGION": self._remote_live_region,
-            "CLEANUP_REMOTE": self._cleanup_remote,
-            "REMOTE_VERSION": snapshot_overrides["REMOTE_VERSION"],
-            "REMOTE_LCU_MANIFEST_URL": snapshot_overrides["REMOTE_LCU_MANIFEST_URL"],
-            "REMOTE_GAME_MANIFEST_URL": snapshot_overrides["REMOTE_GAME_MANIFEST_URL"],
-            "WWISER_PATH": self._wwiser_path,
+            SettingKey.SOURCE_MODE: self.effective_source_mode,
+            SettingKey.GAME_PATH: self._game_path,
+            SettingKey.OUTPUT_PATH: self._output_path,
+            SettingKey.GAME_REGION: self._game_region,
+            SettingKey.GROUP_BY_TYPE: self._group_by_type,
+            SettingKey.REMOTE_LIVE_REGION: self._remote_live_region,
+            SettingKey.CLEANUP_REMOTE: self._cleanup_remote,
+            SettingKey.REMOTE_VERSION: snapshot_overrides[SettingKey.REMOTE_VERSION],
+            SettingKey.REMOTE_LCU_MANIFEST_URL: snapshot_overrides[SettingKey.REMOTE_LCU_MANIFEST_URL],
+            SettingKey.REMOTE_GAME_MANIFEST_URL: snapshot_overrides[SettingKey.REMOTE_GAME_MANIFEST_URL],
+            SettingKey.WWISER_PATH: self._wwiser_path,
         }
 
     def to_app_context_input_snapshot(self) -> AppContextInputSnapshot:
         """构建执行中心可直接消费的共享上下文输入快照。"""
         return AppContextInputSnapshot(
-            overrides=tuple(self.to_app_context_overrides().items()),
+            settings=tuple(self.to_app_context_settings().items()),
         )
 
     def _resolve_optional_runtime_path(self, raw: str) -> Path | None:
@@ -442,6 +417,51 @@ class GuiConfig:
     def vgmstream_path(self, v: str) -> None:
         self._vgmstream_path = v
 
+    @property
+    def extract_wav_enabled(self) -> bool:
+        """返回执行中心默认是否启用 WAV 派生输出。"""
+        return self._extract_wav_enabled
+
+    @extract_wav_enabled.setter
+    def extract_wav_enabled(self, value: bool) -> None:
+        self._extract_wav_enabled = bool(value)
+
+    @property
+    def wav_workers(self) -> int:
+        """返回默认 WAV 转码并发数。"""
+        return self._wav_workers
+
+    @wav_workers.setter
+    def wav_workers(self, value: int) -> None:
+        self._wav_workers = int(value)
+
+    @property
+    def wav_timeout(self) -> int:
+        """返回默认单个 WAV 转码任务超时时间。"""
+        return self._wav_timeout
+
+    @wav_timeout.setter
+    def wav_timeout(self, value: int) -> None:
+        self._wav_timeout = int(value)
+
+    @property
+    def wav_retries(self) -> int:
+        """返回默认 WAV 转码最大重试次数。"""
+        return self._wav_retries
+
+    @wav_retries.setter
+    def wav_retries(self, value: int) -> None:
+        self._wav_retries = int(value)
+
+    @property
+    def wav_format(self) -> str:
+        """返回执行中心默认的 WAV 输出格式。"""
+        return self._wav_format
+
+    @wav_format.setter
+    def wav_format(self, value: str) -> None:
+        self._wav_format = str(value or "pcm16")
+
     # ------------------------------------------------------------------
     # Properties — GUI 专有
     # ------------------------------------------------------------------
@@ -565,13 +585,13 @@ class GuiConfig:
         """根据当前远端快照策略构建实际生效的快照覆盖项。"""
         if self._source_mode != "remote_snapshot" or self._remote_snapshot_strategy != "custom":
             return {
-                "REMOTE_VERSION": "",
-                "REMOTE_LCU_MANIFEST_URL": "",
-                "REMOTE_GAME_MANIFEST_URL": "",
+                SettingKey.REMOTE_VERSION: "",
+                SettingKey.REMOTE_LCU_MANIFEST_URL: "",
+                SettingKey.REMOTE_GAME_MANIFEST_URL: "",
             }
 
         return {
-            "REMOTE_VERSION": self._snapshot_version,
-            "REMOTE_LCU_MANIFEST_URL": self._snapshot_lcu_url,
-            "REMOTE_GAME_MANIFEST_URL": self._snapshot_game_url,
+            SettingKey.REMOTE_VERSION: self._snapshot_version,
+            SettingKey.REMOTE_LCU_MANIFEST_URL: self._snapshot_lcu_url,
+            SettingKey.REMOTE_GAME_MANIFEST_URL: self._snapshot_game_url,
         }

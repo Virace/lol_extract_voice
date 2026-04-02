@@ -715,6 +715,7 @@ class LolAudioUnpackApp:
                 max_workers=opts.max_workers,
                 ctx=self.ctx,
                 progress_callback=progress_callback,
+                wav_output=opts.wav_output,
             )
             return
         if opts.map_ids is not None:
@@ -724,6 +725,7 @@ class LolAudioUnpackApp:
                 max_workers=opts.max_workers,
                 ctx=self.ctx,
                 progress_callback=progress_callback,
+                wav_output=opts.wav_output,
             )
             return
 
@@ -734,6 +736,7 @@ class LolAudioUnpackApp:
             include_maps=include_maps,
             ctx=self.ctx,
             progress_callback=progress_callback,
+            wav_output=opts.wav_output,
         )
 
     def mapping(
