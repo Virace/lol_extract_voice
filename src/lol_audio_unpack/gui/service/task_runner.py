@@ -35,6 +35,7 @@ STAGE_LABEL_BY_KEY = {
 ENTITY_SCOPE_LABEL_BY_TYPE = {
     "champion": "英雄",
     "map": "地图",
+    "wav": "WAV 转码",
 }
 
 
@@ -225,7 +226,11 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     entity_scope_label=task_scope_label,
                     current=1,
                     total=1,
-                    message="音频解包阶段已结束",
+                    message=(
+                        "音频解包与 WAV 转码阶段已结束"
+                        if options.wav_output.enabled
+                        else "音频解包阶段已结束"
+                    ),
                     stage_finished=True,
                 )
             elif step_name == "事件映射":

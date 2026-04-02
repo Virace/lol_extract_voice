@@ -25,7 +25,7 @@ from lol_audio_unpack.utils.path_constants import (
 )
 from lol_audio_unpack.utils.run_summary import record_runtime_note
 from lol_audio_unpack.utils.stats import FileProcessResult, ProcessingStatsContext
-from lol_audio_unpack.wav_sidecar import WavTranscodeCoordinator
+from lol_audio_unpack.wav_sidecar import WavSidecarProgressSnapshot, WavTranscodeCoordinator
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app_context import AppContext, WavOutputOptions
@@ -35,6 +35,8 @@ if TYPE_CHECKING:
 
 AUDIO_TYPE_VO = "VO"
 WAV_SIDECAR_INTERNAL_ERROR_NOTE = "已启用 WAV 转码，但 sidecar 内部异常，已自动降级为仅保留 WEM。"
+_WAV_PROGRESS_SUBMITTED_LOG_INTERVAL = 25
+_WAV_PROGRESS_PROCESSED_LOG_INTERVAL = 10
 
 
 def _persist_wem_and_maybe_submit(
@@ -84,6 +86,98 @@ def _record_wav_sidecar_internal_error(
         detail=detail,
     )
     return detail
+
+
+def _wav_processed_count(snapshot: WavSidecarProgressSnapshot) -> int:
+    """返回当前已处理完成的 WAV 任务数。"""
+    return (
+        snapshot.completed_wav_job_count
+        + snapshot.failed_wav_job_count
+        + snapshot.skipped_wav_job_count
+    )
+
+
+def _format_wav_progress_message(snapshot: WavSidecarProgressSnapshot) -> str:
+    """将 WAV sidecar 快照格式化为可读文案。"""
+    counters = [
+        f"已提交 {snapshot.submitted_wav_job_count}",
+        f"运行中 {snapshot.running_wav_job_count}",
+        f"完成 {snapshot.completed_wav_job_count}",
+        f"失败 {snapshot.failed_wav_job_count}",
+    ]
+    if snapshot.retried_wav_job_count:
+        counters.append(f"重试 {snapshot.retried_wav_job_count}")
+    if snapshot.skipped_wav_job_count:
+        counters.append(f"跳过 {snapshot.skipped_wav_job_count}")
+
+    if snapshot.phase == "draining":
+        prefix = "音频解包已完成，正在等待 WAV 转码收尾"
+    elif snapshot.phase == "finalized":
+        prefix = "WAV 转码已完成"
+    elif snapshot.phase == "breaker_opened":
+        prefix = "WAV 转码已触发熔断，后续任务将跳过"
+    elif snapshot.phase == "retrying":
+        prefix = "WAV 转码失败，准备重试"
+    else:
+        prefix = "WAV 转码进行中"
+    return f"{prefix}：{'，'.join(counters)}"
+
+
+def _emit_wav_sidecar_degraded_progress(
+    *,
+    progress_callback: Callable[[str, int, int, str], None] | None,
+) -> None:
+    """向上游发出 WAV sidecar 已降级的进度提示。"""
+    if progress_callback is None:
+        return
+    progress_callback("wav", 1, 1, "WAV 转码不可用，已自动降级为仅保留 WEM。")
+
+
+def _build_wav_sidecar_progress_handler(
+    *,
+    progress_callback: Callable[[str, int, int, str], None] | None,
+) -> Callable[[WavSidecarProgressSnapshot], None]:
+    """构造 WAV sidecar 到日志/GUI 进度的桥接回调。"""
+    last_logged_submitted = 0
+    last_logged_processed = 0
+
+    def handle(snapshot: WavSidecarProgressSnapshot) -> None:
+        nonlocal last_logged_processed, last_logged_submitted
+
+        processed = _wav_processed_count(snapshot)
+        total = max(snapshot.submitted_wav_job_count, 1)
+        message = _format_wav_progress_message(snapshot)
+
+        if progress_callback is not None:
+            progress_callback("wav", processed, total, message)
+
+        should_log = False
+        log_fn = logger.info
+        if snapshot.phase in {"draining", "finalized"}:
+            should_log = True
+        elif snapshot.phase == "breaker_opened":
+            should_log = True
+            log_fn = logger.warning
+        elif snapshot.phase == "retrying":
+            should_log = True
+            log_fn = logger.warning
+        elif snapshot.phase == "submitted":
+            submitted = snapshot.submitted_wav_job_count
+            if submitted == 1 or submitted - last_logged_submitted >= _WAV_PROGRESS_SUBMITTED_LOG_INTERVAL:
+                should_log = True
+                last_logged_submitted = submitted
+        elif snapshot.phase in {"completed", "failed"}:
+            if processed in {1, snapshot.submitted_wav_job_count}:
+                should_log = True
+            elif processed - last_logged_processed >= _WAV_PROGRESS_PROCESSED_LOG_INTERVAL:
+                should_log = True
+            if should_log:
+                last_logged_processed = processed
+
+        if should_log:
+            log_fn(message)
+
+    return handle
 
 
 def _get_game_region(ctx: AppContext) -> str:
@@ -745,11 +839,21 @@ def execute_unpack_tasks(  # noqa: PLR0913
     coordinator = None
     if wav_output and wav_output.enabled:
         try:
+            logger.info(
+                "WAV 转码已启用：workers={}，timeout={}s，retries={}，format={}",
+                wav_output.worker_count,
+                wav_output.timeout_seconds,
+                wav_output.max_retries,
+                wav_output.format,
+            )
             coordinator = WavTranscodeCoordinator(
                 options=wav_output,
                 audio_root=Path(ctx.paths.audio_path) / reader.version,
                 wav_root=Path(ctx.paths.wav_path) / reader.version,
                 report_root=Path(ctx.paths.report_path) / reader.version / "transcode_wav",
+                progress_callback=_build_wav_sidecar_progress_handler(
+                    progress_callback=progress_callback,
+                ),
             )
         except Exception as exc:  # noqa: BLE001
             wav_sidecar_internal_error_detail = _record_wav_sidecar_internal_error(
@@ -758,6 +862,7 @@ def execute_unpack_tasks(  # noqa: PLR0913
                 phase="initialize",
                 show_exception=show_exception,
             )
+            _emit_wav_sidecar_degraded_progress(progress_callback=progress_callback)
 
     def safe_wav_submitter(wem_path: Path) -> None:
         """安全提交 WAV sidecar 任务。
@@ -777,6 +882,7 @@ def execute_unpack_tasks(  # noqa: PLR0913
                 phase="submit",
                 show_exception=show_exception,
             )
+            _emit_wav_sidecar_degraded_progress(progress_callback=progress_callback)
 
     wav_submitter = None if coordinator is None else safe_wav_submitter
 
@@ -877,6 +983,7 @@ def execute_unpack_tasks(  # noqa: PLR0913
                     phase="mark_extract_finished",
                     show_exception=show_exception,
                 )
+                _emit_wav_sidecar_degraded_progress(progress_callback=progress_callback)
         try:
             transcode_summary = coordinator.finalize()
         except Exception as exc:  # noqa: BLE001
@@ -887,6 +994,7 @@ def execute_unpack_tasks(  # noqa: PLR0913
                     phase="finalize",
                     show_exception=show_exception,
                 )
+                _emit_wav_sidecar_degraded_progress(progress_callback=progress_callback)
             transcode_summary = None
         if transcode_summary is not None and transcode_summary.breaker_open:
             record_runtime_note(
