@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from lol_audio_unpack.app_context import OperationOptions
+from lol_audio_unpack.app_context import OperationOptions, WavOutputOptions
 from lol_audio_unpack.config_schema import SettingKey
 
 TASK_STATUS_WAITING = "等待中"
@@ -44,6 +44,11 @@ class ExecutionTaskParamsSnapshot:
         with_bp_vo: 是否包含 BP 语音。
         exclude_types: 需要排除的音频类型。
         integrate_data: 是否在映射阶段生成整合数据文件。
+        wav_enabled: 是否在解包后额外派生 WAV 输出。
+        wav_workers: WAV 转码使用的默认并发数。
+        wav_timeout: 单个 WAV 转码任务超时时间。
+        wav_retries: WAV 转码失败后的最大重试次数。
+        wav_format: WAV 输出格式。
     """
 
     champion_ids: tuple[int, ...] | None = None
@@ -55,6 +60,11 @@ class ExecutionTaskParamsSnapshot:
     with_bp_vo: bool = True
     exclude_types: tuple[str, ...] = ("SFX", "MUSIC")
     integrate_data: bool = True
+    wav_enabled: bool = False
+    wav_workers: int = 2
+    wav_timeout: int = 5
+    wav_retries: int = 3
+    wav_format: str = "pcm16"
 
     def selected_steps(self) -> tuple[str, ...]:
         """返回当前任务参数实际勾选的执行步骤。
@@ -86,6 +96,13 @@ class ExecutionTaskParamsSnapshot:
             integrate_data=self.integrate_data,
             champion_ids=self.champion_ids,
             map_ids=self.map_ids,
+            wav_output=WavOutputOptions(
+                enabled=self.wav_enabled,
+                worker_count=self.wav_workers,
+                timeout_seconds=self.wav_timeout,
+                max_retries=self.wav_retries,
+                format=self.wav_format,
+            ),
         )
 
     def to_runtime_overrides(self) -> dict[str, str | bool]:

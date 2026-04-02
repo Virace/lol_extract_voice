@@ -27,6 +27,16 @@ CONFIG_SECTION = ConfigSection.APP
 _MISSING = object()
 
 
+def _load_or_create_config_parser(config_file: StrPath) -> tuple[Path, configparser.ConfigParser]:
+    """加载已有配置，若不存在则返回空白 parser。"""
+    config_path = Path(config_file)
+    parser = _load_config_parser(config_path, require_exists=False)
+    if parser is None:
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.optionxform = str
+    return config_path, parser
+
+
 
 def resolve_default_config_file_path(
     *,
@@ -108,11 +118,10 @@ def write_settings_to_config_file(
         config_file: INI 配置文件路径。
         settings: 待写入的共享设置，键名使用内部大写格式。
     """
-    config_path = Path(config_file)
+    config_path, parser = _load_or_create_config_parser(config_file)
     config_path.parent.mkdir(parents=True, exist_ok=True)
-
-    parser = configparser.ConfigParser(interpolation=None)
-    parser.optionxform = str
+    if parser.has_section(ConfigSection.APP):
+        parser.remove_section(ConfigSection.APP)
     parser[ConfigSection.APP] = {}
     section = parser[ConfigSection.APP]
 
@@ -123,6 +132,39 @@ def write_settings_to_config_file(
         if value is None:
             continue
         section[field.ini_key] = str(value).lower() if isinstance(value, bool) else str(value)
+
+    with config_path.open("w", encoding="utf-8") as handle:
+        parser.write(handle)
+
+
+def write_command_config_to_file(
+    config_file: StrPath,
+    *,
+    command: str,
+    values: dict[str, Any],
+) -> None:
+    """按命令分组更新标准 INI 配置文件。"""
+    if command not in COMMAND_CONFIG_FIELDS:
+        raise ValueError(f"不支持的命令配置分组: {command}")
+
+    config_path, parser = _load_or_create_config_parser(config_file)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not parser.has_section(command):
+        parser.add_section(command)
+    section = parser[command]
+
+    for field in COMMAND_CONFIG_FIELDS[command]:
+        if field.attr not in values:
+            continue
+        value = values[field.attr]
+        if value is None:
+            section.pop(field.ini_key, None)
+            continue
+        section[field.ini_key] = str(value).lower() if isinstance(value, bool) else str(value)
+
+    if not list(section.items()):
+        parser.remove_section(command)
 
     with config_path.open("w", encoding="utf-8") as handle:
         parser.write(handle)

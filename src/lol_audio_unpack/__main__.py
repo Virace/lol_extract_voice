@@ -14,6 +14,16 @@ from loguru import logger
 
 from . import __version__, setup_app
 from .app_context import AppContext, AppContextValidationError, OperationOptions, SourceMode, WavOutputOptions
+from .cli_invocation import (
+    DEFAULT_CLI_MAX_WORKERS,
+    DEFAULT_WAV_FORMAT,
+    DEFAULT_WAV_RETRIES,
+    DEFAULT_WAV_TIMEOUT,
+    DEFAULT_WAV_WORKERS,
+    CliInvocationRequest,
+    CliInvocationValidationError,
+    validate_cli_invocation_request,
+)
 from .config_loading import (
     load_command_config_from_file,
     load_settings_from_config_file,
@@ -43,7 +53,7 @@ def _create_shared_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-workers",
         type=int,
-        default=4,
+        default=DEFAULT_CLI_MAX_WORKERS,
         metavar="N",
         help="批量运行时使用的最大线程数。默认为 4。",
     )
@@ -393,20 +403,15 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         logger.error("错误：-c/--config-file 模式不能与共享配置参数同时使用。")
         sys.exit(1)
 
-    wav_tuning_explicit = any(
-        value is not None for value in (args.wav_workers, args.wav_timeout, args.wav_retries, args.wav_format)
-    )
-    if getattr(args, "wav", False) and "extract" not in args.actions:
-        logger.error("错误：--wav 只能与 extract 动作一起使用。")
+    try:
+        validate_cli_invocation_request(
+            build_cli_invocation_request(args),
+            check_required_settings=False,
+        )
+    except CliInvocationValidationError as exc:
+        logger.error(f"错误：{exc}")
         sys.exit(1)
 
-    if wav_tuning_explicit and not getattr(args, "wav", False):
-        logger.error("错误：--wav-workers / --wav-timeout / --wav-retries / --wav-format 只能与 --wav 一起使用。")
-        sys.exit(1)
-
-    if getattr(args, "integrate_data", False) and "mapping" not in args.actions:
-        logger.error("错误：--integrate-data 只能与 mapping 动作一起使用。")
-        sys.exit(1)
     if args.integrate_data is True and "mapping" in args.actions:
         logger.info("检测到 --integrate-data 参数，将生成整合数据文件")
 
@@ -414,6 +419,26 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
 def build_context_settings(args: argparse.Namespace) -> dict[str, object]:
     """从命令行参数构建显式共享配置。"""
     return build_settings_from_namespace(args)
+
+
+def build_cli_invocation_request(args: argparse.Namespace) -> CliInvocationRequest:
+    """将 argparse 结果转换为共享的 invocation 请求。"""
+    settings = dict(getattr(args, "_loaded_settings", {}) or build_context_settings(args))
+    return CliInvocationRequest(
+        actions=tuple(args.actions),
+        settings=tuple(settings.items()),
+        champions=args.champions,
+        maps=args.maps,
+        max_workers=args.max_workers,
+        force=args.force,
+        skip_events=args.skip_events,
+        integrate_data=args.integrate_data,
+        wav_enabled=bool(getattr(args, "wav", False)),
+        wav_workers=DEFAULT_WAV_WORKERS if getattr(args, "wav_workers", None) is None else args.wav_workers,
+        wav_timeout=DEFAULT_WAV_TIMEOUT if getattr(args, "wav_timeout", None) is None else args.wav_timeout,
+        wav_retries=DEFAULT_WAV_RETRIES if getattr(args, "wav_retries", None) is None else args.wav_retries,
+        wav_format=DEFAULT_WAV_FORMAT if getattr(args, "wav_format", None) is None else args.wav_format,
+    )
 
 
 def _resolve_config_file_path(args: argparse.Namespace) -> Path | None:
@@ -442,6 +467,16 @@ def initialize_app(args: argparse.Namespace) -> AppContext:
                 logger.error("请先创建标准 INI 配置文件，或移除 -c 改为纯 CLI 显式参数模式。")
                 sys.exit(1)
         context_settings = dict(loaded_settings)
+
+    try:
+        validate_cli_invocation_request(build_cli_invocation_request(args))
+    except CliInvocationValidationError as exc:
+        logger.error(f"配置初始化失败: {exc}")
+        if config_file is not None:
+            logger.error(f"请检查当前命令使用的配置文件: {config_file}")
+        else:
+            logger.error("当前命令未启用 -c，请通过命令行显式传入缺失的共享配置。")
+        sys.exit(1)
 
     try:
         app_context = setup_app(dev_mode=args.dev, log_level=args.log_level.upper(), settings=context_settings)
@@ -538,10 +573,10 @@ def build_operation_options(
         map_ids=map_ids,
         wav_output=WavOutputOptions(
             enabled=getattr(args, "wav", False),
-            worker_count=2 if getattr(args, "wav_workers", None) is None else args.wav_workers,
-            timeout_seconds=5 if getattr(args, "wav_timeout", None) is None else args.wav_timeout,
-            max_retries=3 if getattr(args, "wav_retries", None) is None else args.wav_retries,
-            format="pcm16" if getattr(args, "wav_format", None) is None else args.wav_format,
+            worker_count=DEFAULT_WAV_WORKERS if getattr(args, "wav_workers", None) is None else args.wav_workers,
+            timeout_seconds=DEFAULT_WAV_TIMEOUT if getattr(args, "wav_timeout", None) is None else args.wav_timeout,
+            max_retries=DEFAULT_WAV_RETRIES if getattr(args, "wav_retries", None) is None else args.wav_retries,
+            format=DEFAULT_WAV_FORMAT if getattr(args, "wav_format", None) is None else args.wav_format,
         ),
     )
 

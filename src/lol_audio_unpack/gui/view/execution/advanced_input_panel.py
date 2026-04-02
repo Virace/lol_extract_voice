@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QSizePolicy, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QWidget
 from qfluentwidgets import CheckBox, ComboBox, LineEdit, SegmentedWidget
 from qfluentwidgets import FluentIcon as FIF
 
@@ -55,12 +55,29 @@ class AdvancedInputPanel(FormAccordionCard):
         self.bp_voice_cb.setChecked(True)
         self.force_update_cb = CheckBox("启用")
         self.integrate_data_cb = CheckBox("启用")
+        self.wav_output_cb = CheckBox("启用")
+        self.wav_format_combo = ComboBox()
+        self.wav_format_combo.addItems(["auto", "pcm16", "pcm24", "pcm32", "float"])
+        self.wav_format_combo.setCurrentText("pcm16")
+        self.wav_format_combo.setMinimumWidth(120)
+        self.wav_format_combo.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
+        self.wav_format_combo.setVisible(False)
+
+        self.wav_output_row = QWidget(self)
+        self.wav_output_row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        wav_output_layout = QHBoxLayout(self.wav_output_row)
+        wav_output_layout.setContentsMargins(0, 0, 0, 0)
+        wav_output_layout.setSpacing(8)
+        wav_output_layout.addWidget(self.wav_output_cb)
+        wav_output_layout.addWidget(self.wav_format_combo)
+        wav_output_layout.addStretch(1)
 
         self.add_form_row("英雄 ID", "多个英雄 ID 用逗号分隔，如 1,103,555", self.champion_ids_input)
         self.add_form_row("地图 ID", "多个地图 ID 用逗号分隔，如 0,11,12", self.map_ids_input)
         self.add_form_row("音频范围", "默认只处理 VO，需要时可切换为全部类型", self.vo_filter)
         self.add_form_row("并发数", "设置任务并发数；一般不建议超过 CPU 线程数", self.max_workers_combo)
         self.add_form_row("附加 BP 语音", "默认同时处理 BP 语音", self.bp_voice_cb)
+        self.add_form_row("派生 WAV", "解包完成后额外生成 WAV；启用后可选择输出格式", self.wav_output_row)
         self.add_form_row(
             "前置强制更新",
             "在执行解包或映射前先强制刷新基础数据，相当于先跑一次 update --force",
@@ -71,3 +88,10 @@ class AdvancedInputPanel(FormAccordionCard):
             "映射任务时额外生成整合数据，便于后续整理和查看",
             self.integrate_data_cb,
         )
+        self.set_wav_control_state(extract_enabled=True, wav_enabled=False)
+
+    def set_wav_control_state(self, *, extract_enabled: bool, wav_enabled: bool) -> None:
+        """同步 WAV 开关与格式控件的可见性。"""
+        self.wav_output_cb.setEnabled(extract_enabled)
+        self.wav_format_combo.setVisible(wav_enabled)
+        self.wav_format_combo.setEnabled(wav_enabled)

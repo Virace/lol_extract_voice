@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from time import perf_counter
 from typing import TYPE_CHECKING
 
@@ -147,6 +148,11 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     try:
         logger.info(f"[执行中心] 任务 #{task.task_id} 开始执行: {' -> '.join(steps)}")
         logger.debug(f"[执行中心] 任务 #{task.task_id} 范围={task_scope_label}, source_mode={source_mode}")
+        logger.debug(f"[执行中心] 任务 #{task.task_id} 共享上下文快照={task.draft.context_input.to_settings()}")
+        logger.debug(
+            f"[执行中心] 任务 #{task.task_id} 参数快照 "
+            f"task_params={asdict(task_params)}, runtime_settings={runtime_settings}, options={asdict(options)}"
+        )
         for step_name in steps:
             stage_key = STAGE_KEY_BY_STEP_NAME.get(step_name, "unknown")
             logger.info(f"[执行中心] 任务 #{task.task_id} 开始{step_name}")

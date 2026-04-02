@@ -126,6 +126,8 @@ def test_run_execution_task_logs_task_start_and_summary(monkeypatch) -> None:
 
     assert infos[0] == "[执行中心] 任务 #1 开始执行: 音频解包 -> 事件映射"
     assert debugs[0] == "[执行中心] 任务 #1 范围=英雄 + 地图, source_mode=local_path"
+    assert any("共享上下文快照" in message and "OUTPUT_PATH" in message for message in debugs)
+    assert any("参数快照" in message and "run_mapping" in message for message in debugs)
     assert debugs.count("[执行中心] 任务 #1 创建运行时 AppContext") == 1
     assert successes == [f"[执行中心] 任务 #1 {result.summary}"]
 
