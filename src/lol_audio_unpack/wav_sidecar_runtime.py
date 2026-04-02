@@ -6,13 +6,12 @@ import multiprocessing
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
-from importlib import import_module
 from multiprocessing.queues import Queue
 from pathlib import Path
 from queue import Empty
 from typing import Any
 
-from pyvgmstream import DecodeConfig, SampleFormat
+from pyvgmstream import DecodeConfig, SampleFormat, decode_to_wav_file
 
 
 @dataclass(frozen=True)
@@ -155,7 +154,6 @@ def default_worker_entry(job: WavJob, queue: Queue[Any]) -> None:
         queue: 用于回传结构化结果的进程队列。
     """
     try:
-        decode_to_wav_file = import_module("pyvgmstream").decode_to_wav_file
         job.wav_path.parent.mkdir(parents=True, exist_ok=True)
         result = decode_to_wav_file(job.wem_path, job.wav_path, config=resolve_wav_decode_config(job.wav_format))
         queue.put({"ok": True, "byte_count": result.byte_count})

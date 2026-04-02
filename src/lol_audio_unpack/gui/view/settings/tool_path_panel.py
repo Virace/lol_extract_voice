@@ -60,3 +60,32 @@ class ToolPathPanel:
 
         self.group.addSettingCard(self.wwiserCard)
         self.group.addSettingCard(self.vgmstreamCard)
+
+
+class WavSettingsPanel:
+    """承载 WAV 转码默认参数设置。"""
+
+    def __init__(self, *, parent: QWidget) -> None:
+        self.group = SettingCardGroup("WAV 转码", parent)
+        self.wavWorkersCard = ComboRowSettingCard(
+            FIF.SETTING,
+            "默认并发数",
+            "创建任务时默认使用的 WAV 转码并发数",
+            ["1", "2", "4", "8", "16", "32", "64"],
+        )
+        self.wavTimeoutCard = ComboRowSettingCard(
+            FIF.SETTING,
+            "单任务超时",
+            "单个 WAV 转码任务的默认超时时间（秒）",
+            ["3", "5", "8", "10", "15", "20", "30", "60"],
+        )
+        self.wavRetriesCard = ComboRowSettingCard(
+            FIF.SETTING,
+            "最大重试次数",
+            "单个 WAV 转码任务失败后的默认最大重试次数",
+            ["0", "1", "2", "3", "4", "5"],
+        )
+
+        self.group.addSettingCard(self.wavWorkersCard)
+        self.group.addSettingCard(self.wavTimeoutCard)
+        self.group.addSettingCard(self.wavRetriesCard)

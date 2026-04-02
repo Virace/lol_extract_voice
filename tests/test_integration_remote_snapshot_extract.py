@@ -26,7 +26,7 @@ def _reset_data_reader_singleton() -> None:
 def _build_remote_context(output_path: Path, *, version: str, lcu_manifest_url: str, game_manifest_url: str):
     """构建远端快照上下文。"""
     return create_app_context(
-        cli_overrides={
+        settings={
             "OUTPUT_PATH": str(output_path),
             "GAME_REGION": GAME_REGION,
             "SOURCE_MODE": "remote_snapshot",

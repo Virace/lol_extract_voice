@@ -60,7 +60,7 @@ def test_remote_snapshot_update_champions_live_latest() -> None:
     _reset_data_reader_singleton()
     try:
         ctx = create_app_context(
-            cli_overrides={
+            settings={
                 "OUTPUT_PATH": str(output_path),
                 "GAME_REGION": GAME_REGION,
                 "SOURCE_MODE": "remote_snapshot",

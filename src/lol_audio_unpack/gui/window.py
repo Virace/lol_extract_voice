@@ -25,6 +25,7 @@ from qfluentwidgets import (
 
 from lol_audio_unpack import __version__
 from lol_audio_unpack.app_context import OperationOptions, create_app_context
+from lol_audio_unpack.config_schema import SettingKey
 from lol_audio_unpack.facade import LolAudioUnpackApp
 from lol_audio_unpack.gui.common import (
     apply_smooth_scroll_enabled,
@@ -32,9 +33,7 @@ from lol_audio_unpack.gui.common import (
     load_app_icon,
     show_feedback_infobar,
 )
-from lol_audio_unpack.gui.common.packaged_remote_mode_policy import (
-    normalize_app_context_overrides,
-)
+from lol_audio_unpack.gui.common.packaged_remote_mode_policy import normalize_app_context_settings
 from lol_audio_unpack.gui.components.log_drawer import (
     GlobalLogDrawer,
 )
@@ -84,12 +83,12 @@ def _log_window_stage(stage: str, startup_begin: float, previous_mark: float) ->
     return current_mark
 
 
-def _prepare_shared_entity_data(cli_overrides: dict[str, str | bool]) -> None:
+def _prepare_shared_entity_data(shared_settings: dict[str, str | bool]) -> None:
     """为实体列表准备后端共享数据。"""
-    prepare_overrides = dict(cli_overrides)
-    prepare_overrides["WITH_BP_VO"] = True
-    prepare_overrides = normalize_app_context_overrides(prepare_overrides)
-    app_context = create_app_context(cli_overrides=prepare_overrides)
+    prepare_settings = dict(shared_settings)
+    prepare_settings[SettingKey.WITH_BP_VO] = True
+    prepare_settings = normalize_app_context_settings(prepare_settings)
+    app_context = create_app_context(settings=prepare_settings)
     app = LolAudioUnpackApp(app_context)
     app.update(OperationOptions(), target="all")
 

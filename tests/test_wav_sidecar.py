@@ -12,7 +12,11 @@ import pytest
 from pyvgmstream import SampleFormat
 
 from lol_audio_unpack.app_context import WavOutputOptions
-from lol_audio_unpack.wav_sidecar import WavTranscodeCoordinator, build_wav_output_path
+from lol_audio_unpack.wav_sidecar import (
+    WavSidecarProgressSnapshot,
+    WavTranscodeCoordinator,
+    build_wav_output_path,
+)
 from lol_audio_unpack.wav_sidecar_runtime import WavJob, default_worker_entry, resolve_wav_decode_config
 
 pytestmark = pytest.mark.unit
@@ -35,6 +39,11 @@ def always_fail_worker_entry(_job: Any, queue: Queue[Any]) -> None:
             "error_message": "decode failed",
         }
     )
+
+
+def instant_success_worker_entry(_job: Any, queue: Queue[Any]) -> None:
+    """模拟立即成功的 worker。"""
+    queue.put({"ok": True, "byte_count": 123})
 
 
 def test_build_wav_output_path_mirrors_audio_tree(tmp_path: Path) -> None:
@@ -73,16 +82,14 @@ def test_default_worker_entry_passes_resolved_decode_config(monkeypatch: pytest.
     class FakeDecodeResult:
         byte_count = 123
 
-    class FakeModule:
-        @staticmethod
-        def decode_to_wav_file(in_path, out_path, *, config=None):
-            captured["in_path"] = in_path
-            captured["out_path"] = out_path
-            captured["config"] = config
-            return FakeDecodeResult()
+    def fake_decode_to_wav_file(in_path, out_path, *, config=None):
+        captured["in_path"] = in_path
+        captured["out_path"] = out_path
+        captured["config"] = config
+        return FakeDecodeResult()
 
     queue: Queue[Any] = SimpleQueueAdapter()
-    monkeypatch.setattr("lol_audio_unpack.wav_sidecar_runtime.import_module", lambda _name: FakeModule)
+    monkeypatch.setattr("lol_audio_unpack.wav_sidecar_runtime.decode_to_wav_file", fake_decode_to_wav_file)
 
     job = WavJob(
         wem_path=tmp_path / "sample.wem",
@@ -171,3 +178,27 @@ def test_finalize_writes_summary_and_failures_reports(tmp_path: Path) -> None:
     assert payload["failed_wav_job_count"] == summary.failed_wav_job_count
     assert payload["skipped_wav_job_count"] == summary.skipped_wav_job_count
     assert len(failures_path.read_text(encoding="utf-8").strip().splitlines()) == summary.failed_wav_job_count
+
+
+def test_progress_callback_receives_sidecar_lifecycle_snapshots(tmp_path: Path) -> None:
+    """协调器应在关键生命周期节点发出结构化进度快照。"""
+    snapshots: list[WavSidecarProgressSnapshot] = []
+    options = WavOutputOptions(enabled=True, worker_count=1, timeout_seconds=1, max_retries=1)
+    coordinator = WavTranscodeCoordinator(
+        options=options,
+        audio_root=tmp_path / "audios" / "15.8",
+        wav_root=tmp_path / "wavs" / "15.8",
+        report_root=tmp_path / "reports" / "15.8" / "transcode_wav",
+        worker_entry=instant_success_worker_entry,
+        progress_callback=snapshots.append,
+    )
+
+    coordinator.submit_persisted_wem(tmp_path / "audios" / "15.8" / "sample.wem")
+    coordinator.mark_extract_finished()
+    summary = coordinator.finalize()
+
+    assert any(snapshot.phase == "submitted" for snapshot in snapshots)
+    assert any(snapshot.phase == "draining" and snapshot.extract_finished for snapshot in snapshots)
+    assert snapshots[-1].phase == "finalized"
+    assert snapshots[-1].completed_wav_job_count == summary.completed_wav_job_count
+    assert snapshots[-1].running_wav_job_count == 0

@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from lol_audio_unpack.app_context import OperationOptions
+from lol_audio_unpack.app_context import OperationOptions, WavOutputOptions
+from lol_audio_unpack.config_schema import SettingKey
 
 TASK_STATUS_WAITING = "等待中"
 TASK_STATUS_RUNNING = "运行中"
@@ -19,14 +20,14 @@ class AppContextInputSnapshot:
     """任务创建时记录的共享上下文输入快照。
 
     Args:
-        overrides: 创建 ``AppContext`` 时需要使用的输入覆盖配置。
+        settings: 创建 ``AppContext`` 时需要使用的共享输入配置。
     """
 
-    overrides: tuple[tuple[str, str | bool], ...] = ()
+    settings: tuple[tuple[str, str | bool], ...] = ()
 
-    def to_cli_overrides(self) -> dict[str, str | bool]:
-        """转换为 ``create_app_context`` 可直接消费的覆盖配置。"""
-        return dict(self.overrides)
+    def to_settings(self) -> dict[str, str | bool]:
+        """转换为 ``create_app_context`` 可直接消费的共享配置。"""
+        return dict(self.settings)
 
 
 @dataclass(slots=True, frozen=True)
@@ -36,13 +37,18 @@ class ExecutionTaskParamsSnapshot:
     Args:
         champion_ids: 目标英雄 ID；为空时表示不限制英雄范围。
         map_ids: 目标地图 ID；为空时表示不限制地图范围。
-        run_update: 是否在执行前先跑更新流程。
+        run_update: 是否在执行解包/映射前先强制刷新基础数据；GUI 中等价于前置一次 ``update --force``。
         run_extract: 是否执行音频解包。
         run_mapping: 是否执行事件映射。
         max_workers: 后端执行时使用的最大并发数。
         with_bp_vo: 是否包含 BP 语音。
         exclude_types: 需要排除的音频类型。
         integrate_data: 是否在映射阶段生成整合数据文件。
+        wav_enabled: 是否在解包后额外派生 WAV 输出。
+        wav_workers: WAV 转码使用的默认并发数。
+        wav_timeout: 单个 WAV 转码任务超时时间。
+        wav_retries: WAV 转码失败后的最大重试次数。
+        wav_format: WAV 输出格式。
     """
 
     champion_ids: tuple[int, ...] | None = None
@@ -53,7 +59,12 @@ class ExecutionTaskParamsSnapshot:
     max_workers: int = 4
     with_bp_vo: bool = True
     exclude_types: tuple[str, ...] = ("SFX", "MUSIC")
-    integrate_data: bool = False
+    integrate_data: bool = True
+    wav_enabled: bool = False
+    wav_workers: int = 2
+    wav_timeout: int = 5
+    wav_retries: int = 3
+    wav_format: str = "pcm16"
 
     def selected_steps(self) -> tuple[str, ...]:
         """返回当前任务参数实际勾选的执行步骤。
@@ -63,7 +74,7 @@ class ExecutionTaskParamsSnapshot:
         """
         steps: list[str] = []
         if self.run_update:
-            steps.append("更新数据")
+            steps.append("前置强制更新")
         if self.run_extract:
             steps.append("音频解包")
         if self.run_mapping:
@@ -75,6 +86,8 @@ class ExecutionTaskParamsSnapshot:
 
         Returns:
             基于当前任务参数构造的操作选项对象。
+            GUI 侧不会暴露“普通 update”，因此 ``run_update`` 会映射为
+            一次任务前置的强制刷新。
         """
         return OperationOptions(
             max_workers=self.max_workers,
@@ -83,13 +96,20 @@ class ExecutionTaskParamsSnapshot:
             integrate_data=self.integrate_data,
             champion_ids=self.champion_ids,
             map_ids=self.map_ids,
+            wav_output=WavOutputOptions(
+                enabled=self.wav_enabled,
+                worker_count=self.wav_workers,
+                timeout_seconds=self.wav_timeout,
+                max_retries=self.wav_retries,
+                format=self.wav_format,
+            ),
         )
 
     def to_runtime_overrides(self) -> dict[str, str | bool]:
         """构造只属于单次任务的运行时覆盖配置。"""
         return {
-            "WITH_BP_VO": self.with_bp_vo,
-            "EXCLUDE_TYPE": ",".join(self.exclude_types),
+            SettingKey.WITH_BP_VO: self.with_bp_vo,
+            SettingKey.EXCLUDE_TYPE: ",".join(self.exclude_types),
         }
 
 

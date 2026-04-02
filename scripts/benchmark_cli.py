@@ -263,13 +263,13 @@ def parse_args() -> argparse.Namespace:
         "--game-path",
         type=Path,
         default=None,
-        help="游戏目录（默认读取 LOL_GAME_PATH）",
+        help="游戏目录（必填）",
     )
     parser.add_argument(
         "--output-path",
         type=Path,
         default=None,
-        help="输出目录根（默认读取 LOL_OUTPUT_PATH）",
+        help="输出目录根（必填）",
     )
     parser.add_argument(
         "--prepare-update",
@@ -682,16 +682,16 @@ def create_api_app(
     log_level: str,
 ) -> Any:
     """创建 API 运行时 app 实例。"""
-    cli_overrides: dict[str, Any] = {
+    settings: dict[str, Any] = {
         "GAME_PATH": str(game_path),
         "OUTPUT_PATH": str(output_path),
         "EXCLUDE_TYPE": exclude_type,
     }
     if with_bp_vo is not None:
-        cli_overrides["WITH_BP_VO"] = with_bp_vo
+        settings["WITH_BP_VO"] = with_bp_vo
 
     _ = log_level
-    app_context = create_app_context(dev_mode=False, cli_overrides=cli_overrides)
+    app_context = create_app_context(dev_mode=False, settings=settings)
     return LolAudioUnpackApp(app_context)
 
 
@@ -1035,14 +1035,8 @@ def execute_runner(  # noqa: PLR0913
 
 
 def resolve_runtime_paths(args: argparse.Namespace) -> tuple[Path | None, Path | None]:
-    """解析运行路径（参数优先，其次环境变量）。"""
-    game_path = args.game_path or Path(os.environ.get("LOL_GAME_PATH", ""))
-    output_path = args.output_path or Path(os.environ.get("LOL_OUTPUT_PATH", ""))
-    if not str(game_path):
-        game_path = None
-    if not str(output_path):
-        output_path = None
-    return game_path, output_path
+    """解析运行路径。"""
+    return args.game_path, args.output_path
 
 
 def main() -> int:
@@ -1063,7 +1057,7 @@ def main() -> int:
             step="game_path",
             output_root=repo_root,
             command="",
-            data={"status": "fail", "error": "未提供有效 GAME_PATH（参数或 LOL_GAME_PATH）"},
+            data={"status": "fail", "error": "未提供有效 GAME_PATH（请使用 --game-path）"},
         )
     elif output_path is None:
         add_result(
@@ -1073,7 +1067,7 @@ def main() -> int:
             step="output_path",
             output_root=repo_root,
             command="",
-            data={"status": "fail", "error": "未提供 OUTPUT_PATH（参数或 LOL_OUTPUT_PATH）"},
+            data={"status": "fail", "error": "未提供 OUTPUT_PATH（请使用 --output-path）"},
         )
     else:
         output_path.mkdir(parents=True, exist_ok=True)

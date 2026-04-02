@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from lol_audio_unpack.config_schema import SettingKey
 from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
 
 LOCAL_SOURCE_MODE_LABEL = "本地模式"
@@ -18,7 +19,7 @@ __all__ = [
     "REMOTE_SOURCE_MODE_VALUE",
     "available_source_mode_labels",
     "effective_source_mode",
-    "normalize_app_context_overrides",
+    "normalize_app_context_settings",
     "packaged_remote_mode_fallback_needed",
     "packaged_remote_mode_disabled",
     "remote_source_panel_visible",
@@ -110,15 +111,15 @@ def remote_source_panel_visible(source_mode: str, *, is_frozen: bool | None = No
     return effective_source_mode(source_mode, is_frozen=is_frozen) == REMOTE_SOURCE_MODE_VALUE
 
 
-def normalize_app_context_overrides(
-    overrides: Mapping[str, str | bool],
+def normalize_app_context_settings(
+    settings: Mapping[str, str | bool],
     *,
     is_frozen: bool | None = None,
 ) -> dict[str, str | bool]:
-    """归一 GUI 传给 ``create_app_context`` 的 overrides。
+    """归一 GUI 传给 ``create_app_context`` 的共享设置。
 
     Args:
-        overrides: GUI 侧准备传递给 ``create_app_context`` 的配置映射。
+        settings: GUI 侧准备传递给 ``create_app_context`` 的共享配置映射。
         is_frozen: 可选的冻结态覆写；未提供时按当前运行时自动探测。
 
     Returns:
@@ -126,9 +127,9 @@ def normalize_app_context_overrides(
         回退到 ``local_path``。
     """
 
-    normalized = dict(overrides)
-    normalized["SOURCE_MODE"] = effective_source_mode(
-        str(normalized.get("SOURCE_MODE", LOCAL_SOURCE_MODE_VALUE) or LOCAL_SOURCE_MODE_VALUE),
+    normalized = dict(settings)
+    normalized[SettingKey.SOURCE_MODE] = effective_source_mode(
+        str(normalized.get(SettingKey.SOURCE_MODE, LOCAL_SOURCE_MODE_VALUE) or LOCAL_SOURCE_MODE_VALUE),
         is_frozen=is_frozen,
     )
     return normalized

@@ -48,9 +48,9 @@ def test_pytest_cache_stays_inside_repo_temp(pytestconfig: pytest.Config) -> Non
 
 
 def test_gui_config_default_env_file_stays_inside_repo_temp() -> None:
-    """测试环境中的 GuiConfig 不应指向项目根目录下的真实 .lol.env。"""
+    """测试环境中的 GuiConfig 不应指向项目根目录下的真实 INI 配置。"""
     cfg = GuiConfig()
-    assert cfg._env_file.resolve().is_relative_to(PYTEST_TEMP_ROOT)
+    assert cfg._config_file.resolve().is_relative_to(PYTEST_TEMP_ROOT)
 
 
 def test_gui_config_uses_fake_qsettings_backend_in_tests() -> None:
