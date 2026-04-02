@@ -258,6 +258,39 @@ def test_load_command_config_from_file_reads_targets_and_extract_sections(tmp_pa
     }
 
 
+def test_load_command_config_from_file_reads_runtime_and_wav_sections(tmp_path: Path) -> None:
+    config_file = tmp_path / "lol-audio-unpack.ini"
+    config_file.write_text(
+        (
+            "[app]\n"
+            "game_path = ./game\n"
+            "\n"
+            "[runtime]\n"
+            "max_workers = 8\n"
+            "\n"
+            "[wav]\n"
+            "wav_workers = 3\n"
+            "wav_timeout = 9\n"
+            "wav_retries = 4\n"
+            "wav_format = float\n"
+        ),
+        encoding="utf-8",
+    )
+
+    runtime_config = load_command_config_from_file(config_file, command="runtime")
+    wav_config = load_command_config_from_file(config_file, command="wav")
+
+    assert runtime_config == {
+        "max_workers": 8,
+    }
+    assert wav_config == {
+        "wav_workers": 3,
+        "wav_timeout": 9,
+        "wav_retries": 4,
+        "wav_format": "float",
+    }
+
+
 def test_resolve_default_config_file_path_uses_runtime_config_root() -> None:
     config_file = resolve_default_config_file_path()
     assert config_file.name == "lol-audio-unpack.ini"

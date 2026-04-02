@@ -40,8 +40,10 @@ class ConfigSection:
 
     APP = "app"
     TARGETS = "targets"
+    RUNTIME = "runtime"
     UPDATE = "update"
     EXTRACT = "extract"
+    WAV = "wav"
     MAPPING = "mapping"
 
 
@@ -117,12 +119,21 @@ COMMAND_CONFIG_FIELDS: dict[str, tuple[CommandConfigField, ...]] = {
         CommandConfigField("champions", "champions", "text"),
         CommandConfigField("maps", "maps", "text"),
     ),
+    ConfigSection.RUNTIME: (
+        CommandConfigField("max_workers", "max_workers", "int"),
+    ),
     ConfigSection.UPDATE: (
         CommandConfigField("force", "force", "bool"),
         CommandConfigField("skip_events", "skip_events", "bool"),
     ),
     ConfigSection.EXTRACT: (
         CommandConfigField("wav", "wav", "bool"),
+    ),
+    ConfigSection.WAV: (
+        CommandConfigField("wav_workers", "wav_workers", "int"),
+        CommandConfigField("wav_timeout", "wav_timeout", "int"),
+        CommandConfigField("wav_retries", "wav_retries", "int"),
+        CommandConfigField("wav_format", "wav_format", "text"),
     ),
     ConfigSection.MAPPING: (
         CommandConfigField("integrate_data", "integrate_data", "bool"),

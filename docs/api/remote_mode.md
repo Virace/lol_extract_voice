@@ -56,6 +56,18 @@ remote_live_region = EUW
 
 [targets]
 champions = 1,103,555
+
+[runtime]
+max_workers = 4
+
+[extract]
+wav = false
+
+[wav]
+wav_workers = 2
+wav_timeout = 5
+wav_retries = 3
+wav_format = pcm16
 ```
 
 调用方式：

@@ -164,7 +164,7 @@ CLI 参数总表：
 
 - 不写 `-c` 时，本次命令只使用内建默认值和 CLI 显式参数。
 - 写了 `-c` 后，当前命令会进入完整配置文件模式，除动作子命令和配置文件路径外，不允许再手工追加其他参数。
-- `champions` / `maps` 需要写在 `[targets]` 中；动作自己的运行参数写在对应 section 中。
+- `champions` / `maps` 需要写在 `[targets]` 中；`max_workers` 写在 `[runtime]` 中；`wav` 开关写在 `[extract]` 中，`wav_*` 细节参数写在 `[wav]` 中；其余动作参数写在对应 section 中。
 - 旧 `.lol.env` / `LOL_*` 方式已经不再是当前主线用法。
 
 更详细的 CLI / 配置 / Remote 使用说明见：

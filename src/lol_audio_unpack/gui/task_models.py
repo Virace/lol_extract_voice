@@ -37,7 +37,7 @@ class ExecutionTaskParamsSnapshot:
     Args:
         champion_ids: 目标英雄 ID；为空时表示不限制英雄范围。
         map_ids: 目标地图 ID；为空时表示不限制地图范围。
-        run_update: 是否在执行前先跑更新流程。
+        run_update: 是否在执行解包/映射前先强制刷新基础数据；GUI 中等价于前置一次 ``update --force``。
         run_extract: 是否执行音频解包。
         run_mapping: 是否执行事件映射。
         max_workers: 后端执行时使用的最大并发数。
@@ -64,7 +64,7 @@ class ExecutionTaskParamsSnapshot:
         """
         steps: list[str] = []
         if self.run_update:
-            steps.append("更新数据")
+            steps.append("前置强制更新")
         if self.run_extract:
             steps.append("音频解包")
         if self.run_mapping:
@@ -76,6 +76,8 @@ class ExecutionTaskParamsSnapshot:
 
         Returns:
             基于当前任务参数构造的操作选项对象。
+            GUI 侧不会暴露“普通 update”，因此 ``run_update`` 会映射为
+            一次任务前置的强制刷新。
         """
         return OperationOptions(
             max_workers=self.max_workers,

@@ -50,14 +50,23 @@ def _build_target_summary(champion_ids: tuple[str, ...], map_ids: tuple[str, ...
     return f"目标：英雄 {len(champion_ids)} 个，地图 {len(map_ids)} 个"
 
 
-def _build_task_scope_summary(*, include_extract: bool, include_mapping: bool) -> str:
+def _build_task_scope_summary(
+    *,
+    include_preflight_update: bool,
+    include_extract: bool,
+    include_mapping: bool,
+) -> str:
     """构造当前任务包含的执行步骤摘要。"""
     parts: list[str] = []
     if include_extract:
         parts.append("音频解包")
     if include_mapping:
         parts.append("事件映射")
-    return " + ".join(parts) if parts else "未选择执行内容"
+    if not parts:
+        return "未选择执行内容"
+    if include_preflight_update:
+        parts.insert(0, "前置强制更新")
+    return " + ".join(parts)
 
 
 def _quote_cli_arg(arg: str) -> str:
@@ -103,6 +112,7 @@ class _ExecutionTaskFormState:
     def task_scope_summary(self) -> str:
         """返回当前勾选的任务步骤摘要。"""
         return _build_task_scope_summary(
+            include_preflight_update=self.force_update,
             include_extract=self.include_extract,
             include_mapping=self.include_mapping,
         )
@@ -250,9 +260,7 @@ class TaskBuilderPanel(CardWidget):
         if task_scope_summary == "未选择执行内容":
             self.task_builder_summary_label.setText("请至少勾选一个执行步骤后再创建任务。")
         else:
-            self.task_builder_summary_label.setText(
-                f"将创建：{task_scope_summary.replace(' + ', '和')}。"
-            )
+            self.task_builder_summary_label.setText(f"将创建：{task_scope_summary.replace(' + ', '、')}。")
 
     def current_target_ids(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """返回当前任务目标中的英雄和地图 ID。"""
@@ -284,7 +292,7 @@ class TaskBuilderPanel(CardWidget):
             f"{task_scope_summary} · {draft_summary} · "
             f"VO={state.vo_filter_key} · "
             f"BP={state.with_bp_vo} · "
-            f"刷新缓存={state.force_update} · "
+            f"前置强制更新={state.force_update} · "
             f"整合={state.integrate_data} · "
             f"并发={state.max_workers_text}"
         )
@@ -298,14 +306,11 @@ class TaskBuilderPanel(CardWidget):
         return ExecutionTaskDraft(
             source=self.current_selection_source(),
             source_summary=state.target_summary(),
-            context_input=(
-                gui_config.to_app_context_input_snapshot()
-                if gui_config
-                else AppContextInputSnapshot()
-            ),
+            context_input=(gui_config.to_app_context_input_snapshot() if gui_config else AppContextInputSnapshot()),
             task_params=ExecutionTaskParamsSnapshot(
                 champion_ids=champion_ids,
                 map_ids=map_ids,
+                # GUI 的该开关表示任务前置一次 `update --force`，而不是独立的常规 update 步骤。
                 run_update=state.force_update,
                 run_extract=state.include_extract,
                 run_mapping=state.include_mapping,

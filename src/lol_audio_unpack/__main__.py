@@ -75,7 +75,7 @@ def _create_shared_parser() -> argparse.ArgumentParser:
         nargs="?",
         const="",
         metavar="PATH",
-        help="启用配置文件模式；仅写 -c 时读取默认 INI，写 -c PATH 时读取指定 INI。",
+        help="启用绝对独占的配置文件模式；仅允许同时提供动作列表和配置文件路径。仅写 -c 时读取默认 INI，写 -c PATH 时读取指定 INI。",
     )
 
     target_group = parser.add_argument_group("实体选择", "多个动作共享的目标范围选择")
@@ -311,42 +311,40 @@ def create_parser() -> argparse.ArgumentParser:
 
 
 def _validate_config_mode_raw_argv(argv: list[str]) -> None:
-    """校验 `-c` 模式下是否混入了额外手工参数。"""
-    if "-c" not in argv and "--config-file" not in argv:
+    """校验 `-c` 模式下是否只保留动作和配置文件路径。
+
+    Args:
+        argv: 原始命令行参数列表，不包含程序名。
+    """
+    if (
+        "-c" not in argv
+        and "--config-file" not in argv
+        and not any(token.startswith("--config-file=") for token in argv)
+    ):
         return
 
+    allowed_actions = {"update", "extract", "mapping"}
     config_flag_tokens = {"-c", "--config-file"}
-    waiting_config_path = False
-    config_seen = False
-    option_phase = False
-    for token in argv:
-        if waiting_config_path:
-            if not token.startswith("-"):
-                waiting_config_path = False
-                config_seen = True
-                option_phase = True
-                continue
-            waiting_config_path = False
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+
+        if token in allowed_actions:
+            index += 1
+            continue
 
         if token in config_flag_tokens:
-            waiting_config_path = True
-            config_seen = True
-            option_phase = True
+            index += 1
+            if index < len(argv) and not argv[index].startswith("-"):
+                index += 1
             continue
 
-        if not token.startswith("-") and not option_phase:
-            # 允许在前面连续提供多个动作，如 `update extract -c`
+        if token.startswith("--config-file="):
+            index += 1
             continue
 
-        if config_seen:
-            logger.error("错误：-c/--config-file 模式下不允许再手工传递其他参数。")
-            sys.exit(1)
-
-        if token.startswith("-"):
-            option_phase = True
-            continue
-
-        option_phase = True
+        logger.error("错误：-c/--config-file 模式下除动作列表和配置文件路径外，不允许再手工传递其他参数。")
+        sys.exit(1)
 
 
 def _apply_config_profile_to_args(args: argparse.Namespace) -> None:
@@ -363,9 +361,15 @@ def _apply_config_profile_to_args(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     args._loaded_settings = loaded_settings
-    merged_options = load_command_config_from_file(config_file, command=ConfigSection.TARGETS, require_exists=True)
+    section_sequence = [ConfigSection.TARGETS, ConfigSection.RUNTIME]
     for action in args.actions:
-        merged_options.update(load_command_config_from_file(config_file, command=action, require_exists=True))
+        section_sequence.append(action)
+    if ConfigSection.EXTRACT in args.actions:
+        section_sequence.append(ConfigSection.WAV)
+
+    merged_options: dict[str, object] = {}
+    for section_name in section_sequence:
+        merged_options.update(load_command_config_from_file(config_file, command=section_name, require_exists=True))
     for attr_name, value in merged_options.items():
         setattr(args, attr_name, value)
 
@@ -750,7 +754,9 @@ def _log_mapping_runtime_error(error: ValueError) -> None:
     if "Wwiser 工具路径" not in message and SettingKey.WWISER_PATH not in message:
         return
 
-    logger.error("如果需要使用 WwiserHIRC 回退路径，请通过 --wwiser-path 显式传入，或在 -c 指定的 INI 中配置 wwiser_path。")
+    logger.error(
+        "如果需要使用 WwiserHIRC 回退路径，请通过 --wwiser-path 显式传入，或在 -c 指定的 INI 中配置 wwiser_path。"
+    )
     logger.error(
         "WWISER_PATH 应指向 wwiser.pyz 或 wwiser.exe 文件；如果不需要 wwiser，请移除该配置并直接使用默认 NativeHIRC。"
     )

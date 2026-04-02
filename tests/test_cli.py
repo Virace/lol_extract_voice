@@ -11,6 +11,7 @@ pytestmark = pytest.mark.unit
 EXPECTED_WAV_WORKERS = 4
 EXPECTED_WAV_TIMEOUT = 7
 EXPECTED_WAV_RETRIES = 5
+EXPECTED_CONFIG_MAX_WORKERS = 6
 
 
 def test_parse_ids() -> None:
@@ -43,6 +44,24 @@ def test_validate_config_mode_rejects_any_extra_manual_args() -> None:
         cli._validate_config_mode_raw_argv(["update", "-c", "--game-path", "game-root"])
 
     assert exc.value.code == 1
+
+
+def test_validate_config_mode_rejects_manual_args_before_config_flag() -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli._validate_config_mode_raw_argv(["update", "--force", "-c", "config.ini"])
+
+    assert exc.value.code == 1
+
+
+def test_validate_config_mode_rejects_dev_flag_in_config_mode() -> None:
+    with pytest.raises(SystemExit) as exc:
+        cli._validate_config_mode_raw_argv(["update", "--dev", "-c"])
+
+    assert exc.value.code == 1
+
+
+def test_validate_config_mode_allows_only_actions_and_config_path() -> None:
+    cli._validate_config_mode_raw_argv(["update", "extract", "--config-file", "config.ini"])
 
 
 def test_validate_args_wav_tuning_requires_wav_flag() -> None:
@@ -200,6 +219,41 @@ def test_apply_config_profile_to_args_loads_command_section(monkeypatch, tmp_pat
     assert args._loaded_settings == {"GAME_PATH": str(tmp_path / "game")}
 
 
+def test_apply_config_profile_to_args_loads_runtime_and_wav_sections(monkeypatch, tmp_path: Path) -> None:
+    parser = cli.create_parser()
+    config_file = tmp_path / "lol-audio-unpack.ini"
+    args = parser.parse_args(["extract", "-c", str(config_file)])
+
+    monkeypatch.setattr(
+        cli,
+        "load_settings_from_config_file",
+        lambda path, require_exists=True: {"GAME_PATH": str(tmp_path / "game")},
+    )
+    monkeypatch.setattr(
+        cli,
+        "load_command_config_from_file",
+        lambda path, command, require_exists=True: {
+            "runtime": {"max_workers": EXPECTED_CONFIG_MAX_WORKERS},
+            "extract": {"wav": True},
+            "wav": {
+                "wav_workers": EXPECTED_WAV_WORKERS,
+                "wav_timeout": EXPECTED_WAV_TIMEOUT,
+                "wav_retries": EXPECTED_WAV_RETRIES,
+                "wav_format": "auto",
+            },
+        }.get(command, {}),
+    )
+
+    cli._apply_config_profile_to_args(args)
+
+    assert args.max_workers == EXPECTED_CONFIG_MAX_WORKERS
+    assert args.wav is True
+    assert args.wav_workers == EXPECTED_WAV_WORKERS
+    assert args.wav_timeout == EXPECTED_WAV_TIMEOUT
+    assert args.wav_retries == EXPECTED_WAV_RETRIES
+    assert args.wav_format == "auto"
+
+
 def test_initialize_app_in_config_mode_uses_loaded_settings(monkeypatch, tmp_path: Path) -> None:
     parser = cli.create_parser()
     config_file = tmp_path / "lol-audio-unpack.ini"
@@ -296,8 +350,12 @@ def test_execute_extract_operations_uses_standard_stage_logs(monkeypatch) -> Non
     args = parser.parse_args(["extract"])
     stage_calls = []
 
-    monkeypatch.setattr(cli, "_log_cli_stage_start", lambda stage, detail=None: stage_calls.append(("start", stage, detail)))
-    monkeypatch.setattr(cli, "_log_cli_stage_complete", lambda stage, detail=None: stage_calls.append(("done", stage, detail)))
+    monkeypatch.setattr(
+        cli, "_log_cli_stage_start", lambda stage, detail=None: stage_calls.append(("start", stage, detail))
+    )
+    monkeypatch.setattr(
+        cli, "_log_cli_stage_complete", lambda stage, detail=None: stage_calls.append(("done", stage, detail))
+    )
 
     class FakeApp:
         def extract(self, _opts, **_kwargs) -> None:

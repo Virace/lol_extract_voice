@@ -22,12 +22,12 @@ if TYPE_CHECKING:
 
 
 STAGE_KEY_BY_STEP_NAME = {
-    "更新数据": "update",
+    "前置强制更新": "update",
     "音频解包": "extract",
     "事件映射": "mapping",
 }
 STAGE_LABEL_BY_KEY = {
-    "update": "更新数据",
+    "update": "前置强制更新",
     "extract": "音频解包",
     "mapping": "事件映射",
 }
@@ -146,22 +146,19 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
 
     try:
         logger.info(f"[执行中心] 任务 #{task.task_id} 开始执行: {' -> '.join(steps)}")
-        logger.debug(
-            f"[执行中心] 任务 #{task.task_id} 范围={task_scope_label}, "
-            f"source_mode={source_mode}"
-        )
+        logger.debug(f"[执行中心] 任务 #{task.task_id} 范围={task_scope_label}, source_mode={source_mode}")
         for step_name in steps:
             stage_key = STAGE_KEY_BY_STEP_NAME.get(step_name, "unknown")
             logger.info(f"[执行中心] 任务 #{task.task_id} 开始{step_name}")
 
-            if step_name == "更新数据":
+            if step_name == "前置强制更新":
                 _emit_stage_progress(
                     signals,
                     stage_key=stage_key,
                     entity_scope_label=task_scope_label,
                     current=0,
                     total=1,
-                    message="正在更新基础数据…",
+                    message="正在强制刷新基础数据…",
                 )
                 update_app = LolAudioUnpackApp(
                     create_app_context(
@@ -175,9 +172,10 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     entity_scope_label=task_scope_label,
                     current=1,
                     total=1,
-                    message="更新数据完成",
+                    message="基础数据刷新完成",
                 )
             elif step_name == "音频解包":
+
                 def emit_extract_progress(
                     entity_type: str,
                     current: int,

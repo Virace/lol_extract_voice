@@ -61,7 +61,11 @@ class AdvancedInputPanel(FormAccordionCard):
         self.add_form_row("音频范围", "默认只处理 VO，需要时可切换为全部类型", self.vo_filter)
         self.add_form_row("并发数", "设置任务并发数；一般不建议超过 CPU 线程数", self.max_workers_combo)
         self.add_form_row("附加 BP 语音", "默认同时处理 BP 语音", self.bp_voice_cb)
-        self.add_form_row("强制刷新缓存", "执行前重新刷新当前任务需要的缓存", self.force_update_cb)
+        self.add_form_row(
+            "前置强制更新",
+            "在执行解包或映射前先强制刷新基础数据，相当于先跑一次 update --force",
+            self.force_update_cb,
+        )
         self.add_form_row(
             "整合数据文件",
             "映射任务时额外生成整合数据，便于后续整理和查看",

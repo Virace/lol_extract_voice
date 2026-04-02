@@ -36,27 +36,31 @@ uv run unpack update extract \
 ### 2.2 配置文件模式
 
 - 带 `-c` 或 `--config-file`
-- `-c` 不带路径：读取默认配置文件
+- `-c` 不带路径：读取默认配置文件 `lol-audio-unpack.ini`
 - `-c <PATH>`：读取指定 INI 配置文件
 - 启用 `-c` 后，除动作列表和配置文件路径外，不允许再手工追加任何其他参数
+- 这条规则对全部 CLI 参数都生效，包括 `--dev`、`--force`、`--max-workers`
+- 如果要切换到其他 profile（例如 `lol-audio-unpack.dev.ini`），请直接写显式 `-c <PATH>`
 
 默认配置文件名：
 
-- 源码运行：`lol-audio-unpack.ini`
-- `--dev`：`lol-audio-unpack.dev.ini`
+- 默认：`lol-audio-unpack.ini`
+- dev 配置：请显式传入 `-c ./lol-audio-unpack.dev.ini`
 
 配置文件结构：
 
 - `[app]`：共享配置
 - `[targets]`：多个动作共享的实体范围
+- `[runtime]`：多个动作共享的通用执行参数
 - `[update]`：`update` 动作参数
 - `[extract]`：`extract` 动作参数
+- `[wav]`：WAV sidecar 细节参数
 - `[mapping]`：`mapping` 动作参数
 
 其中：
 
 - `GUI` 只读取 `[app]`
-- `[targets]` 与动作分组仅在 CLI 的 `-c` 模式下生效
+- `[targets] / [runtime] / [update] / [extract] / [wav] / [mapping]` 仅在 CLI 的 `-c` 模式下生效
 
 示例配置文件中的约定：
 
@@ -96,6 +100,12 @@ uv run unpack update extract mapping -c ./config/custom.ini
 - `--dev`
 - `--enable-league-tools-log`
 
+注意：
+
+- `--max-workers` 在 `-c` 模式下应写入 `[runtime]`
+- `-l, --log-level`、`--dev`、`--enable-league-tools-log` 仍然只支持纯 CLI 显式传入
+- 一旦启用 `-c`，它们都不能再作为手工 CLI 参数追加
+
 ## 4. 动作与参数
 
 ### 4.1 动作列表
@@ -129,7 +139,18 @@ champions = Annie,Ahri
 maps =
 ```
 
-### 4.3 `update`
+### 4.3 通用执行参数
+
+- `--max-workers N`
+
+在 `-c` 模式下，应写入 `[runtime]`：
+
+```ini
+[runtime]
+max_workers = 4
+```
+
+### 4.4 `update`
 
 - `-f, --force`
 - `--skip-events`
@@ -142,7 +163,7 @@ force = false
 skip_events = false
 ```
 
-### 4.4 `extract`
+### 4.5 `extract`
 
 - `--wav`
 - `--wav-workers N`
@@ -150,9 +171,25 @@ skip_events = false
 - `--wav-retries N`
 - `--wav-format {auto,pcm16,pcm24,pcm32,float}`
 
-在 `-c` 模式下，当前推荐只写 `[extract].wav`，其余 WAV 调优参数继续优先用纯 CLI 模式按次显式传入。
+在 `-c` 模式下：
 
-### 4.5 `mapping`
+- `[extract]` 负责 `wav` 开关
+- `[wav]` 负责 `wav_workers`、`wav_timeout`、`wav_retries`、`wav_format`
+
+示例：
+
+```ini
+[extract]
+wav = true
+
+[wav]
+wav_workers = 2
+wav_timeout = 5
+wav_retries = 3
+wav_format = pcm16
+```
+
+### 4.6 `mapping`
 
 - `--integrate-data` / `--no-integrate-data`
 

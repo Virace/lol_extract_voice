@@ -94,18 +94,36 @@ def write_settings_to_config_file(
 - `lol-audio-unpack.ini`
 - `lol-audio-unpack.dev.ini`
 
+当前 CLI 约束：
+
+- `-c` 模式默认只读取 `lol-audio-unpack.ini`
+- 如果 CLI 需要读取 dev 配置，请显式传入 `-c ./lol-audio-unpack.dev.ini`
+- 这是因为当前 CLI 的 `-c` 模式与 `--dev` 绝对互斥
+
 标准 section：
 
 - `[app]`：共享配置
 - `[targets]`：多个动作共享的实体范围
+- `[runtime]`：多个动作共享的通用执行参数
 - `[update]`：`update` 动作参数
 - `[extract]`：`extract` 动作参数
+- `[wav]`：WAV sidecar 细节参数
 - `[mapping]`：`mapping` 动作参数
+
+当前支持的命令字段：
+
+- `[targets]`：`champions`、`maps`
+- `[runtime]`：`max_workers`
+- `[update]`：`force`、`skip_events`
+- `[extract]`：`wav`
+- `[wav]`：`wav_workers`、`wav_timeout`、`wav_retries`、`wav_format`
+- `[mapping]`：`integrate_data`
 
 GUI 语义：
 
 - GUI 只读取 `[app]`
-- `[targets] / [update] / [extract] / [mapping]` 仅供 CLI 的配置文件模式使用
+- `[targets] / [runtime] / [update] / [extract] / [wav] / [mapping]` 仅供 CLI 的配置文件模式使用
+- GUI 执行中心的“前置强制更新”属于 GUI 自身的调度包装，语义上等价于任务开始前插入一次 `update --force`
 
 建议示例风格：
 
