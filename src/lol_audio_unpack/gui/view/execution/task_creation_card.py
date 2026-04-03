@@ -17,11 +17,13 @@ from qfluentwidgets import (
     LineEdit,
     PrimaryPushButton,
     SegmentedWidget,
+    TransparentToolButton,
 )
 from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
+from lol_audio_unpack.gui.common.font_compat import apply_tool_button_safe_font
 from lol_audio_unpack.gui.task_models import (
     AppContextInputSnapshot,
     ExecutionTaskDraft,
@@ -205,7 +207,12 @@ class TaskCreationCard(GroupHeaderCardWidget):
         self.extract_task_cb.setChecked(True)
         self.mapping_task_cb = CheckBox("事件映射", self)
         self.mapping_task_cb.setChecked(True)
+        self.restore_defaults_btn = TransparentToolButton(FIF.SYNC, self)
+        self.restore_defaults_btn.setToolTip("恢复默认值")
+        self.restore_defaults_btn.setFixedSize(32, 32)
+        apply_tool_button_safe_font(self.restore_defaults_btn)
         self.create_task_btn = PrimaryPushButton("创建任务", self)
+        self.restore_defaults_btn.clicked.connect(self.reset_custom_inputs_to_defaults)
 
         self.bottom_toolbar_layout = QHBoxLayout()
         self.bottom_toolbar_layout.setSpacing(10)
@@ -218,6 +225,7 @@ class TaskCreationCard(GroupHeaderCardWidget):
         self.bottom_toolbar_layout.addStretch(1)
         self.bottom_toolbar_layout.addWidget(self.extract_task_cb, 0, Qt.AlignmentFlag.AlignRight)
         self.bottom_toolbar_layout.addWidget(self.mapping_task_cb, 0, Qt.AlignmentFlag.AlignRight)
+        self.bottom_toolbar_layout.addWidget(self.restore_defaults_btn, 0, Qt.AlignmentFlag.AlignRight)
         self.bottom_toolbar_layout.addWidget(self.create_task_btn, 0, Qt.AlignmentFlag.AlignRight)
         self.vBoxLayout.addLayout(self.bottom_toolbar_layout)
 
@@ -266,7 +274,7 @@ class TaskCreationCard(GroupHeaderCardWidget):
             with_bp_vo=self._defaults.with_bp_vo,
             force_update=self._defaults.force_update,
             integrate_data=self._defaults.integrate_data,
-            wav_enabled=bool(getattr(gui_config, "extract_wav_enabled", False)),
+            wav_enabled=False,
             wav_format=str(getattr(gui_config, "wav_format", "pcm16") or "pcm16"),
         )
 
