@@ -122,7 +122,7 @@ def test_build_context_settings_only_keeps_explicit_values() -> None:
         ]
     )
 
-    settings = runtime_cli.build_context_settings(args)
+    settings = runtime_cli.build_settings(args)
 
     assert settings == {
         "GAME_PATH": "game-root",
@@ -148,7 +148,7 @@ def test_build_context_settings_includes_remote_options_and_bp_voice() -> None:
         ]
     )
 
-    settings = runtime_cli.build_context_settings(args)
+    settings = runtime_cli.build_settings(args)
 
     assert settings == {
         "SOURCE_MODE": "remote_snapshot",

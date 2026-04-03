@@ -137,7 +137,7 @@ def _create_shared_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _add_update_subcommand(
+def _add_update(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
     shared_parser: argparse.ArgumentParser,
 ) -> None:
@@ -162,7 +162,7 @@ def _add_update_subcommand(
     )
 
 
-def _add_extract_subcommand(
+def _add_extract(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
     shared_parser: argparse.ArgumentParser,
 ) -> None:
@@ -209,7 +209,7 @@ def _add_extract_subcommand(
     )
 
 
-def _add_mapping_subcommand(
+def _add_mapping(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
     shared_parser: argparse.ArgumentParser,
 ) -> None:
@@ -312,9 +312,9 @@ def create_parser(mode: EntryMode = "unpack") -> argparse.ArgumentParser:
 
 
 __all__ = [
-    "_add_extract_subcommand",
-    "_add_mapping_subcommand",
-    "_add_update_subcommand",
+    "_add_extract",
+    "_add_mapping",
+    "_add_update",
     "_create_shared_parser",
     "EntryMode",
     "create_parser",

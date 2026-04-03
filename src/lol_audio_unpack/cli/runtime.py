@@ -137,7 +137,7 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         logger.info("检测到 --integrate-data 参数，将生成整合数据文件")
 
 
-def build_context_settings(args: argparse.Namespace) -> dict[str, object]:
+def build_settings(args: argparse.Namespace) -> dict[str, object]:
     """从命令行参数构建显式共享配置。
 
     Args:
@@ -158,7 +158,7 @@ def build_invocation_request(args: argparse.Namespace) -> CliInvocationRequest:
     Returns:
         供 CLI 显式命令构造与校验复用的结构化请求对象。
     """
-    settings = dict(getattr(args, "_loaded_settings", {}) or build_context_settings(args))
+    settings = dict(getattr(args, "_loaded_settings", {}) or build_settings(args))
     return CliInvocationRequest(
         actions=tuple(args.actions),
         settings=tuple(settings.items()),
@@ -204,7 +204,7 @@ def initialize_app(args: argparse.Namespace) -> AppContext:
     if not args.enable_league_tools_log:
         logger.disable("league_tools")
 
-    context_settings = build_context_settings(args)
+    context_settings = build_settings(args)
     config_file = _config_path(args)
     if config_file is not None:
         loaded_settings = getattr(args, "_loaded_settings", None)
@@ -354,7 +354,7 @@ __all__ = [
     "_config_path",
     "_validate_config_argv",
     "build_invocation_request",
-    "build_context_settings",
+    "build_settings",
     "build_options",
     "initialize_app",
     "parse_ids",
