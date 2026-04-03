@@ -369,6 +369,26 @@ def test_execute_extract_operations_uses_standard_stage_logs(monkeypatch) -> Non
     ]
 
 
+def test_execute_extract_operations_forwards_detached_wav_flags(monkeypatch) -> None:
+    parser = cli.create_parser()
+    args = parser.parse_args(["extract", "--wav"])
+    captured_kwargs = {}
+
+    monkeypatch.setattr(cli, "_log_cli_stage_start", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli, "_log_cli_stage_complete", lambda *_args, **_kwargs: None)
+
+    class FakeApp:
+        def extract(self, _opts, **kwargs):
+            captured_kwargs.update(kwargs)
+            return SimpleNamespace(poll=lambda: None, read_progress_snapshot=lambda: None, job_label="cli-test")
+
+    handle = cli.execute_extract_operations(args, FakeApp())
+
+    assert handle is not None
+    assert captured_kwargs["detach_wav_sidecar"] is True
+    assert str(captured_kwargs["wav_job_label"]).startswith("cli-")
+
+
 def test_execute_mapping_operations_defaults_to_native_hirc_without_wwiser(monkeypatch) -> None:
     parser = cli.create_parser()
     args = parser.parse_args(["mapping"])

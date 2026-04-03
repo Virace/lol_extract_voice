@@ -196,11 +196,15 @@ class ExecutionTaskResult:
         completed_steps: 已成功完成的步骤名称。
         summary: 展示给用户的完成摘要。
         duration_seconds: 本次任务耗时。
+        wav_background_process: 解耦后的后台 WAV 进程句柄。
+        wav_background_notice: 需要在主流程结束后额外提示给用户的 WAV 文案。
     """
 
     completed_steps: tuple[str, ...]
     summary: str
     duration_seconds: float
+    wav_background_process: object | None = None
+    wav_background_notice: str = ""
 
 
 @dataclass(slots=True, frozen=True)

@@ -582,7 +582,7 @@ class LolAudioUnpackApp:
                     extract_output_paths: tuple[Path, ...] = ()
                     mapping_output_path: Path | None = None
                     if work_item.need_extract and extract_options is not None:
-                        self.extract(
+                        remote_wav_handle = self.extract(
                             self._build_entity_operation_options(
                                 extract_options,
                                 entity_type=work_item.entity_type,
@@ -591,7 +591,15 @@ class LolAudioUnpackApp:
                             include_champions=is_champion,
                             include_maps=not is_champion,
                             prepare_remote=False,
+                            detach_wav_sidecar=bool(extract_options.wav_output.enabled),
+                            wav_job_label=f"remote-{work_item.entity_type}-{work_item.entity_id}",
                         )
+                        if remote_wav_handle is not None and remote_wav_handle.poll() is None:
+                            logger.info(
+                                "remote 实体 {} {} 的 WAV 转码已转入后台进程。",
+                                work_item.entity_type,
+                                work_item.entity_id,
+                            )
                         extract_output_paths = self._resolve_extract_output_paths(entity_data)
                     if work_item.need_mapping and mapping_options is not None:
                         self.mapping(
@@ -674,7 +682,7 @@ class LolAudioUnpackApp:
             f"更新流程完成：target={target}，英雄 {len(opts.champion_ids or ())} 个，地图 {len(opts.map_ids or ())} 个"
         )
 
-    def extract(
+    def extract(  # noqa: PLR0913
         self,
         opts: OperationOptions,
         *,
@@ -682,7 +690,10 @@ class LolAudioUnpackApp:
         include_maps: bool = True,
         prepare_remote: bool = True,
         progress_callback: Callable[[str, int, int, str], None] | None = None,
-    ) -> None:
+        detach_wav_sidecar: bool = False,
+        wav_job_label: str | None = None,
+        persisted_wem_callback: Callable[[Path], None] | None = None,
+    ) -> object | None:
         """执行解包流程。
 
         Args:
@@ -709,27 +720,31 @@ class LolAudioUnpackApp:
         logger.info(f"语言: {self.ctx.config.game_region}")
 
         if opts.champion_ids is not None:
-            unpack_champions(
+            return unpack_champions(
                 reader=reader,
                 champion_ids=list(opts.champion_ids),
                 max_workers=opts.max_workers,
                 ctx=self.ctx,
                 progress_callback=progress_callback,
                 wav_output=opts.wav_output,
+                detach_wav_sidecar=detach_wav_sidecar,
+                wav_job_label=wav_job_label,
+                persisted_wem_callback=persisted_wem_callback,
             )
-            return
         if opts.map_ids is not None:
-            unpack_maps(
+            return unpack_maps(
                 reader=reader,
                 map_ids=list(opts.map_ids),
                 max_workers=opts.max_workers,
                 ctx=self.ctx,
                 progress_callback=progress_callback,
                 wav_output=opts.wav_output,
+                detach_wav_sidecar=detach_wav_sidecar,
+                wav_job_label=wav_job_label,
+                persisted_wem_callback=persisted_wem_callback,
             )
-            return
 
-        unpack_audio_all(
+        return unpack_audio_all(
             reader=reader,
             max_workers=opts.max_workers,
             include_champions=include_champions,
@@ -737,6 +752,9 @@ class LolAudioUnpackApp:
             ctx=self.ctx,
             progress_callback=progress_callback,
             wav_output=opts.wav_output,
+            detach_wav_sidecar=detach_wav_sidecar,
+            wav_job_label=wav_job_label,
+            persisted_wem_callback=persisted_wem_callback,
         )
 
     def mapping(

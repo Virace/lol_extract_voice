@@ -30,6 +30,7 @@ from qfluentwidgets.common.icon import FluentIconBase, drawIcon
 from lol_audio_unpack import __version__
 from lol_audio_unpack.gui.common.icon import get_app_logo_path
 from lol_audio_unpack.gui.common.style import (
+    PAGE_CONTENT_MARGIN,
     apply_page_content_margins,
     configure_transparent_scroll_page,
 )
@@ -44,6 +45,11 @@ BILIBILI_URL = "https://space.bilibili.com/12353537"
 TECH_STACK = ("Python", "PySide6", "QFluentWidgets")
 BILIBILI_ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "bilibili.svg"
 QR_CODE_ASSET_DIR = Path(__file__).resolve().parent.parent / "assets" / "qr"
+ABOUT_HERO_CARD_HEIGHT = 326
+ABOUT_ACTION_CARD_SIZE = QSize(188, 224)
+ABOUT_ACTION_CARD_SPACING = 16
+ABOUT_TAG_ROW_HEIGHT = 40
+ABOUT_SECTION_SPACING = 24
 
 
 def _rgba_text(rgba: tuple[int, int, int, int]) -> str:
@@ -63,6 +69,21 @@ def _configure_label_font(
     font.setPixelSize(pixel_size)
     font.setWeight(weight)
     label.setFont(font)
+
+
+def get_about_page_minimum_shell_size() -> QSize:
+    """返回 About 页固定构图要求的最小窗口尺寸。"""
+    cards_width = ABOUT_ACTION_CARD_SIZE.width() * 4 + ABOUT_ACTION_CARD_SPACING * 3
+    content_width = cards_width + PAGE_CONTENT_MARGIN * 2
+    content_height = (
+        PAGE_CONTENT_MARGIN * 2
+        + ABOUT_HERO_CARD_HEIGHT
+        + ABOUT_SECTION_SPACING
+        + ABOUT_TAG_ROW_HEIGHT
+        + ABOUT_SECTION_SPACING
+        + ABOUT_ACTION_CARD_SIZE.height()
+    )
+    return QSize(content_width, content_height)
 
 
 class AboutCustomIcon(FluentIconBase, Enum):
@@ -445,14 +466,14 @@ class AboutActionCard(SimpleCardWidget):
         self._url = spec.url
         self._on_click = spec.on_click
         self.setObjectName(spec.object_name)
-        self.setFixedSize(196, 236)
+        self.setFixedSize(ABOUT_ACTION_CARD_SIZE)
         self.setBorderRadius(20)
         self.setCursor(Qt.PointingHandCursor if (spec.url or spec.on_click) else Qt.ArrowCursor)
         self.setProperty("aboutRole", "action")
         self._animated_icon_widget: FaShakeIconWidget | None = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(22, 22, 22, 20)
+        layout.setContentsMargins(18, 18, 18, 16)
         layout.setSpacing(0)
         layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
 
@@ -485,11 +506,11 @@ class AboutActionCard(SimpleCardWidget):
         _configure_label_font(value_label, pixel_size=20, weight=QFont.Weight.Bold)
 
         layout.addWidget(icon_shell, alignment=Qt.AlignHCenter)
-        layout.addSpacing(28)
+        layout.addSpacing(22)
         layout.addWidget(title_label)
-        layout.addSpacing(12)
+        layout.addSpacing(8)
         layout.addWidget(value_label)
-        layout.addSpacing(12)
+        layout.addSpacing(10)
         layout.addWidget(helper_label)
         layout.addStretch(1)
 
@@ -613,13 +634,13 @@ class AboutPage(SmoothScrollArea):
         """构建关于页面的布局内容。"""
         root_layout = QVBoxLayout(self.view)
         apply_page_content_margins(root_layout)
-        root_layout.setSpacing(24)
+        root_layout.setSpacing(ABOUT_SECTION_SPACING)
         self._refresh_theme_styles()
 
         hero_card = QFrame(self.view)
         hero_card.setObjectName("AboutHeroCard")
         hero_card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        hero_card.setFixedHeight(338)
+        hero_card.setFixedHeight(ABOUT_HERO_CARD_HEIGHT)
         hero_layout = QVBoxLayout(hero_card)
         hero_layout.setContentsMargins(32, 10, 32, 12)
         hero_layout.setSpacing(6)
@@ -649,6 +670,7 @@ class AboutPage(SmoothScrollArea):
         root_layout.addWidget(hero_card)
 
         tags_row = QWidget(self.view)
+        tags_row.setFixedHeight(ABOUT_TAG_ROW_HEIGHT)
         tags_layout = QHBoxLayout(tags_row)
         tags_layout.setContentsMargins(0, 0, 0, 0)
         tags_layout.setSpacing(10)
@@ -667,7 +689,7 @@ class AboutPage(SmoothScrollArea):
         cards_row = QWidget(self.view)
         cards_layout = QHBoxLayout(cards_row)
         cards_layout.setContentsMargins(0, 0, 0, 0)
-        cards_layout.setSpacing(16)
+        cards_layout.setSpacing(ABOUT_ACTION_CARD_SPACING)
         cards_layout.addStretch(1)
 
         action_specs = (

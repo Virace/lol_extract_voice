@@ -2,22 +2,31 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from PySide6.QtGui import QColor
+
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 from lol_audio_unpack.gui.view.setting_page import SettingPage
 
 EXPECTED_WAV_WORKERS = 8
 EXPECTED_WAV_TIMEOUT = 15
 EXPECTED_WAV_RETRIES = 5
+EXPECTED_TASK_BUILDER_MIN_HEIGHT = 300
+EXPECTED_GROUP_COUNT = 8
+EXPECTED_CONTENT_TEXT_LIGHT = QColor(96, 96, 96)
+EXPECTED_CONTENT_TEXT_DARK = QColor(206, 206, 206)
 
 
-def test_execution_page_initializes_with_queue_placeholder(qtbot) -> None:
+def test_execution_page_uses_single_task_creation_card(qtbot) -> None:
+    """执行中心页面不再显示任务队列 UI，只保留单一卡片。"""
     page = ExecutionPage()
     qtbot.addWidget(page)
 
-    assert page.draft_list.count() == 1
-    placeholder = page.draft_list.item(0)
-    assert placeholder is not None
-    assert placeholder.text() == "当前任务队列为空。"
+    assert not hasattr(page, "draft_list")
+    assert not hasattr(page, "taskQueuePanel")
+    assert page.advancedPanel is page.taskBuilderPanel
+    assert page.taskBuilderPanel.groupCount() == EXPECTED_GROUP_COUNT
 
 
 def _build_linked_pages(qtbot) -> tuple[SettingPage, ExecutionPage]:
@@ -57,3 +66,65 @@ def test_execution_page_hides_cli_copy_entrypoint(qtbot) -> None:
 
     assert not hasattr(execution_page, "copy_cli_btn")
     assert not hasattr(execution_page.taskBuilderPanel, "copy_cli_btn")
+
+
+def test_execution_page_embeds_advanced_panel_into_task_builder(qtbot) -> None:
+    """顶部自定义输入应直接由任务配置卡承载。"""
+    page = ExecutionPage()
+    qtbot.addWidget(page)
+    page.resize(1120, 840)
+    page.show()
+    qtbot.waitUntil(page.taskBuilderPanel.isVisible)
+
+    assert page.advancedPanel is page.taskBuilderPanel
+    assert page.taskBuilderPanel.groupCount() == EXPECTED_GROUP_COUNT
+
+
+def test_execution_page_cards_keep_visible_height_in_default_layout(qtbot, tmp_path: Path) -> None:
+    """当前数据量下，顶部设置卡与底部单行卡不应额外出现滚动。"""
+    page = ExecutionPage()
+    qtbot.addWidget(page)
+    page.resize(1120, 840)
+    page.show()
+    qtbot.waitUntil(lambda: page.isVisible() and page.taskBuilderPanel.isVisible())
+
+    screenshot_path = tmp_path / "execution-page-default.png"
+    page.grab().save(str(screenshot_path))
+
+    assert screenshot_path.exists()
+    assert page.verticalScrollBar().maximum() == 0
+    assert page.taskBuilderPanel.height() >= EXPECTED_TASK_BUILDER_MIN_HEIGHT
+
+
+def test_execution_page_global_progress_state_hidden_by_default(qtbot) -> None:
+    """默认页面不应主动显示全局进度条。"""
+    page = ExecutionPage()
+    qtbot.addWidget(page)
+
+    state = page.current_global_progress_state()
+
+    assert state.visible is False
+
+
+def test_execution_page_mock_queue_updates_global_progress_state(qtbot) -> None:
+    """队列进入运行态后，应产出可供主窗口使用的全局进度条状态。"""
+    page = ExecutionPage()
+    qtbot.addWidget(page)
+
+    page._debug_fill_mock_queue(3)
+    state = page.current_global_progress_state()
+
+    assert state.visible is True
+    assert state.title_text != ""
+    assert state.detail_text != ""
+    assert state.rate_text != ""
+    assert state.status_text != ""
+
+
+def test_execution_page_subtitle_uses_setting_card_content_tone(qtbot) -> None:
+    """页头副标题应直接复用 Fluent 次级文案色。"""
+    page = ExecutionPage()
+    qtbot.addWidget(page)
+
+    assert page.subtitle_label.lightColor == EXPECTED_CONTENT_TEXT_LIGHT
+    assert page.subtitle_label.darkColor == EXPECTED_CONTENT_TEXT_DARK
