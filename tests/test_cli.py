@@ -98,7 +98,7 @@ def test_mapping_defaults_integrate_data_to_true() -> None:
     parser = create_parser()
     args = parser.parse_args(["mapping"])
 
-    opts = runtime_cli.build_operation_options(args)
+    opts = runtime_cli.build_options(args)
 
     assert opts.integrate_data is True
 
@@ -314,7 +314,7 @@ def test_build_operation_options_includes_wav_settings() -> None:
         ]
     )
 
-    opts = runtime_cli.build_operation_options(args)
+    opts = runtime_cli.build_options(args)
 
     assert opts.wav_output.enabled is True
     assert opts.wav_output.worker_count == EXPECTED_WAV_WORKERS
@@ -344,7 +344,7 @@ def test_execute_update_operations_all() -> None:
 def test_execute_update_operations_shared_targets_cover_both_entity_types(monkeypatch) -> None:
     parser = create_parser()
     args = parser.parse_args(["update", "--champions", "Annie,Ahri", "--maps", "11,12"])
-    monkeypatch.setattr(dispatch_cli, "resolve_cli_champion_ids", lambda *_args, **_kwargs: (1, 2))
+    monkeypatch.setattr(dispatch_cli, "resolve_champion_ids", lambda *_args, **_kwargs: (1, 2))
 
     class FakeApp:
         def update(self, opts, *, target="all"):

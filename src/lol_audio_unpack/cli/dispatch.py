@@ -16,7 +16,7 @@ from loguru import logger
 from ..config_schema import SettingKey
 from ..facade import LolAudioUnpackApp
 from ..wav_background_job import WavBackgroundProcessHandle
-from .runtime import build_operation_options, parse_int_ids, resolve_cli_champion_ids
+from .runtime import build_options, parse_int_ids, resolve_champion_ids
 
 
 @dataclass(slots=True, frozen=True)
@@ -54,7 +54,7 @@ def _resolve_targets(
     app: LolAudioUnpackApp,
 ) -> tuple[tuple[int, ...] | None, tuple[int, ...] | None]:
     """解析共享的 CLI 实体选择。"""
-    champion_ids = resolve_cli_champion_ids(args.champions, app=app, force_update=args.force)
+    champion_ids = resolve_champion_ids(args.champions, app=app, force_update=args.force)
     map_ids = parse_int_ids(args.maps)
     return champion_ids, map_ids
 
@@ -200,15 +200,15 @@ def run_remote_workflow(args: argparse.Namespace, app: LolAudioUnpackApp) -> Non
 
     update_options = None
     if _has_update(args):
-        update_options = build_operation_options(args, champion_ids=champion_ids, map_ids=map_ids)
+        update_options = build_options(args, champion_ids=champion_ids, map_ids=map_ids)
 
     extract_options = None
     if _has_extract(args):
-        extract_options = build_operation_options(args, champion_ids=champion_ids, map_ids=map_ids)
+        extract_options = build_options(args, champion_ids=champion_ids, map_ids=map_ids)
 
     mapping_options = None
     if _has_mapping(args):
-        mapping_options = build_operation_options(args, champion_ids=champion_ids, map_ids=map_ids)
+        mapping_options = build_options(args, champion_ids=champion_ids, map_ids=map_ids)
 
     app.run_remote_entity_workflow(
         update_options=update_options,
@@ -243,7 +243,7 @@ def run_update(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
         map_detail="指定地图数据",
     )
     _log_stage_start("数据更新", detail)
-    app.update(build_operation_options(args, champion_ids=champion_ids, map_ids=map_ids), target=target)
+    app.update(build_options(args, champion_ids=champion_ids, map_ids=map_ids), target=target)
     _log_stage_done("数据更新", detail)
 
 
@@ -271,7 +271,7 @@ def run_extract(args: argparse.Namespace, app: LolAudioUnpackApp) -> WavBackgrou
     )
     _log_stage_start("音频解包", detail)
     wav_handle = app.extract(
-        build_operation_options(args, champion_ids=champion_ids, map_ids=map_ids),
+        build_options(args, champion_ids=champion_ids, map_ids=map_ids),
         include_champions=include_champions,
         include_maps=include_maps,
         detach_wav_sidecar=args.wav,
@@ -307,7 +307,7 @@ def run_mapping(
     if not _has_mapping(args):
         return
 
-    if build_operation_options(args).integrate_data:
+    if build_options(args).integrate_data:
         logger.info("启用整合数据功能，将生成包含完整实体信息的整合文件")
 
     try:
@@ -325,7 +325,7 @@ def run_mapping(
         map_detail="指定地图事件映射",
     )
     _log_stage_start("事件映射", detail)
-    mapping_options = build_operation_options(args, champion_ids=champion_ids, map_ids=map_ids)
+    mapping_options = build_options(args, champion_ids=champion_ids, map_ids=map_ids)
     mapping_kwargs = {
         "include_champions": include_champions,
         "include_maps": include_maps,

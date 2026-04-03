@@ -28,7 +28,7 @@ from .invocation import (
     DEFAULT_WAV_WORKERS,
     CliInvocationRequest,
     CliInvocationValidationError,
-    validate_cli_invocation_request,
+    validate_request,
 )
 
 
@@ -125,7 +125,7 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         sys.exit(1)
 
     try:
-        validate_cli_invocation_request(
+        validate_request(
             build_invocation_request(args),
             check_required_settings=False,
         )
@@ -218,7 +218,7 @@ def initialize_app(args: argparse.Namespace) -> AppContext:
         context_settings = dict(loaded_settings)
 
     try:
-        validate_cli_invocation_request(build_invocation_request(args))
+        validate_request(build_invocation_request(args))
     except CliInvocationValidationError as exc:
         logger.error(f"配置初始化失败: {exc}")
         if config_file is not None:
@@ -279,7 +279,7 @@ def parse_int_ids(id_string: str | None) -> tuple[int, ...] | None:
     return tuple(int(item) for item in raw_ids)
 
 
-def resolve_cli_champion_ids(
+def resolve_champion_ids(
     id_string: str | None,
     *,
     app: LolAudioUnpackApp,
@@ -313,7 +313,7 @@ def resolve_cli_champion_ids(
     return app.resolve_champion_ids(raw_ids)
 
 
-def build_operation_options(
+def build_options(
     args: argparse.Namespace,
     champion_ids: tuple[int, ...] | None = None,
     map_ids: tuple[int, ...] | None = None,
@@ -355,10 +355,10 @@ __all__ = [
     "_validate_config_argv",
     "build_invocation_request",
     "build_context_settings",
-    "build_operation_options",
+    "build_options",
     "initialize_app",
     "parse_ids",
     "parse_int_ids",
-    "resolve_cli_champion_ids",
+    "resolve_champion_ids",
     "validate_args",
 ]
