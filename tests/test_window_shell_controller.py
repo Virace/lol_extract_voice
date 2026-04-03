@@ -341,6 +341,38 @@ def test_main_window_connect_pages_reuses_existing_runtime_logging_on_startup() 
     assert "sync_existing_runtime_logging(" in body
 
 
+def test_main_window_wraps_stacked_widget_with_bottom_progress_host() -> None:
+    window_source = Path("src/lol_audio_unpack/gui/window.py").read_text(encoding="utf-8")
+
+    assert "GlobalProgressStripHost" in window_source
+    assert "self._content_shell_layout.addWidget(self.stackedWidget, 1)" in window_source
+    assert "self._content_shell_layout.addWidget(self._progress_strip_host, 0)" in window_source
+    assert "self.widgetLayout.setContentsMargins(0, 48, 0, 0)" in window_source
+    assert "self.titleBar.raise_()" in window_source
+
+
+def test_main_window_connect_pages_forwards_execution_progress_to_global_strip() -> None:
+    window_source = Path("src/lol_audio_unpack/gui/window.py").read_text(encoding="utf-8")
+    connect_pages_match = re.search(
+        r"def _connect_pages\(self\):(?P<body>.*?)(?:\n    def |\Z)",
+        window_source,
+        re.DOTALL,
+    )
+    assert connect_pages_match is not None
+    body = connect_pages_match.group("body")
+
+    assert "self.executionInterface.global_progress_state_changed.connect(" in body
+    assert "self._progress_strip_host.set_state" in body
+
+
+def test_execution_log_controller_runtime_sink_uses_async_queue() -> None:
+    controller_source = Path(
+        "src/lol_audio_unpack/gui/controllers/execution_log_controller.py"
+    ).read_text(encoding="utf-8")
+
+    assert "enqueue=True" in controller_source
+
+
 def test_main_window_close_event_confirms_running_tasks_before_force_quit() -> None:
     window_source = Path("src/lol_audio_unpack/gui/window.py").read_text(encoding="utf-8")
     close_match = re.search(
@@ -352,5 +384,6 @@ def test_main_window_close_event_confirms_running_tasks_before_force_quit() -> N
     body = close_match.group("body")
 
     assert "confirm_force_close_running_tasks(parent=self)" in body
+    assert "self._shutdown_background_work()" in body
     assert "event.ignore()" in body
     assert "force_quit_application(" in body

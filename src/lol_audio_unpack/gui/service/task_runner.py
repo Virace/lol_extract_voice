@@ -145,6 +145,8 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     runtime_app: LolAudioUnpackApp | None = None
     runtime_settings = _build_runtime_settings(task)
     source_mode = runtime_settings.get(SettingKey.SOURCE_MODE, "local_path")
+    background_wav_process: object | None = None
+    wav_background_notice = ""
 
     try:
         logger.info(f"[执行中心] 任务 #{task.task_id} 开始执行: {' -> '.join(steps)}")
@@ -182,7 +184,6 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     message="基础数据刷新完成",
                 )
             elif step_name == "音频解包":
-
                 def emit_extract_progress(
                     entity_type: str,
                     current: int,
@@ -214,11 +215,13 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     entity_scope_label=task_scope_label,
                     message="正在准备解包任务…",
                 )
-                runtime_app.extract(
+                background_wav_process = runtime_app.extract(
                     options,
                     include_champions=include_champions,
                     include_maps=include_maps,
                     progress_callback=emit_extract_progress,
+                    detach_wav_sidecar=options.wav_output.enabled,
+                    wav_job_label=f"gui-task-{task.task_id}",
                 )
                 _emit_stage_progress(
                     signals,
@@ -227,7 +230,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     current=1,
                     total=1,
                     message=(
-                        "音频解包与 WAV 转码阶段已结束"
+                        "音频解包阶段已结束，WAV 转码已转入后台"
                         if options.wav_output.enabled
                         else "音频解包阶段已结束"
                     ),
@@ -292,11 +295,24 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
         logger.exception(f"[执行中心] 任务 #{task.task_id} 执行失败")
         raise
 
+    active_background_wav_process = (
+        background_wav_process
+        if background_wav_process is not None
+        and hasattr(background_wav_process, "poll")
+        and background_wav_process.poll() is None
+        else None
+    )
+    if active_background_wav_process is not None and task_params.run_mapping:
+        wav_background_notice = f"任务 #{task.task_id} 的事件映射已完成，WAV 转码仍在后台继续。"
     duration_seconds = perf_counter() - started_at
     summary = f"已完成：{' -> '.join(completed_steps)}（{duration_seconds:.1f}s）"
+    if active_background_wav_process is not None:
+        summary = f"{summary}；WAV 转码仍在后台继续"
     logger.success(f"[执行中心] 任务 #{task.task_id} {summary}")
     return ExecutionTaskResult(
         completed_steps=tuple(completed_steps),
         summary=summary,
         duration_seconds=duration_seconds,
+        wav_background_process=active_background_wav_process,
+        wav_background_notice=wav_background_notice,
     )

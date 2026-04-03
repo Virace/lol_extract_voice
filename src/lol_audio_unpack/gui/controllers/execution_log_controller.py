@@ -7,6 +7,8 @@ from collections import deque
 from loguru import logger
 from PySide6.QtCore import QObject, QTimer, Signal
 
+LOG_FLUSH_BATCH_INTERVAL_MS = 16
+
 
 class _GuiLogTextRelay(QObject):
     """将 loguru 文本 sink 转发为 Qt 信号。"""
@@ -44,7 +46,7 @@ class ExecutionLogController(QObject):
         self._runtime_log_sink_id: int | None = None
         self._log_flush_timer = QTimer(self)
         self._log_flush_timer.setSingleShot(True)
-        self._log_flush_timer.setInterval(0)
+        self._log_flush_timer.setInterval(LOG_FLUSH_BATCH_INTERVAL_MS)
         self._log_flush_timer.timeout.connect(self.flush_pending_log_lines)
         self._runtime_log_relay = _GuiLogTextRelay(self)
         self._runtime_log_relay.message_received.connect(self.queue_runtime_log_line)
@@ -57,7 +59,7 @@ class ExecutionLogController(QObject):
             self._runtime_log_relay,
             level=level.upper(),
             colorize=False,
-            enqueue=False,
+            enqueue=True,
             format=self._log_format,
         )
 

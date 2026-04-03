@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -17,7 +18,13 @@ from lol_audio_unpack.gui.task_models import (
 from lol_audio_unpack.gui.window import _prepare_shared_entity_data
 
 
-def _build_task(*, source_mode: str, run_update: bool = False) -> QueuedExecutionTask:
+def _build_task(
+    *,
+    source_mode: str,
+    run_update: bool = False,
+    run_mapping: bool = True,
+    wav_enabled: bool = False,
+) -> QueuedExecutionTask:
     return QueuedExecutionTask(
         task_id=1,
         summary="test",
@@ -32,7 +39,11 @@ def _build_task(*, source_mode: str, run_update: bool = False) -> QueuedExecutio
                     ("GAME_REGION", "zh_CN"),
                 )
             ),
-            task_params=ExecutionTaskParamsSnapshot(run_update=run_update),
+            task_params=ExecutionTaskParamsSnapshot(
+                run_update=run_update,
+                run_mapping=run_mapping,
+                wav_enabled=wav_enabled,
+            ),
         ),
     )
 
@@ -184,3 +195,71 @@ def test_run_execution_task_logs_preflight_forced_update_step(monkeypatch) -> No
     assert infos[0] == "[执行中心] 任务 #1 开始执行: 前置强制更新 -> 音频解包 -> 事件映射"
     assert infos[1] == "[执行中心] 任务 #1 开始前置强制更新"
     assert successes == [f"[执行中心] 任务 #1 {result.summary}"]
+
+
+def test_run_execution_task_detaches_wav_process_from_mapping(monkeypatch, tmp_path: Path) -> None:
+    task = _build_task(source_mode="remote_snapshot", wav_enabled=True)
+    events: list[object] = []
+
+    def _fail_exception(message: str) -> None:
+        pytest.fail(message)
+
+    runtime_context = SimpleNamespace(
+        paths=SimpleNamespace(
+            audio_path=tmp_path / "audios",
+            wav_path=tmp_path / "wavs",
+            report_path=tmp_path / "reports",
+        ),
+        runtime_cache={},
+        config=SimpleNamespace(),
+    )
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.returncode = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+    fake_process = FakeProcess()
+
+    monkeypatch.setattr(
+        task_runner,
+        "normalize_app_context_settings",
+        lambda settings: {**settings, "SOURCE_MODE": "local_path"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        task_runner,
+        "logger",
+        SimpleNamespace(
+            info=lambda _message: None,
+            debug=lambda _message: None,
+            success=lambda _message: None,
+            exception=_fail_exception,
+        ),
+    )
+    monkeypatch.setattr(task_runner, "create_app_context", lambda *, settings: runtime_context)
+
+    class FakeApp:
+        def __init__(self, app_context) -> None:
+            self.ctx = app_context
+
+        def extract(self, options, **kwargs) -> None:
+            assert options.wav_output.enabled is True
+            assert kwargs["detach_wav_sidecar"] is True
+            events.append(("extract", kwargs["detach_wav_sidecar"]))
+            return fake_process
+
+        def mapping(self, _options, **_kwargs) -> None:
+            events.append("mapping")
+
+    monkeypatch.setattr(task_runner, "LolAudioUnpackApp", FakeApp)
+    signals = SimpleNamespace(progress=SimpleNamespace(emit=lambda _payload: None))
+
+    result = task_runner.run_execution_task(task, signals)
+
+    assert events == [("extract", True), "mapping"]
+    assert result.wav_background_process is fake_process
+    assert result.wav_background_notice == "任务 #1 的事件映射已完成，WAV 转码仍在后台继续。"
+    assert "WAV 转码仍在后台继续" in result.summary

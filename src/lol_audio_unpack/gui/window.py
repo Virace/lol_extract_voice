@@ -9,7 +9,7 @@ from time import perf_counter
 from loguru import logger
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QThreadPool, QTimer
 from PySide6.QtGui import QCloseEvent, QIcon, QResizeEvent, QShowEvent
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QVBoxLayout, QWidget
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets import (
     FluentWindow,
@@ -34,6 +34,7 @@ from lol_audio_unpack.gui.common import (
     show_feedback_infobar,
 )
 from lol_audio_unpack.gui.common.packaged_remote_mode_policy import normalize_app_context_settings
+from lol_audio_unpack.gui.components.global_progress_strip import GlobalProgressStripHost
 from lol_audio_unpack.gui.components.log_drawer import (
     GlobalLogDrawer,
 )
@@ -58,7 +59,7 @@ from lol_audio_unpack.gui.controllers.window_shell_controller import (
 )
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 from lol_audio_unpack.gui.service.worker import DataLoadWorker
-from lol_audio_unpack.gui.view.about_page import AboutPage
+from lol_audio_unpack.gui.view.about_page import AboutPage, get_about_page_minimum_shell_size
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 from lol_audio_unpack.gui.view.home_page import HomePage
 from lol_audio_unpack.gui.view.overview_page import OverviewPage
@@ -109,6 +110,18 @@ class MainWindow(FluentWindow):
         self._log_drawer_controller = LogDrawerController()
         super().__init__()
         previous_mark = _log_window_stage("FluentWindow 基类初始化", startup_begin, previous_mark)
+        self._progress_strip_host = GlobalProgressStripHost(self)
+        self._content_shell = QWidget(self)
+        self._content_shell_layout = QVBoxLayout(self._content_shell)
+        self._content_shell_layout.setContentsMargins(0, 0, 0, 0)
+        self._content_shell_layout.setSpacing(0)
+        self.widgetLayout.setContentsMargins(0, 48, 0, 0)
+        self.widgetLayout.removeWidget(self.stackedWidget)
+        self._content_shell_layout.addWidget(self.stackedWidget, 1)
+        self._content_shell_layout.addWidget(self._progress_strip_host, 0)
+        self.widgetLayout.addWidget(self._content_shell)
+        self.titleBar.raise_()
+        previous_mark = _log_window_stage("主内容壳层初始化完成", startup_begin, previous_mark)
 
         # apply specific real-time listeners for theme tracking
         qconfig.themeChanged.connect(setTheme)
@@ -194,7 +207,9 @@ class MainWindow(FluentWindow):
     def _initWindow(self):
         """设置主窗口尺寸、标题与基础事件过滤器。"""
         self.resize(1130, 800)
-        self.setMinimumWidth(860)
+        about_min_size = get_about_page_minimum_shell_size()
+        self.setMinimumWidth(max(860, about_min_size.width()))
+        self.setMinimumHeight(about_min_size.height())
         self.setWindowIcon(load_app_icon())
         self.setWindowTitle(f"Lol Audio Unpack  {__version__}")
 
@@ -287,6 +302,8 @@ class MainWindow(FluentWindow):
             event.ignore()
             return
         should_force_quit = self._has_active_background_work()
+        if should_force_quit:
+            self._shutdown_background_work()
         self._disconnect_theme_material_listener()
         self._unregister_app_event_filter()
         super().closeEvent(event)
@@ -373,6 +390,9 @@ class MainWindow(FluentWindow):
         self.executionInterface.output_state_refresh_requested.connect(
             self._shared_data_controller.refresh_shared_output_state
         )
+        self.executionInterface.global_progress_state_changed.connect(
+            lambda state: self._progress_strip_host.set_state(state, animate=True)
+        )
         self.executionInterface.task_queue_busy_changed.connect(
             lambda busy: apply_task_queue_busy_state(
                 busy=busy,
@@ -382,6 +402,10 @@ class MainWindow(FluentWindow):
             )
         )
         self.executionInterface.log_lines_appended.connect(self._log_drawer_controller.append_log_lines)
+        self._progress_strip_host.set_state(
+            self.executionInterface.current_global_progress_state(),
+            animate=False,
+        )
         self.settingInterface.shared_context_input_changed.connect(self._shared_data_controller.on_shared_context_input_changed)
         self.settingInterface.smooth_scroll_changed.connect(
             lambda page_enabled, widget_enabled: apply_smooth_scroll_settings(

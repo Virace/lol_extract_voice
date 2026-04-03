@@ -1,18 +1,23 @@
-"""执行中心任务表单中的参数测试。"""
+"""执行中心任务创建卡片测试。"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from qfluentwidgets import GroupHeaderCardWidget
+
 from lol_audio_unpack.gui.task_models import AppContextInputSnapshot
-from lol_audio_unpack.gui.view.execution.advanced_input_panel import AdvancedInputPanel
-from lol_audio_unpack.gui.view.execution.task_builder_panel import TaskBuilderPanel
+from lol_audio_unpack.gui.view.execution.task_creation_card import TaskCreationCard
 
 EXPECTED_WAV_WORKERS = 6
 EXPECTED_WAV_TIMEOUT = 9
 EXPECTED_WAV_RETRIES = 4
 EXPECTED_GAME_PATH = "game-root"
 EXPECTED_OUTPUT_PATH = "output-root"
+EXPECTED_GROUP_COUNT = 8
+EXPECTED_ID_INPUT_WIDTH = 320
+EXPECTED_SCOPE_TOGGLE_WIDTH = 180
+EXPECTED_MAX_WORKERS_WIDTH = 120
 
 
 @dataclass(slots=True)
@@ -37,19 +42,24 @@ class _FakeGuiConfig:
         )
 
 
-def _build_panel(qtbot) -> tuple[TaskBuilderPanel, AdvancedInputPanel]:
-    """创建绑定完成的任务表单与高级输入面板。"""
-    panel = TaskBuilderPanel()
-    advanced_panel = AdvancedInputPanel()
-    panel.bind_advanced_panel(advanced_panel)
+def _build_panel(qtbot) -> TaskCreationCard:
+    """创建任务创建卡片。"""
+    panel = TaskCreationCard()
     qtbot.addWidget(panel)
-    qtbot.addWidget(advanced_panel)
-    return panel, advanced_panel
+    return panel
 
 
-def test_task_builder_panel_uses_gui_wav_defaults_for_draft(qtbot) -> None:
+def test_task_creation_card_uses_group_header_card_widget(qtbot) -> None:
+    """任务表单应基于 GroupHeaderCardWidget 承载全部参数行。"""
+    panel = _build_panel(qtbot)
+
+    assert isinstance(panel, GroupHeaderCardWidget)
+    assert panel.groupCount() == EXPECTED_GROUP_COUNT
+
+
+def test_task_creation_card_uses_gui_wav_defaults_for_draft(qtbot) -> None:
     """启用 WAV 时，任务草稿应携带默认转码参数。"""
-    panel, _advanced_panel = _build_panel(qtbot)
+    panel = _build_panel(qtbot)
     gui_config = _FakeGuiConfig()
 
     panel.apply_gui_config_defaults(gui_config)
@@ -71,9 +81,9 @@ def test_task_builder_panel_uses_gui_wav_defaults_for_draft(qtbot) -> None:
     assert operation_options.wav_output.format == "float"
 
 
-def test_task_builder_panel_drops_wav_when_extract_is_disabled(qtbot) -> None:
+def test_task_creation_card_drops_wav_when_extract_is_disabled(qtbot) -> None:
     """未勾选音频解包时，不应继续携带 WAV 相关参数。"""
-    panel, _advanced_panel = _build_panel(qtbot)
+    panel = _build_panel(qtbot)
     gui_config = _FakeGuiConfig()
 
     panel.apply_gui_config_defaults(gui_config)
@@ -85,3 +95,15 @@ def test_task_builder_panel_drops_wav_when_extract_is_disabled(qtbot) -> None:
 
     assert draft.task_params.run_extract is False
     assert draft.task_params.wav_enabled is False
+
+
+def test_task_creation_card_uses_balanced_control_widths(qtbot) -> None:
+    """英雄/地图输入宽度应统一，右侧状态控件应更紧凑。"""
+    panel = _build_panel(qtbot)
+
+    assert panel.champion_ids_input.minimumWidth() == EXPECTED_ID_INPUT_WIDTH
+    assert panel.map_ids_input.minimumWidth() == EXPECTED_ID_INPUT_WIDTH
+    assert panel.champion_ids_input.maximumWidth() == EXPECTED_ID_INPUT_WIDTH
+    assert panel.map_ids_input.maximumWidth() == EXPECTED_ID_INPUT_WIDTH
+    assert panel.vo_filter.maximumWidth() == EXPECTED_SCOPE_TOGGLE_WIDTH
+    assert panel.max_workers_combo.maximumWidth() == EXPECTED_MAX_WORKERS_WIDTH
