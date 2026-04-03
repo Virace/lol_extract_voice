@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 from loguru import logger
@@ -32,6 +33,7 @@ from .config_loading import (
 from .config_schema import BASE_CONTEXT_OPTION_ATTRS, ConfigSection, SettingKey, build_settings_from_namespace
 from .facade import LolAudioUnpackApp
 from .utils.run_summary import attach_run_summary_sink, emit_cli_run_summary, get_or_create_run_summary
+from .wav_background_job import WavBackgroundProcessHandle
 
 
 def _create_shared_parser() -> argparse.ArgumentParser:
@@ -681,6 +683,62 @@ def _log_cli_stage_complete(stage_label: str, detail: str | None = None) -> None
     logger.opt(depth=1).success(message)
 
 
+def _build_wav_background_progress_signature(snapshot: dict[str, object]) -> tuple[object, ...]:
+    """将后台 WAV 快照压缩为便于去重比较的签名。"""
+    return (
+        snapshot.get("status"),
+        snapshot.get("phase"),
+        snapshot.get("submitted_wav_job_count"),
+        snapshot.get("running_wav_job_count"),
+        snapshot.get("completed_wav_job_count"),
+        snapshot.get("failed_wav_job_count"),
+        snapshot.get("skipped_wav_job_count"),
+        snapshot.get("detail"),
+    )
+
+
+def _format_wav_background_progress(snapshot: dict[str, object]) -> str:
+    """将后台 WAV 快照格式化为 CLI 友好的进度文案。"""
+    status = str(snapshot.get("status", "running"))
+    if status != "running":
+        detail = str(snapshot.get("detail", "")).strip()
+        return detail or status
+    return (
+        f"phase={snapshot.get('phase', 'unknown')} · "
+        f"已提交 {snapshot.get('submitted_wav_job_count', 0)} · "
+        f"运行中 {snapshot.get('running_wav_job_count', 0)} · "
+        f"完成 {snapshot.get('completed_wav_job_count', 0)} · "
+        f"失败 {snapshot.get('failed_wav_job_count', 0)} · "
+        f"跳过 {snapshot.get('skipped_wav_job_count', 0)}"
+    )
+
+
+def _poll_cli_wav_background_progress(
+    handle: WavBackgroundProcessHandle | None,
+    *,
+    last_signature: tuple[object, ...] | None,
+    force: bool = False,
+) -> tuple[object, ...] | None:
+    """按主线节奏主动轮询后台 WAV 进度。"""
+    if handle is None:
+        return last_signature
+    snapshot = handle.read_progress_snapshot()
+    if snapshot is None:
+        return last_signature
+    signature = _build_wav_background_progress_signature(snapshot)
+    if not force and signature == last_signature:
+        return last_signature
+
+    message = _format_wav_background_progress(snapshot)
+    if snapshot.get("status") == "completed":
+        logger.success(f"WAV 后台进度[{handle.job_label}]：{message}")
+    elif snapshot.get("status") == "failed":
+        logger.warning(f"WAV 后台进度[{handle.job_label}]：{message}")
+    else:
+        logger.info(f"WAV 后台进度[{handle.job_label}]：{message}")
+    return signature
+
+
 def _log_cli_unhandled_error(error: Exception, *, dev_mode: bool) -> None:
     """统一记录 CLI 顶层未处理异常。
 
@@ -749,10 +807,10 @@ def execute_update_operations(args: argparse.Namespace, app: LolAudioUnpackApp) 
     _log_cli_stage_complete("数据更新", detail)
 
 
-def execute_extract_operations(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
+def execute_extract_operations(args: argparse.Namespace, app: LolAudioUnpackApp) -> WavBackgroundProcessHandle | None:
     """执行音频解包操作。"""
     if not _has_extract_actions(args):
-        return
+        return None
 
     try:
         champion_ids, map_ids = _resolve_cli_targets(args, app=app)
@@ -772,13 +830,16 @@ def execute_extract_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
         wav_enabled=args.wav,
     )
     _log_cli_stage_start("音频解包", detail)
-    app.extract(
+    wav_background_handle = app.extract(
         build_operation_options(args, champion_ids=champion_ids, map_ids=map_ids),
         include_champions=include_champions,
         include_maps=include_maps,
+        detach_wav_sidecar=args.wav,
+        wav_job_label=f"cli-{int(time.time() * 1000)}",
     )
 
     _log_cli_stage_complete("音频解包", detail)
+    return wav_background_handle
 
 
 def _log_mapping_runtime_error(error: ValueError) -> None:
@@ -797,7 +858,12 @@ def _log_mapping_runtime_error(error: ValueError) -> None:
     )
 
 
-def execute_mapping_operations(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
+def execute_mapping_operations(
+    args: argparse.Namespace,
+    app: LolAudioUnpackApp,
+    *,
+    wav_background_handle: WavBackgroundProcessHandle | None = None,
+) -> None:
     """执行事件映射操作。"""
     if not _has_mapping_actions(args):
         return
@@ -825,13 +891,29 @@ def execute_mapping_operations(args: argparse.Namespace, app: LolAudioUnpackApp)
         "include_champions": include_champions,
         "include_maps": include_maps,
     }
+    last_wav_progress_signature: tuple[object, ...] | None = None
+
+    def emit_mapping_progress(_entity_type: str, _current: int, _total: int, _message: str) -> None:
+        nonlocal last_wav_progress_signature
+        last_wav_progress_signature = _poll_cli_wav_background_progress(
+            wav_background_handle,
+            last_signature=last_wav_progress_signature,
+        )
 
     try:
-        app.mapping(mapping_options, **mapping_kwargs)
+        if wav_background_handle is None:
+            app.mapping(mapping_options, **mapping_kwargs)
+        else:
+            app.mapping(mapping_options, progress_callback=emit_mapping_progress, **mapping_kwargs)
     except ValueError as e:
         _log_mapping_runtime_error(e)
         sys.exit(1)
 
+    _poll_cli_wav_background_progress(
+        wav_background_handle,
+        last_signature=last_wav_progress_signature,
+        force=True,
+    )
     _log_cli_stage_complete("事件映射", detail)
 
 
@@ -864,12 +946,21 @@ def main() -> None:
         if _has_update_actions(args):
             with run_summary.stage_context("update", label="数据更新"):
                 execute_update_operations(args, app)
+        wav_background_handle = None
         if _has_extract_actions(args):
             with run_summary.stage_context("extract", label="音频解包"):
-                execute_extract_operations(args, app)
+                wav_background_handle = execute_extract_operations(args, app)
         if _has_mapping_actions(args):
             with run_summary.stage_context("mapping", label="事件映射"):
-                execute_mapping_operations(args, app)
+                execute_mapping_operations(args, app, wav_background_handle=wav_background_handle)
+        if wav_background_handle is not None:
+            _poll_cli_wav_background_progress(
+                wav_background_handle,
+                last_signature=None,
+                force=True,
+            )
+            if wav_background_handle.poll() is None:
+                logger.info("WAV 后台作业仍在继续，CLI 主流程将先结束。")
         app.cleanup_remote_artifacts()
 
     except KeyboardInterrupt:

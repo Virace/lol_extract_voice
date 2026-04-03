@@ -25,6 +25,12 @@ from lol_audio_unpack.utils.path_constants import (
 )
 from lol_audio_unpack.utils.run_summary import record_runtime_note
 from lol_audio_unpack.utils.stats import FileProcessResult, ProcessingStatsContext
+from lol_audio_unpack.wav_background_job import (
+    WavBackgroundProcessHandle,
+    WavManifestRecorder,
+    build_wav_background_job_spec_from_paths,
+    launch_wav_background_process,
+)
 from lol_audio_unpack.wav_sidecar import WavSidecarProgressSnapshot, WavTranscodeCoordinator
 
 if TYPE_CHECKING:
@@ -43,6 +49,7 @@ def _persist_wem_and_maybe_submit(
     file: Any,
     destination_path: Path,
     *,
+    persisted_wem_callback: Callable[[Path], None] | None = None,
     wav_submitter: Callable[[Path], None] | None = None,
 ) -> None:
     """保存 ``.wem`` 文件，并在成功后通知 WAV sidecar。
@@ -50,10 +57,13 @@ def _persist_wem_and_maybe_submit(
     Args:
         file: 具备 ``save_file`` 方法的提取结果对象。
         destination_path: 落盘目标路径。
+        persisted_wem_callback: 文件成功落盘后的附加回调。
         wav_submitter: 可选的 WAV sidecar 提交回调。
     """
     destination_path.parent.mkdir(parents=True, exist_ok=True)
     file.save_file(destination_path)
+    if persisted_wem_callback is not None:
+        persisted_wem_callback(destination_path)
     if wav_submitter is not None:
         wav_submitter(destination_path)
 
@@ -131,6 +141,54 @@ def _emit_wav_sidecar_degraded_progress(
     if progress_callback is None:
         return
     progress_callback("wav", 1, 1, "WAV 转码不可用，已自动降级为仅保留 WEM。")
+
+
+def _build_detached_wav_manifest_recorder(*, ctx: AppContext, job_label: str) -> WavManifestRecorder:
+    """为 detached WAV sidecar 构造清单记录器。"""
+    manifest_path = Path(ctx.paths.report_path) / "_wav_manifests" / f"{job_label}.txt"
+    if manifest_path.exists():
+        manifest_path.unlink(missing_ok=True)
+    return WavManifestRecorder(manifest_path)
+
+
+def _launch_detached_wav_sidecar(
+    *,
+    ctx: AppContext,
+    wav_output: WavOutputOptions,
+    manifest_recorder: WavManifestRecorder,
+    job_label: str,
+) -> WavBackgroundProcessHandle | None:
+    """根据已记录的 WEM 清单启动后台 WAV 进程。"""
+    if not manifest_recorder.has_records() or not manifest_recorder.manifest_path.exists():
+        return None
+
+    manifest_lines = [
+        line.strip()
+        for line in manifest_recorder.manifest_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    if not manifest_lines:
+        return None
+
+    first_wem_path = Path(manifest_lines[0])
+    audio_root_path = Path(ctx.paths.audio_path)
+    relative_parts = first_wem_path.relative_to(audio_root_path).parts
+    if not relative_parts:
+        return None
+
+    version = relative_parts[0]
+    spec = build_wav_background_job_spec_from_paths(
+        job_label=job_label,
+        manifest_path=manifest_recorder.manifest_path,
+        audio_root=audio_root_path / version,
+        wav_root=Path(ctx.paths.wav_path) / version,
+        report_root=Path(ctx.paths.report_path) / version / "transcode_wav" / job_label,
+        worker_count=wav_output.worker_count,
+        timeout_seconds=wav_output.timeout_seconds,
+        max_retries=wav_output.max_retries,
+        wav_format=wav_output.format,
+    )
+    return launch_wav_background_process(spec)
 
 
 def _build_wav_sidecar_progress_handler(
@@ -263,6 +321,7 @@ def unpack_audio_entity(  # noqa: PLR0913
     cache_lock: threading.Lock | None = None,
     *,
     ctx: AppContext,
+    persisted_wem_callback: Callable[[Path], None] | None = None,
     wav_submitter: Callable[[Path], None] | None = None,
 ) -> None:
     """解包单个实体音频（英雄或地图）。
@@ -477,6 +536,7 @@ def unpack_audio_entity(  # noqa: PLR0913
                                 _persist_wem_and_maybe_submit(
                                     file,
                                     output_path / f"{file.id}.wem",
+                                    persisted_wem_callback=persisted_wem_callback,
                                     wav_submitter=wav_submitter,
                                 )
                                 # 记录成功统计
@@ -495,6 +555,7 @@ def unpack_audio_entity(  # noqa: PLR0913
                                 _persist_wem_and_maybe_submit(
                                     file,
                                     output_path / f"{file.filename}",
+                                    persisted_wem_callback=persisted_wem_callback,
                                     wav_submitter=wav_submitter,
                                 )
                                 # 记录成功统计
@@ -716,6 +777,7 @@ def unpack_champion(  # noqa: PLR0913
     cache_lock: threading.Lock | None = None,
     *,
     ctx: AppContext,
+    persisted_wem_callback: Callable[[Path], None] | None = None,
     wav_submitter: Callable[[Path], None] | None = None,
 ) -> None:
     """按英雄 ID 解包音频。
@@ -737,6 +799,7 @@ def unpack_champion(  # noqa: PLR0913
             wad_cache=wad_cache,
             cache_lock=cache_lock,
             ctx=ctx,
+            persisted_wem_callback=persisted_wem_callback,
             wav_submitter=wav_submitter,
         )
         _attach_bp_vo_to_champion(entity_data, reader, ctx=ctx)
@@ -753,6 +816,7 @@ def unpack_map_audio(  # noqa: PLR0913
     cache_lock: threading.Lock | None = None,
     *,
     ctx: AppContext,
+    persisted_wem_callback: Callable[[Path], None] | None = None,
     wav_submitter: Callable[[Path], None] | None = None,
 ) -> None:
     """按地图 ID 解包音频。
@@ -774,6 +838,7 @@ def unpack_map_audio(  # noqa: PLR0913
             wad_cache=wad_cache,
             cache_lock=cache_lock,
             ctx=ctx,
+            persisted_wem_callback=persisted_wem_callback,
             wav_submitter=wav_submitter,
         )
     except ValueError as e:
@@ -789,8 +854,11 @@ def execute_unpack_tasks(  # noqa: PLR0913
     *,
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
+    persisted_wem_callback: Callable[[Path], None] | None = None,
     wav_output: WavOutputOptions | None = None,
-) -> None:
+    detach_wav_sidecar: bool = False,
+    wav_job_label: str | None = None,
+) -> WavBackgroundProcessHandle | None:
     """执行批量解包任务。
 
     Args:
@@ -837,32 +905,49 @@ def execute_unpack_tasks(  # noqa: PLR0913
     wad_cache: dict[Path, WAD] = {}
     cache_lock = threading.Lock() if max_workers > 1 else None
     coordinator = None
+    detached_wav_handle: WavBackgroundProcessHandle | None = None
+    detached_manifest_recorder: WavManifestRecorder | None = None
+    detached_job_label = wav_job_label or f"wav-sidecar-{int(start_time * 1000)}"
     if wav_output and wav_output.enabled:
-        try:
-            logger.info(
-                "WAV 转码已启用：workers={}，timeout={}s，retries={}，format={}",
-                wav_output.worker_count,
-                wav_output.timeout_seconds,
-                wav_output.max_retries,
-                wav_output.format,
-            )
-            coordinator = WavTranscodeCoordinator(
-                options=wav_output,
-                audio_root=Path(ctx.paths.audio_path) / reader.version,
-                wav_root=Path(ctx.paths.wav_path) / reader.version,
-                report_root=Path(ctx.paths.report_path) / reader.version / "transcode_wav",
-                progress_callback=_build_wav_sidecar_progress_handler(
-                    progress_callback=progress_callback,
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001
-            wav_sidecar_internal_error_detail = _record_wav_sidecar_internal_error(
-                ctx,
-                exc,
-                phase="initialize",
-                show_exception=show_exception,
-            )
-            _emit_wav_sidecar_degraded_progress(progress_callback=progress_callback)
+        logger.info(
+            "WAV 转码已启用：workers={}，timeout={}s，retries={}，format={}",
+            wav_output.worker_count,
+            wav_output.timeout_seconds,
+            wav_output.max_retries,
+            wav_output.format,
+        )
+        if detach_wav_sidecar:
+            try:
+                detached_manifest_recorder = _build_detached_wav_manifest_recorder(
+                    ctx=ctx,
+                    job_label=detached_job_label,
+                )
+            except Exception as exc:  # noqa: BLE001
+                wav_sidecar_internal_error_detail = _record_wav_sidecar_internal_error(
+                    ctx,
+                    exc,
+                    phase="initialize_detached_manifest",
+                    show_exception=show_exception,
+                )
+        else:
+            try:
+                coordinator = WavTranscodeCoordinator(
+                    options=wav_output,
+                    audio_root=Path(ctx.paths.audio_path) / reader.version,
+                    wav_root=Path(ctx.paths.wav_path) / reader.version,
+                    report_root=Path(ctx.paths.report_path) / reader.version / "transcode_wav",
+                    progress_callback=_build_wav_sidecar_progress_handler(
+                        progress_callback=progress_callback,
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001
+                wav_sidecar_internal_error_detail = _record_wav_sidecar_internal_error(
+                    ctx,
+                    exc,
+                    phase="initialize",
+                    show_exception=show_exception,
+                )
+                _emit_wav_sidecar_degraded_progress(progress_callback=progress_callback)
 
     def safe_wav_submitter(wem_path: Path) -> None:
         """安全提交 WAV sidecar 任务。
@@ -884,27 +969,47 @@ def execute_unpack_tasks(  # noqa: PLR0913
             )
             _emit_wav_sidecar_degraded_progress(progress_callback=progress_callback)
 
-    wav_submitter = None if coordinator is None else safe_wav_submitter
+    def safe_detached_wav_submitter(wem_path: Path) -> None:
+        """安全记录 detached WAV 清单。"""
+        nonlocal wav_sidecar_internal_error_detail
+        if detached_manifest_recorder is None or wav_sidecar_internal_error_detail is not None:
+            return
+        try:
+            detached_manifest_recorder.record(wem_path)
+        except Exception as exc:  # noqa: BLE001
+            wav_sidecar_internal_error_detail = _record_wav_sidecar_internal_error(
+                ctx,
+                exc,
+                phase="record_detached_manifest",
+                show_exception=show_exception,
+            )
+
+    if detach_wav_sidecar:
+        wav_submitter = None if detached_manifest_recorder is None else safe_detached_wav_submitter
+    else:
+        wav_submitter = None if coordinator is None else safe_wav_submitter
 
     def unpack_entity(entity_type: str, entity_id: int) -> None:
         """解包单个实体的辅助函数"""
+        common_kwargs: dict[str, object] = {
+            "wad_cache": wad_cache,
+            "cache_lock": cache_lock,
+            "ctx": ctx,
+            "wav_submitter": wav_submitter,
+        }
+        if persisted_wem_callback is not None:
+            common_kwargs["persisted_wem_callback"] = persisted_wem_callback
         if entity_type == "champion":
             unpack_champion(
                 entity_id,
                 reader,
-                wad_cache=wad_cache,
-                cache_lock=cache_lock,
-                ctx=ctx,
-                wav_submitter=wav_submitter,
+                **common_kwargs,
             )
         elif entity_type == "map":
             unpack_map_audio(
                 entity_id,
                 reader,
-                wad_cache=wad_cache,
-                cache_lock=cache_lock,
-                ctx=ctx,
-                wav_submitter=wav_submitter,
+                **common_kwargs,
             )
         else:
             raise ValueError(f"未知的实体类型: {entity_type}")
@@ -1010,6 +1115,29 @@ def execute_unpack_tasks(  # noqa: PLR0913
                 f"失败 {transcode_summary.failed_wav_job_count} 个，"
                 f"跳过 {transcode_summary.skipped_wav_job_count} 个"
             )
+    elif (
+        detach_wav_sidecar
+        and detached_manifest_recorder is not None
+        and wav_output is not None
+        and wav_sidecar_internal_error_detail is None
+    ):
+        try:
+            detached_wav_handle = _launch_detached_wav_sidecar(
+                ctx=ctx,
+                wav_output=wav_output,
+                manifest_recorder=detached_manifest_recorder,
+                job_label=detached_job_label,
+            )
+        except Exception as exc:  # noqa: BLE001
+            wav_sidecar_internal_error_detail = _record_wav_sidecar_internal_error(
+                ctx,
+                exc,
+                phase="launch_detached_process",
+                show_exception=show_exception,
+            )
+        if detached_wav_handle is not None:
+            logger.info("WAV 转码已转入后台进程，主流程将继续推进。")
+            summary_message = f"{summary_message}；WAV 已转入后台进程"
     if wav_sidecar_internal_error_detail is not None:
         summary_message = f"{summary_message}；WAV sidecar 内部异常，已降级为仅保留 WEM"
 
@@ -1026,6 +1154,7 @@ def execute_unpack_tasks(  # noqa: PLR0913
 
     # 在所有操作完成后，将收集到的未知分类写入文件
     reader.write_unknown_categories_to_file()
+    return detached_wav_handle
 
 
 def unpack_audio_all(  # noqa: PLR0913
@@ -1036,8 +1165,11 @@ def unpack_audio_all(  # noqa: PLR0913
     *,
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
+    persisted_wem_callback: Callable[[Path], None] | None = None,
     wav_output: WavOutputOptions | None = None,
-) -> None:
+    detach_wav_sidecar: bool = False,
+    wav_job_label: str | None = None,
+) -> WavBackgroundProcessHandle | None:
     """使用线程池并发解包全部实体。
 
     Args:
@@ -1067,13 +1199,16 @@ def unpack_audio_all(  # noqa: PLR0913
         return
 
     # 执行任务
-    execute_unpack_tasks(
+    return execute_unpack_tasks(
         tasks,
         reader,
         max_workers,
         ctx=ctx,
         progress_callback=progress_callback,
+        persisted_wem_callback=persisted_wem_callback,
         wav_output=wav_output,
+        detach_wav_sidecar=detach_wav_sidecar,
+        wav_job_label=wav_job_label,
     )
 
 
@@ -1084,8 +1219,11 @@ def unpack_champions(  # noqa: PLR0913
     *,
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
+    persisted_wem_callback: Callable[[Path], None] | None = None,
     wav_output: WavOutputOptions | None = None,
-) -> None:
+    detach_wav_sidecar: bool = False,
+    wav_job_label: str | None = None,
+) -> WavBackgroundProcessHandle | None:
     """便捷函数：解包指定英雄。
 
     Args:
@@ -1096,13 +1234,16 @@ def unpack_champions(  # noqa: PLR0913
         progress_callback: 每个实体处理结束后的可选进度回调。
     """
     tasks = generate_champion_tasks(reader, champion_ids)
-    execute_unpack_tasks(
+    return execute_unpack_tasks(
         tasks,
         reader,
         max_workers,
         ctx=ctx,
         progress_callback=progress_callback,
+        persisted_wem_callback=persisted_wem_callback,
         wav_output=wav_output,
+        detach_wav_sidecar=detach_wav_sidecar,
+        wav_job_label=wav_job_label,
     )
 
 
@@ -1113,8 +1254,11 @@ def unpack_maps(  # noqa: PLR0913
     *,
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
+    persisted_wem_callback: Callable[[Path], None] | None = None,
     wav_output: WavOutputOptions | None = None,
-) -> None:
+    detach_wav_sidecar: bool = False,
+    wav_job_label: str | None = None,
+) -> WavBackgroundProcessHandle | None:
     """便捷函数：解包指定地图。
 
     Args:
@@ -1125,11 +1269,14 @@ def unpack_maps(  # noqa: PLR0913
         progress_callback: 每个实体处理结束后的可选进度回调。
     """
     tasks = generate_map_tasks(reader, map_ids)
-    execute_unpack_tasks(
+    return execute_unpack_tasks(
         tasks,
         reader,
         max_workers,
         ctx=ctx,
         progress_callback=progress_callback,
+        persisted_wem_callback=persisted_wem_callback,
         wav_output=wav_output,
+        detach_wav_sidecar=detach_wav_sidecar,
+        wav_job_label=wav_job_label,
     )

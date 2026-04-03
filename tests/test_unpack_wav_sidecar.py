@@ -179,6 +179,78 @@ def test_execute_unpack_tasks_sidecar_finalize_error_does_not_fail_main_flow(
     assert any("sidecar 内部异常" in note for note in summary.stages["extract"].notes)
 
 
+def test_execute_unpack_tasks_detaches_wav_sidecar_into_background_handle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launches: list[object] = []
+
+    class FakeHandle:
+        def __init__(self) -> None:
+            self.returncode = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.returncode = 1
+
+    def fake_unpack_champion(
+        _champion_id: int,
+        _reader,
+        wad_cache=None,
+        cache_lock=None,
+        *,
+        ctx,
+        wav_submitter=None,
+    ) -> None:
+        _ = (wad_cache, cache_lock, ctx)
+        if wav_submitter is not None:
+            wav_submitter(tmp_path / "audios" / "15.8" / "champion-1.wem")
+
+    monkeypatch.setattr(
+        unpack,
+        "WavTranscodeCoordinator",
+        lambda **_kwargs: pytest.fail("detached 模式不应创建阻塞 coordinator"),
+    )
+    monkeypatch.setattr(unpack, "unpack_champion", fake_unpack_champion)
+    monkeypatch.setattr(
+        unpack,
+        "launch_wav_background_process",
+        lambda spec: launches.append(spec) or FakeHandle(),
+    )
+
+    reader = SimpleNamespace(
+        version="15.8",
+        write_unknown_categories_to_file=lambda: None,
+    )
+    ctx = SimpleNamespace(
+        config=SimpleNamespace(dev_mode=False),
+        paths=SimpleNamespace(
+            audio_path=tmp_path / "audios",
+            wav_path=tmp_path / "wavs",
+            report_path=tmp_path / "reports",
+        ),
+        runtime_cache={},
+    )
+    wav_output = SimpleNamespace(enabled=True, worker_count=1, timeout_seconds=1, max_retries=1, format="pcm16")
+
+    handle = unpack.execute_unpack_tasks(
+        [("champion", 1, "测试英雄")],
+        reader,
+        max_workers=1,
+        ctx=ctx,
+        wav_output=wav_output,
+        detach_wav_sidecar=True,
+        wav_job_label="cli-test",
+    )
+
+    assert handle is not None
+    assert launches
+    assert launches[0].job_label == "cli-test"
+    assert launches[0].manifest_path.read_text(encoding="utf-8").strip().endswith("champion-1.wem")
+
+
 def test_execute_unpack_tasks_bridges_wav_progress_to_logs_and_callback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
