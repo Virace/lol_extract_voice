@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from lol_audio_unpack.cli_invocation import (
+from lol_audio_unpack.cli.invocation import (
     DEFAULT_CLI_MAX_WORKERS,
     DEFAULT_WAV_FORMAT,
     DEFAULT_WAV_RETRIES,

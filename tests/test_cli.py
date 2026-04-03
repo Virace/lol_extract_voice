@@ -3,8 +3,11 @@ from types import SimpleNamespace
 
 import pytest
 
-import lol_audio_unpack.__main__ as cli
+import lol_audio_unpack.cli.dispatch as dispatch_cli
+import lol_audio_unpack.cli.runtime as runtime_cli
 from lol_audio_unpack.app_context import SourceMode
+from lol_audio_unpack.cli.cli import _detect_mode
+from lol_audio_unpack.cli.parser import create_parser
 
 pytestmark = pytest.mark.unit
 
@@ -14,84 +17,94 @@ EXPECTED_WAV_RETRIES = 5
 EXPECTED_CONFIG_MAX_WORKERS = 6
 
 
+def test_detect_mode_from_unpack_script_name() -> None:
+    assert _detect_mode("unpack") == "unpack"
+    assert _detect_mode("unpack.exe") == "unpack"
+
+
+def test_detect_mode_from_mapping_script_name() -> None:
+    assert _detect_mode("mapping") == "mapping"
+    assert _detect_mode("mapping.exe") == "mapping"
+
+
 def test_parse_ids() -> None:
-    assert cli.parse_ids(None) is None
-    assert cli.parse_ids("all") is None
-    assert cli.parse_ids("1,2, 3 , ,") == ["1", "2", "3"]
+    assert runtime_cli.parse_ids(None) is None
+    assert runtime_cli.parse_ids("all") is None
+    assert runtime_cli.parse_ids("1,2, 3 , ,") == ["1", "2", "3"]
 
 
 def test_validate_args_requires_action_subcommand() -> None:
-    parser = cli.create_parser()
+    parser = create_parser()
     args = parser.parse_args([])
 
     with pytest.raises(SystemExit) as exc:
-        cli.validate_args(args, parser)
+        runtime_cli.validate_args(args, parser)
 
     assert exc.value.code == 1
 
 
 def test_validate_args_deduplicates_action_order() -> None:
-    parser = cli.create_parser()
+    parser = create_parser()
     args = parser.parse_args(["extract", "update", "extract"])
 
-    cli.validate_args(args, parser)
+    runtime_cli.validate_args(args, parser)
 
     assert args.actions == ["extract", "update"]
 
 
 def test_validate_config_mode_rejects_any_extra_manual_args() -> None:
     with pytest.raises(SystemExit) as exc:
-        cli._validate_config_mode_raw_argv(["update", "-c", "--game-path", "game-root"])
+        runtime_cli._validate_config_argv(["update", "-c", "--game-path", "game-root"])
 
     assert exc.value.code == 1
 
 
 def test_validate_config_mode_rejects_manual_args_before_config_flag() -> None:
     with pytest.raises(SystemExit) as exc:
-        cli._validate_config_mode_raw_argv(["update", "--force", "-c", "config.ini"])
+        runtime_cli._validate_config_argv(["update", "--force", "-c", "config.ini"])
 
     assert exc.value.code == 1
 
 
 def test_validate_config_mode_rejects_dev_flag_in_config_mode() -> None:
     with pytest.raises(SystemExit) as exc:
-        cli._validate_config_mode_raw_argv(["update", "--dev", "-c"])
+        runtime_cli._validate_config_argv(["update", "--dev", "-c"])
 
     assert exc.value.code == 1
 
 
 def test_validate_config_mode_allows_only_actions_and_config_path() -> None:
-    cli._validate_config_mode_raw_argv(["update", "extract", "--config-file", "config.ini"])
+    runtime_cli._validate_config_argv(["update", "extract", "--config-file", "config.ini"])
 
 
 def test_validate_args_wav_tuning_requires_wav_flag() -> None:
-    parser = cli.create_parser()
+    parser = create_parser()
     args = parser.parse_args(["extract", "--wav-workers", "4"])
 
     with pytest.raises(SystemExit) as exc:
-        cli.validate_args(args, parser)
+        runtime_cli.validate_args(args, parser)
 
     assert exc.value.code == 1
 
 
 def test_validate_args_mapping_allows_integrate_data() -> None:
-    parser = cli.create_parser()
+    parser = create_parser()
     args = parser.parse_args(["mapping", "--integrate-data"])
 
-    cli.validate_args(args, parser)
+    runtime_cli.validate_args(args, parser)
 
 
 def test_mapping_defaults_integrate_data_to_true() -> None:
-    parser = cli.create_parser()
+    parser = create_parser()
     args = parser.parse_args(["mapping"])
 
-    opts = cli.build_operation_options(args)
+    opts = runtime_cli.build_operation_options(args)
 
     assert opts.integrate_data is True
 
 
 def test_build_context_settings_only_keeps_explicit_values() -> None:
-    parser = cli.create_parser()
+    parser = create_parser()
     args = parser.parse_args(
         [
             "update",
@@ -109,7 +122,7 @@ def test_build_context_settings_only_keeps_explicit_values() -> None:
         ]
     )
 
-    settings = cli.build_context_settings(args)
+    settings = runtime_cli.build_context_settings(args)
 
     assert settings == {
         "GAME_PATH": "game-root",
@@ -122,7 +135,7 @@ def test_build_context_settings_only_keeps_explicit_values() -> None:
 
 
 def test_build_context_settings_includes_remote_options_and_bp_voice() -> None:
-    parser = cli.create_parser()
+    parser = create_parser()
     args = parser.parse_args(
         [
             "update",
@@ -135,7 +148,7 @@ def test_build_context_settings_includes_remote_options_and_bp_voice() -> None:
         ]
     )
 
-    settings = cli.build_context_settings(args)
+    settings = runtime_cli.build_context_settings(args)
 
     assert settings == {
         "SOURCE_MODE": "remote_snapshot",
@@ -146,7 +159,7 @@ def test_build_context_settings_includes_remote_options_and_bp_voice() -> None:
 
 
 def test_initialize_app_passes_settings_to_setup_app(monkeypatch, tmp_path: Path) -> None:
-    parser = cli.create_parser()
+    parser = create_parser()
     game_path = tmp_path / "game"
     game_path.mkdir(parents=True, exist_ok=True)
 
@@ -176,9 +189,9 @@ def test_initialize_app_passes_settings_to_setup_app(monkeypatch, tmp_path: Path
         captured["kwargs"] = kwargs
         return fake_context
 
-    monkeypatch.setattr(cli, "setup_app", fake_setup_app)
+    monkeypatch.setattr(runtime_cli, "setup_app", fake_setup_app)
 
-    ctx = cli.initialize_app(args)
+    ctx = runtime_cli.initialize_app(args)
 
     assert ctx == fake_context
     assert captured["kwargs"]["settings"] == {
@@ -191,18 +204,18 @@ def test_initialize_app_passes_settings_to_setup_app(monkeypatch, tmp_path: Path
     }
 
 
-def test_apply_config_profile_to_args_loads_command_section(monkeypatch, tmp_path: Path) -> None:
-    parser = cli.create_parser()
+def test_apply_config_profile_loads_command_section(monkeypatch, tmp_path: Path) -> None:
+    parser = create_parser()
     config_file = tmp_path / "lol-audio-unpack.ini"
     args = parser.parse_args(["update", "extract", "-c", str(config_file)])
 
     monkeypatch.setattr(
-        cli,
+        runtime_cli,
         "load_settings_from_config_file",
         lambda path, require_exists=True: {"GAME_PATH": str(tmp_path / "game")},
     )
     monkeypatch.setattr(
-        cli,
+        runtime_cli,
         "load_command_config_from_file",
         lambda path, command, require_exists=True: {
             "targets": {"champions": "Annie,Ahri"},
@@ -211,7 +224,7 @@ def test_apply_config_profile_to_args_loads_command_section(monkeypatch, tmp_pat
         }.get(command, {}),
     )
 
-    cli._apply_config_profile_to_args(args)
+    runtime_cli._apply_config_profile(args)
 
     assert args.champions == "Annie,Ahri"
     assert args.skip_events is True
@@ -219,18 +232,18 @@ def test_apply_config_profile_to_args_loads_command_section(monkeypatch, tmp_pat
     assert args._loaded_settings == {"GAME_PATH": str(tmp_path / "game")}
 
 
-def test_apply_config_profile_to_args_loads_runtime_and_wav_sections(monkeypatch, tmp_path: Path) -> None:
-    parser = cli.create_parser()
+def test_apply_config_profile_loads_runtime_and_wav_sections(monkeypatch, tmp_path: Path) -> None:
+    parser = create_parser()
     config_file = tmp_path / "lol-audio-unpack.ini"
     args = parser.parse_args(["extract", "-c", str(config_file)])
 
     monkeypatch.setattr(
-        cli,
+        runtime_cli,
         "load_settings_from_config_file",
         lambda path, require_exists=True: {"GAME_PATH": str(tmp_path / "game")},
     )
     monkeypatch.setattr(
-        cli,
+        runtime_cli,
         "load_command_config_from_file",
         lambda path, command, require_exists=True: {
             "runtime": {"max_workers": EXPECTED_CONFIG_MAX_WORKERS},
@@ -244,7 +257,7 @@ def test_apply_config_profile_to_args_loads_runtime_and_wav_sections(monkeypatch
         }.get(command, {}),
     )
 
-    cli._apply_config_profile_to_args(args)
+    runtime_cli._apply_config_profile(args)
 
     assert args.max_workers == EXPECTED_CONFIG_MAX_WORKERS
     assert args.wav is True
@@ -255,7 +268,7 @@ def test_apply_config_profile_to_args_loads_runtime_and_wav_sections(monkeypatch
 
 
 def test_initialize_app_in_config_mode_uses_loaded_settings(monkeypatch, tmp_path: Path) -> None:
-    parser = cli.create_parser()
+    parser = create_parser()
     config_file = tmp_path / "lol-audio-unpack.ini"
     game_path = tmp_path / "game"
     game_path.mkdir(parents=True, exist_ok=True)
@@ -273,9 +286,9 @@ def test_initialize_app_in_config_mode_uses_loaded_settings(monkeypatch, tmp_pat
         captured["settings"] = kwargs["settings"]
         return fake_context
 
-    monkeypatch.setattr(cli, "setup_app", fake_setup_app)
+    monkeypatch.setattr(runtime_cli, "setup_app", fake_setup_app)
 
-    cli.initialize_app(args)
+    runtime_cli.initialize_app(args)
 
     assert captured["settings"] == {
         "GAME_PATH": str(game_path),
@@ -285,7 +298,7 @@ def test_initialize_app_in_config_mode_uses_loaded_settings(monkeypatch, tmp_pat
 
 
 def test_build_operation_options_includes_wav_settings() -> None:
-    parser = cli.create_parser()
+    parser = create_parser()
     args = parser.parse_args(
         [
             "extract",
@@ -301,7 +314,7 @@ def test_build_operation_options_includes_wav_settings() -> None:
         ]
     )
 
-    opts = cli.build_operation_options(args)
+    opts = runtime_cli.build_operation_options(args)
 
     assert opts.wav_output.enabled is True
     assert opts.wav_output.worker_count == EXPECTED_WAV_WORKERS
@@ -311,7 +324,7 @@ def test_build_operation_options_includes_wav_settings() -> None:
 
 
 def test_execute_update_operations_all() -> None:
-    parser = cli.create_parser()
+    parser = create_parser()
     args = parser.parse_args(["update"])
 
     calls = {}
@@ -321,7 +334,7 @@ def test_execute_update_operations_all() -> None:
             calls["target"] = target
             calls["opts"] = opts
 
-    cli.execute_update_operations(args, FakeApp())
+    dispatch_cli.run_update(args, FakeApp())
 
     assert calls["target"] == "all"
     assert calls["opts"].force_update is False
@@ -329,9 +342,9 @@ def test_execute_update_operations_all() -> None:
 
 
 def test_execute_update_operations_shared_targets_cover_both_entity_types(monkeypatch) -> None:
-    parser = cli.create_parser()
+    parser = create_parser()
     args = parser.parse_args(["update", "--champions", "Annie,Ahri", "--maps", "11,12"])
-    monkeypatch.setattr(cli, "resolve_cli_champion_ids", lambda *_args, **_kwargs: (1, 2))
+    monkeypatch.setattr(dispatch_cli, "resolve_cli_champion_ids", lambda *_args, **_kwargs: (1, 2))
 
     class FakeApp:
         def update(self, opts, *, target="all"):
@@ -339,29 +352,29 @@ def test_execute_update_operations_shared_targets_cover_both_entity_types(monkey
             assert opts.champion_ids == (1, 2)
             assert opts.map_ids == (11, 12)
 
-    cli.execute_update_operations(
+    dispatch_cli.run_update(
         args,
         FakeApp(),
     )
 
 
 def test_execute_extract_operations_uses_standard_stage_logs(monkeypatch) -> None:
-    parser = cli.create_parser()
+    parser = create_parser()
     args = parser.parse_args(["extract"])
     stage_calls = []
 
     monkeypatch.setattr(
-        cli, "_log_cli_stage_start", lambda stage, detail=None: stage_calls.append(("start", stage, detail))
+        dispatch_cli, "_log_stage_start", lambda stage, detail=None: stage_calls.append(("start", stage, detail))
     )
     monkeypatch.setattr(
-        cli, "_log_cli_stage_complete", lambda stage, detail=None: stage_calls.append(("done", stage, detail))
+        dispatch_cli, "_log_stage_done", lambda stage, detail=None: stage_calls.append(("done", stage, detail))
     )
 
     class FakeApp:
         def extract(self, _opts, **_kwargs) -> None:
             return None
 
-    cli.execute_extract_operations(args, FakeApp())
+    dispatch_cli.run_extract(args, FakeApp())
 
     assert stage_calls == [
         ("start", "音频解包", "所有音频（英雄和地图）"),
@@ -370,19 +383,19 @@ def test_execute_extract_operations_uses_standard_stage_logs(monkeypatch) -> Non
 
 
 def test_execute_extract_operations_forwards_detached_wav_flags(monkeypatch) -> None:
-    parser = cli.create_parser()
+    parser = create_parser()
     args = parser.parse_args(["extract", "--wav"])
     captured_kwargs = {}
 
-    monkeypatch.setattr(cli, "_log_cli_stage_start", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(cli, "_log_cli_stage_complete", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(dispatch_cli, "_log_stage_start", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(dispatch_cli, "_log_stage_done", lambda *_args, **_kwargs: None)
 
     class FakeApp:
         def extract(self, _opts, **kwargs):
             captured_kwargs.update(kwargs)
             return SimpleNamespace(poll=lambda: None, read_progress_snapshot=lambda: None, job_label="cli-test")
 
-    handle = cli.execute_extract_operations(args, FakeApp())
+    handle = dispatch_cli.run_extract(args, FakeApp())
 
     assert handle is not None
     assert captured_kwargs["detach_wav_sidecar"] is True
@@ -390,7 +403,7 @@ def test_execute_extract_operations_forwards_detached_wav_flags(monkeypatch) -> 
 
 
 def test_execute_mapping_operations_defaults_to_native_hirc_without_wwiser(monkeypatch) -> None:
-    parser = cli.create_parser()
+    parser = create_parser()
     args = parser.parse_args(["mapping"])
 
     class FakeApp:
@@ -398,7 +411,7 @@ def test_execute_mapping_operations_defaults_to_native_hirc_without_wwiser(monke
             assert opts.wwiser_path is None if hasattr(opts, "wwiser_path") else True
             assert kwargs == {"include_champions": True, "include_maps": True}
 
-    monkeypatch.setattr(cli, "_log_cli_stage_start", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(cli, "_log_cli_stage_complete", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(dispatch_cli, "_log_stage_start", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(dispatch_cli, "_log_stage_done", lambda *_args, **_kwargs: None)
 
-    cli.execute_mapping_operations(args, FakeApp())
+    dispatch_cli.run_mapping(args, FakeApp())
