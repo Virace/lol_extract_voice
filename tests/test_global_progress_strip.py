@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QApplication, QFrame, QScrollArea, QVBoxLayout, QW
 
 from lol_audio_unpack.gui.components.global_progress_strip import (
     DEFAULT_PROGRESS_SWEEP_ANIMATION_MS,
+    PROGRESS_ACTION_GAP,
     GlobalProgressStripHost,
     GlobalProgressStripState,
 )
@@ -166,6 +167,22 @@ def test_progress_updates_do_not_stop_sweep_animation(qtbot) -> None:
     assert phase_before != phase_after
 
 
+def test_progress_updates_do_not_restart_host_height_animation_when_visibility_is_unchanged(qtbot) -> None:
+    shell = _ProgressStripShellDemo()
+    qtbot.addWidget(shell)
+    shell.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
+    shell.show()
+    _wait_until_visible(qtbot, shell)
+
+    running_state = _running_state()
+    shell.progress_host.set_state(running_state, animate=False)
+
+    updated_state = replace(running_state, progress_current=2100)
+    shell.progress_host.set_state(updated_state, animate=True)
+
+    assert shell.progress_host._height_animation.state() == shell.progress_host._height_animation.State.Stopped
+
+
 def test_progress_strip_uses_configurable_sweep_duration(qtbot) -> None:
     shell = _ProgressStripShellDemo()
     qtbot.addWidget(shell)
@@ -254,6 +271,24 @@ def test_progress_strip_compacts_height_and_reserves_action_area(qtbot) -> None:
     assert fill_rect.right() <= action_rect.left()
 
 
+def test_progress_strip_hidden_meta_labels_do_not_shrink_progress_rect(qtbot) -> None:
+    shell = _ProgressStripShellDemo()
+    qtbot.addWidget(shell)
+    shell.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
+    shell.show()
+    _wait_until_visible(qtbot, shell)
+
+    state = replace(_running_state(), rate_text="", status_text="")
+    shell.progress_host.set_state(state, animate=False)
+    strip = shell.progress_host.strip_widget()
+    progress_rect = strip._progress_rect()
+    action_rect = strip.debug_action_rect()
+
+    assert strip._rate_label.isVisible() is False
+    assert strip._status_label.isVisible() is False
+    assert progress_rect.right() >= action_rect.left() - PROGRESS_ACTION_GAP - 1.0
+
+
 def test_progress_strip_light_theme_switches_meta_text_after_fill_passes_label(qtbot) -> None:
     shell = _ProgressStripShellDemo()
     qtbot.addWidget(shell)
@@ -316,8 +351,9 @@ def test_progress_strip_buttons_are_flush_and_status_keeps_right_padding_at_full
     left_padding = strip._text_block.geometry().left()
 
     assert action_rect.right() >= outer_rect.right() - 1.0
-    assert fill_rect.right() >= status_rect.right() + left_padding - 1.0
-    assert fill_rect.right() <= action_rect.left() + 1.0
+    assert fill_rect.right() <= action_rect.left() - PROGRESS_ACTION_GAP + 1.0
+    assert status_rect.right() <= action_rect.left() - 1.0
+    assert fill_rect.right() >= status_rect.left() - left_padding
 
 
 def test_progress_strip_outer_radius_clips_inner_fill_left_edge(qtbot) -> None:

@@ -119,7 +119,7 @@ def _qcolor_to_rgba_text(color: QColor) -> str:
 
 def _fill_text_color() -> QColor:
     """返回覆盖在填充区域上的文本颜色。"""
-    return QColor(250, 250, 250)
+    return QColor(236, 244, 252)
 
 
 def _with_alpha(color: QColor, alpha: int) -> QColor:
@@ -631,13 +631,7 @@ class GlobalProgressStrip(QWidget):
         action_rect = self._action_rect()
         if action_rect.isNull():
             return track_rect
-        progress_right = max(track_rect.left(), action_rect.left())
-        status_rect = QRectF(self._status_label.geometry())
-        if not status_rect.isNull():
-            progress_right = min(
-                progress_right,
-                status_rect.right() + PROGRESS_CONTENT_HORIZONTAL_MARGIN,
-            )
+        progress_right = max(track_rect.left(), action_rect.left() - PROGRESS_ACTION_GAP)
         return QRectF(track_rect.left(), track_rect.top(), max(0.0, progress_right - track_rect.left()), track_rect.height())
 
     def _glow_rect(self, *, fill_rect: QRectF, phase: float) -> QRectF:
@@ -753,13 +747,15 @@ class GlobalProgressStripHost(QWidget):
             state: 新状态。
             animate: 是否对宿主高度变化启用动画。
         """
+        previous_state = self._state
         self._state = state
         self._strip.set_state(state, animate=animate)
         self._sync_strip_visibility(force=True)
         target_height = self._target_host_height() if state.visible else 0
+        visibility_changed = previous_state.visible != state.visible
 
         self._height_animation.stop()
-        if animate:
+        if animate and visibility_changed and target_height != self._host_height:
             self._height_animation.setStartValue(self._host_height)
             self._height_animation.setEndValue(target_height)
             self._height_animation.start()
