@@ -53,7 +53,7 @@ class CliInvocationRequest:
         return dict(self.settings)
 
 
-def quote_cli_arg(arg: str) -> str:
+def quote_arg(arg: str) -> str:
     """以 shell 无关的方式格式化单个命令行参数。"""
     if not arg:
         return "''"
@@ -66,7 +66,7 @@ def quote_cli_arg(arg: str) -> str:
 
 def render_cli_command(argv: list[str]) -> str:
     """将 argv 渲染为可复制的 CLI 命令文本。"""
-    return " ".join(quote_cli_arg(arg) for arg in argv)
+    return " ".join(quote_arg(arg) for arg in argv)
 
 
 def _clean_setting_value(key: str, value: str | bool | None) -> str | bool | None:
@@ -104,7 +104,7 @@ def _normalize_actions(actions: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(actions))
 
 
-def validate_cli_invocation_request(
+def validate_request(
     request: CliInvocationRequest,
     *,
     runtime_paths: RuntimePaths | None = None,
@@ -157,14 +157,14 @@ def validate_cli_invocation_request(
         )
 
 
-def build_explicit_cli_argv(
+def build_argv(
     request: CliInvocationRequest,
     *,
     runtime_paths: RuntimePaths | None = None,
 ) -> list[str]:
     """将结构化请求转换为完整显式 CLI argv。"""
     runtime = runtime_paths or detect_runtime_paths()
-    validate_cli_invocation_request(request, runtime_paths=runtime)
+    validate_request(request, runtime_paths=runtime)
 
     settings = _normalized_settings(request)
     actions = _normalize_actions(request.actions)
@@ -249,13 +249,13 @@ def build_explicit_cli_argv(
     return argv
 
 
-def build_explicit_cli_command(
+def build_command(
     request: CliInvocationRequest,
     *,
     runtime_paths: RuntimePaths | None = None,
 ) -> str:
     """构造完整显式的 CLI 命令文本。"""
-    return render_cli_command(build_explicit_cli_argv(request, runtime_paths=runtime_paths))
+    return render_cli_command(build_argv(request, runtime_paths=runtime_paths))
 
 
 __all__ = [
@@ -266,9 +266,9 @@ __all__ = [
     "DEFAULT_WAV_RETRIES",
     "DEFAULT_WAV_TIMEOUT",
     "DEFAULT_WAV_WORKERS",
-    "build_explicit_cli_argv",
-    "build_explicit_cli_command",
-    "quote_cli_arg",
+    "build_argv",
+    "build_command",
+    "quote_arg",
     "render_cli_command",
-    "validate_cli_invocation_request",
+    "validate_request",
 ]

@@ -23,8 +23,8 @@ gui = [
 ]
 
 [project.scripts]
-"unpack" = "lol_audio_unpack.__main__:main"
-"mapping" = "lol_audio_unpack.mapping:main"
+"unpack" = "lol_audio_unpack.cli.cli:main"
+"mapping" = "lol_audio_unpack.cli.cli:main"
 "unpack-gui" = "lol_audio_unpack.gui.__main__:main"
 
 [build-system]

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from lol_audio_unpack.cli_invocation import (
+from lol_audio_unpack.cli.invocation import (
     DEFAULT_CLI_MAX_WORKERS,
     DEFAULT_WAV_FORMAT,
     DEFAULT_WAV_RETRIES,
@@ -14,7 +14,7 @@ from lol_audio_unpack.cli_invocation import (
     DEFAULT_WAV_WORKERS,
     CliInvocationRequest,
     CliInvocationValidationError,
-    build_explicit_cli_argv,
+    build_argv,
 )
 from lol_audio_unpack.config_schema import SettingKey
 from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths, get_default_output_root, get_default_wwiser_path
@@ -54,7 +54,7 @@ def test_build_explicit_cli_argv_omits_defaults_but_keeps_required_and_changed_v
         wav_format=DEFAULT_WAV_FORMAT,
     )
 
-    argv = build_explicit_cli_argv(request, runtime_paths=runtime_paths)
+    argv = build_argv(request, runtime_paths=runtime_paths)
 
     assert argv[:4] == ["uv", "run", "unpack", "extract"]
     assert "--game-path" in argv
@@ -82,7 +82,7 @@ def test_build_explicit_cli_argv_requires_game_path_in_local_mode(tmp_path: Path
     )
 
     with pytest.raises(CliInvocationValidationError, match="game_path"):
-        build_explicit_cli_argv(request, runtime_paths=runtime_paths)
+        build_argv(request, runtime_paths=runtime_paths)
 
 
 def test_build_explicit_cli_argv_does_not_require_wwiser_for_mapping_fallback(tmp_path: Path) -> None:
@@ -93,7 +93,7 @@ def test_build_explicit_cli_argv_does_not_require_wwiser_for_mapping_fallback(tm
         settings=((SettingKey.GAME_PATH, "game-root"),),
     )
 
-    argv = build_explicit_cli_argv(request, runtime_paths=runtime_paths)
+    argv = build_argv(request, runtime_paths=runtime_paths)
 
     assert argv[:4] == ["uv", "run", "unpack", "mapping"]
     assert "--wwiser-path" not in argv
@@ -110,7 +110,7 @@ def test_build_explicit_cli_argv_omits_gui_default_wwiser_path(tmp_path: Path) -
         ),
     )
 
-    argv = build_explicit_cli_argv(request, runtime_paths=runtime_paths)
+    argv = build_argv(request, runtime_paths=runtime_paths)
 
     assert "--wwiser-path" not in argv
 
@@ -124,7 +124,7 @@ def test_build_explicit_cli_argv_uses_negative_flag_for_non_default_mapping_opti
         integrate_data=False,
     )
 
-    argv = build_explicit_cli_argv(request, runtime_paths=runtime_paths)
+    argv = build_argv(request, runtime_paths=runtime_paths)
 
     assert "--no-integrate-data" in argv
     assert "--integrate-data" not in argv
@@ -143,7 +143,7 @@ def test_build_explicit_cli_argv_includes_non_default_wav_tuning(tmp_path: Path)
         wav_format=EXPECTED_WAV_FORMAT,
     )
 
-    argv = build_explicit_cli_argv(request, runtime_paths=runtime_paths)
+    argv = build_argv(request, runtime_paths=runtime_paths)
 
     assert "--wav" in argv
     assert argv[argv.index("--wav-workers") + 1] == "8"
