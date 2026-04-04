@@ -21,28 +21,8 @@ __all__ = [
     "describe_hirc_backend",
     "execute_tasks",
     "integrate_entity",
-    "MappingRuntimeCache",
-    "build_audio_event_mapping",
-    "build_champion_mapping",
-    "build_champions_mapping",
-    "build_map_mapping",
-    "build_maps_mapping",
-    "build_mapping_all",
-    "execute_mapping_tasks",
-    "integrate_entity_data",
     "main",
 ]
-
-# 兼容层：后续统一收口后再移除旧名。
-MappingRuntimeCache = RuntimeCache
-build_audio_event_mapping = build_entity
-build_champion_mapping = build_champion
-build_champions_mapping = build_champions
-build_map_mapping = build_map
-build_maps_mapping = build_maps
-build_mapping_all = build_all
-execute_mapping_tasks = execute_tasks
-integrate_entity_data = integrate_entity
 
 
 def main() -> None:

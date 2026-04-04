@@ -594,8 +594,4 @@ def unpack_maps(  # noqa: PLR0913
     )
 
 
-# 兼容层：等全项目统一收口后再移除旧名。
-execute_unpack_tasks = execute_tasks
-unpack_audio_all = unpack_all
-
 

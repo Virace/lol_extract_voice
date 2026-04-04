@@ -8,12 +8,12 @@ from loguru import logger
 import lol_audio_unpack.mapping.entity as mapping_entity
 import lol_audio_unpack.mapping.session as mapping_session
 from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
-from lol_audio_unpack.mapping import build_audio_event_mapping, build_entity
+from lol_audio_unpack.mapping import build_entity
 from lol_audio_unpack.model import AudioEntityData
 
 
 class _FakeReader:
-    """提供 `build_audio_event_mapping` 所需最小读取接口。"""
+    """提供 `build_entity` 所需最小读取接口。"""
 
     version = "test-version"
 
@@ -206,7 +206,7 @@ def test_resolve_wad_path_uses_language_wad_for_vo_and_root_wad_for_other_catego
     assert mapping_entity._resolve_wad_path(entity_data, "CHARACTER_VO", ctx=ctx) is None
 
 
-def test_build_audio_event_mapping_alias_points_to_build_entity() -> None:
-    """旧公开名应继续指向新的主实现。"""
+def test_mapping_module_exposes_build_entity() -> None:
+    """映射包应暴露 canonical 的实体入口。"""
 
-    assert build_audio_event_mapping is build_entity
+    assert callable(build_entity)

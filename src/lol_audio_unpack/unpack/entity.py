@@ -497,9 +497,4 @@ def unpack_map(  # noqa: PLR0913
         return
 
 
-# 兼容层：等全项目统一收口后再移除旧名。
-_persist_wem_and_maybe_submit = _persist_wem
-unpack_audio_entity = unpack_entity
-unpack_map_audio = unpack_map
-
 

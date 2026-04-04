@@ -150,15 +150,6 @@ def build_settings(args: Any) -> dict[str, Any]:
             settings[field.key] = value
     return settings
 
-
-# 兼容层：保留旧长名，待后续统一删除。
-SHARED_SETTING_FIELD_BY_KEY = SHARED_FIELDS_BY_KEY
-SHARED_SETTING_FIELD_BY_INI_KEY = SHARED_FIELDS_BY_INI_KEY
-SHARED_SETTING_FIELD_BY_CLI_ATTR = SHARED_FIELDS_BY_CLI_ATTR
-BASE_CONTEXT_OPTION_ATTRS = CONTEXT_OPTION_ATTRS
-build_settings_from_namespace = build_settings
-
-
 __all__ = [
     "COMMAND_CONFIG_FIELDS",
     "CONTEXT_OPTION_ATTRS",
@@ -174,9 +165,4 @@ __all__ = [
     "SettingKey",
     "SharedSettingField",
     "build_settings",
-    "BASE_CONTEXT_OPTION_ATTRS",
-    "SHARED_SETTING_FIELD_BY_CLI_ATTR",
-    "SHARED_SETTING_FIELD_BY_INI_KEY",
-    "SHARED_SETTING_FIELD_BY_KEY",
-    "build_settings_from_namespace",
 ]

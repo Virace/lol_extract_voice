@@ -207,16 +207,6 @@ def load_command_config(
         values[field.attr] = value
     return values
 
-
-# 兼容层：保留旧长名，待后续统一删除。
-_load_or_create_config_parser = _ensure_parser
-resolve_default_config_file_path = resolve_default_path
-load_settings_from_config_file = load_settings
-write_settings_to_config_file = write_settings
-write_command_config_to_file = write_command_config
-load_command_config_from_file = load_command_config
-
-
 __all__ = [
     "CONFIG_SECTION",
     "DEFAULT_CONFIG_FILENAME",
@@ -226,9 +216,4 @@ __all__ = [
     "resolve_default_path",
     "write_command_config",
     "write_settings",
-    "load_command_config_from_file",
-    "load_settings_from_config_file",
-    "resolve_default_config_file_path",
-    "write_command_config_to_file",
-    "write_settings_to_config_file",
 ]

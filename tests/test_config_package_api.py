@@ -21,11 +21,9 @@ def test_config_package_exports_schema_symbols() -> None:
     assert config_pkg.ConfigSection.APP == "app"
     assert config_pkg.DEFAULT_REMOTE_LIVE_REGION == "EUW"
     assert callable(config_pkg.build_settings)
-    assert config_pkg.build_settings_from_namespace is config_pkg.build_settings
-    assert config_pkg.SHARED_SETTING_FIELD_BY_KEY is config_pkg.SHARED_FIELDS_BY_KEY
-    assert config_pkg.SHARED_SETTING_FIELD_BY_INI_KEY is config_pkg.SHARED_FIELDS_BY_INI_KEY
-    assert config_pkg.SHARED_SETTING_FIELD_BY_CLI_ATTR is config_pkg.SHARED_FIELDS_BY_CLI_ATTR
-    assert config_pkg.BASE_CONTEXT_OPTION_ATTRS is config_pkg.CONTEXT_OPTION_ATTRS
+    assert config_pkg.SHARED_FIELDS_BY_KEY[config_pkg.SettingKey.GAME_PATH].ini_key == "game_path"
+    assert config_pkg.SHARED_FIELDS_BY_INI_KEY["game_path"].key == config_pkg.SettingKey.GAME_PATH
+    assert "game_path" in config_pkg.CONTEXT_OPTION_ATTRS
 
 
 def test_config_package_round_trips_shared_settings(tmp_path: Path) -> None:
@@ -72,9 +70,9 @@ def test_config_package_default_path_uses_runtime_config_root(
     assert config_file.parent == runtime_root
 
 
-def test_config_package_keeps_public_aliases() -> None:
-    assert config_pkg.load_settings_from_config_file is config_pkg.load_settings
-    assert config_pkg.write_settings_to_config_file is config_pkg.write_settings
-    assert config_pkg.load_command_config_from_file is config_pkg.load_command_config
-    assert config_pkg.write_command_config_to_file is config_pkg.write_command_config
-    assert config_pkg.resolve_default_config_file_path is config_pkg.resolve_default_path
+def test_config_package_keeps_short_public_api() -> None:
+    assert callable(config_pkg.load_settings)
+    assert callable(config_pkg.write_settings)
+    assert callable(config_pkg.load_command_config)
+    assert callable(config_pkg.write_command_config)
+    assert callable(config_pkg.resolve_default_path)
