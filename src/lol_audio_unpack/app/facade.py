@@ -640,15 +640,6 @@ class LolAudioUnpackApp:
 
         logger.success(f"remote 实体工作流完成：共处理 {total_work_items} 个实体工作项")
 
-    # 兼容层：保留旧公开方法名，后续阶段统一删除。
-    def build_remote_entity_work_items(self, **kwargs) -> list[RemoteEntityWorkItem]:
-        """兼容旧公开方法名。"""
-        return self.build_work_items(**kwargs)
-
-    def run_remote_entity_workflow(self, **kwargs) -> None:
-        """兼容旧公开方法名。"""
-        self.run_workflow(**kwargs)
-
     def update(self, opts: OperationOptions, *, target: str = "all") -> None:
         """执行更新流程。"""
         logger.info(

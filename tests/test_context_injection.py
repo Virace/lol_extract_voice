@@ -5,7 +5,7 @@ import pytest
 
 from lol_audio_unpack import mapping as m_mapping
 from lol_audio_unpack import unpack as m_unpack
-from lol_audio_unpack.app_context import AppConfig, AppContext, AppPaths
+from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
 from lol_audio_unpack.mapping import batch as mapping_batch
 from lol_audio_unpack.mapping import session as mapping_session
 from lol_audio_unpack.model import AudioEntityData

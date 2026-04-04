@@ -4,25 +4,16 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from .app import (
-    AppConfig,
-    AppContext,
-    AppContextValidationError,
-    AppPaths,
-    LolAudioUnpackApp,
-    OperationOptions,
-    RemoteEntityCallbackPayload,
-    RemoteEntityWorkItem,
-    RemoteSnapshotConfig,
-    SourceMode,
-    create_app_context,
-)
-from .manager import BinUpdater, DataReader, DataUpdater
+from .app import create_app_context as _create_app_context
 from .utils.logging import setup_logging
 from .utils.versioning import resolve_runtime_version
+
+if TYPE_CHECKING:
+    from .app import AppContext
 
 _STATIC_VERSION = "3.5.1.dev0"
 __version__ = resolve_runtime_version(Path(__file__).resolve().parents[2], _STATIC_VERSION)
@@ -50,7 +41,7 @@ def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs) -> AppC
         logger.add(sys.stdout, level=log_level.upper(), enqueue=False, colorize=True)
         logger.warning("日志队列初始化失败，已回退为非 enqueue 模式。")
 
-    app_context = create_app_context(dev_mode=dev_mode, **kwargs)
+    app_context = _create_app_context(dev_mode=dev_mode, **kwargs)
 
     setup_logging(
         dev_mode=dev_mode,
@@ -64,19 +55,6 @@ def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs) -> AppC
 
 
 __all__ = [
-    "AppConfig",
-    "AppContext",
-    "AppContextValidationError",
-    "AppPaths",
-    "LolAudioUnpackApp",
-    "OperationOptions",
-    "RemoteEntityCallbackPayload",
-    "RemoteEntityWorkItem",
-    "RemoteSnapshotConfig",
-    "SourceMode",
     "__version__",
     "setup_app",
-    "BinUpdater",
-    "DataUpdater",
-    "DataReader",
 ]

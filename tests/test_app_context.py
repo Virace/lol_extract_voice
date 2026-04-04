@@ -184,7 +184,7 @@ def test_setup_app_returns_context_with_settings(monkeypatch: pytest.MonkeyPatch
         captured["runtime_cache"] = runtime_cache
         return fake_context
 
-    monkeypatch.setattr(app_pkg, "create_app_context", fake_create_app_context)
+    monkeypatch.setattr(app_pkg, "_create_app_context", fake_create_app_context)
     monkeypatch.setattr(app_pkg, "setup_logging", lambda **_kwargs: None)
 
     result = setup_app(

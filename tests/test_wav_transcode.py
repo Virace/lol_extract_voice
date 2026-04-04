@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from pyvgmstream import SampleFormat
 
-from lol_audio_unpack.app_context import WavOutputOptions
+from lol_audio_unpack.app.types import WavOutputOptions
 from lol_audio_unpack.runtime.wav import (
     TranscodeCoordinator,
     TranscodeProgress,
