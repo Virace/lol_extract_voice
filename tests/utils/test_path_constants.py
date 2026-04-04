@@ -2,7 +2,6 @@ import pytest
 
 from lol_audio_unpack.utils import path_constants as pc
 
-
 pytestmark = pytest.mark.unit
 
 

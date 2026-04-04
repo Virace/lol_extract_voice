@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from riotmanifest import VersionMatchMode
 
-SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "benchmark_remote_live.py"
+SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "benchmark_remote_live.py"
 SPEC = importlib.util.spec_from_file_location("benchmark_remote_live", SCRIPT_PATH)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
