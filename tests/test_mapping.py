@@ -5,8 +5,9 @@ from types import SimpleNamespace
 
 from loguru import logger
 
-import lol_audio_unpack.mapping as mapping_module
-from lol_audio_unpack.mapping import build_audio_event_mapping
+import lol_audio_unpack.mapping.entity as mapping_entity
+import lol_audio_unpack.mapping.runtime as mapping_runtime
+from lol_audio_unpack.mapping import build_audio_event_mapping, build_entity
 from lol_audio_unpack.model import AudioEntityData
 
 
@@ -65,7 +66,7 @@ def _build_fake_ctx() -> SimpleNamespace:
     return SimpleNamespace(config=SimpleNamespace(dev_mode=False, wwiser_path=None))
 
 
-def test_build_audio_event_mapping_uses_single_success_summary(monkeypatch, tmp_path: Path) -> None:
+def test_build_entity_uses_single_success_summary(monkeypatch, tmp_path: Path) -> None:
     """类别级完成日志应降为 debug，实体级只保留一条统计 success。"""
     cache_dir = tmp_path / "cache"
     hash_dir = tmp_path / "hashes"
@@ -73,19 +74,19 @@ def test_build_audio_event_mapping_uses_single_success_summary(monkeypatch, tmp_
     game_dir.mkdir()
     (game_dir / "root.wad.client").write_bytes(b"fake-wad")
 
-    monkeypatch.setattr(mapping_module, "_get_cache_base_path", lambda _ctx: cache_dir)
-    monkeypatch.setattr(mapping_module, "_get_hash_base_path", lambda _ctx: hash_dir)
-    monkeypatch.setattr(mapping_module, "_get_game_base_path", lambda _ctx: game_dir)
-    monkeypatch.setattr(mapping_module, "_get_wad_instance", lambda _wad_path, runtime_cache=None: _FakeWad())
-    monkeypatch.setattr(mapping_module, "AudioEventMapper", _FakeAudioEventMapper)
-    monkeypatch.setattr(mapping_module, "write_data", lambda *args, **kwargs: None)
+    monkeypatch.setattr(mapping_runtime, "_get_cache_path", lambda _ctx: cache_dir)
+    monkeypatch.setattr(mapping_runtime, "_get_hash_path", lambda _ctx: hash_dir)
+    monkeypatch.setattr(mapping_runtime, "_get_game_path", lambda _ctx: game_dir)
+    monkeypatch.setattr(mapping_runtime, "_get_wad", lambda _wad_path, runtime_cache=None: _FakeWad())
+    monkeypatch.setattr(mapping_entity, "AudioEventMapper", _FakeAudioEventMapper)
+    monkeypatch.setattr(mapping_entity, "write_data", lambda *args, **kwargs: None)
 
     def fake_get_cached_hirc(*, bnk_path: Path, **_kwargs) -> object:
         if bnk_path.name == "bad_events.bnk":
             raise RuntimeError("读取 MusicSwitch.rule_destination_count 失败")
         return object()
 
-    monkeypatch.setattr(mapping_module, "_get_cached_hirc", fake_get_cached_hirc)
+    monkeypatch.setattr(mapping_runtime, "_get_cached_hirc", fake_get_cached_hirc)
 
     entity_data = AudioEntityData(
         entity_id="1",
@@ -122,7 +123,7 @@ def test_build_audio_event_mapping_uses_single_success_summary(monkeypatch, tmp_
     )
 
     try:
-        build_audio_event_mapping(
+        build_entity(
             entity_data=entity_data,
             reader=_FakeReader(),
             wwiser_manager=None,
@@ -143,3 +144,9 @@ def test_build_audio_event_mapping_uses_single_success_summary(monkeypatch, tmp_
     assert any("异常事件 1 个" in line for line in warning_lines)
     assert any("未映射跳过 1 个" in line for line in warning_lines)
     assert not any("SUCCESS|Test Entity 的事件映射统计" in line for line in log_lines)
+
+
+def test_build_audio_event_mapping_alias_points_to_build_entity() -> None:
+    """旧公开名应继续指向新的主实现。"""
+
+    assert build_audio_event_mapping is build_entity
