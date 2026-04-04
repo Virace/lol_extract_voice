@@ -709,7 +709,7 @@ def test_facade_mapping_prepares_remote_wads_before_mapping(monkeypatch: pytest.
     assert call_order == ["prepare_mapping", "mapping"]
 
 
-def test_facade_build_remote_entity_work_items_merges_extract_and_mapping_targets(
+def test_facade_build_work_items_merges_extract_and_mapping_targets(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -719,7 +719,7 @@ def test_facade_build_remote_entity_work_items_merges_extract_and_mapping_target
 
     monkeypatch.setattr(m_facade, "DataReader", lambda ctx: reader)
 
-    work_items = app.build_remote_entity_work_items(
+    work_items = app.build_work_items(
         extract_options=OperationOptions(champion_ids=(1, 103)),
         mapping_options=OperationOptions(champion_ids=(103, 555)),
         extract_include_champions=True,
@@ -733,7 +733,7 @@ def test_facade_build_remote_entity_work_items_merges_extract_and_mapping_target
     ]
 
 
-def test_facade_run_remote_entity_workflow_runs_per_entity_and_cleans_between_entities(
+def test_facade_run_workflow_runs_per_entity_and_cleans_between_entities(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -768,7 +768,7 @@ def test_facade_run_remote_entity_workflow_runs_per_entity_and_cleans_between_en
     )
     app.cleanup_remote_artifacts = lambda: call_order.append(("cleanup",))  # type: ignore[method-assign]
 
-    app.run_remote_entity_workflow(
+    app.run_workflow(
         update_options=OperationOptions(champion_ids=(1, 103)),
         update_target="skin",
         extract_options=OperationOptions(champion_ids=(1, 103)),
@@ -790,7 +790,7 @@ def test_facade_run_remote_entity_workflow_runs_per_entity_and_cleans_between_en
     ]
 
 
-def test_facade_run_remote_entity_workflow_logs_completion_summary(
+def test_facade_run_workflow_logs_completion_summary(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -812,7 +812,7 @@ def test_facade_run_remote_entity_workflow_logs_completion_summary(
 
     monkeypatch.setattr(
         app,
-        "build_remote_entity_work_items",
+        "build_work_items",
         lambda **_kwargs: [
             RemoteEntityWorkItem(entity_type="champion", entity_id=1, need_extract=True, need_mapping=False)
         ],
@@ -838,7 +838,7 @@ def test_facade_run_remote_entity_workflow_logs_completion_summary(
         ),
     )
 
-    app.run_remote_entity_workflow(
+    app.run_workflow(
         extract_options=OperationOptions(champion_ids=(1,)),
         extract_include_champions=True,
     )
@@ -847,7 +847,7 @@ def test_facade_run_remote_entity_workflow_logs_completion_summary(
     assert success_messages == ["remote 实体工作流完成：共处理 1 个实体工作项"]
 
 
-def test_facade_run_remote_entity_workflow_invokes_callback_with_extract_and_mapping_paths(
+def test_facade_run_workflow_invokes_callback_with_extract_and_mapping_paths(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -892,7 +892,7 @@ def test_facade_run_remote_entity_workflow_invokes_callback_with_extract_and_map
     app.mapping = fake_mapping  # type: ignore[method-assign]
     app.cleanup_remote_artifacts = lambda: None  # type: ignore[method-assign]
 
-    app.run_remote_entity_workflow(
+    app.run_workflow(
         extract_options=OperationOptions(champion_ids=(103,)),
         mapping_options=OperationOptions(champion_ids=(103,)),
         extract_include_champions=True,
@@ -910,7 +910,7 @@ def test_facade_run_remote_entity_workflow_invokes_callback_with_extract_and_map
     ]
 
 
-def test_facade_run_remote_entity_workflow_callback_returns_multiple_audio_paths_when_grouped_by_type(
+def test_facade_run_workflow_callback_returns_multiple_audio_paths_when_grouped_by_type(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -955,7 +955,7 @@ def test_facade_run_remote_entity_workflow_callback_returns_multiple_audio_paths
     app.extract = fake_extract  # type: ignore[method-assign]
     app.cleanup_remote_artifacts = lambda: None  # type: ignore[method-assign]
 
-    app.run_remote_entity_workflow(
+    app.run_workflow(
         extract_options=OperationOptions(champion_ids=(1,)),
         extract_include_champions=True,
         on_entity_complete=callback_payloads.append,
@@ -971,7 +971,7 @@ def test_facade_run_remote_entity_workflow_callback_returns_multiple_audio_paths
     ]
 
 
-def test_facade_run_remote_entity_workflow_retries_download_errors_before_success(
+def test_facade_run_workflow_retries_download_errors_before_success(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1004,7 +1004,7 @@ def test_facade_run_remote_entity_workflow_retries_download_errors_before_succes
     app.extract = lambda opts, **kwargs: call_order.append(("extract", opts.champion_ids, kwargs["prepare_remote"]))  # type: ignore[method-assign]
     app.cleanup_remote_artifacts = lambda: call_order.append(("cleanup",))  # type: ignore[method-assign]
 
-    app.run_remote_entity_workflow(
+    app.run_workflow(
         extract_options=OperationOptions(champion_ids=(1,)),
         extract_include_champions=True,
         download_retry_attempts=download_retry_attempts,
@@ -1020,7 +1020,7 @@ def test_facade_run_remote_entity_workflow_retries_download_errors_before_succes
     ]
 
 
-def test_facade_run_remote_entity_workflow_raises_after_entity_retry_threshold(
+def test_facade_run_workflow_raises_after_entity_retry_threshold(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -1054,7 +1054,7 @@ def test_facade_run_remote_entity_workflow_raises_after_entity_retry_threshold(
     app.cleanup_remote_artifacts = lambda: call_order.append(("cleanup",))  # type: ignore[method-assign]
 
     with pytest.raises(RuntimeError, match="当前解包脚本可能无法正常解包"):
-        app.run_remote_entity_workflow(
+        app.run_workflow(
             extract_options=OperationOptions(champion_ids=(1,)),
             extract_include_champions=True,
             entity_retry_attempts=3,
@@ -1071,6 +1071,17 @@ def test_facade_run_remote_entity_workflow_raises_after_entity_retry_threshold(
         ("extract", (1,), False),
         ("cleanup",),
     ]
+
+
+def test_facade_aliases_forward_to_new_workflow_names(tmp_path: Path) -> None:
+    ctx = _build_remote_ctx(tmp_path)
+    app = LolAudioUnpackApp(ctx)
+
+    app.build_work_items = lambda **_kwargs: ["ok"]  # type: ignore[method-assign]
+    app.run_workflow = lambda **_kwargs: None  # type: ignore[method-assign]
+
+    assert app.build_remote_entity_work_items() == ["ok"]
+    assert app.run_remote_entity_workflow() is None
 
 
 def test_remote_snapshot_preparer_cleanup_artifacts_supports_dry_run(

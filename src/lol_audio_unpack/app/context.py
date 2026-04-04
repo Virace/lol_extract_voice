@@ -76,7 +76,7 @@ def _parse_source_mode(value: Any) -> SourceMode:
         raise AppContextValidationError(f"{SettingKey.SOURCE_MODE} 无效: {raw_value}，可选值: {valid_modes}") from exc
 
 
-def _normalize_remote_live_region(value: Any) -> str:
+def _normalize_live_region(value: Any) -> str:
     """标准化远端 live 区服。"""
     text = str(value or DEFAULT_REMOTE_LIVE_REGION).strip()
     if not text:
@@ -84,7 +84,7 @@ def _normalize_remote_live_region(value: Any) -> str:
     return text.upper()
 
 
-def _resolve_latest_remote_snapshot_config(*, live_region: str) -> RemoteSnapshotConfig:
+def _resolve_latest_snapshot(*, live_region: str) -> RemoteSnapshotConfig:
     """自动解析最新 live 快照配置。"""
     try:
         pair = LeagueManifestResolver().resolve_manifest_pair(live_region)
@@ -150,7 +150,7 @@ def _resolve_game_path(
     return _to_runtime_path(settings.get(SettingKey.GAME_PATH), SettingKey.GAME_PATH, runtime_root=runtime_root)
 
 
-def _build_remote_snapshot_config(
+def _build_snapshot(
     *,
     settings: Mapping[str, Any],
     source_mode: SourceMode,
@@ -186,11 +186,11 @@ def _build_remote_snapshot_config(
             game_manifest_url=game_manifest_url,
         )
 
-    live_region = _normalize_remote_live_region(settings.get(SettingKey.REMOTE_LIVE_REGION))
-    return _resolve_latest_remote_snapshot_config(live_region=live_region)
+    live_region = _normalize_live_region(settings.get(SettingKey.REMOTE_LIVE_REGION))
+    return _resolve_latest_snapshot(live_region=live_region)
 
 
-def _build_raw_settings(
+def _build_settings(
     *,
     settings: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
@@ -217,7 +217,7 @@ def _build_raw_settings(
     return merged
 
 
-def _build_app_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConfig:
+def _build_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConfig:
     """从原始配置构建 ``AppConfig``。"""
     runtime_root = detect_runtime_paths().launch_root
     output_path = _to_runtime_path(
@@ -232,7 +232,7 @@ def _build_app_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConf
         source_mode=source_mode,
         runtime_root=runtime_root,
     )
-    remote_snapshot = _build_remote_snapshot_config(settings=settings, source_mode=source_mode)
+    remote_snapshot = _build_snapshot(settings=settings, source_mode=source_mode)
 
     game_region = str(settings.get(SettingKey.GAME_REGION, "zh_CN") or "zh_CN")
     if game_region.lower() == "en_us":
@@ -263,7 +263,7 @@ def _build_app_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConf
     )
 
 
-def _build_app_paths(app_config: AppConfig) -> AppPaths:
+def _build_paths(app_config: AppConfig) -> AppPaths:
     """根据 ``AppConfig`` 构建 ``AppPaths``。"""
     output_path = app_config.output_path
     game_path = app_config.game_path
@@ -317,9 +317,9 @@ def create_app_context(
     """
     _ = force_reload
 
-    raw_settings = _build_raw_settings(settings=settings)
-    app_config = _build_app_config(settings=raw_settings, dev_mode=dev_mode)
-    app_paths = _build_app_paths(app_config)
+    raw_settings = _build_settings(settings=settings)
+    app_config = _build_config(settings=raw_settings, dev_mode=dev_mode)
+    app_paths = _build_paths(app_config)
     return AppContext(config=app_config, paths=app_paths, runtime_cache=runtime_cache or {})
 
 

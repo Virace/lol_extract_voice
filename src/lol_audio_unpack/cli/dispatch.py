@@ -210,7 +210,7 @@ def run_remote_workflow(args: argparse.Namespace, app: LolAudioUnpackApp) -> Non
     if _has_mapping(args):
         mapping_options = build_options(args, champion_ids=champion_ids, map_ids=map_ids)
 
-    app.run_remote_entity_workflow(
+    app.run_workflow(
         update_options=update_options,
         update_target=update_target,
         extract_options=extract_options,

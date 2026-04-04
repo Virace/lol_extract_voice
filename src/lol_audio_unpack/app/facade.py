@@ -29,9 +29,9 @@ from lol_audio_unpack.utils.path_constants import format_entity_folder_name, get
 from .remote import RemoteEntityCallbackPayload, RemoteEntityWorkItem
 from .types import AppContext, OperationOptions, SourceMode
 
-DEFAULT_REMOTE_DOWNLOAD_RETRY_ATTEMPTS = 3
-DEFAULT_REMOTE_ENTITY_RETRY_ATTEMPTS = 3
-UPDATE_DATA_PREPARED_FORCE_CACHE_KEY = "update_data_prepared_force"
+DEFAULT_DOWNLOAD_RETRIES = 3
+DEFAULT_ENTITY_RETRIES = 3
+UPDATE_PREPARED_KEY = "update_data_prepared_force"
 
 
 class LolAudioUnpackApp:
@@ -60,7 +60,7 @@ class LolAudioUnpackApp:
         """返回 mapping 流程使用的 HIRC 后端。"""
         return describe_hirc_backend(self.ctx)
 
-    def _prepare_remote_snapshot_for_update(self) -> RemotePreparer | None:
+    def _prepare_remote_update(self) -> RemotePreparer | None:
         """在远端快照模式下准备更新流程所需的远端资源。"""
         if self.ctx.config.source_mode is not SourceMode.REMOTE_SNAPSHOT:
             return None
@@ -70,9 +70,9 @@ class LolAudioUnpackApp:
         preparer.prepare_lcu_data()
         return preparer
 
-    def _is_update_data_prepared(self, *, force_update: bool) -> bool:
+    def _is_update_prepared(self, *, force_update: bool) -> bool:
         """判断当前上下文是否已完成数据预热。"""
-        cached_force_update = self.ctx.runtime_cache.get(UPDATE_DATA_PREPARED_FORCE_CACHE_KEY)
+        cached_force_update = self.ctx.runtime_cache.get(UPDATE_PREPARED_KEY)
         if cached_force_update is True:
             return True
         if cached_force_update is False and not force_update:
@@ -88,10 +88,10 @@ class LolAudioUnpackApp:
         Returns:
             remote 模式下返回远端准备器，否则返回 ``None``。
         """
-        remote_preparer = self._prepare_remote_snapshot_for_update()
-        if not self._is_update_data_prepared(force_update=force_update):
+        remote_preparer = self._prepare_remote_update()
+        if not self._is_update_prepared(force_update=force_update):
             DataUpdater(force_update=force_update, ctx=self.ctx).check_and_update()
-            self.ctx.runtime_cache[UPDATE_DATA_PREPARED_FORCE_CACHE_KEY] = force_update
+            self.ctx.runtime_cache[UPDATE_PREPARED_KEY] = force_update
         return remote_preparer
 
     def resolve_champion_ids(self, selectors: Sequence[int | str] | None) -> tuple[int, ...] | None:
@@ -155,7 +155,7 @@ class LolAudioUnpackApp:
 
         return tuple(resolved_ids)
 
-    def _build_remote_preparer(self) -> RemotePreparer | None:
+    def _create_preparer(self) -> RemotePreparer | None:
         """按需创建远端准备器。"""
         if self.ctx.config.source_mode is not SourceMode.REMOTE_SNAPSHOT:
             return None
@@ -259,7 +259,7 @@ class LolAudioUnpackApp:
                 )
 
     @staticmethod
-    def _build_entity_operation_options(
+    def _build_entity_options(
         opts: OperationOptions,
         *,
         entity_type: str,
@@ -286,7 +286,7 @@ class LolAudioUnpackApp:
             return AudioEntityData.from_champion(entity_id, reader, include_events=include_events, ctx=self.ctx)
         return AudioEntityData.from_map(entity_id, reader, include_events=include_events, ctx=self.ctx)
 
-    def _resolve_extract_output_paths(self, entity_data: AudioEntityData) -> tuple[Path, ...]:
+    def _resolve_audio_paths(self, entity_data: AudioEntityData) -> tuple[Path, ...]:
         """解析实体解包后的实际输出目录。"""
         audio_base = Path(self.ctx.paths.audio_path)
         entity_dir = get_output_dir_name(entity_data.entity_type)
@@ -311,7 +311,7 @@ class LolAudioUnpackApp:
             return (candidate,)
         return ()
 
-    def _resolve_mapping_output_path(self, *, entity_type: str, entity_id: int, integrate_data: bool) -> Path | None:
+    def _resolve_mapping_path(self, *, entity_type: str, entity_id: int, integrate_data: bool) -> Path | None:
         """解析实体 mapping 的最终产物路径。"""
         version_hash_root = Path(self.ctx.paths.hash_path) / self._create_reader().version
         entity_dir = get_output_dir_name(entity_type)
@@ -327,11 +327,11 @@ class LolAudioUnpackApp:
         return None
 
     @staticmethod
-    def _is_retryable_remote_download_error(exc: BaseException) -> bool:
+    def _is_retryable_download_error(exc: BaseException) -> bool:
         """判断是否属于可重试的远端下载错误。"""
         return isinstance(exc, (DownloadError, DecompressError, DownloadBatchError))
 
-    def _prepare_remote_entity_wads_with_retries(  # noqa: PLR0913
+    def _prepare_entity_wads(  # noqa: PLR0913
         self,
         remote_preparer: RemotePreparer,
         *,
@@ -361,7 +361,7 @@ class LolAudioUnpackApp:
                 )
                 return
             except Exception as exc:
-                if not self._is_retryable_remote_download_error(exc):
+                if not self._is_retryable_download_error(exc):
                     raise
                 if download_attempt >= download_retry_attempts:
                     raise
@@ -376,7 +376,7 @@ class LolAudioUnpackApp:
                     exc,
                 )
 
-    def _raise_remote_entity_failure(
+    def _raise_entity_failure(
         self,
         *,
         work_item: RemoteEntityWorkItem,
@@ -398,14 +398,14 @@ class LolAudioUnpackApp:
             logger.info("remote_snapshot 模式已显式关闭自动清理，保留远端准备产物。")
             return
 
-        preparer = self._build_remote_preparer()
+        preparer = self._create_preparer()
         if preparer is None:
             return
         cleanup_result = preparer.cleanup_artifacts()
         if cleanup_result:
             logger.info(f"远端准备产物清理完成: {cleanup_result}")
 
-    def build_remote_entity_work_items(  # noqa: PLR0913
+    def build_work_items(  # noqa: PLR0913
         self,
         *,
         extract_options: OperationOptions | None = None,
@@ -459,7 +459,7 @@ class LolAudioUnpackApp:
             key=lambda item: (item.entity_type != "champion", item.entity_id),
         )
 
-    def run_remote_entity_workflow(  # noqa: PLR0913
+    def run_workflow(  # noqa: PLR0913
         self,
         *,
         update_options: OperationOptions | None = None,
@@ -472,8 +472,8 @@ class LolAudioUnpackApp:
         mapping_include_maps: bool = True,
         on_entity_complete: Callable[[RemoteEntityCallbackPayload], None] | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
-        download_retry_attempts: int = DEFAULT_REMOTE_DOWNLOAD_RETRY_ATTEMPTS,
-        entity_retry_attempts: int = DEFAULT_REMOTE_ENTITY_RETRY_ATTEMPTS,
+        download_retry_attempts: int = DEFAULT_DOWNLOAD_RETRIES,
+        entity_retry_attempts: int = DEFAULT_ENTITY_RETRIES,
     ) -> None:
         """按实体拆批执行 remote 流程，并在每轮后清理远端产物。
 
@@ -508,7 +508,7 @@ class LolAudioUnpackApp:
         if extract_options is None and mapping_options is None:
             return
 
-        work_items = self.build_remote_entity_work_items(
+        work_items = self.build_work_items(
             extract_options=extract_options,
             mapping_options=mapping_options,
             extract_include_champions=extract_include_champions,
@@ -546,7 +546,7 @@ class LolAudioUnpackApp:
                 champion_ids = (work_item.entity_id,) if is_champion else None
                 map_ids = (work_item.entity_id,) if not is_champion else None
                 try:
-                    self._prepare_remote_entity_wads_with_retries(
+                    self._prepare_entity_wads(
                         remote_preparer,
                         reader=reader,
                         champion_ids=champion_ids,
@@ -565,7 +565,7 @@ class LolAudioUnpackApp:
                     mapping_output_path: Path | None = None
                     if work_item.need_extract and extract_options is not None:
                         remote_wav_handle = self.extract(
-                            self._build_entity_operation_options(
+                            self._build_entity_options(
                                 extract_options,
                                 entity_type=work_item.entity_type,
                                 entity_id=work_item.entity_id,
@@ -582,10 +582,10 @@ class LolAudioUnpackApp:
                                 work_item.entity_type,
                                 work_item.entity_id,
                             )
-                        extract_output_paths = self._resolve_extract_output_paths(entity_data)
+                        extract_output_paths = self._resolve_audio_paths(entity_data)
                     if work_item.need_mapping and mapping_options is not None:
                         self.mapping(
-                            self._build_entity_operation_options(
+                            self._build_entity_options(
                                 mapping_options,
                                 entity_type=work_item.entity_type,
                                 entity_id=work_item.entity_id,
@@ -594,7 +594,7 @@ class LolAudioUnpackApp:
                             include_maps=not is_champion,
                             prepare_remote=False,
                         )
-                        mapping_output_path = self._resolve_mapping_output_path(
+                        mapping_output_path = self._resolve_mapping_path(
                             entity_type=work_item.entity_type,
                             entity_id=work_item.entity_id,
                             integrate_data=mapping_options.integrate_data,
@@ -622,7 +622,7 @@ class LolAudioUnpackApp:
                     break
                 except Exception as exc:
                     if entity_attempt >= entity_retry_attempts:
-                        self._raise_remote_entity_failure(
+                        self._raise_entity_failure(
                             work_item=work_item,
                             entity_retry_attempts=entity_retry_attempts,
                             exc=exc,
@@ -639,6 +639,15 @@ class LolAudioUnpackApp:
                     self.cleanup_remote_artifacts()
 
         logger.success(f"remote 实体工作流完成：共处理 {total_work_items} 个实体工作项")
+
+    # 兼容层：保留旧公开方法名，后续阶段统一删除。
+    def build_remote_entity_work_items(self, **kwargs) -> list[RemoteEntityWorkItem]:
+        """兼容旧公开方法名。"""
+        return self.build_work_items(**kwargs)
+
+    def run_remote_entity_workflow(self, **kwargs) -> None:
+        """兼容旧公开方法名。"""
+        self.run_workflow(**kwargs)
 
     def update(self, opts: OperationOptions, *, target: str = "all") -> None:
         """执行更新流程。"""
@@ -686,7 +695,7 @@ class LolAudioUnpackApp:
             progress_callback: 每个实体处理结束后的可选进度回调。
         """
         reader = self._create_reader()
-        remote_preparer = self._build_remote_preparer()
+        remote_preparer = self._create_preparer()
         if prepare_remote and remote_preparer is not None:
             remote_preparer.prepare_extract_wads(
                 reader=reader,
@@ -751,7 +760,7 @@ class LolAudioUnpackApp:
         """执行映射流程。"""
         backend_label = self._describe_mapping_backend()
         reader = self._create_reader()
-        remote_preparer = self._build_remote_preparer()
+        remote_preparer = self._create_preparer()
         if prepare_remote and remote_preparer is not None:
             remote_preparer.prepare_mapping_wads(
                 reader=reader,
