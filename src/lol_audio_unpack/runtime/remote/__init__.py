@@ -1,6 +1,6 @@
-"""兼容层：迁移期保留旧 remote 导入路径。"""
+"""远端快照公开导出面。"""
 
-from lol_audio_unpack.runtime.remote import (
+from .preparer import (
     BinInputPrepareResult,
     GameWadPrepareResult,
     LcuPrepareResult,

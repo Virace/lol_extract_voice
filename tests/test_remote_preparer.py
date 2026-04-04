@@ -9,7 +9,7 @@ from loguru import logger
 from riotmanifest import DownloadError
 
 import lol_audio_unpack.facade as m_facade
-import lol_audio_unpack.remote.preparer as m_remote
+import lol_audio_unpack.runtime.remote.preparer as m_remote
 from lol_audio_unpack.app_context import (
     AppConfig,
     AppContext,
@@ -19,7 +19,7 @@ from lol_audio_unpack.app_context import (
     SourceMode,
 )
 from lol_audio_unpack.facade import LolAudioUnpackApp, RemoteEntityCallbackPayload, RemoteEntityWorkItem
-from lol_audio_unpack.remote import RemoteSnapshotPreparer
+from lol_audio_unpack.runtime import RemoteSnapshotPreparer
 
 pytestmark = pytest.mark.unit
 EXPECTED_BUNDLE_COUNT = 3

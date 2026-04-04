@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+from importlib.util import find_spec
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from lol_audio_unpack.runtime.wav import WavSidecarProgressSnapshot
 from lol_audio_unpack.unpack import batch as unpack_batch
 from lol_audio_unpack.unpack import entity as unpack_entity
 from lol_audio_unpack.utils.run_summary import get_or_create_run_summary
-from lol_audio_unpack.wav_sidecar import WavSidecarProgressSnapshot
 
 pytestmark = pytest.mark.unit
+
+
+def test_unpack_wav_bridge_module_is_removed() -> None:
+    """解包侧旧 bridge 模块应在收口后被移除。"""
+    assert find_spec("lol_audio_unpack.unpack.wav") is None
 
 
 def test_persisted_wem_is_submitted_to_sidecar(tmp_path: Path) -> None:

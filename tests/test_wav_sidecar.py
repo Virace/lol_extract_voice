@@ -12,12 +12,13 @@ import pytest
 from pyvgmstream import SampleFormat
 
 from lol_audio_unpack.app_context import WavOutputOptions
-from lol_audio_unpack.wav_sidecar import (
+from lol_audio_unpack.runtime.wav import (
     WavSidecarProgressSnapshot,
     WavTranscodeCoordinator,
     build_wav_output_path,
+    resolve_wav_decode_config,
 )
-from lol_audio_unpack.wav_sidecar_runtime import WavJob, default_worker_entry, resolve_wav_decode_config
+from lol_audio_unpack.runtime.wav._runtime import WavJob, default_worker_entry
 
 pytestmark = pytest.mark.unit
 
@@ -89,7 +90,7 @@ def test_default_worker_entry_passes_resolved_decode_config(monkeypatch: pytest.
         return FakeDecodeResult()
 
     queue: Queue[Any] = SimpleQueueAdapter()
-    monkeypatch.setattr("lol_audio_unpack.wav_sidecar_runtime.decode_to_wav_file", fake_decode_to_wav_file)
+    monkeypatch.setattr("lol_audio_unpack.runtime.wav._runtime.decode_to_wav_file", fake_decode_to_wav_file)
 
     job = WavJob(
         wem_path=tmp_path / "sample.wem",

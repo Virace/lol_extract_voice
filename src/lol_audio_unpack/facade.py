@@ -23,7 +23,7 @@ from lol_audio_unpack.mapping import (
     describe_hirc_backend,
 )
 from lol_audio_unpack.model import AudioEntityData
-from lol_audio_unpack.remote import RemoteSnapshotPreparer
+from lol_audio_unpack.runtime import RemoteSnapshotPreparer
 from lol_audio_unpack.unpack import unpack_all, unpack_champions, unpack_maps
 from lol_audio_unpack.utils.path_constants import format_entity_folder_name, get_output_dir_name
 

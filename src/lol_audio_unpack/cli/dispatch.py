@@ -15,7 +15,7 @@ from loguru import logger
 
 from ..config_schema import SettingKey
 from ..facade import LolAudioUnpackApp
-from ..wav_background_job import WavBackgroundProcessHandle
+from ..runtime import WavBackgroundProcessHandle
 from .runtime import build_options, parse_int_ids, resolve_champion_ids
 
 
