@@ -13,7 +13,7 @@ from lol_audio_unpack.manager.utils import create_metadata_object, write_data
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.utils.logging import performance_monitor
 
-from . import runtime as mapping_runtime
+from . import session as mapping_session
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app_context import AppContext
@@ -30,8 +30,8 @@ def _ensure_version_dirs(reader: DataReader, *, ctx: AppContext) -> tuple[Path, 
         tuple[Path, Path]: ``(version_cache_dir, version_hash_dir)``。
     """
 
-    version_cache_dir = mapping_runtime._get_cache_path(ctx) / reader.version
-    version_hash_dir = mapping_runtime._get_hash_path(ctx) / reader.version
+    version_cache_dir = ctx.cache_path / reader.version
+    version_hash_dir = ctx.hash_path / reader.version
     version_cache_dir.mkdir(parents=True, exist_ok=True)
     version_hash_dir.mkdir(parents=True, exist_ok=True)
     return version_cache_dir, version_hash_dir
@@ -77,19 +77,23 @@ def _resolve_wad_path(entity_data: AudioEntityData, category: str, *, ctx: AppCo
         Path | None: 可用的 WAD 文件路径；不可用时返回 ``None``。
     """
 
-    if "VO" in category:
-        wad_file = entity_data.wad_language
-        if not wad_file:
-            logger.warning(f"VO类别但无语言WAD文件: {category}")
-            return None
-    else:
-        wad_file = entity_data.wad_root
+    # WAD 选择规则统一收口到 AudioEntityData；
+    # mapping 层只负责把“类别名”翻译成模型认识的音频类型。
+    audio_type = "VO" if "VO" in category else "SFX"
+    wad_path = entity_data.get_wad_path(audio_type, ctx=ctx)
+    if wad_path is not None:
+        return wad_path
 
-    wad_path = mapping_runtime._get_game_path(ctx) / wad_file
-    if not wad_path.exists():
-        logger.warning(f"WAD文件不存在: {wad_path}")
+    # 这里保留 mapping 侧原有的日志语义：
+    # VO 缺语言包和“路径声明存在但文件缺失”都要继续可见，而不是重构后静默失败。
+    if audio_type == "VO" and not entity_data.wad_language:
+        logger.warning(f"VO类别但无语言WAD文件: {category}")
         return None
-    return wad_path
+
+    relative_path = entity_data.wad_language if audio_type == "VO" else entity_data.wad_root
+    if relative_path:
+        logger.warning(f"WAD文件不存在: {ctx.game_path / relative_path}")
+    return None
 
 
 def _build_category_mapping(  # noqa: PLR0913
@@ -99,7 +103,7 @@ def _build_category_mapping(  # noqa: PLR0913
     event_list: list[str],
     version_cache_dir: Path,
     wwiser_manager: WwiserManager | None,
-    runtime_cache: mapping_runtime.RuntimeCache | None,
+    runtime_cache: mapping_session.RuntimeCache | None,
     *,
     ctx: AppContext,
 ) -> tuple[Any | None, int]:
@@ -143,19 +147,19 @@ def _build_category_mapping(  # noqa: PLR0913
             continue
 
         try:
-            wad_obj = mapping_runtime._get_wad(wad_path, runtime_cache=runtime_cache)
+            wad_obj = mapping_session._get_wad(wad_path, runtime_cache=runtime_cache)
             bnk_rel_path = bnk_paths[0]
             extract_key = (wad_path, bnk_rel_path)
-            if not mapping_runtime._is_bnk_extracted(extract_key, runtime_cache=runtime_cache):
+            if not mapping_session._is_bnk_extracted(extract_key, runtime_cache=runtime_cache):
                 wad_obj.extract(bnk_paths, out_dir=version_cache_dir)
-                mapping_runtime._mark_bnk_extracted(extract_key, runtime_cache=runtime_cache)
+                mapping_session._mark_bnk_extracted(extract_key, runtime_cache=runtime_cache)
 
             bnk_path = version_cache_dir / bnk_rel_path
             if not bnk_path.exists():
                 logger.warning(f"提取的BNK文件不存在: {bnk_path}")
                 continue
 
-            hirc = mapping_runtime._get_cached_hirc(
+            hirc = mapping_session._get_cached_hirc(
                 bnk_path=bnk_path,
                 hirc_cache_dir=hirc_cache_dir,
                 wwiser_manager=wwiser_manager,
@@ -277,7 +281,7 @@ def build_entity(  # noqa: PLR0913
     reader: DataReader,
     wwiser_manager: WwiserManager | None = None,
     integrate_data: bool = False,
-    runtime_cache: mapping_runtime.RuntimeCache | None = None,
+    runtime_cache: mapping_session.RuntimeCache | None = None,
     *,
     ctx: AppContext,
 ) -> dict[str, Any]:
@@ -302,7 +306,7 @@ def build_entity(  # noqa: PLR0913
         raise ValueError(f"{entity_data.entity_name} 缺少事件数据，请使用 include_events=True 创建实体数据")
 
     logger.info(f"构建 {entity_data.entity_name} (ID:{entity_data.entity_id}) 的事件映射")
-    manager = mapping_runtime._create_wwiser_manager(ctx) if wwiser_manager is None else wwiser_manager
+    manager = mapping_session._create_wwiser_manager(ctx) if wwiser_manager is None else wwiser_manager
     version_cache_dir, version_hash_dir = _ensure_version_dirs(reader, ctx=ctx)
     mapping_result, mapping_data_key = _build_mapping_result(entity_data, reader)
     entity_group = "champions" if entity_data.entity_type == "champion" else "maps"
@@ -506,7 +510,7 @@ def build_champion(  # noqa: PLR0913
     reader: DataReader,
     wwiser_manager: WwiserManager | None = None,
     integrate_data: bool = False,
-    runtime_cache: mapping_runtime.RuntimeCache | None = None,
+    runtime_cache: mapping_session.RuntimeCache | None = None,
     *,
     ctx: AppContext,
 ) -> dict[str, Any]:
@@ -544,7 +548,7 @@ def build_map(  # noqa: PLR0913
     reader: DataReader,
     wwiser_manager: WwiserManager | None = None,
     integrate_data: bool = False,
-    runtime_cache: mapping_runtime.RuntimeCache | None = None,
+    runtime_cache: mapping_session.RuntimeCache | None = None,
     *,
     ctx: AppContext,
 ) -> dict[str, Any]:

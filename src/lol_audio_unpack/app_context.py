@@ -116,6 +116,105 @@ class AppContext:
     paths: AppPaths
     runtime_cache: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def game_path(self) -> Path:
+        """返回标准化后的游戏根目录。
+
+        Returns:
+            Path: 游戏根目录。
+        """
+        return self.config.game_path
+
+    @property
+    def game_region(self) -> str:
+        """返回标准化后的语言区域。
+
+        Returns:
+            str: 当前语言区域。
+        """
+        return self.config.game_region
+
+    @property
+    def wwiser_path(self) -> Path | None:
+        """返回标准化后的 wwiser 路径。
+
+        Returns:
+            Path | None: 配置中的 wwiser 文件路径；未配置时返回 ``None``。
+        """
+        return self.config.wwiser_path
+
+    @property
+    def include_types(self) -> tuple[str, ...]:
+        """返回包含的音频类型集合。
+
+        Returns:
+            tuple[str, ...]: 当前启用的音频类型。
+        """
+        return self.config.include_types
+
+    @property
+    def exclude_types(self) -> tuple[str, ...]:
+        """返回排除的音频类型集合。
+
+        Returns:
+            tuple[str, ...]: 当前排除的音频类型。
+        """
+        return self.config.exclude_types
+
+    @property
+    def group_by_type(self) -> bool:
+        """返回是否按音频类型优先分组输出。
+
+        Returns:
+            bool: ``True`` 表示按类型分组。
+        """
+        return self.config.group_by_type
+
+    @property
+    def audio_path(self) -> Path:
+        """返回音频输出根目录。
+
+        Returns:
+            Path: 音频输出根目录。
+        """
+        return self.paths.audio_path
+
+    @property
+    def wav_path(self) -> Path:
+        """返回 WAV 输出根目录。
+
+        Returns:
+            Path: WAV 输出根目录。
+        """
+        return self.paths.wav_path
+
+    @property
+    def cache_path(self) -> Path:
+        """返回 cache 根目录。
+
+        Returns:
+            Path: cache 根目录。
+        """
+        return self.paths.cache_path
+
+    @property
+    def hash_path(self) -> Path:
+        """返回 hashes 根目录。
+
+        Returns:
+            Path: hashes 根目录。
+        """
+        return self.paths.hash_path
+
+    @property
+    def report_path(self) -> Path:
+        """返回报告输出根目录。
+
+        Returns:
+            Path: 报告输出根目录。
+        """
+        return self.paths.report_path
+
 
 def _parse_bool(value: Any) -> bool:
     """解析布尔配置值。"""

@@ -1,13 +1,4 @@
-# 🐍 There should be one-- and preferably only one --obvious way to do it.
-# 🐼 任何问题应有一种，且最好只有一种，显而易见的解决方法
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2025/8/4 13:03
-# @Update  : 2025/8/7 11:00
-# @Detail  : 共用数据模型和工具函数
-
+"""共享音频实体模型与任务生成逻辑。"""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,37 +12,26 @@ if TYPE_CHECKING:
     from lol_audio_unpack.app_context import AppContext
 
 
-def _resolve_game_path(ctx: "AppContext") -> Path:
-    """解析游戏根目录路径。"""
-    return Path(ctx.config.game_path)
-
-
-def _resolve_game_region(ctx: "AppContext") -> str:
-    """解析当前语言区域。"""
-    if ctx.config.game_region:
-        return str(ctx.config.game_region)
-    return "zh_CN"
-
-
 @dataclass
 class AudioEntityData:
-    """音频实体统一数据结构
+    """统一描述可解包和可映射的音频实体。
 
-    :param entity_id: 实体ID（英雄ID或地图ID）
-    :param entity_name: 实体名称（英雄名或地图名）
-    :param entity_alias: 实体别名（英雄alias或地图mapStringId）
-    :param entity_title: 实体标题（英雄称号或地图描述）
-    :param entity_type: 实体类型（"champion" 或 "map"）
-    :param sub_entities: 子实体数据（皮肤数据或地图本身）
-    :param wad_root: 根WAD文件路径（用于SFX/Music）
-    :param wad_language: 语言WAD文件路径（用于VO），None表示无语言WAD
-    :param events: 事件数据（仅映射时使用），None表示不包含事件数据
+    Args:
+        entity_id: 实体 ID，例如英雄 ID 或地图 ID。
+        entity_name: 实体名称。
+        entity_alias: 实体别名。
+        entity_title: 实体标题；无标题时为 ``None``。
+        entity_type: 实体类型，当前为 ``"champion"`` 或 ``"map"``。
+        sub_entities: 子实体数据，例如皮肤或地图自身。
+        wad_root: 根 WAD 相对路径，用于 SFX/MUSIC。
+        wad_language: 语言 WAD 相对路径，用于 VO；缺失时为 ``None``。
+        events: 事件数据，仅映射流程需要；缺失时为 ``None``。
     """
 
     entity_id: str
     entity_name: str
     entity_alias: str
-    entity_title: str
+    entity_title: str | None
     entity_type: str  # "champion" | "map"
     sub_entities: dict[str, dict[str, Any]]
     wad_root: str
@@ -76,24 +56,28 @@ class AudioEntityData:
         *,
         ctx: "AppContext",
     ) -> Path | None:
-        """根据音频类型获取对应的WAD文件完整路径
+        """根据音频类型返回可用的 WAD 绝对路径。
 
-        :param audio_type: 音频类型（"VO"需要语言WAD，其他使用根WAD）
-        :param ctx: 运行时上下文。
-        :returns: 存在的WAD文件完整路径，不存在时返回None
+        Args:
+            audio_type: 音频类型；``"VO"`` 使用语言 WAD，其余类型使用根 WAD。
+            ctx: 运行时上下文。
+
+        Returns:
+            Path | None: 存在的 WAD 绝对路径；不可用时返回 ``None``。
         """
-        # 获取相对路径
+        # VO 必须优先走语言 WAD，其他类型统一走根 WAD。
+        # 这条规则由模型层集中维护，避免 mapping / unpack 各自复制分支。
         if audio_type == "VO":
             relative_path = self.wad_language
         else:
             relative_path = self.wad_root
 
-        # 如果没有相对路径，直接返回None
         if not relative_path:
             return None
 
-        # 构建完整路径并检查存在性
-        full_path = _resolve_game_path(ctx) / relative_path
+        # 调用方统一把 None 视为“当前音频类型没有可用 WAD”，
+        # 因此这里顺手完成存在性校验，避免上层重复拼路径和判断。
+        full_path = ctx.game_path / relative_path
         return full_path if full_path.exists() else None
 
     @classmethod
@@ -105,36 +89,38 @@ class AudioEntityData:
         *,
         ctx: "AppContext",
     ) -> "AudioEntityData":
-        """从英雄数据创建AudioEntityData实例
+        """从英雄数据构建音频实体。
 
-        :param champion_id: 英雄ID
-        :param reader: 数据读取器实例
-        :param include_events: 是否包含事件数据（用于映射功能）
-        :param ctx: 运行时上下文。
-        :returns: AudioEntityData实例
-        :raises ValueError: 当英雄数据不存在或无音频数据时
+        Args:
+            champion_id: 英雄 ID。
+            reader: 数据读取器实例。
+            include_events: 是否附带事件数据。
+            ctx: 运行时上下文。
+
+        Returns:
+            AudioEntityData: 对应英雄的音频实体。
+
+        Raises:
+            ValueError: 英雄不存在、没有音频数据或缺少根 WAD 时抛出。
         """
-        # 获取英雄基础信息
         champion = reader.get_champion(champion_id)
         if not champion:
             raise ValueError(f"数据中不存在英雄ID {champion_id}")
 
-        # 获取英雄音频合集数据
         champion_banks = reader.get_champion_banks(champion_id)
         if not champion_banks:
             raise ValueError(f"英雄ID {champion_id} 没有音频数据")
 
-        # 获取WAD文件信息
         wad_info = champion.get("wad", {})
         wad_root = wad_info.get("root")
         if not wad_root:
             raise ValueError(f"英雄ID {champion_id} 缺少根WAD文件信息")
 
-        # 获取语言设置
-        language = _resolve_game_region(ctx)
-        wad_language = wad_info.get(language)  # 可能为None，某些英雄可能没有语言WAD
+        # AppContext 已负责标准化语言区域；模型层只消费标准化结果，
+        # 不再在 champion / map / mapping / unpack 各自做 fallback。
+        language = ctx.game_region
+        wad_language = wad_info.get(language)
 
-        # 创建皮肤ID到皮肤信息的映射
         skin_info_map = {}
         for skin in champion.get("skins", []):
             skin_id = skin.get("id")
@@ -142,11 +128,11 @@ class AudioEntityData:
             skin_name_raw = skin.get("skinNames", {}).get(language, skin.get("skinNames", {}).get("default", ""))
             is_base_skin = skin.get("isBase", False)
             skin_name = "基础皮肤" if is_base_skin else skin_name_raw
-            # 安全化皮肤名称，确保文件系统兼容性
+            # 子实体名称在模型层就完成文件名安全化，
+            # 后续 unpack / mapping / GUI 都直接复用同一份稳定值。
             safe_skin_name = sanitize_filename(skin_name)
             skin_info_map[skin_id_str] = {"id": skin_id, "name": safe_skin_name}
 
-        # 构建子实体数据
         sub_entities = {}
         available_skins = champion_banks.get("skins", {})
 
@@ -155,20 +141,20 @@ class AudioEntityData:
             if not skin_info:
                 continue
 
+            # 这里只保留当前 banks 真正出现的皮肤，
+            # 避免后续流程再为“有皮肤定义但没有音频数据”的空壳子实体兜底。
             sub_entities[skin_id_str] = {"name": skin_info["name"], "categories": banks}
 
-        # 获取事件数据（如果需要）
         events_data = None
         if include_events:
+            # 解包流程不需要 events；保持按需装载，避免把 mapping 负担带进通用实体模型。
             champion_events = reader.get_champion_events(champion_id)
             events_data = champion_events.get("skins", {}) if champion_events else {}
 
-        # 安全化英雄名称和标题
         champion_name_raw = champion.get("names", {}).get(language, champion.get("names", {}).get("default", ""))
         safe_champion_name = sanitize_filename(champion_name_raw)
         safe_champion_alias = sanitize_filename(champion.get("alias", "").lower())
 
-        # 获取英雄标题（称号）
         champion_title_raw = champion.get("titles", {}).get(language, champion.get("titles", {}).get("default", ""))
         safe_champion_title = sanitize_filename(champion_title_raw) if champion_title_raw else None
 
@@ -193,51 +179,52 @@ class AudioEntityData:
         *,
         ctx: "AppContext",
     ) -> "AudioEntityData":
-        """从地图数据创建AudioEntityData实例
+        """从地图数据构建音频实体。
 
-        :param map_id: 地图ID
-        :param reader: 数据读取器实例
-        :param include_events: 是否包含事件数据（用于映射功能）
-        :param ctx: 运行时上下文。
-        :returns: AudioEntityData实例
-        :raises ValueError: 当地图数据不存在或无音频数据时
+        Args:
+            map_id: 地图 ID。
+            reader: 数据读取器实例。
+            include_events: 是否附带事件数据。
+            ctx: 运行时上下文。
+
+        Returns:
+            AudioEntityData: 对应地图的音频实体。
+
+        Raises:
+            ValueError: 地图不存在、没有音频数据或缺少根 WAD 时抛出。
         """
-        # 获取地图基础信息
         map_info = reader.get_map(map_id)
         if not map_info:
             raise ValueError(f"数据中不存在地图ID {map_id}")
 
-        # 获取地图音频合集数据
         map_banks = reader.get_map_banks(map_id)
         if not map_banks:
             raise ValueError(f"地图ID {map_id} 没有音频数据")
 
-        # 获取WAD文件信息
         wad_info = map_info.get("wad", {})
         wad_root = wad_info.get("root")
         if not wad_root:
             raise ValueError(f"地图ID {map_id} 缺少根WAD文件信息")
 
-        # 获取语言设置
-        language = _resolve_game_region(ctx)
-        wad_language = wad_info.get(language)  # 可能为None，某些地图可能没有语言WAD
+        # 地图和英雄共用同一条语言选择主线，避免两边在 region 语义上再次漂移。
+        language = ctx.game_region
+        wad_language = wad_info.get(language)
 
-        # 获取地图名称（支持本地化）
         map_name_raw = map_info.get("names", {}).get(language, map_info.get("names", {}).get("default", ""))
         safe_map_name = sanitize_filename(map_name_raw)
 
-        # 获取地图别名
         map_alias_raw = "common" if map_id == 0 else map_info.get("mapStringId", "").lower()
         safe_map_alias = sanitize_filename(map_alias_raw)
 
-        # 地图作为自己的唯一"子实体"
+        # 地图没有独立皮肤概念，但解包和映射都按“实体 -> 子实体”统一处理，
+        # 因此这里把地图包装成唯一一个子实体，减少下游分支。
         sub_entities = {str(map_id): {"name": safe_map_name, "categories": map_banks.get("banks", {})}}
 
-        # 获取事件数据（如果需要）
         events_data = None
         if include_events:
             map_events_data = reader.get_map_events(map_id)
-            # 地图事件数据结构稍有不同，需要包装成类似皮肤的格式
+            # 地图事件原始结构与英雄不同，这里先整理成与皮肤一致的形状，
+            # 让 mapping 主流程不必再判断“当前是 champion 还是 map”。
             events_data = {str(map_id): {"events": map_events_data.get("events", {})}} if map_events_data else {}
 
         return cls(

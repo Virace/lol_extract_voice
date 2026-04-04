@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from lol_audio_unpack import unpack as m_unpack
+from lol_audio_unpack.app_context import AppConfig, AppContext, AppPaths
 from lol_audio_unpack.model import AudioEntityData
 
 
@@ -38,14 +39,27 @@ def test_generate_output_path_keeps_current_folder_layout(tmp_path: Path) -> Non
         wad_root="Game/root.wad.client",
         wad_language="Game/zh.wad.client",
     )
-    ctx = type(
-        "Ctx",
-        (),
-        {
-            "config": type("Config", (), {"group_by_type": False})(),
-            "paths": type("Paths", (), {"audio_path": tmp_path / "audios"})(),
-        },
-    )()
+    ctx = AppContext(
+        config=AppConfig(
+            game_path=tmp_path / "game",
+            output_path=tmp_path,
+            group_by_type=False,
+        ),
+        paths=AppPaths(
+            audio_path=tmp_path / "audios",
+            wav_path=tmp_path / "wavs",
+            temp_path=tmp_path / "temps",
+            log_path=tmp_path / "logs",
+            cache_path=tmp_path / "cache",
+            hash_path=tmp_path / "hashes",
+            report_path=tmp_path / "reports",
+            manifest_path=tmp_path / "manifest",
+            local_version_file=tmp_path / "game_version",
+            game_champion_path=tmp_path / "game" / "Game" / "DATA" / "FINAL" / "Champions",
+            game_maps_path=tmp_path / "game" / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping",
+            game_lcu_path=tmp_path / "game" / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data",
+        ),
+    )
 
     path = m_unpack.generate_output_path(entity, "1000", "VO", ctx=ctx)
 

@@ -7,7 +7,7 @@ from lol_audio_unpack import mapping as m_mapping
 from lol_audio_unpack import unpack as m_unpack
 from lol_audio_unpack.app_context import AppConfig, AppContext, AppPaths
 from lol_audio_unpack.mapping import batch as mapping_batch
-from lol_audio_unpack.mapping import runtime as mapping_runtime
+from lol_audio_unpack.mapping import session as mapping_session
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.unpack import batch as unpack_batch
 from lol_audio_unpack.unpack import bp_vo as unpack_bp_vo
@@ -53,9 +53,11 @@ def _build_ctx(
 
 def test_audio_entity_from_champion_uses_ctx_region_and_game_path(tmp_path: Path) -> None:
     ctx = _build_ctx(tmp_path, game_region="en_US")
-    wad_file = ctx.config.game_path / "Game" / "en.wad.client"
+    wad_file = ctx.game_path / "Game" / "en.wad.client"
+    root_wad_file = ctx.game_path / "Game" / "root.wad.client"
     wad_file.parent.mkdir(parents=True, exist_ok=True)
     wad_file.write_bytes(b"wad")
+    root_wad_file.write_bytes(b"root-wad")
 
     reader = SimpleNamespace(
         get_champion=lambda _id: {
@@ -72,9 +74,11 @@ def test_audio_entity_from_champion_uses_ctx_region_and_game_path(tmp_path: Path
 
     entity_data = AudioEntityData.from_champion(1, reader, ctx=ctx)
 
+    assert ctx.game_region == "en_US"
     assert entity_data.entity_name == "Annie"
     assert entity_data.wad_language == "Game/en.wad.client"
     assert entity_data.get_wad_path("VO", ctx=ctx) == wad_file
+    assert entity_data.get_wad_path("SFX", ctx=ctx) == root_wad_file
 
 
 def test_generate_output_path_supports_ctx_grouping(tmp_path: Path) -> None:
@@ -151,7 +155,7 @@ def test_execute_tasks_defaults_to_native_hirc(monkeypatch: pytest.MonkeyPatch, 
         captured["ctx"] = kwargs.get("ctx")
         return {}
 
-    monkeypatch.setattr(mapping_runtime, "WwiserManager", fail_wwiser_manager)
+    monkeypatch.setattr(mapping_session, "WwiserManager", fail_wwiser_manager)
     monkeypatch.setattr(mapping_batch, "build_champion", fake_build_champion_mapping)
 
     reader = SimpleNamespace()
@@ -180,7 +184,7 @@ def test_execute_tasks_passes_wwiser_manager_and_ctx_to_runtime(
         captured["ctx"] = kwargs.get("ctx")
         return {}
 
-    monkeypatch.setattr(mapping_runtime, "WwiserManager", fake_wwiser_manager)
+    monkeypatch.setattr(mapping_session, "WwiserManager", fake_wwiser_manager)
     monkeypatch.setattr(mapping_batch, "build_champion", fake_build_champion_mapping)
 
     reader = SimpleNamespace()
@@ -276,7 +280,7 @@ def test_execute_tasks_uses_warning_summary_for_partial_failures(
         raise RuntimeError("map boom")
 
     monkeypatch.setattr(mapping_batch, "logger", fake_logger)
-    monkeypatch.setattr(mapping_runtime, "_create_wwiser_manager", lambda _ctx: None)
+    monkeypatch.setattr(mapping_session, "_create_wwiser_manager", lambda _ctx: None)
     monkeypatch.setattr(mapping_batch, "build_champion", _fake_build_champion_mapping)
     monkeypatch.setattr(mapping_batch, "build_map", _fail_build_map_mapping)
 
@@ -307,10 +311,10 @@ def test_get_cached_hirc_uses_native_hirc_by_default(monkeypatch: pytest.MonkeyP
     def fail_wwiser_from_bnk(*_args, **_kwargs) -> object:
         pytest.fail("默认路径不应调用 WwiserHIRC")
 
-    monkeypatch.setattr(mapping_runtime, "NativeHIRC", SimpleNamespace(from_bnk=fake_native_from_bnk))
-    monkeypatch.setattr(mapping_runtime, "WwiserHIRC", SimpleNamespace(from_bnk=fail_wwiser_from_bnk))
+    monkeypatch.setattr(mapping_session, "NativeHIRC", SimpleNamespace(from_bnk=fake_native_from_bnk))
+    monkeypatch.setattr(mapping_session, "WwiserHIRC", SimpleNamespace(from_bnk=fail_wwiser_from_bnk))
 
-    result = mapping_runtime._get_cached_hirc(
+    result = mapping_session._get_cached_hirc(
         bnk_path=bnk_path,
         hirc_cache_dir=hirc_cache_dir,
         wwiser_manager=None,
@@ -335,10 +339,10 @@ def test_get_cached_hirc_uses_wwiser_when_manager_is_provided(monkeypatch: pytes
         captured["wwiser_args"] = (path, cache_dir, wwiser_manager)
         return wwiser_hirc
 
-    monkeypatch.setattr(mapping_runtime, "NativeHIRC", SimpleNamespace(from_bnk=fail_native_from_bnk))
-    monkeypatch.setattr(mapping_runtime, "WwiserHIRC", SimpleNamespace(from_bnk=fake_wwiser_from_bnk))
+    monkeypatch.setattr(mapping_session, "NativeHIRC", SimpleNamespace(from_bnk=fail_native_from_bnk))
+    monkeypatch.setattr(mapping_session, "WwiserHIRC", SimpleNamespace(from_bnk=fake_wwiser_from_bnk))
 
-    result = mapping_runtime._get_cached_hirc(
+    result = mapping_session._get_cached_hirc(
         bnk_path=bnk_path,
         hirc_cache_dir=hirc_cache_dir,
         wwiser_manager=wwiser_manager,

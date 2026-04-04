@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from importlib.util import find_spec
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from lol_audio_unpack.runtime.wav import TranscodeProgress
+from lol_audio_unpack.runtime.wav import job as wav_job
 from lol_audio_unpack.unpack import batch as unpack_batch
 from lol_audio_unpack.unpack import entity as unpack_entity
 from lol_audio_unpack.utils.run_summary import get_or_create_run_summary
@@ -19,6 +21,30 @@ pytestmark = pytest.mark.unit
 def test_unpack_wav_bridge_module_is_removed() -> None:
     """解包侧旧 bridge 模块应在收口后被移除。"""
     assert find_spec("lol_audio_unpack.unpack.wav") is None
+
+
+def test_build_transcode_paths_uses_version_and_optional_job_label(tmp_path: Path) -> None:
+    """WAV 路径装配应由 runtime.wav.job 统一负责。"""
+    ctx = SimpleNamespace(
+        paths=SimpleNamespace(
+            audio_path=tmp_path / "audios",
+            wav_path=tmp_path / "wavs",
+            report_path=tmp_path / "reports",
+        )
+    )
+
+    paths = wav_job.build_transcode_paths(ctx=ctx, version="15.8")
+    detached_paths = wav_job.build_transcode_paths(ctx=ctx, version="15.8", job_label="cli-test")
+
+    assert paths.audio_root == tmp_path / "audios" / "15.8"
+    assert paths.wav_root == tmp_path / "wavs" / "15.8"
+    assert paths.report_root == tmp_path / "reports" / "15.8" / "transcode_wav"
+    assert detached_paths.report_root == tmp_path / "reports" / "15.8" / "transcode_wav" / "cli-test"
+
+
+def test_launch_detached_accepts_manifest_recorder_keyword() -> None:
+    """launch_detached 的关键字参数应与调用侧保持一致。"""
+    assert "manifest_recorder" in inspect.signature(wav_job.launch_detached).parameters
 
 
 def test_persisted_wem_is_submitted_to_transcode(tmp_path: Path) -> None:

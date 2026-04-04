@@ -13,7 +13,7 @@ from loguru import logger
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.model import generate_champion_tasks, generate_map_tasks
 
-from . import runtime as mapping_runtime
+from . import session as mapping_session
 from .entity import build_champion, build_map
 
 if TYPE_CHECKING:
@@ -53,7 +53,7 @@ def _build_entity(  # noqa: PLR0913
     reader: DataReader,
     wwiser_manager: Any,
     integrate_data: bool,
-    runtime_cache: mapping_runtime.RuntimeCache,
+    runtime_cache: mapping_session.RuntimeCache,
     *,
     ctx: AppContext,
 ) -> None:
@@ -158,12 +158,14 @@ def execute_tasks(  # noqa: PLR0913
         f"开始构建 {total_tasks} 个实体的事件映射 ({' 和 '.join(summary_parts)})，"
         f"模式: {'多线程' if max_workers > 1 else '单线程'} (workers: {max_workers})"
     )
-    logger.info(f"HIRC 后端: {mapping_runtime.describe_hirc_backend(ctx)}")
+    logger.info(f"HIRC 后端: {mapping_session.describe_hirc_backend(ctx)}")
 
     failed_count = 0
     show_exception = bool(getattr(ctx.config, "dev_mode", False))
-    wwiser_manager = mapping_runtime._create_wwiser_manager(ctx)
-    runtime_cache = mapping_runtime.RuntimeCache(cache_lock=threading.Lock() if max_workers > 1 else None)
+    # manager 和 runtime_cache 都按“整轮任务”复用，
+    # 否则多实体并发时会重复创建 wwiser 进程态和 WAD/HIRC 缓存。
+    wwiser_manager = mapping_session._create_wwiser_manager(ctx)
+    runtime_cache = mapping_session.RuntimeCache(cache_lock=threading.Lock() if max_workers > 1 else None)
 
     if max_workers > 1:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:

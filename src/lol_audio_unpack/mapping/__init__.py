@@ -8,7 +8,7 @@ from lol_audio_unpack.manager import DataReader
 
 from .batch import build_all, build_champions, build_maps, execute_tasks
 from .entity import build_champion, build_entity, build_map, integrate_entity
-from .runtime import RuntimeCache, describe_hirc_backend
+from .session import RuntimeCache, describe_hirc_backend
 
 __all__ = [
     "RuntimeCache",

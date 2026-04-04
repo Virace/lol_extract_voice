@@ -12,6 +12,7 @@ from loguru import logger
 
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.model import AudioEntityData
+from lol_audio_unpack.runtime.wad import get_wad
 from lol_audio_unpack.utils.logging import performance_monitor
 from lol_audio_unpack.utils.path_constants import (
     format_entity_folder_name,
@@ -50,42 +51,6 @@ def _persist_wem(
     if wav_submitter is not None:
         wav_submitter(destination_path)
 
-
-def _get_region(ctx: AppContext) -> str:
-    """获取当前运行语言区域。"""
-    return str(ctx.config.game_region or "zh_CN")
-
-
-def _get_audio_root(ctx: AppContext) -> Path:
-    """获取音频输出根目录。"""
-    return Path(ctx.paths.audio_path)
-
-
-def _get_report_root(ctx: AppContext) -> Path:
-    """获取报告输出根目录。"""
-    return Path(ctx.paths.report_path)
-
-
-def _get_includes(ctx: AppContext) -> list[str]:
-    """获取包含的音频类型列表。"""
-    return list(ctx.config.include_types)
-
-
-def _get_excludes(ctx: AppContext) -> list[str]:
-    """获取排除的音频类型列表。"""
-    return list(ctx.config.exclude_types)
-
-
-def _is_group_by_type(ctx: AppContext) -> bool:
-    """是否按音频类型优先分组输出。"""
-    return bool(ctx.config.group_by_type)
-
-
-def _get_vo_type(_ctx: AppContext) -> str:
-    """获取 VO 音频类型常量。"""
-    return AUDIO_TYPE_VO
-
-
 def _get_wad_instance(
     wad_path: Path,
     wad_cache: dict[Path, WAD] | None,
@@ -101,18 +66,9 @@ def _get_wad_instance(
     Returns:
         对应路径的 ``WAD`` 实例。
     """
-    if wad_cache is None:
-        return WAD(wad_path)
-
-    if cache_lock is None:
-        if wad_path not in wad_cache:
-            wad_cache[wad_path] = WAD(wad_path)
-        return wad_cache[wad_path]
-
-    with cache_lock:
-        if wad_path not in wad_cache:
-            wad_cache[wad_path] = WAD(wad_path)
-        return wad_cache[wad_path]
+    # WAD 缓存语义已经收口到 runtime.wad；
+    # unpack 侧继续保留这个薄入口，是为了不改动当前调用面和类型签名。
+    return get_wad(wad_path, cache=wad_cache, lock=cache_lock)
 
 
 @logger.catch
@@ -141,13 +97,15 @@ def unpack_entity(  # noqa: PLR0913
     Raises:
         ValueError: 实体数据无效时抛出。
     """
-    language = _get_region(ctx)
-    audio_path = _get_audio_root(ctx) / reader.version
+    # 这里消费的是 AppContext 暴露的标准化派生值；
+    # unpack 层不再自己补 region/path fallback，避免与其他子域再次分叉。
+    language = ctx.game_region
+    audio_path = ctx.audio_path / reader.version
     if not audio_path.exists():
         audio_path.mkdir(parents=True, exist_ok=True)
 
-    include_types = _get_includes(ctx)
-    exclude_types = _get_excludes(ctx)
+    include_types = list(ctx.include_types)
+    exclude_types = list(ctx.exclude_types)
 
     stats_context = ProcessingStatsContext(
         entity_data,
@@ -189,7 +147,8 @@ def unpack_entity(  # noqa: PLR0913
                     "type": audio_type,
                 }
 
-                if audio_type == _get_vo_type(ctx):
+                # 先按 VO / 非 VO 拆分提取集合，后面才能分别命中语言 WAD 与根 WAD。
+                if audio_type == AUDIO_TYPE_VO:
                     for bank in banks_list:
                         for path in bank:
                             vo_paths_to_extract.add(path)
@@ -249,6 +208,8 @@ def unpack_entity(  # noqa: PLR0913
             stats.set_wad_info("ROOT", None, len(other_paths_to_extract), 0, "WAD文件不存在")
 
         logger.debug("阶段 3: 组装并处理最终数据...")
+        # WAD 提取后只拿到“路径 -> 原始字节”，这里再把结果重新挂回对应子实体，
+        # 后续输出目录和统计才能继续沿用统一的 sub-entity 语义。
         path_to_sub_info_map = {**vo_path_to_sub_info_map, **other_path_to_sub_info_map}
         unpacked_audio_data: dict[int, dict[str, Any]] = {}
 
@@ -287,6 +248,8 @@ def unpack_entity(  # noqa: PLR0913
                 files_by_type[audio_type].append(file_info)
 
             for audio_type, files_in_type in files_by_type.items():
+                # 输出布局是“子实体目录 + 音频类型”，因此这里先按 audio_type 聚合，
+                # 再一次性生成目标目录，避免同一目录反复判断与创建。
                 output_path = generate_output_path(entity_data, sub_id_str, audio_type, audio_path, ctx=ctx)
                 output_path.mkdir(parents=True, exist_ok=True)
                 logger.debug(f"处理 {sub_name} ({audio_type}) - {len(files_in_type)} 个文件")
@@ -395,9 +358,7 @@ def unpack_entity(  # noqa: PLR0913
 
     try:
         report_filename = f"_{entity_data.entity_id}_metadata.yaml"
-        report_path = (
-            _get_report_root(ctx) / reader.version / get_output_dir_name(entity_data.entity_type) / report_filename
-        )
+        report_path = ctx.report_path / reader.version / get_output_dir_name(entity_data.entity_type) / report_filename
         report_path.parent.mkdir(parents=True, exist_ok=True)
         stats.save_concise_report_to_yaml(report_path)
     except Exception as e:
@@ -451,10 +412,12 @@ def generate_output_path(
         对应音频类型的目标目录路径。
     """
     if base_path is None:
-        base_path = _get_audio_root(ctx)
+        # base_path 保持可注入，便于测试和未来镜像目录复用；
+        # 默认仍然以 AppContext 的音频根目录为准。
+        base_path = ctx.audio_path
 
     relative_path = _generate_relative_path(entity_data, sub_id)
-    if _is_group_by_type(ctx):
+    if ctx.group_by_type:
         return base_path / audio_type / relative_path
     return base_path / relative_path / audio_type
 

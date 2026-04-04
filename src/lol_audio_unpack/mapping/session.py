@@ -1,4 +1,4 @@
-"""映射流程运行时与后端辅助。"""
+"""映射流程会话缓存与后端辅助。"""
 
 from __future__ import annotations
 
@@ -9,24 +9,13 @@ from typing import TYPE_CHECKING
 
 from league_tools import WAD, NativeHIRC, WwiserHIRC, WwiserManager
 
+from lol_audio_unpack.runtime.wad import get_wad
+
 if TYPE_CHECKING:
     from lol_audio_unpack.app_context import AppContext
 
 
 ParsedHIRC = NativeHIRC | WwiserHIRC
-
-
-def _get_wwiser_path(ctx: AppContext) -> Path | str | None:
-    """获取 wwiser 可执行路径。
-
-    Args:
-        ctx: 运行时上下文。
-
-    Returns:
-        Path | str | None: 原始配置中的 wwiser 路径。
-    """
-
-    return ctx.config.wwiser_path
 
 
 def _resolve_wwiser_path(ctx: AppContext) -> Path | None:
@@ -42,7 +31,7 @@ def _resolve_wwiser_path(ctx: AppContext) -> Path | None:
         ValueError: 配置了路径但文件不存在时抛出。
     """
 
-    wwiser_path = _get_wwiser_path(ctx)
+    wwiser_path = ctx.wwiser_path
     if wwiser_path is None:
         return None
 
@@ -84,45 +73,6 @@ def _create_wwiser_manager(ctx: AppContext) -> WwiserManager | None:
     return WwiserManager(wwiser_path)
 
 
-def _get_cache_path(ctx: AppContext) -> Path:
-    """返回 mapping 使用的 cache 根目录。
-
-    Args:
-        ctx: 运行时上下文。
-
-    Returns:
-        Path: cache 根目录。
-    """
-
-    return Path(ctx.paths.cache_path)
-
-
-def _get_hash_path(ctx: AppContext) -> Path:
-    """返回 mapping 使用的 hashes 根目录。
-
-    Args:
-        ctx: 运行时上下文。
-
-    Returns:
-        Path: hashes 根目录。
-    """
-
-    return Path(ctx.paths.hash_path)
-
-
-def _get_game_path(ctx: AppContext) -> Path:
-    """返回当前游戏根目录。
-
-    Args:
-        ctx: 运行时上下文。
-
-    Returns:
-        Path: 游戏根目录。
-    """
-
-    return Path(ctx.config.game_path)
-
-
 @dataclass
 class RuntimeCache:
     """映射流程中的运行时缓存。
@@ -154,21 +104,9 @@ def _get_wad(
         WAD: 对应路径的 ``WAD`` 实例。
     """
 
-    if runtime_cache is None:
-        return WAD(wad_path)
-
-    wad_cache = runtime_cache.wad_cache
-    cache_lock = runtime_cache.cache_lock
-
-    if cache_lock is None:
-        if wad_path not in wad_cache:
-            wad_cache[wad_path] = WAD(wad_path)
-        return wad_cache[wad_path]
-
-    with cache_lock:
-        if wad_path not in wad_cache:
-            wad_cache[wad_path] = WAD(wad_path)
-        return wad_cache[wad_path]
+    wad_cache = None if runtime_cache is None else runtime_cache.wad_cache
+    cache_lock = None if runtime_cache is None else runtime_cache.cache_lock
+    return get_wad(wad_path, cache=wad_cache, lock=cache_lock)
 
 
 def _is_bnk_extracted(
@@ -190,6 +128,8 @@ def _is_bnk_extracted(
     extract_cache = runtime_cache.extract_cache
     cache_lock = runtime_cache.cache_lock
 
+    # 提取去重必须同时看 wad_path 和 bnk 相对路径，
+    # 否则不同 WAD 中同名 bnk 会被错误地视为已提取。
     if cache_lock is None:
         return key in extract_cache
     with cache_lock:
@@ -263,6 +203,8 @@ def _get_cached_hirc(
         hirc_cache[cache_key] = parsed
         return parsed
 
+    # 这里刻意不用“持锁解析”：
+    # HIRC 解析本身可能较慢，若全程占锁会把其他类别处理全部阻塞住。
     with cache_lock:
         cached = hirc_cache.get(cache_key)
     if cached is not None:
@@ -270,6 +212,8 @@ def _get_cached_hirc(
 
     parsed = parse_hirc()
     with cache_lock:
+        # 二次确认是为了兼容并发场景：
+        # 可能在当前线程解析期间，其他线程已经把同一个 cache_key 填进缓存。
         existing = hirc_cache.get(cache_key)
         if existing is not None:
             return existing

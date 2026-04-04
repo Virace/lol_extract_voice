@@ -46,6 +46,15 @@ class JobSpec:
     wav_format: str
 
 
+@dataclass(slots=True, frozen=True)
+class TranscodePaths:
+    """描述单个版本的 WAV 运行路径组合。"""
+
+    audio_root: Path
+    wav_root: Path
+    report_root: Path
+
+
 @dataclass(slots=True)
 class JobHandle:
     """封装后台 WAV 转码进程与可轮询元数据。"""
@@ -98,6 +107,29 @@ class ManifestRecorder:
     def has_records(self) -> bool:
         """返回当前是否已记录过任意 WEM 路径。"""
         return self.recorded_count > 0
+
+
+def build_transcode_paths(*, ctx: AppContext, version: str, job_label: str | None = None) -> TranscodePaths:
+    """根据版本和可选后台标签构造 WAV 路径组合。
+
+    Args:
+        ctx: 运行时上下文。
+        version: 当前数据版本号。
+        job_label: 可选后台作业标签；提供时报告目录会追加该标签。
+
+    Returns:
+        TranscodePaths: 当前版本对应的音频、WAV 和报告目录。
+    """
+    # 前台转码和 detached 转码的根目录规则必须完全一致；
+    # 唯一允许变化的是后台作业会把报告目录再细分到 job_label。
+    report_root = Path(ctx.paths.report_path) / version / "transcode_wav"
+    if job_label is not None:
+        report_root = report_root / job_label
+    return TranscodePaths(
+        audio_root=Path(ctx.paths.audio_path) / version,
+        wav_root=Path(ctx.paths.wav_path) / version,
+        report_root=report_root,
+    )
 
 
 def build_recorder(*, ctx: AppContext, job_label: str) -> ManifestRecorder:
@@ -181,16 +213,16 @@ def launch_detached(
     *,
     ctx: AppContext,
     wav_output: WavOutputOptions,
-    recorder: ManifestRecorder,
+    manifest_recorder: ManifestRecorder,
     job_label: str,
 ) -> JobHandle | None:
     """根据已记录的 WEM 清单启动后台 WAV 进程。"""
-    if not recorder.has_records() or not recorder.manifest_path.exists():
+    if not manifest_recorder.has_records() or not manifest_recorder.manifest_path.exists():
         return None
 
     manifest_lines = [
         line.strip()
-        for line in recorder.manifest_path.read_text(encoding="utf-8").splitlines()
+        for line in manifest_recorder.manifest_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     if not manifest_lines:
@@ -202,13 +234,17 @@ def launch_detached(
     if not relative_parts:
         return None
 
+    # manifest 记录的是已落盘的绝对 WEM 路径，因此 detached 进程启动前
+    # 需要先从第一条记录还原当前版本号，再反推本轮的 audio/wav/report 根目录。
     version = relative_parts[0]
+    # 具体目录拼接统一委托给 build_transcode_paths，避免 unpack 主流程和后台流程各自拼一次。
+    paths = build_transcode_paths(ctx=ctx, version=version, job_label=job_label)
     spec = build_job_spec(
         job_label=job_label,
-        manifest_path=recorder.manifest_path,
-        audio_root=audio_root / version,
-        wav_root=Path(ctx.paths.wav_path) / version,
-        report_root=Path(ctx.paths.report_path) / version / "transcode_wav" / job_label,
+        manifest_path=manifest_recorder.manifest_path,
+        audio_root=paths.audio_root,
+        wav_root=paths.wav_root,
+        report_root=paths.report_root,
         worker_count=wav_output.worker_count,
         timeout_seconds=wav_output.timeout_seconds,
         max_retries=wav_output.max_retries,

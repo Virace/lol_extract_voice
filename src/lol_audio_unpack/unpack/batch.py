@@ -22,6 +22,7 @@ from lol_audio_unpack.runtime.wav import (
     build_recorder,
     launch_detached,
 )
+from lol_audio_unpack.runtime.wav.job import build_transcode_paths
 from lol_audio_unpack.utils.run_summary import record_runtime_note
 
 from .entity import unpack_champion, unpack_map
@@ -114,6 +115,8 @@ def _build_wav_progress_handler(
         if progress_callback is not None:
             progress_callback("wav", processed, total, message)
 
+        # 这里故意做日志节流：
+        # GUI/日志层只需要阶段性可见性，不能让高频转码进度反向淹没主流程日志。
         should_log = False
         log_fn = logger.info
         if snapshot.phase in {"draining", "finalized"}:
@@ -201,6 +204,8 @@ def execute_tasks(  # noqa: PLR0913
     show_exception = bool(getattr(ctx.config, "dev_mode", False))
     wav_error_detail: str | None = None
 
+    # 解包阶段的 WAD 缓存以整轮 batch 为单位共享，
+    # 这样同一个实体/多个实体命中同一 WAD 时都不会重复打开文件句柄。
     wad_cache: dict[Path, WAD] = {}
     cache_lock = threading.Lock() if max_workers > 1 else None
     coordinator = None
@@ -230,11 +235,14 @@ def execute_tasks(  # noqa: PLR0913
                 )
         else:
             try:
+                # 前台 coordinator 与 detached job 都必须复用同一套路径装配语义，
+                # 否则 audio_root / wav_root / report_root 很容易在后续改动中再次漂移。
+                transcode_paths = build_transcode_paths(ctx=ctx, version=reader.version)
                 coordinator = TranscodeCoordinator(
                     options=wav_output,
-                    audio_root=Path(ctx.paths.audio_path) / reader.version,
-                    wav_root=Path(ctx.paths.wav_path) / reader.version,
-                    report_root=Path(ctx.paths.report_path) / reader.version / "transcode_wav",
+                    audio_root=transcode_paths.audio_root,
+                    wav_root=transcode_paths.wav_root,
+                    report_root=transcode_paths.report_root,
                     progress_callback=_build_wav_progress_handler(
                         progress_callback=progress_callback,
                     ),
