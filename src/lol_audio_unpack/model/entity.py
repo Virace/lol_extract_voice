@@ -1,11 +1,12 @@
-"""共享音频实体模型与任务生成逻辑。"""
+"""共享音频实体定义。"""
+
+from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from lol_audio_unpack.manager import DataReader
-from lol_audio_unpack.manager.data_reader import get_default_visible_champions
 from lol_audio_unpack.utils.common import sanitize_filename
 
 if TYPE_CHECKING:
@@ -39,10 +40,13 @@ class AudioEntityData:
     events: dict[str, dict[str, Any]] | None = None
 
     def get_sub_entity_info(self, sub_id: str) -> dict[str, Any] | None:
-        """获取子实体的信息（皮肤或地图信息）
+        """返回子实体的基础信息。
 
-        :param sub_id: 子实体ID（皮肤ID或地图ID）
-        :returns: 包含id和name的字典，不存在时返回None
+        Args:
+            sub_id: 子实体 ID，例如皮肤 ID 或地图 ID。
+
+        Returns:
+            dict[str, Any] | None: 包含 ``id`` 与 ``name`` 的字典；不存在时返回 ``None``。
         """
         sub_entity = self.sub_entities.get(sub_id)
         if not sub_entity:
@@ -54,7 +58,7 @@ class AudioEntityData:
         self,
         audio_type: str,
         *,
-        ctx: "AppContext",
+        ctx: AppContext,
     ) -> Path | None:
         """根据音频类型返回可用的 WAD 绝对路径。
 
@@ -87,8 +91,8 @@ class AudioEntityData:
         reader: DataReader,
         include_events: bool = False,
         *,
-        ctx: "AppContext",
-    ) -> "AudioEntityData":
+        ctx: AppContext,
+    ) -> AudioEntityData:
         """从英雄数据构建音频实体。
 
         Args:
@@ -177,8 +181,8 @@ class AudioEntityData:
         reader: DataReader,
         include_events: bool = False,
         *,
-        ctx: "AppContext",
-    ) -> "AudioEntityData":
+        ctx: AppContext,
+    ) -> AudioEntityData:
         """从地图数据构建音频实体。
 
         Args:
@@ -240,59 +244,4 @@ class AudioEntityData:
         )
 
 
-def generate_champion_tasks(reader: DataReader, champion_ids: list[int] | None = None) -> list[tuple[str, int, str]]:
-    """生成英雄任务集
-
-    :param reader: 数据读取器
-    :param champion_ids: 指定的英雄ID列表，None表示所有英雄
-    :returns: 任务元组列表 [("champion", id, description), ...]
-    :raises ValueError: 当指定的ID不存在时
-    """
-    all_champions = reader.get_champions()
-    available_ids = {champ.get("id") for champ in all_champions if champ.get("id") is not None}
-
-    if champion_ids is None:
-        # 处理所有英雄
-        return [
-            ("champion", champ.get("id"), f"英雄ID {champ.get('id')}")
-            for champ in get_default_visible_champions(reader)
-            if champ.get("id") is not None
-        ]
-    else:
-        # 验证指定的ID
-        invalid_ids = [cid for cid in champion_ids if cid not in available_ids]
-        if invalid_ids:
-            raise ValueError(f"无效的英雄ID: {invalid_ids}")
-
-        # 生成指定ID的任务
-        return [("champion", cid, f"英雄ID {cid}") for cid in champion_ids]
-
-
-def generate_map_tasks(reader: DataReader, map_ids: list[int] | None = None) -> list[tuple[str, int, str]]:
-    """生成地图任务集
-
-    :param reader: 数据读取器
-    :param map_ids: 指定的地图ID列表，None表示所有地图
-    :returns: 任务元组列表 [("map", id, description), ...]
-    :raises ValueError: 当指定的ID不存在时
-    """
-    maps = reader.get_maps()
-    available_ids = {map_data.get("id") for map_data in maps if map_data.get("id") is not None}
-
-    if map_ids is None:
-        # 处理所有地图
-        return [
-            ("map", map_data.get("id"), f"地图ID {map_data.get('id')}")
-            for map_data in maps
-            if map_data.get("id") is not None
-        ]
-    else:
-        # 验证指定的ID
-        invalid_ids = [mid for mid in map_ids if mid not in available_ids]
-        if invalid_ids:
-            raise ValueError(f"无效的地图ID: {invalid_ids}")
-
-        # 生成指定ID的任务
-        return [("map", mid, f"地图ID {mid}") for mid in map_ids]
-
-
+__all__ = ["AudioEntityData"]
