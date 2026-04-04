@@ -1,13 +1,4 @@
-# 🐍 Although that way may not be obvious at first unless you're Dutch.
-# 🐼 尽管这方法一开始并非如此直观，除非你是荷兰人
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2025/7/30 7:38
-# @Update  : 2025/8/6 5:56
-# @Detail  : Manager模块的通用函数
-
+"""提供 manager 子域共享的数据文件与版本辅助函数。"""
 
 import json
 import os
@@ -39,16 +30,14 @@ if TYPE_CHECKING:
 
 
 def find_data_file(path: Path, *, dev_mode: bool) -> Path | None:
-    """
-    查找数据文件的实际路径。
-    如果路径包含后缀，则直接检查该文件。
-    如果路径不含后缀，则按优先级顺序查找第一个存在的文件。
+    """查找数据文件的实际路径。
 
-    开发模式下，优先使用人类可读的格式。
+    Args:
+        path: 文件路径，可带或不带后缀。
+        dev_mode: 是否启用开发模式。
 
-    :param path: 文件路径（可带或不带后缀）
-    :param dev_mode: 是否启用开发模式。
-    :return: 实际存在的文件路径，如果都不存在则返回None
+    Returns:
+        实际存在的文件路径；若所有候选文件都不存在则返回 ``None``。
     """
     files_to_check = []
 
@@ -70,16 +59,14 @@ def find_data_file(path: Path, *, dev_mode: bool) -> Path | None:
 
 
 def read_data(path: Path, *, dev_mode: bool = False) -> dict:
-    """
-    智能读取数据文件。
-    如果路径包含后缀，则直接读取该文件。
-    如果路径不含后缀，则按优先级顺序查找并读取第一个存在的文件。
+    """按环境优先级读取数据文件。
 
-    开发模式下，优先使用人类可读的格式。
+    Args:
+        path: 文件路径，可带或不带后缀。
+        dev_mode: 是否启用开发模式。
 
-    :param path: 文件路径（可带或不带后缀）
-    :param dev_mode: 是否启用开发模式。
-    :return: 读取的数据字典
+    Returns:
+        读取到的数据字典；读取失败时返回空字典。
     """
     start_time = time.time()
 
@@ -143,13 +130,12 @@ def read_data(path: Path, *, dev_mode: bool = False) -> dict:
 
 
 def write_data(data: dict, base_path: Path, *, dev_mode: bool) -> None:
-    """
-    根据环境自动选择最佳格式写入数据文件。
-    开发模式下写入YAML，生产模式下写入MessagePack。
+    """根据环境选择格式并写入数据文件。
 
-    :param data: 要写入的数据
-    :param base_path: 不带后缀的基础文件路径
-    :param dev_mode: 是否启用开发模式。
+    Args:
+        data: 要写入的数据。
+        base_path: 不带后缀的基础文件路径。
+        dev_mode: 是否启用开发模式。
     """
     fmt = "yml" if dev_mode else "msgpack"
     path = base_path.with_suffix(f".{fmt}")
@@ -166,11 +152,16 @@ def write_data(data: dict, base_path: Path, *, dev_mode: bool) -> None:
 
 
 def get_game_version(game_path: Path) -> str:
-    """
-    获取游戏版本
+    """读取本地 GAME 版本号。
 
-    :param game_path: 游戏根目录路径
-    :return: 游戏版本号
+    Args:
+        game_path: 游戏根目录路径。
+
+    Returns:
+        标准化后的 ``major.minor`` 版本号。
+
+    Raises:
+        FileNotFoundError: 当缺少 `content-metadata.json` 时抛出。
     """
     meta = game_path / "Game" / "content-metadata.json"
     if not meta.exists():
@@ -257,12 +248,14 @@ def resolve_context_version(ctx: "AppContext") -> str:
 
 
 def create_metadata_object(game_version: str, languages: list[str]) -> dict:
-    """
-    创建一个包含标准化元数据的新对象。
+    """创建包含标准化元数据的新对象。
 
-    :param game_version: 游戏客户端版本。
-    :param languages: 包含的语言列表。
-    :return: 一个包含所有元数据的字典。
+    Args:
+        game_version: 游戏客户端版本。
+        languages: 包含的语言列表。
+
+    Returns:
+        一个包含所有元数据的字典。
     """
     try:
         script_version = get_package_version("lol-audio-unpack")
@@ -287,14 +280,16 @@ def create_metadata_object(game_version: str, languages: list[str]) -> dict:
 
 
 def needs_update(base_path: Path, current_version: str, force_update: bool, *, dev_mode: bool) -> bool:
-    """
-    检查文件是否需要更新的通用函数
+    """检查目标文件是否需要更新。
 
-    :param base_path: 要检查的文件的基础路径（不带后缀）
-    :param current_version: 当前游戏版本
-    :param force_update: 是否强制更新
-    :param dev_mode: 是否启用开发模式。
-    :return: 如果需要更新，则返回True
+    Args:
+        base_path: 要检查的文件基础路径，不带后缀。
+        current_version: 当前游戏版本。
+        force_update: 是否强制更新。
+        dev_mode: 是否启用开发模式。
+
+    Returns:
+        若需要更新则返回 ``True``。
     """
     if force_update:
         return True

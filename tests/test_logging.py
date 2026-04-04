@@ -7,6 +7,16 @@ from pathlib import Path
 import lol_audio_unpack.utils.logging as logging_module
 
 
+def test_logging_module_exports_trimmed_public_surface() -> None:
+    """`logging` 应只暴露当前主干日志能力。"""
+
+    assert logging_module.__all__ == [
+        "LoggingConfiguration",
+        "performance_monitor",
+        "setup_logging",
+    ]
+
+
 def test_setup_logging_tolerates_missing_stderr_in_windowed_mode(
     monkeypatch,
     tmp_path: Path,

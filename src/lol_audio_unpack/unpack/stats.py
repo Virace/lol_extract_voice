@@ -1,13 +1,6 @@
-# 🐍 In the face of ambiguity, refuse the temptation to guess.
-# 🐼 面对不确定性，拒绝妄加猜测
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2025/8/3 13:41
-# @Update  : 2025/8/7 6:55
-# @Detail  : 音频解包统计系统
+"""音频解包统计与报告工具。"""
 
+from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
@@ -16,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ..manager.utils import create_metadata_object
-from .common import dump_yaml, format_duration
+from ..utils.common import dump_yaml, format_duration
 
 
 class StageResult(Enum):

@@ -18,9 +18,9 @@ from lol_audio_unpack.utils.path_constants import (
     format_sub_entity_folder_name,
     get_output_dir_name,
 )
-from lol_audio_unpack.utils.stats import FileProcessResult, ProcessingStatsContext
 
 from .bp_vo import attach_bp_vo
+from .stats import FileProcessResult, ProcessingStatsContext
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app_context import AppContext
