@@ -353,7 +353,7 @@ def test_get_cached_hirc_uses_wwiser_when_manager_is_provided(monkeypatch: pytes
     assert captured["wwiser_args"] == (bnk_path, hirc_cache_dir, wwiser_manager)
 
 
-def test_execute_mapping_tasks_alias_points_to_execute_tasks() -> None:
-    """旧公开名应继续指向新的批量入口。"""
+def test_mapping_module_exposes_execute_tasks() -> None:
+    """映射包应暴露新的批量入口。"""
 
-    assert m_mapping.execute_mapping_tasks is m_mapping.execute_tasks
+    assert callable(m_mapping.execute_tasks)

@@ -10,7 +10,10 @@ from riotmanifest import DownloadError
 
 import lol_audio_unpack.app.facade as m_facade
 import lol_audio_unpack.runtime.remote.preparer as m_remote
-from lol_audio_unpack.app_context import (
+from lol_audio_unpack.app import create_app_context
+from lol_audio_unpack.app.facade import LolAudioUnpackApp
+from lol_audio_unpack.app.remote import RemoteEntityCallbackPayload, RemoteEntityWorkItem
+from lol_audio_unpack.app.types import (
     AppConfig,
     AppContext,
     AppPaths,
@@ -18,7 +21,6 @@ from lol_audio_unpack.app_context import (
     RemoteSnapshotConfig,
     SourceMode,
 )
-from lol_audio_unpack.facade import LolAudioUnpackApp, RemoteEntityCallbackPayload, RemoteEntityWorkItem
 from lol_audio_unpack.runtime.remote import RemotePreparer
 
 pytestmark = pytest.mark.unit
@@ -702,7 +704,7 @@ def test_facade_mapping_prepares_remote_wads_before_mapping(monkeypatch: pytest.
 
     monkeypatch.setattr(m_facade, "RemotePreparer", FakePreparer)
     monkeypatch.setattr(m_facade, "DataReader", lambda ctx: SimpleNamespace(ctx=ctx, version="16.5"))
-    monkeypatch.setattr(m_facade, "build_mapping_all", lambda **_kwargs: call_order.append("mapping"))
+    monkeypatch.setattr(m_facade, "build_all", lambda **_kwargs: call_order.append("mapping"))
 
     app.mapping(OperationOptions())
 
@@ -1073,15 +1075,15 @@ def test_facade_run_workflow_raises_after_entity_retry_threshold(
     ]
 
 
-def test_facade_aliases_forward_to_new_workflow_names(tmp_path: Path) -> None:
+def test_facade_uses_canonical_workflow_names(tmp_path: Path) -> None:
     ctx = _build_remote_ctx(tmp_path)
     app = LolAudioUnpackApp(ctx)
 
     app.build_work_items = lambda **_kwargs: ["ok"]  # type: ignore[method-assign]
     app.run_workflow = lambda **_kwargs: None  # type: ignore[method-assign]
 
-    assert app.build_remote_entity_work_items() == ["ok"]
-    assert app.run_remote_entity_workflow() is None
+    assert app.build_work_items() == ["ok"]
+    assert app.run_workflow() is None
 
 
 def test_remote_snapshot_preparer_cleanup_artifacts_supports_dry_run(

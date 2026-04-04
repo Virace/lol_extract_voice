@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from lol_audio_unpack.app_context import RemoteSnapshotConfig, SourceMode
+from lol_audio_unpack.app.types import RemoteSnapshotConfig, SourceMode
 from lol_audio_unpack.manager import utils as mutils
 
 pytestmark = pytest.mark.unit

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from lol_audio_unpack.app_context import AppConfig, AppContext, AppPaths
+from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
 
 pytestmark = pytest.mark.unit
 

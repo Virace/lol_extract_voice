@@ -7,7 +7,7 @@ from loguru import logger
 
 import lol_audio_unpack.mapping.entity as mapping_entity
 import lol_audio_unpack.mapping.session as mapping_session
-from lol_audio_unpack.app_context import AppConfig, AppContext, AppPaths
+from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
 from lol_audio_unpack.mapping import build_audio_event_mapping, build_entity
 from lol_audio_unpack.model import AudioEntityData
 

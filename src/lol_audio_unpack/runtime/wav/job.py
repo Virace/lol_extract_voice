@@ -13,7 +13,7 @@ from typing import Any
 
 from loguru import logger
 
-from ...app_context import AppContext, WavOutputOptions
+from ...app.types import AppContext, WavOutputOptions
 from .transcode import TranscodeCoordinator, TranscodeProgress
 
 

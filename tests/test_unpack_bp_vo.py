@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from loguru import logger
 
-from lol_audio_unpack.app_context import AppConfig, AppContext, AppPaths
+from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.unpack import bp_vo as unpack_bp_vo
 from lol_audio_unpack.unpack import entity as unpack_entity

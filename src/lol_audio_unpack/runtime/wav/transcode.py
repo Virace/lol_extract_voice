@@ -14,7 +14,7 @@ from typing import Any
 
 from loguru import logger
 
-from ...app_context import WavOutputOptions
+from ...app.types import WavOutputOptions
 from ._runtime import (
     AttemptResult,
     Job,

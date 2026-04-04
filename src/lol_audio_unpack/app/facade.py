@@ -16,9 +16,9 @@ from riotmanifest import DecompressError, DownloadBatchError, DownloadError
 from lol_audio_unpack.manager import BinUpdater, DataReader, DataUpdater
 from lol_audio_unpack.manager.data_reader import get_default_visible_champions
 from lol_audio_unpack.mapping import (
-    build_champions_mapping,
-    build_mapping_all,
-    build_maps_mapping,
+    build_all,
+    build_champions,
+    build_maps,
     describe_hirc_backend,
 )
 from lol_audio_unpack.model import AudioEntityData
@@ -776,7 +776,7 @@ class LolAudioUnpackApp:
         logger.info(f"语言: {self.ctx.config.game_region}")
 
         if opts.champion_ids is not None:
-            build_champions_mapping(
+            build_champions(
                 reader=reader,
                 champion_ids=list(opts.champion_ids),
                 max_workers=opts.max_workers,
@@ -786,7 +786,7 @@ class LolAudioUnpackApp:
             )
             return
         if opts.map_ids is not None:
-            build_maps_mapping(
+            build_maps(
                 reader=reader,
                 map_ids=list(opts.map_ids),
                 max_workers=opts.max_workers,
@@ -796,7 +796,7 @@ class LolAudioUnpackApp:
             )
             return
 
-        build_mapping_all(
+        build_all(
             reader=reader,
             max_workers=opts.max_workers,
             include_champions=include_champions,

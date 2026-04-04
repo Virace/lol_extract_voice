@@ -6,17 +6,13 @@ import pytest
 import lol_audio_unpack as app_pkg
 import lol_audio_unpack.app.context as app_context_impl
 from lol_audio_unpack import setup_app
-from lol_audio_unpack.app_context import AppContext, AppContextValidationError, SourceMode, create_app_context
+from lol_audio_unpack.app import AppContext, AppContextValidationError, SourceMode, create_app_context
 from lol_audio_unpack.config import (
     CONFIG_SECTION,
     load_command_config,
-    load_command_config_from_file,
     load_settings,
-    load_settings_from_config_file,
-    resolve_default_config_file_path,
     resolve_default_path,
     write_settings,
-    write_settings_to_config_file,
 )
 from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
 
@@ -318,8 +314,8 @@ def test_write_settings_creates_expected_section(tmp_path: Path) -> None:
     assert "output_path =" in text
 
 
-def test_config_aliases_still_point_to_new_names() -> None:
-    assert load_settings_from_config_file is load_settings
-    assert write_settings_to_config_file is write_settings
-    assert load_command_config_from_file is load_command_config
-    assert resolve_default_config_file_path is resolve_default_path
+def test_config_short_names_are_stable_public_api() -> None:
+    assert callable(load_settings)
+    assert callable(write_settings)
+    assert callable(load_command_config)
+    assert callable(resolve_default_path)

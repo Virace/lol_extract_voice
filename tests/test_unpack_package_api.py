@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from lol_audio_unpack import unpack as m_unpack
-from lol_audio_unpack.app_context import AppConfig, AppContext, AppPaths
+from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
 from lol_audio_unpack.model import AudioEntityData
 
 
@@ -13,15 +13,12 @@ def test_unpack_module_keeps_public_batch_entrypoints() -> None:
     assert callable(m_unpack.unpack_all)
     assert callable(m_unpack.unpack_champions)
     assert callable(m_unpack.unpack_maps)
-    assert m_unpack.unpack_audio_all is m_unpack.unpack_all
 
 
 def test_unpack_module_keeps_public_single_entity_entrypoints() -> None:
     assert callable(m_unpack.unpack_entity)
     assert callable(m_unpack.unpack_champion)
     assert callable(m_unpack.unpack_map)
-    assert m_unpack.unpack_audio_entity is m_unpack.unpack_entity
-    assert m_unpack.unpack_map_audio is m_unpack.unpack_map
 
 
 def test_unpack_module_keeps_generate_output_path() -> None:

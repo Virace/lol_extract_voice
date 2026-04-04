@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from loguru import logger
 
-from lol_audio_unpack.app_context import SourceMode
+from lol_audio_unpack.app.types import SourceMode
 from lol_audio_unpack.manager import data_updater as m_data_updater
 
 pytestmark = pytest.mark.integration

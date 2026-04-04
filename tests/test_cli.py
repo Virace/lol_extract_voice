@@ -5,7 +5,7 @@ import pytest
 
 import lol_audio_unpack.cli.dispatch as dispatch_cli
 import lol_audio_unpack.cli.runtime as runtime_cli
-from lol_audio_unpack.app_context import SourceMode
+from lol_audio_unpack.app.types import SourceMode
 from lol_audio_unpack.cli.cli import _detect_mode
 from lol_audio_unpack.cli.parser import create_parser
 

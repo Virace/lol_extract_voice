@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from loguru import logger
 
-from lol_audio_unpack.app_context import AppContext, create_app_context
+from lol_audio_unpack.app import AppContext, create_app_context
 from lol_audio_unpack.manager import BinUpdater, DataReader, DataUpdater
 from lol_audio_unpack.manager.utils import read_data
 from lol_audio_unpack.unpack import unpack_champions, unpack_maps
