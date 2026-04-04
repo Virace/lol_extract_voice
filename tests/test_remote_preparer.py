@@ -43,6 +43,7 @@ def _build_remote_ctx(tmp_path: Path, *, game_region: str = "zh_CN") -> AppConte
     )
     app_paths = AppPaths(
         audio_path=output_path / "audios",
+        wav_path=output_path / "wavs",
         temp_path=output_path / "temps",
         log_path=output_path / "logs",
         cache_path=output_path / "cache",
@@ -665,7 +666,7 @@ def test_facade_extract_prepares_remote_wads_before_unpack(monkeypatch: pytest.M
 
     monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
     monkeypatch.setattr(m_facade, "DataReader", lambda ctx: SimpleNamespace(ctx=ctx, version="16.5"))
-    monkeypatch.setattr(m_facade, "unpack_audio_all", lambda **_kwargs: call_order.append("extract"))
+    monkeypatch.setattr(m_facade, "unpack_all", lambda **_kwargs: call_order.append("extract"))
 
     app.extract(OperationOptions())
 

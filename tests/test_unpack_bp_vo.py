@@ -4,9 +4,11 @@ from types import SimpleNamespace
 import pytest
 from loguru import logger
 
-from lol_audio_unpack import unpack as m_unpack
 from lol_audio_unpack.app_context import AppConfig, AppContext, AppPaths
 from lol_audio_unpack.model import AudioEntityData
+from lol_audio_unpack.unpack import bp_vo as unpack_bp_vo
+from lol_audio_unpack.unpack import entity as unpack_entity
+from lol_audio_unpack.utils.path_constants import format_entity_folder_name
 
 pytestmark = pytest.mark.unit
 
@@ -36,6 +38,7 @@ def test_attach_bp_vo_to_champion_fallback_copy_when_link_fails(tmp_path, monkey
         ),
         paths=AppPaths(
             audio_path=audio_root,
+            wav_path=output_root / "wavs",
             temp_path=output_root / "temps",
             log_path=output_root / "logs",
             cache_path=output_root / "cache",
@@ -48,7 +51,7 @@ def test_attach_bp_vo_to_champion_fallback_copy_when_link_fails(tmp_path, monkey
             game_lcu_path=game_root / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data",
         ),
     )
-    monkeypatch.setattr(m_unpack.os, "link", lambda _src, _dst: (_ for _ in ()).throw(OSError("no link")))
+    monkeypatch.setattr(unpack_bp_vo.os, "link", lambda _src, _dst: (_ for _ in ()).throw(OSError("no link")))
 
     entity_data = AudioEntityData(
         entity_id="1",
@@ -62,15 +65,15 @@ def test_attach_bp_vo_to_champion_fallback_copy_when_link_fails(tmp_path, monkey
     )
     reader = SimpleNamespace(version=version)
 
-    m_unpack._attach_bp_vo_to_champion(entity_data, reader, ctx=ctx)
+    unpack_bp_vo.attach_bp_vo(entity_data, reader, ctx=ctx)
 
-    entity_folder = m_unpack.format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
+    entity_folder = format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
     target_dir = audio_root / version / "champions" / entity_folder / "BP_VO"
     assert (target_dir / "ban.ogg").read_bytes() == b"ban"
     assert (target_dir / "choose.ogg").read_bytes() == b"choose"
 
 
-def test_unpack_audio_entity_uses_warning_summary_for_partial_parse_failures(tmp_path, monkeypatch):
+def test_unpack_entity_uses_warning_summary_for_partial_parse_failures(tmp_path, monkeypatch):
     version = "16.3"
     manifest_root = tmp_path / "manifest"
     audio_root = tmp_path / "audios"
@@ -91,6 +94,7 @@ def test_unpack_audio_entity_uses_warning_summary_for_partial_parse_failures(tmp
         ),
         paths=AppPaths(
             audio_path=audio_root,
+            wav_path=output_root / "wavs",
             temp_path=output_root / "temps",
             log_path=output_root / "logs",
             cache_path=output_root / "cache",
@@ -148,9 +152,9 @@ def test_unpack_audio_entity_uses_warning_summary_for_partial_parse_failures(tmp
     def _fail_bnk(_raw: bytes):
         raise RuntimeError("bnk boom")
 
-    monkeypatch.setattr(m_unpack, "_get_wad_instance", lambda *_args, **_kwargs: _FakeWad())
-    monkeypatch.setattr(m_unpack, "BNK", _fail_bnk)
-    monkeypatch.setattr(m_unpack, "WPK", _FakeWPK)
+    monkeypatch.setattr(unpack_entity, "_get_wad_instance", lambda *_args, **_kwargs: _FakeWad())
+    monkeypatch.setattr(unpack_entity, "BNK", _fail_bnk)
+    monkeypatch.setattr(unpack_entity, "WPK", _FakeWPK)
 
     log_lines: list[str] = []
     logger.enable("lol_audio_unpack")
@@ -160,7 +164,7 @@ def test_unpack_audio_entity_uses_warning_summary_for_partial_parse_failures(tmp
     )
 
     try:
-        m_unpack.unpack_audio_entity(entity_data, reader, ctx=ctx)
+        unpack_entity.unpack_entity(entity_data, reader, ctx=ctx)
     finally:
         logger.remove(sink_id)
 

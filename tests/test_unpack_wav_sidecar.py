@@ -7,7 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from lol_audio_unpack import unpack
+from lol_audio_unpack.unpack import batch as unpack_batch
+from lol_audio_unpack.unpack import entity as unpack_entity
 from lol_audio_unpack.utils.run_summary import get_or_create_run_summary
 from lol_audio_unpack.wav_sidecar import WavSidecarProgressSnapshot
 
@@ -24,7 +25,11 @@ def test_persisted_wem_is_submitted_to_sidecar(tmp_path: Path) -> None:
     file = SimpleNamespace(save_file=lambda path: Path(path).write_bytes(b"wem-bytes"))
     destination = tmp_path / "audios" / "15.8" / "champions" / "1" / "VO" / "123.wem"
 
-    unpack._persist_wem_and_maybe_submit(file, destination, wav_submitter=FakeCoordinator().submit_persisted_wem)
+    unpack_entity._persist_wem(
+        file,
+        destination,
+        wav_submitter=FakeCoordinator().submit_persisted_wem,
+    )
 
     assert submitted == [destination]
 
@@ -39,12 +44,16 @@ def test_failed_wem_write_is_not_submitted(tmp_path: Path) -> None:
     destination = tmp_path / "audios" / "15.8" / "champions" / "1" / "VO" / "123.wem"
 
     with pytest.raises(OSError):
-        unpack._persist_wem_and_maybe_submit(file, destination, wav_submitter=submitted.append)
+        unpack_entity._persist_wem(
+            file,
+            destination,
+            wav_submitter=submitted.append,
+        )
 
     assert submitted == []
 
 
-def test_execute_unpack_tasks_sidecar_submit_error_does_not_fail_main_flow(
+def test_execute_tasks_sidecar_submit_error_does_not_fail_main_flow(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -83,12 +92,14 @@ def test_execute_unpack_tasks_sidecar_submit_error_does_not_fail_main_flow(
         if wav_submitter is not None:
             wav_submitter(tmp_path / "audios" / "15.8" / "champion-1.wem")
 
-    monkeypatch.setattr(unpack, "WavTranscodeCoordinator", FakeCoordinator)
-    monkeypatch.setattr(unpack, "unpack_champion", fake_unpack_champion)
+    monkeypatch.setattr(unpack_batch, "WavTranscodeCoordinator", FakeCoordinator)
+    monkeypatch.setattr(unpack_batch, "unpack_champion", fake_unpack_champion)
 
     reader = SimpleNamespace(
         version="15.8",
-        write_unknown_categories_to_file=lambda: writes.__setitem__("unknown_categories", writes["unknown_categories"] + 1),
+        write_unknown_categories_to_file=lambda: writes.__setitem__(
+            "unknown_categories", writes["unknown_categories"] + 1
+        ),
     )
     ctx = SimpleNamespace(
         config=SimpleNamespace(dev_mode=False),
@@ -101,7 +112,7 @@ def test_execute_unpack_tasks_sidecar_submit_error_does_not_fail_main_flow(
     )
     wav_output = SimpleNamespace(enabled=True, worker_count=1, timeout_seconds=1, max_retries=1, format="pcm16")
 
-    unpack.execute_unpack_tasks(
+    unpack_batch.execute_tasks(
         [("champion", 1, "测试英雄")],
         reader,
         max_workers=1,
@@ -115,7 +126,7 @@ def test_execute_unpack_tasks_sidecar_submit_error_does_not_fail_main_flow(
     assert any("sidecar 内部异常" in note for note in summary.stages["extract"].notes)
 
 
-def test_execute_unpack_tasks_sidecar_finalize_error_does_not_fail_main_flow(
+def test_execute_tasks_sidecar_finalize_error_does_not_fail_main_flow(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -147,12 +158,14 @@ def test_execute_unpack_tasks_sidecar_finalize_error_does_not_fail_main_flow(
         if wav_submitter is not None:
             wav_submitter(tmp_path / "audios" / "15.8" / "champion-1.wem")
 
-    monkeypatch.setattr(unpack, "WavTranscodeCoordinator", FakeCoordinator)
-    monkeypatch.setattr(unpack, "unpack_champion", fake_unpack_champion)
+    monkeypatch.setattr(unpack_batch, "WavTranscodeCoordinator", FakeCoordinator)
+    monkeypatch.setattr(unpack_batch, "unpack_champion", fake_unpack_champion)
 
     reader = SimpleNamespace(
         version="15.8",
-        write_unknown_categories_to_file=lambda: writes.__setitem__("unknown_categories", writes["unknown_categories"] + 1),
+        write_unknown_categories_to_file=lambda: writes.__setitem__(
+            "unknown_categories", writes["unknown_categories"] + 1
+        ),
     )
     ctx = SimpleNamespace(
         config=SimpleNamespace(dev_mode=False),
@@ -165,7 +178,7 @@ def test_execute_unpack_tasks_sidecar_finalize_error_does_not_fail_main_flow(
     )
     wav_output = SimpleNamespace(enabled=True, worker_count=1, timeout_seconds=1, max_retries=1, format="pcm16")
 
-    unpack.execute_unpack_tasks(
+    unpack_batch.execute_tasks(
         [("champion", 1, "测试英雄")],
         reader,
         max_workers=1,
@@ -179,7 +192,7 @@ def test_execute_unpack_tasks_sidecar_finalize_error_does_not_fail_main_flow(
     assert any("sidecar 内部异常" in note for note in summary.stages["extract"].notes)
 
 
-def test_execute_unpack_tasks_detaches_wav_sidecar_into_background_handle(
+def test_execute_tasks_detaches_wav_sidecar_into_background_handle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -209,15 +222,15 @@ def test_execute_unpack_tasks_detaches_wav_sidecar_into_background_handle(
             wav_submitter(tmp_path / "audios" / "15.8" / "champion-1.wem")
 
     monkeypatch.setattr(
-        unpack,
+        unpack_batch,
         "WavTranscodeCoordinator",
         lambda **_kwargs: pytest.fail("detached 模式不应创建阻塞 coordinator"),
     )
-    monkeypatch.setattr(unpack, "unpack_champion", fake_unpack_champion)
+    monkeypatch.setattr(unpack_batch, "unpack_champion", fake_unpack_champion)
     monkeypatch.setattr(
-        unpack,
-        "launch_wav_background_process",
-        lambda spec: launches.append(spec) or FakeHandle(),
+        unpack_batch,
+        "launch_detached_wav",
+        lambda **kwargs: launches.append(kwargs["manifest_recorder"]) or FakeHandle(),
     )
 
     reader = SimpleNamespace(
@@ -235,7 +248,7 @@ def test_execute_unpack_tasks_detaches_wav_sidecar_into_background_handle(
     )
     wav_output = SimpleNamespace(enabled=True, worker_count=1, timeout_seconds=1, max_retries=1, format="pcm16")
 
-    handle = unpack.execute_unpack_tasks(
+    handle = unpack_batch.execute_tasks(
         [("champion", 1, "测试英雄")],
         reader,
         max_workers=1,
@@ -247,11 +260,11 @@ def test_execute_unpack_tasks_detaches_wav_sidecar_into_background_handle(
 
     assert handle is not None
     assert launches
-    assert launches[0].job_label == "cli-test"
+    assert launches[0].manifest_path.name == "cli-test.txt"
     assert launches[0].manifest_path.read_text(encoding="utf-8").strip().endswith("champion-1.wem")
 
 
-def test_execute_unpack_tasks_bridges_wav_progress_to_logs_and_callback(
+def test_execute_tasks_bridges_wav_progress_to_logs_and_callback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -364,9 +377,9 @@ def test_execute_unpack_tasks_bridges_wav_progress_to_logs_and_callback(
         if wav_submitter is not None:
             wav_submitter(tmp_path / "audios" / "15.8" / "champion-1.wem")
 
-    monkeypatch.setattr(unpack, "logger", FakeLogger())
-    monkeypatch.setattr(unpack, "WavTranscodeCoordinator", FakeCoordinator)
-    monkeypatch.setattr(unpack, "unpack_champion", fake_unpack_champion)
+    monkeypatch.setattr(unpack_batch, "logger", FakeLogger())
+    monkeypatch.setattr(unpack_batch, "WavTranscodeCoordinator", FakeCoordinator)
+    monkeypatch.setattr(unpack_batch, "unpack_champion", fake_unpack_champion)
 
     reader = SimpleNamespace(
         version="15.8",
@@ -383,7 +396,7 @@ def test_execute_unpack_tasks_bridges_wav_progress_to_logs_and_callback(
     )
     wav_output = SimpleNamespace(enabled=True, worker_count=1, timeout_seconds=1, max_retries=1, format="pcm16")
 
-    unpack.execute_unpack_tasks(
+    unpack_batch.execute_tasks(
         [("champion", 1, "测试英雄")],
         reader,
         max_workers=1,

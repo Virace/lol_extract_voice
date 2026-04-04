@@ -7,6 +7,9 @@ from lol_audio_unpack import mapping as m_mapping
 from lol_audio_unpack import unpack as m_unpack
 from lol_audio_unpack.app_context import AppConfig, AppContext, AppPaths
 from lol_audio_unpack.model import AudioEntityData
+from lol_audio_unpack.unpack import batch as unpack_batch
+from lol_audio_unpack.unpack import bp_vo as unpack_bp_vo
+from lol_audio_unpack.utils.path_constants import format_entity_folder_name, format_sub_entity_folder_name
 
 pytestmark = pytest.mark.unit
 
@@ -31,6 +34,7 @@ def _build_ctx(
     )
     app_paths = AppPaths(
         audio_path=output_path / "audios",
+        wav_path=output_path / "wavs",
         temp_path=output_path / "temps",
         log_path=output_path / "logs",
         cache_path=output_path / "cache",
@@ -88,7 +92,11 @@ def test_generate_output_path_supports_ctx_grouping(tmp_path: Path) -> None:
 
     path_by_type = m_unpack.generate_output_path(entity_data, "1000", "VO", ctx=by_type_ctx)
     path_by_entity = m_unpack.generate_output_path(entity_data, "1000", "VO", ctx=by_entity_ctx)
-    relative_path = m_unpack._generate_relative_path(entity_data, "1000")
+    relative_path = (
+        Path("champions")
+        / format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
+        / format_sub_entity_folder_name("1000", "基础皮肤")
+    )
 
     assert path_by_type == by_type_ctx.paths.audio_path / "VO" / relative_path
     assert path_by_entity == by_entity_ctx.paths.audio_path / relative_path / "VO"
@@ -107,7 +115,7 @@ def test_attach_bp_vo_to_champion_uses_ctx_without_global_config(
     (manifest_root / version / "lobby_vo" / "zh_CN" / "champion-ban-vo" / "1.ogg").write_bytes(b"ban")
     (manifest_root / version / "lobby_vo" / "zh_CN" / "champion-choose-vo" / "1.ogg").write_bytes(b"choose")
 
-    monkeypatch.setattr(m_unpack.os, "link", lambda _src, _dst: (_ for _ in ()).throw(OSError("no link")))
+    monkeypatch.setattr(unpack_bp_vo.os, "link", lambda _src, _dst: (_ for _ in ()).throw(OSError("no link")))
 
     entity_data = AudioEntityData(
         entity_id="1",
@@ -121,9 +129,9 @@ def test_attach_bp_vo_to_champion_uses_ctx_without_global_config(
     )
     reader = SimpleNamespace(version=version)
 
-    m_unpack._attach_bp_vo_to_champion(entity_data, reader, ctx=ctx)
+    unpack_bp_vo.attach_bp_vo(entity_data, reader, ctx=ctx)
 
-    entity_folder = m_unpack.format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
+    entity_folder = format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
     target_dir = ctx.paths.audio_path / version / "champions" / entity_folder / "BP_VO"
     assert (target_dir / "ban.ogg").read_bytes() == b"ban"
     assert (target_dir / "choose.ogg").read_bytes() == b"choose"
@@ -181,7 +189,7 @@ def test_execute_mapping_tasks_passes_wwiser_manager_and_ctx_to_runtime(
     assert captured["ctx"] == ctx
 
 
-def test_execute_unpack_tasks_uses_warning_summary_for_partial_failures(
+def test_execute_tasks_uses_warning_summary_for_partial_failures(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     ctx = _build_ctx(tmp_path)
@@ -215,11 +223,11 @@ def test_execute_unpack_tasks_uses_warning_summary_for_partial_failures(
 
     reader = SimpleNamespace(write_unknown_categories_to_file=lambda: None)
 
-    monkeypatch.setattr(m_unpack, "logger", fake_logger)
-    monkeypatch.setattr(m_unpack, "unpack_champion", _fake_unpack_champion)
-    monkeypatch.setattr(m_unpack, "unpack_map_audio", _fail_unpack_map)
+    monkeypatch.setattr(unpack_batch, "logger", fake_logger)
+    monkeypatch.setattr(unpack_batch, "unpack_champion", _fake_unpack_champion)
+    monkeypatch.setattr(unpack_batch, "unpack_map", _fail_unpack_map)
 
-    m_unpack.execute_unpack_tasks(
+    unpack_batch.execute_tasks(
         [("champion", 1, "英雄ID 1"), ("map", 11, "地图ID 11")],
         reader,
         max_workers=1,

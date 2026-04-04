@@ -24,7 +24,7 @@ from lol_audio_unpack.mapping import (
 )
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.remote_preparer import RemoteSnapshotPreparer
-from lol_audio_unpack.unpack import unpack_audio_all, unpack_champions, unpack_maps
+from lol_audio_unpack.unpack import unpack_all, unpack_champions, unpack_maps
 from lol_audio_unpack.utils.path_constants import format_entity_folder_name, get_output_dir_name
 
 DEFAULT_REMOTE_DOWNLOAD_RETRY_ATTEMPTS = 3
@@ -744,7 +744,7 @@ class LolAudioUnpackApp:
                 persisted_wem_callback=persisted_wem_callback,
             )
 
-        return unpack_audio_all(
+        return unpack_all(
             reader=reader,
             max_workers=opts.max_workers,
             include_champions=include_champions,
