@@ -137,9 +137,11 @@ def test_ensure_manifest_cached_sends_user_agent_header(
     monkeypatch.setattr(m_remote, "urlopen", fake_urlopen)
 
     preparer = RemotePreparer(ctx=ctx)
-    manifest_path = preparer._ensure_manifest_cached(
+    manifest_path = m_remote.remote_lcu.ensure_manifest_cached(
         manifest_url=ctx.config.remote_snapshot.lcu_manifest_url,
         manifest_cache_dir=preparer.lcu_manifest_cache_dir,
+        headers=m_remote.MANIFEST_HEADERS,
+        request_open=m_remote.urlopen,
     )
 
     assert manifest_path.exists()
@@ -409,8 +411,8 @@ def test_remote_snapshot_preparer_logs_bin_input_plan_summary(
     log_lines: list[str] = []
 
     monkeypatch.setattr(
-        preparer,
-        "_build_bin_plan",
+        m_remote.remote_game,
+        "build_bin_plan",
         lambda **_kwargs: {
             "Game/DATA/FINAL/Champions/Annie.wad.client": [
                 "data/characters/Annie/skins/skin0.bin",
@@ -462,13 +464,13 @@ def test_remote_snapshot_preparer_logs_entity_wad_scope_before_prepare(
     log_lines: list[str] = []
 
     monkeypatch.setattr(
-        preparer,
-        "_build_extract_plan",
+        m_remote.remote_game,
+        "build_extract_plan",
         lambda **_kwargs: {"Game/DATA/FINAL/Champions/Annie.wad.client"},
     )
     monkeypatch.setattr(
-        preparer,
-        "_build_mapping_plan",
+        m_remote.remote_game,
+        "build_mapping_plan",
         lambda **_kwargs: {"Game/DATA/FINAL/Maps/Shipping/Map11/Map11.wad.client"},
     )
     monkeypatch.setattr(preparer, "_prepare_wads", lambda wad_paths: ("prepared", tuple(sorted(wad_paths))))

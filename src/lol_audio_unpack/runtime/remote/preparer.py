@@ -134,13 +134,16 @@ class RemotePreparer:
         )
         manifest = PatcherManifest(file=manifest_cache_path, path=self.download_root)
 
-        lcu_files = self._collect_files(manifest)
-        description_file = self._find_description(lcu_files)
+        lcu_files = remote_lcu.collect_files(manifest, get_relative_path=self._get_lcu_path)
+        description_file = remote_lcu.find_description(lcu_files, description_file_name=DESCRIPTION_FILE_NAME)
         description_cache_path = self._ensure_files_downloaded(manifest, [description_file])[0]
         self._sync_lcu_file(description_cache_path)
 
-        bundle_names = self._resolve_bundle_names(description_cache_path)
-        bundle_files = self._resolve_bundle_files(bundle_names, lcu_files)
+        bundle_names = remote_lcu.resolve_bundle_names(
+            description_cache_path,
+            region=self.ctx.config.game_region,
+        )
+        bundle_files = remote_lcu.resolve_bundle_files(bundle_names, lcu_files)
         bundle_cache_paths = tuple(self._ensure_files_downloaded(manifest, bundle_files))
         prepared_bundle_paths: list[Path] = []
         for bundle_cache_path in bundle_cache_paths:
@@ -181,7 +184,7 @@ class RemotePreparer:
         Returns:
             提取结果；若没有任何目标 BIN，返回 `None`。
         """
-        extraction_plan = self._build_bin_plan(
+        extraction_plan = remote_game.build_bin_plan(
             reader=reader,
             target=target,
             champion_ids=champion_ids,
@@ -249,7 +252,7 @@ class RemotePreparer:
         include_maps: bool,
     ) -> GameWadResult | None:
         """准备远端 `extract` 阶段所需的实体 WAD。"""
-        wad_paths = self._build_extract_plan(
+        wad_paths = remote_game.build_extract_plan(
             reader=reader,
             champion_ids=champion_ids,
             map_ids=map_ids,
@@ -268,7 +271,7 @@ class RemotePreparer:
         include_maps: bool,
     ) -> GameWadResult | None:
         """准备远端 `mapping` 阶段所需的实体 WAD。"""
-        wad_paths = self._build_mapping_plan(
+        wad_paths = remote_game.build_mapping_plan(
             reader=reader,
             champion_ids=champion_ids,
             map_ids=map_ids,
@@ -292,7 +295,7 @@ class RemotePreparer:
         wad_paths: set[str] = set()
         if need_extract:
             wad_paths.update(
-                self._build_extract_plan(
+                remote_game.build_extract_plan(
                     reader=reader,
                     champion_ids=champion_ids,
                     map_ids=map_ids,
@@ -302,7 +305,7 @@ class RemotePreparer:
             )
         if need_mapping:
             wad_paths.update(
-                self._build_mapping_plan(
+                remote_game.build_mapping_plan(
                     reader=reader,
                     champion_ids=champion_ids,
                     map_ids=map_ids,
@@ -328,29 +331,6 @@ class RemotePreparer:
             request_open=urlopen,
         )
 
-    def _collect_files(self, manifest: PatcherManifest) -> dict[str, PatcherFile]:
-        """收集 LCU 插件目录内的 manifest 文件条目。"""
-        return remote_lcu.collect_files(manifest, get_relative_path=self._get_lcu_path)
-
-    def _find_description(self, lcu_files: dict[str, PatcherFile]) -> PatcherFile:
-        """定位 `description.json` 文件。"""
-        return remote_lcu.find_description(lcu_files, description_file_name=DESCRIPTION_FILE_NAME)
-
-    def _resolve_bundle_names(self, description_cache_path: Path) -> list[str]:
-        """根据区域与 `description.json` 解析所需 bundle 名称。"""
-        return remote_lcu.resolve_bundle_names(
-            description_cache_path,
-            region=self.ctx.config.game_region,
-        )
-
-    def _resolve_bundle_files(
-        self,
-        bundle_names: list[str],
-        lcu_files: dict[str, PatcherFile],
-    ) -> list[PatcherFile]:
-        """把 bundle 文件名映射为 manifest 文件条目。"""
-        return remote_lcu.resolve_bundle_files(bundle_names, lcu_files)
-
     def _ensure_files_downloaded(
         self,
         manifest: PatcherManifest,
@@ -362,145 +342,6 @@ class RemotePreparer:
             files,
             run_coroutine_sync=self._run_sync,
         )
-
-    def _build_bin_plan(
-        self,
-        *,
-        reader: DataReader,
-        target: str,
-        champion_ids: tuple[int, ...] | None,
-        map_ids: tuple[int, ...] | None,
-    ) -> dict[str, list[str]]:
-        """构建远端 BIN 提取计划。"""
-        return remote_game.build_bin_plan(
-            reader=reader,
-            target=target,
-            champion_ids=champion_ids,
-            map_ids=map_ids,
-        )
-
-    def _build_extract_plan(
-        self,
-        *,
-        reader: DataReader,
-        champion_ids: tuple[int, ...] | None,
-        map_ids: tuple[int, ...] | None,
-        include_champions: bool,
-        include_maps: bool,
-    ) -> set[str]:
-        """构建 `extract` 阶段所需的 WAD 清单。"""
-        return remote_game.build_extract_plan(
-            reader=reader,
-            champion_ids=champion_ids,
-            map_ids=map_ids,
-            include_champions=include_champions,
-            include_maps=include_maps,
-        )
-
-    def _build_mapping_plan(
-        self,
-        *,
-        reader: DataReader,
-        champion_ids: tuple[int, ...] | None,
-        map_ids: tuple[int, ...] | None,
-        include_champions: bool,
-        include_maps: bool,
-    ) -> set[str]:
-        """构建 `mapping` 阶段所需的 WAD 清单。"""
-        return remote_game.build_mapping_plan(
-            reader=reader,
-            champion_ids=champion_ids,
-            map_ids=map_ids,
-            include_champions=include_champions,
-            include_maps=include_maps,
-        )
-
-    @staticmethod
-    def _add_champion_bins(extraction_plan: dict[str, list[str]], champion: dict[str, Any]) -> None:
-        """把单个英雄的 BIN 需求追加到提取计划。"""
-        remote_game.add_champion_bins(extraction_plan, champion)
-
-    @staticmethod
-    def _add_champion_extract_wads(
-        *,
-        wad_paths: set[str],
-        champion: dict[str, Any],
-        champion_banks: dict[str, Any] | None,
-        reader: DataReader,
-        include_types: set[str],
-    ) -> None:
-        """根据英雄 banks 数据规划 `extract` 所需 WAD。"""
-        remote_game.add_champion_extract_wads(
-            wad_paths=wad_paths,
-            champion=champion,
-            champion_banks=champion_banks,
-            reader=reader,
-            include_types=include_types,
-        )
-
-    @staticmethod
-    def _add_map_extract_wads(
-        *,
-        wad_paths: set[str],
-        map_data: dict[str, Any],
-        map_banks: dict[str, Any] | None,
-        reader: DataReader,
-        include_types: set[str],
-    ) -> None:
-        """根据地图 banks 数据规划 `extract` 所需 WAD。"""
-        remote_game.add_map_extract_wads(
-            wad_paths=wad_paths,
-            map_data=map_data,
-            map_banks=map_banks,
-            reader=reader,
-            include_types=include_types,
-        )
-
-    @staticmethod
-    def _add_champion_mapping_wads(
-        *,
-        wad_paths: set[str],
-        champion: dict[str, Any],
-        champion_banks: dict[str, Any] | None,
-        champion_events: dict[str, Any] | None,
-        reader: DataReader,
-    ) -> None:
-        """根据英雄 banks/events 数据规划 `mapping` 所需 WAD。"""
-        remote_game.add_champion_mapping_wads(
-            wad_paths=wad_paths,
-            champion=champion,
-            champion_banks=champion_banks,
-            champion_events=champion_events,
-            reader=reader,
-        )
-
-    @staticmethod
-    def _add_map_mapping_wads(
-        *,
-        wad_paths: set[str],
-        map_data: dict[str, Any],
-        map_banks: dict[str, Any] | None,
-        map_events: dict[str, Any] | None,
-        reader: DataReader,
-    ) -> None:
-        """根据地图 banks/events 数据规划 `mapping` 所需 WAD。"""
-        remote_game.add_map_mapping_wads(
-            wad_paths=wad_paths,
-            map_data=map_data,
-            map_banks=map_banks,
-            map_events=map_events,
-            reader=reader,
-        )
-
-    @staticmethod
-    def _add_map_bins(extraction_plan: dict[str, list[str]], map_data: dict[str, Any]) -> None:
-        """把单个地图的 BIN 需求追加到提取计划。"""
-        remote_game.add_map_bins(extraction_plan, map_data)
-
-    @staticmethod
-    def _normalize_wad_path(wad_root: Any) -> str | None:
-        """把本地 `wad.root` 相对路径转换为 GAME manifest 可识别路径。"""
-        return remote_game.normalize_wad_path(wad_root)
 
     def _prepare_wads(self, wad_paths: set[str]) -> GameWadResult | None:
         """下载并同步远端 GAME WAD 到最小运行目录。"""
