@@ -28,7 +28,7 @@ from lol_audio_unpack.utils.run_summary import record_runtime_note
 from .entity import unpack_champion, unpack_map
 
 if TYPE_CHECKING:
-    from lol_audio_unpack.app_context import AppContext, WavOutputOptions
+    from lol_audio_unpack.app.context import AppContext, WavOutputOptions
 
 
 WAV_ERROR_NOTE = "已启用 WAV 转码，但内部异常导致已自动降级为仅保留 WEM。"
@@ -597,3 +597,4 @@ def unpack_maps(  # noqa: PLR0913
 # 兼容层：等全项目统一收口后再移除旧名。
 execute_unpack_tasks = execute_tasks
 unpack_audio_all = unpack_all
+

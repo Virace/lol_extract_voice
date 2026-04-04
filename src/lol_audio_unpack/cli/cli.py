@@ -7,8 +7,8 @@ from pathlib import Path
 
 from loguru import logger
 
-from ..app_context import AppContext, SourceMode
-from ..facade import LolAudioUnpackApp
+from ..app.context import AppContext, SourceMode
+from ..app.facade import LolAudioUnpackApp
 from ..utils.run_summary import attach_run_summary_sink, emit_cli_run_summary, get_or_create_run_summary
 from .dispatch import (
     _has_extract,
@@ -93,3 +93,5 @@ def main() -> None:
 
 
 __all__ = ["main"]
+
+

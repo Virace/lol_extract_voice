@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import lol_audio_unpack.facade as m_facade
+import lol_audio_unpack.app.facade as m_facade
 from lol_audio_unpack.facade import LolAudioUnpackApp
 from lol_audio_unpack.manager.data_reader import (
     filter_default_visible_champions,

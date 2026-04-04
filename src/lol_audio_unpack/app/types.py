@@ -1,12 +1,8 @@
-"""应用上下文兼容层。
-
-当前首选入口已迁移到 ``lol_audio_unpack.app.context``。
-本模块仅保留旧导入路径兼容，后续阶段会删除。
-"""
+"""应用层共享类型入口。"""
 
 from __future__ import annotations
 
-from .app.context import (
+from .context import (
     AppConfig,
     AppContext,
     AppContextValidationError,
@@ -15,7 +11,6 @@ from .app.context import (
     RemoteSnapshotConfig,
     SourceMode,
     WavOutputOptions,
-    create_app_context,
 )
 
 __all__ = [
@@ -27,5 +22,4 @@ __all__ = [
     "RemoteSnapshotConfig",
     "SourceMode",
     "WavOutputOptions",
-    "create_app_context",
 ]

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 import lol_audio_unpack as app_pkg
-import lol_audio_unpack.app_context as app_context_module
+import lol_audio_unpack.app.context as app_context_impl
 from lol_audio_unpack import setup_app
 from lol_audio_unpack.app_context import AppContext, AppContextValidationError, SourceMode, create_app_context
 from lol_audio_unpack.config import (
@@ -76,7 +76,7 @@ def test_create_app_context_uses_runtime_default_output_when_missing(
     runtime_root.mkdir(parents=True, exist_ok=True)
     game_path = tmp_path / "game"
     monkeypatch.setattr(
-        app_context_module,
+        app_context_impl,
         "detect_runtime_paths",
         lambda: detect_runtime_paths(
             is_frozen=False,
@@ -104,7 +104,7 @@ def test_create_app_context_ignores_blank_output_setting(
     runtime_root.mkdir(parents=True, exist_ok=True)
     game_path = tmp_path / "game"
     monkeypatch.setattr(
-        app_context_module,
+        app_context_impl,
         "detect_runtime_paths",
         lambda: detect_runtime_paths(
             is_frozen=False,
@@ -131,7 +131,7 @@ def test_create_app_context_resolves_relative_paths_from_runtime_root(
     runtime_root = tmp_path / "runtime-root"
     runtime_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(
-        app_context_module,
+        app_context_impl,
         "detect_runtime_paths",
         lambda: detect_runtime_paths(
             is_frozen=False,

@@ -24,7 +24,7 @@ from lol_audio_unpack.utils.logging import performance_monitor
 from lol_audio_unpack.utils.run_summary import record_runtime_note
 
 if TYPE_CHECKING:
-    from lol_audio_unpack.app_context import AppContext
+    from lol_audio_unpack.app.context import AppContext
 
 # 类型别名定义
 ChampionData = dict[str, Any]
@@ -915,3 +915,4 @@ class BinUpdater:
 
         # 回退到默认语言
         return names.get("default", map_data.get("mapStringId", ""))
+

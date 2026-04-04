@@ -12,7 +12,7 @@ from league_tools import WAD, NativeHIRC, WwiserHIRC, WwiserManager
 from lol_audio_unpack.runtime.wad import get_wad
 
 if TYPE_CHECKING:
-    from lol_audio_unpack.app_context import AppContext
+    from lol_audio_unpack.app.context import AppContext
 
 
 ParsedHIRC = NativeHIRC | WwiserHIRC
@@ -219,3 +219,4 @@ def _get_cached_hirc(
             return existing
         hirc_cache[cache_key] = parsed
         return parsed
+

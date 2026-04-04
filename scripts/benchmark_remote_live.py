@@ -19,8 +19,8 @@ from league_tools.utils.wwiser import WwiserManager
 from loguru import logger
 from riotmanifest import LeagueManifestResolver, VersionMatchMode
 
-from lol_audio_unpack.app_context import OperationOptions, create_app_context
-from lol_audio_unpack.facade import LolAudioUnpackApp
+from lol_audio_unpack.app.context import OperationOptions, create_app_context
+from lol_audio_unpack.app.facade import LolAudioUnpackApp
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.manager.utils import find_data_file
 from lol_audio_unpack.utils.common import Singleton
@@ -894,3 +894,5 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+

@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 from league_tools.formats import WAD
 from loguru import logger
 
-from lol_audio_unpack.app_context import SourceMode
+from lol_audio_unpack.app.context import SourceMode
 from lol_audio_unpack.manager.utils import (
     create_metadata_object,
     needs_update,
@@ -32,7 +32,7 @@ from lol_audio_unpack.utils.logging import performance_monitor
 from lol_audio_unpack.utils.type_hints import StrPath
 
 if TYPE_CHECKING:
-    from lol_audio_unpack.app_context import AppContext
+    from lol_audio_unpack.app.context import AppContext
 
 CHAMPIONS_REL_PATH = Path("Game") / "DATA" / "FINAL" / "Champions"
 MAPS_SHIPPING_REL_PATH = Path("Game") / "DATA" / "FINAL" / "Maps" / "Shipping"
@@ -629,3 +629,5 @@ class DataUpdater:
         champion_id_len = len(str(champion_id))
         skin_id_str = str(full_id)[champion_id_len:]
         return int(skin_id_str)
+
+

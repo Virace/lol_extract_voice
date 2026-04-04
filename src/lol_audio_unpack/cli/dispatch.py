@@ -13,8 +13,8 @@ from dataclasses import dataclass
 
 from loguru import logger
 
+from ..app.facade import LolAudioUnpackApp
 from ..config import SettingKey
-from ..facade import LolAudioUnpackApp
 from ..runtime.wav import JobHandle
 from .runtime import build_options, parse_int_ids, resolve_champion_ids
 
@@ -369,3 +369,4 @@ __all__ = [
     "run_remote_workflow",
     "run_update",
 ]
+

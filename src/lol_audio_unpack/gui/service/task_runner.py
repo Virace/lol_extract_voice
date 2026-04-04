@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from lol_audio_unpack.app_context import create_app_context
+from lol_audio_unpack.app.context import create_app_context
+from lol_audio_unpack.app.facade import LolAudioUnpackApp
 from lol_audio_unpack.config import SettingKey
-from lol_audio_unpack.facade import LolAudioUnpackApp
 from lol_audio_unpack.gui.common.packaged_remote_mode_policy import normalize_app_context_settings
 from lol_audio_unpack.gui.task_models import (
     ExecutionTaskProgress,
@@ -316,3 +316,5 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
         wav_background_process=active_background_wav_process,
         wav_background_notice=wav_background_notice,
     )
+
+

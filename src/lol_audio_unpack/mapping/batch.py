@@ -17,7 +17,7 @@ from . import session as mapping_session
 from .entity import build_champion, build_map
 
 if TYPE_CHECKING:
-    from lol_audio_unpack.app_context import AppContext
+    from lol_audio_unpack.app.context import AppContext
 
 
 EntityTask = tuple[str, int, str]
@@ -352,3 +352,4 @@ def build_maps(  # noqa: PLR0913
         ctx=ctx,
         progress_callback=progress_callback,
     )
+

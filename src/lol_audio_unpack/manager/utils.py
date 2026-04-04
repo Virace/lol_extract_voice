@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from lol_audio_unpack.app_context import SourceMode
+from lol_audio_unpack.app.context import SourceMode
 from lol_audio_unpack.utils.common import (
     dump_json,
     dump_msgpack,
@@ -26,7 +26,7 @@ from lol_audio_unpack.utils.common import (
 from lol_audio_unpack.utils.versioning import extract_windows_file_version, normalize_patch_version
 
 if TYPE_CHECKING:
-    from lol_audio_unpack.app_context import AppContext
+    from lol_audio_unpack.app.context import AppContext
 
 
 def find_data_file(path: Path, *, dev_mode: bool) -> Path | None:
@@ -315,3 +315,5 @@ def needs_update(base_path: Path, current_version: str, force_update: bool, *, d
         return False
 
     return True
+
+

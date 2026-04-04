@@ -24,9 +24,9 @@ from qfluentwidgets import (
 )
 
 from lol_audio_unpack import __version__
-from lol_audio_unpack.app_context import OperationOptions, create_app_context
+from lol_audio_unpack.app.context import OperationOptions, create_app_context
+from lol_audio_unpack.app.facade import LolAudioUnpackApp
 from lol_audio_unpack.config import SettingKey
-from lol_audio_unpack.facade import LolAudioUnpackApp
 from lol_audio_unpack.gui.common import (
     apply_smooth_scroll_enabled,
     get_app_context_block_reason,
@@ -491,3 +491,5 @@ class MainWindow(FluentWindow):
             window_size=self.size(),
             navigation_width=navigation_interface.width(),
         )
+
+

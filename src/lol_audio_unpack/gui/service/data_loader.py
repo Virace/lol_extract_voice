@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Literal
 from loguru import logger
 
 if TYPE_CHECKING:
-    from lol_audio_unpack.app_context import AppContext
+    from lol_audio_unpack.app.context import AppContext
 
 from lol_audio_unpack.manager.data_reader import DataReader, get_default_visible_champions
 from lol_audio_unpack.manager.utils import find_data_file, read_data
@@ -434,3 +434,4 @@ class EntityDataLoader:
         if not matched_paths:
             return None
         return min(matched_paths, key=lambda path: str(path).lower())
+

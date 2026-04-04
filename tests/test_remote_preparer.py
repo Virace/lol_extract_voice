@@ -8,7 +8,7 @@ import pytest
 from loguru import logger
 from riotmanifest import DownloadError
 
-import lol_audio_unpack.facade as m_facade
+import lol_audio_unpack.app.facade as m_facade
 import lol_audio_unpack.runtime.remote.preparer as m_remote
 from lol_audio_unpack.app_context import (
     AppConfig,

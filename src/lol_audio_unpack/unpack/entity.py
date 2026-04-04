@@ -24,7 +24,7 @@ from .bp_vo import attach_bp_vo
 from .stats import FileProcessResult, ProcessingStatsContext
 
 if TYPE_CHECKING:
-    from lol_audio_unpack.app_context import AppContext
+    from lol_audio_unpack.app.context import AppContext
 
 AUDIO_TYPE_VO = "VO"
 
@@ -501,3 +501,4 @@ def unpack_map(  # noqa: PLR0913
 _persist_wem_and_maybe_submit = _persist_wem
 unpack_audio_entity = unpack_entity
 unpack_map_audio = unpack_map
+
