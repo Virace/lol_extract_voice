@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 from loguru import logger
 
-from ..config_schema import SettingKey
+from ..config import SettingKey
 from ..facade import LolAudioUnpackApp
 from ..runtime.wav import JobHandle
 from .runtime import build_options, parse_int_ids, resolve_champion_ids

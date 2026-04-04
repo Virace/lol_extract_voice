@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from lol_audio_unpack.app_context import OperationOptions, WavOutputOptions
-from lol_audio_unpack.config_schema import SettingKey
+from lol_audio_unpack.config import SettingKey
 
 TASK_STATUS_WAITING = "等待中"
 TASK_STATUS_RUNNING = "运行中"

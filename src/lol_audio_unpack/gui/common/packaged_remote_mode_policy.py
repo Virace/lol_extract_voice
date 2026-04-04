@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from lol_audio_unpack.config_schema import SettingKey
+from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
 
 LOCAL_SOURCE_MODE_LABEL = "本地模式"

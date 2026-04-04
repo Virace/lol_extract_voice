@@ -14,12 +14,16 @@ from loguru import logger
 
 from .. import setup_app
 from ..app_context import AppContext, AppContextValidationError, OperationOptions, SourceMode, WavOutputOptions
-from ..config_loading import (
-    load_command_config_from_file,
-    load_settings_from_config_file,
-    resolve_default_config_file_path,
+from ..config import (
+    CONTEXT_OPTION_ATTRS,
+    ConfigSection,
+    load_command_config,
+    load_settings,
+    resolve_default_path,
 )
-from ..config_schema import BASE_CONTEXT_OPTION_ATTRS, ConfigSection, build_settings_from_namespace
+from ..config import (
+    build_settings as build_config_settings,
+)
 from ..facade import LolAudioUnpackApp
 from .invocation import (
     DEFAULT_WAV_FORMAT,
@@ -80,7 +84,7 @@ def _apply_config_profile(args: argparse.Namespace) -> None:
         return
 
     try:
-        loaded_settings = load_settings_from_config_file(config_file, require_exists=True)
+        loaded_settings = load_settings(config_file, require_exists=True)
     except FileNotFoundError:
         logger.error(f"配置文件不存在: {config_file}")
         logger.error("请先创建标准 INI 配置文件，或移除 -c 改为纯 CLI 显式参数模式。")
@@ -95,7 +99,7 @@ def _apply_config_profile(args: argparse.Namespace) -> None:
 
     merged_options: dict[str, object] = {}
     for section_name in section_sequence:
-        merged_options.update(load_command_config_from_file(config_file, command=section_name, require_exists=True))
+        merged_options.update(load_command_config(config_file, command=section_name, require_exists=True))
     for attr_name, value in merged_options.items():
         setattr(args, attr_name, value)
 
@@ -120,7 +124,7 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
 
     args.actions = list(dict.fromkeys(args.actions))
 
-    if args.config_file is not None and any(getattr(args, attr) is not None for attr in BASE_CONTEXT_OPTION_ATTRS):
+    if args.config_file is not None and any(getattr(args, attr) is not None for attr in CONTEXT_OPTION_ATTRS):
         logger.error("错误：-c/--config-file 模式不能与共享配置参数同时使用。")
         sys.exit(1)
 
@@ -146,7 +150,7 @@ def build_settings(args: argparse.Namespace) -> dict[str, object]:
     Returns:
         仅包含显式传入项的共享配置字典。
     """
-    return build_settings_from_namespace(args)
+    return build_config_settings(args)
 
 
 def build_invocation_request(args: argparse.Namespace) -> CliInvocationRequest:
@@ -188,7 +192,7 @@ def _config_path(args: argparse.Namespace) -> Path | None:
     if args.config_file is None:
         return None
     if args.config_file == "":
-        return resolve_default_config_file_path(dev_mode=args.dev)
+        return resolve_default_path(dev_mode=args.dev)
     return Path(args.config_file)
 
 
@@ -210,7 +214,7 @@ def initialize_app(args: argparse.Namespace) -> AppContext:
         loaded_settings = getattr(args, "_loaded_settings", None)
         if loaded_settings is None:
             try:
-                loaded_settings = load_settings_from_config_file(config_file, require_exists=True)
+                loaded_settings = load_settings(config_file, require_exists=True)
             except FileNotFoundError:
                 logger.error(f"配置文件不存在: {config_file}")
                 logger.error("请先创建标准 INI 配置文件，或移除 -c 改为纯 CLI 显式参数模式。")

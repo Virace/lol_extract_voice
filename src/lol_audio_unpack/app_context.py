@@ -11,7 +11,7 @@ from typing import Any
 from loguru import logger
 from riotmanifest import LeagueManifestError, LeagueManifestResolver
 
-from lol_audio_unpack.config_schema import (
+from lol_audio_unpack.config import (
     DEFAULT_REMOTE_LIVE_REGION,
     DEFAULT_SHARED_SETTINGS,
     SUPPORTED_SETTING_KEYS,

@@ -98,21 +98,21 @@ SHARED_SETTING_FIELDS: tuple[SharedSettingField, ...] = (
     SharedSettingField(SettingKey.WWISER_PATH, "wwiser_path", "wwiser_path"),
 )
 
-SHARED_SETTING_FIELD_BY_KEY: dict[str, SharedSettingField] = {
+SHARED_FIELDS_BY_KEY: dict[str, SharedSettingField] = {
     field.key: field for field in SHARED_SETTING_FIELDS
 }
-SHARED_SETTING_FIELD_BY_INI_KEY: dict[str, SharedSettingField] = {
+SHARED_FIELDS_BY_INI_KEY: dict[str, SharedSettingField] = {
     field.ini_key: field for field in SHARED_SETTING_FIELDS
 }
-SHARED_SETTING_FIELD_BY_CLI_ATTR: dict[str, SharedSettingField] = {
+SHARED_FIELDS_BY_CLI_ATTR: dict[str, SharedSettingField] = {
     field.cli_attr: field for field in SHARED_SETTING_FIELDS if field.cli_attr is not None
 }
 
-SUPPORTED_SETTING_KEYS: frozenset[str] = frozenset(SHARED_SETTING_FIELD_BY_KEY)
+SUPPORTED_SETTING_KEYS: frozenset[str] = frozenset(SHARED_FIELDS_BY_KEY)
 DEFAULT_SHARED_SETTINGS: dict[str, Any] = {
     field.key: field.default for field in SHARED_SETTING_FIELDS if field.default is not None
 }
-BASE_CONTEXT_OPTION_ATTRS: tuple[str, ...] = tuple(SHARED_SETTING_FIELD_BY_CLI_ATTR)
+CONTEXT_OPTION_ATTRS: tuple[str, ...] = tuple(SHARED_FIELDS_BY_CLI_ATTR)
 
 COMMAND_CONFIG_FIELDS: dict[str, tuple[CommandConfigField, ...]] = {
     ConfigSection.TARGETS: (
@@ -141,11 +141,42 @@ COMMAND_CONFIG_FIELDS: dict[str, tuple[CommandConfigField, ...]] = {
 }
 
 
-def build_settings_from_namespace(args: Any) -> dict[str, Any]:
+def build_settings(args: Any) -> dict[str, Any]:
     """从 argparse namespace 构建显式共享配置。"""
     settings: dict[str, Any] = {}
-    for attr_name, field in SHARED_SETTING_FIELD_BY_CLI_ATTR.items():
+    for attr_name, field in SHARED_FIELDS_BY_CLI_ATTR.items():
         value = getattr(args, attr_name, None)
         if value is not None:
             settings[field.key] = value
     return settings
+
+
+# 兼容层：保留旧长名，待后续统一删除。
+SHARED_SETTING_FIELD_BY_KEY = SHARED_FIELDS_BY_KEY
+SHARED_SETTING_FIELD_BY_INI_KEY = SHARED_FIELDS_BY_INI_KEY
+SHARED_SETTING_FIELD_BY_CLI_ATTR = SHARED_FIELDS_BY_CLI_ATTR
+BASE_CONTEXT_OPTION_ATTRS = CONTEXT_OPTION_ATTRS
+build_settings_from_namespace = build_settings
+
+
+__all__ = [
+    "COMMAND_CONFIG_FIELDS",
+    "CONTEXT_OPTION_ATTRS",
+    "DEFAULT_REMOTE_LIVE_REGION",
+    "DEFAULT_SHARED_SETTINGS",
+    "SHARED_FIELDS_BY_CLI_ATTR",
+    "SHARED_FIELDS_BY_INI_KEY",
+    "SHARED_FIELDS_BY_KEY",
+    "SHARED_SETTING_FIELDS",
+    "SUPPORTED_SETTING_KEYS",
+    "CommandConfigField",
+    "ConfigSection",
+    "SettingKey",
+    "SharedSettingField",
+    "build_settings",
+    "BASE_CONTEXT_OPTION_ATTRS",
+    "SHARED_SETTING_FIELD_BY_CLI_ATTR",
+    "SHARED_SETTING_FIELD_BY_INI_KEY",
+    "SHARED_SETTING_FIELD_BY_KEY",
+    "build_settings_from_namespace",
+]

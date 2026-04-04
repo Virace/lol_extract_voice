@@ -16,7 +16,7 @@ from lol_audio_unpack.cli.invocation import (
     CliInvocationValidationError,
     build_argv,
 )
-from lol_audio_unpack.config_schema import SettingKey
+from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths, get_default_output_root, get_default_wwiser_path
 
 EXPECTED_WAV_FORMAT = "float"

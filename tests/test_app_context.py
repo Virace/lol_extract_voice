@@ -7,11 +7,15 @@ import lol_audio_unpack as app_pkg
 import lol_audio_unpack.app_context as app_context_module
 from lol_audio_unpack import setup_app
 from lol_audio_unpack.app_context import AppContext, AppContextValidationError, SourceMode, create_app_context
-from lol_audio_unpack.config_loading import (
+from lol_audio_unpack.config import (
     CONFIG_SECTION,
+    load_command_config,
     load_command_config_from_file,
+    load_settings,
     load_settings_from_config_file,
     resolve_default_config_file_path,
+    resolve_default_path,
+    write_settings,
     write_settings_to_config_file,
 )
 from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
@@ -204,9 +208,9 @@ def test_setup_app_returns_context_with_settings(monkeypatch: pytest.MonkeyPatch
     }
 
 
-def test_load_settings_from_config_file_reads_lowercase_ini_keys(tmp_path: Path) -> None:
+def test_load_settings_reads_lowercase_ini_keys(tmp_path: Path) -> None:
     config_file = tmp_path / "lol-audio-unpack.ini"
-    write_settings_to_config_file(
+    write_settings(
         config_file,
         {
             "GAME_PATH": str(tmp_path / "game"),
@@ -215,7 +219,7 @@ def test_load_settings_from_config_file_reads_lowercase_ini_keys(tmp_path: Path)
         },
     )
 
-    settings = load_settings_from_config_file(config_file)
+    settings = load_settings(config_file)
 
     assert settings == {
         "GAME_PATH": str(tmp_path / "game"),
@@ -224,14 +228,14 @@ def test_load_settings_from_config_file_reads_lowercase_ini_keys(tmp_path: Path)
     }
 
 
-def test_load_settings_from_config_file_requires_existing_file(tmp_path: Path) -> None:
+def test_load_settings_requires_existing_file(tmp_path: Path) -> None:
     config_file = tmp_path / "missing.ini"
 
     with pytest.raises(FileNotFoundError, match="配置文件不存在"):
-        load_settings_from_config_file(config_file)
+        load_settings(config_file)
 
 
-def test_load_command_config_from_file_reads_targets_and_extract_sections(tmp_path: Path) -> None:
+def test_load_command_config_reads_targets_and_extract_sections(tmp_path: Path) -> None:
     config_file = tmp_path / "lol-audio-unpack.ini"
     config_file.write_text(
         (
@@ -247,8 +251,8 @@ def test_load_command_config_from_file_reads_targets_and_extract_sections(tmp_pa
         encoding="utf-8",
     )
 
-    target_config = load_command_config_from_file(config_file, command="targets")
-    extract_config = load_command_config_from_file(config_file, command="extract")
+    target_config = load_command_config(config_file, command="targets")
+    extract_config = load_command_config(config_file, command="extract")
 
     assert target_config == {
         "champions": "Annie,Ahri",
@@ -258,7 +262,7 @@ def test_load_command_config_from_file_reads_targets_and_extract_sections(tmp_pa
     }
 
 
-def test_load_command_config_from_file_reads_runtime_and_wav_sections(tmp_path: Path) -> None:
+def test_load_command_config_reads_runtime_and_wav_sections(tmp_path: Path) -> None:
     config_file = tmp_path / "lol-audio-unpack.ini"
     config_file.write_text(
         (
@@ -277,8 +281,8 @@ def test_load_command_config_from_file_reads_runtime_and_wav_sections(tmp_path: 
         encoding="utf-8",
     )
 
-    runtime_config = load_command_config_from_file(config_file, command="runtime")
-    wav_config = load_command_config_from_file(config_file, command="wav")
+    runtime_config = load_command_config(config_file, command="runtime")
+    wav_config = load_command_config(config_file, command="wav")
 
     assert runtime_config == {
         "max_workers": 8,
@@ -291,16 +295,16 @@ def test_load_command_config_from_file_reads_runtime_and_wav_sections(tmp_path: 
     }
 
 
-def test_resolve_default_config_file_path_uses_runtime_config_root() -> None:
-    config_file = resolve_default_config_file_path()
+def test_resolve_default_path_uses_runtime_config_root() -> None:
+    config_file = resolve_default_path()
     assert config_file.name == "lol-audio-unpack.ini"
     assert config_file.parent.name == "isolated_env"
 
 
-def test_write_settings_to_config_file_creates_expected_section(tmp_path: Path) -> None:
+def test_write_settings_creates_expected_section(tmp_path: Path) -> None:
     config_file = tmp_path / "lol-audio-unpack.ini"
 
-    write_settings_to_config_file(
+    write_settings(
         config_file,
         {
             "GAME_PATH": str(tmp_path / "game"),
@@ -312,3 +316,10 @@ def test_write_settings_to_config_file_creates_expected_section(tmp_path: Path) 
     assert f"[{CONFIG_SECTION}]" in text
     assert "game_path =" in text
     assert "output_path =" in text
+
+
+def test_config_aliases_still_point_to_new_names() -> None:
+    assert load_settings_from_config_file is load_settings
+    assert write_settings_to_config_file is write_settings
+    assert load_command_config_from_file is load_command_config
+    assert resolve_default_config_file_path is resolve_default_path

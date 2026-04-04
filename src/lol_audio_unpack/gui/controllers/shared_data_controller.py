@@ -7,7 +7,7 @@ from collections.abc import Callable
 from loguru import logger
 from PySide6.QtCore import QObject, QTimer, Signal
 
-from lol_audio_unpack.config_schema import SettingKey
+from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.gui.controllers.contracts import (
     EntityRowsPayload,
     GuiNotice,

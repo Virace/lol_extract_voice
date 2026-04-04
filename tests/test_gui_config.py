@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from lol_audio_unpack.config_loading import load_command_config_from_file
+from lol_audio_unpack.config import load_command_config
 from lol_audio_unpack.gui.common.gui_config import GuiConfig
 
 EXPECTED_WAV_WORKERS = 6
@@ -73,10 +73,10 @@ def test_gui_config_save_updates_wav_tuning_without_clobbering_extract_or_format
 
     cfg.save()
 
-    assert load_command_config_from_file(config_file, command="extract") == {
+    assert load_command_config(config_file, command="extract") == {
         "wav": True,
     }
-    assert load_command_config_from_file(config_file, command="wav") == {
+    assert load_command_config(config_file, command="wav") == {
         "wav_workers": 8,
         "wav_timeout": 11,
         "wav_retries": 5,

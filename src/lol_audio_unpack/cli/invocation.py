@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from lol_audio_unpack.app_context import OperationOptions, SourceMode, WavOutputOptions
-from lol_audio_unpack.config_schema import DEFAULT_REMOTE_LIVE_REGION, DEFAULT_SHARED_SETTINGS, SettingKey
+from lol_audio_unpack.config import DEFAULT_REMOTE_LIVE_REGION, DEFAULT_SHARED_SETTINGS, SettingKey
 from lol_audio_unpack.utils.runtime_paths import (
     RuntimePaths,
     detect_runtime_paths,

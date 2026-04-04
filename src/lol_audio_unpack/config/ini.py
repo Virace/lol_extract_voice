@@ -11,14 +11,14 @@ from typing import Any
 
 from loguru import logger
 
-from lol_audio_unpack.config_schema import (
+from ..utils.runtime_paths import RuntimePaths, detect_runtime_paths
+from ..utils.type_hints import StrPath
+from .schema import (
     COMMAND_CONFIG_FIELDS,
-    SHARED_SETTING_FIELD_BY_INI_KEY,
+    SHARED_FIELDS_BY_INI_KEY,
     SHARED_SETTING_FIELDS,
     ConfigSection,
 )
-from lol_audio_unpack.utils.runtime_paths import RuntimePaths, detect_runtime_paths
-from lol_audio_unpack.utils.type_hints import StrPath
 
 DEFAULT_CONFIG_FILENAME = "lol-audio-unpack.ini"
 DEFAULT_DEV_CONFIG_FILENAME = "lol-audio-unpack.dev.ini"
@@ -27,7 +27,7 @@ CONFIG_SECTION = ConfigSection.APP
 _MISSING = object()
 
 
-def _load_or_create_config_parser(config_file: StrPath) -> tuple[Path, configparser.ConfigParser]:
+def _ensure_parser(config_file: StrPath) -> tuple[Path, configparser.ConfigParser]:
     """加载已有配置，若不存在则返回空白 parser。"""
     config_path = Path(config_file)
     parser = _load_config_parser(config_path, require_exists=False)
@@ -37,8 +37,7 @@ def _load_or_create_config_parser(config_file: StrPath) -> tuple[Path, configpar
     return config_path, parser
 
 
-
-def resolve_default_config_file_path(
+def resolve_default_path(
     *,
     dev_mode: bool = False,
     runtime_paths: RuntimePaths | None = None,
@@ -75,7 +74,7 @@ def _load_config_parser(
     return parser
 
 
-def load_settings_from_config_file(
+def load_settings(
     config_file: StrPath,
     *,
     require_exists: bool = True,
@@ -100,7 +99,7 @@ def load_settings_from_config_file(
 
     settings: dict[str, str] = {}
     for raw_key, raw_value in parser.items(ConfigSection.APP):
-        field = SHARED_SETTING_FIELD_BY_INI_KEY.get(raw_key.strip().lower())
+        field = SHARED_FIELDS_BY_INI_KEY.get(raw_key.strip().lower())
         if field is None:
             logger.warning(f"忽略未知配置项: {raw_key}")
             continue
@@ -108,7 +107,7 @@ def load_settings_from_config_file(
     return settings
 
 
-def write_settings_to_config_file(
+def write_settings(
     config_file: StrPath,
     settings: dict[str, Any],
 ) -> None:
@@ -118,7 +117,7 @@ def write_settings_to_config_file(
         config_file: INI 配置文件路径。
         settings: 待写入的共享设置，键名使用内部大写格式。
     """
-    config_path, parser = _load_or_create_config_parser(config_file)
+    config_path, parser = _ensure_parser(config_file)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     if parser.has_section(ConfigSection.APP):
         parser.remove_section(ConfigSection.APP)
@@ -137,7 +136,7 @@ def write_settings_to_config_file(
         parser.write(handle)
 
 
-def write_command_config_to_file(
+def write_command_config(
     config_file: StrPath,
     *,
     command: str,
@@ -147,7 +146,7 @@ def write_command_config_to_file(
     if command not in COMMAND_CONFIG_FIELDS:
         raise ValueError(f"不支持的命令配置分组: {command}")
 
-    config_path, parser = _load_or_create_config_parser(config_file)
+    config_path, parser = _ensure_parser(config_file)
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not parser.has_section(command):
@@ -188,7 +187,7 @@ def _parse_command_value(
     return None if not value else value
 
 
-def load_command_config_from_file(
+def load_command_config(
     config_file: StrPath,
     *,
     command: str | None,
@@ -207,3 +206,29 @@ def load_command_config_from_file(
             continue
         values[field.attr] = value
     return values
+
+
+# 兼容层：保留旧长名，待后续统一删除。
+_load_or_create_config_parser = _ensure_parser
+resolve_default_config_file_path = resolve_default_path
+load_settings_from_config_file = load_settings
+write_settings_to_config_file = write_settings
+write_command_config_to_file = write_command_config
+load_command_config_from_file = load_command_config
+
+
+__all__ = [
+    "CONFIG_SECTION",
+    "DEFAULT_CONFIG_FILENAME",
+    "DEFAULT_DEV_CONFIG_FILENAME",
+    "load_command_config",
+    "load_settings",
+    "resolve_default_path",
+    "write_command_config",
+    "write_settings",
+    "load_command_config_from_file",
+    "load_settings_from_config_file",
+    "resolve_default_config_file_path",
+    "write_command_config_to_file",
+    "write_settings_to_config_file",
+]

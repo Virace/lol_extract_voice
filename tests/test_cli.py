@@ -211,12 +211,12 @@ def test_apply_config_profile_loads_command_section(monkeypatch, tmp_path: Path)
 
     monkeypatch.setattr(
         runtime_cli,
-        "load_settings_from_config_file",
+        "load_settings",
         lambda path, require_exists=True: {"GAME_PATH": str(tmp_path / "game")},
     )
     monkeypatch.setattr(
         runtime_cli,
-        "load_command_config_from_file",
+        "load_command_config",
         lambda path, command, require_exists=True: {
             "targets": {"champions": "Annie,Ahri"},
             "update": {"skip_events": True},
@@ -239,12 +239,12 @@ def test_apply_config_profile_loads_runtime_and_wav_sections(monkeypatch, tmp_pa
 
     monkeypatch.setattr(
         runtime_cli,
-        "load_settings_from_config_file",
+        "load_settings",
         lambda path, require_exists=True: {"GAME_PATH": str(tmp_path / "game")},
     )
     monkeypatch.setattr(
         runtime_cli,
-        "load_command_config_from_file",
+        "load_command_config",
         lambda path, command, require_exists=True: {
             "runtime": {"max_workers": EXPECTED_CONFIG_MAX_WORKERS},
             "extract": {"wav": True},

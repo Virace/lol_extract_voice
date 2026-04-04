@@ -6,14 +6,16 @@ from pathlib import Path
 
 from PySide6.QtCore import QSettings
 
-from lol_audio_unpack.config_loading import (
-    load_command_config_from_file,
-    load_settings_from_config_file,
-    resolve_default_config_file_path,
-    write_command_config_to_file,
-    write_settings_to_config_file,
+from lol_audio_unpack.config import (
+    DEFAULT_REMOTE_LIVE_REGION,
+    ConfigSection,
+    SettingKey,
+    load_command_config,
+    load_settings,
+    resolve_default_path,
+    write_command_config,
+    write_settings,
 )
-from lol_audio_unpack.config_schema import DEFAULT_REMOTE_LIVE_REGION, ConfigSection, SettingKey
 from lol_audio_unpack.gui.common.packaged_remote_mode_policy import effective_source_mode
 from lol_audio_unpack.gui.task_models import AppContextInputSnapshot
 from lol_audio_unpack.utils.runtime_paths import (
@@ -37,7 +39,7 @@ class GuiConfig:
         self._env_dir = detect_runtime_paths().config_root
 
         self._dev_mode = dev_mode
-        self._config_file = resolve_default_config_file_path(dev_mode=dev_mode)
+        self._config_file = resolve_default_path(dev_mode=dev_mode)
 
         # QSettings 用于 GUI 独有配置
         self._qs = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, "ViraceLab", "LolAudioUnpack")
@@ -75,13 +77,13 @@ class GuiConfig:
 
     def load(self) -> None:
         """从标准 INI 和 QSettings 加载配置。"""
-        shared_settings = load_settings_from_config_file(self._config_file, require_exists=False)
-        extract_settings = load_command_config_from_file(
+        shared_settings = load_settings(self._config_file, require_exists=False)
+        extract_settings = load_command_config(
             self._config_file,
             command=ConfigSection.EXTRACT,
             require_exists=False,
         )
-        wav_settings = load_command_config_from_file(
+        wav_settings = load_command_config(
             self._config_file,
             command=ConfigSection.WAV,
             require_exists=False,
@@ -169,7 +171,7 @@ class GuiConfig:
     def save(self) -> None:
         """保存配置到标准 INI 与 QSettings。"""
         snapshot_overrides = self._snapshot_overrides()
-        write_settings_to_config_file(
+        write_settings(
             self._config_file,
             {
                 SettingKey.SOURCE_MODE: self._source_mode,
@@ -185,7 +187,7 @@ class GuiConfig:
                 SettingKey.WWISER_PATH: self._wwiser_path,
             },
         )
-        write_command_config_to_file(
+        write_command_config(
             self._config_file,
             command=ConfigSection.WAV,
             values={
