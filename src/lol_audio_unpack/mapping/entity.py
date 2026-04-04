@@ -16,7 +16,7 @@ from lol_audio_unpack.utils.logging import performance_monitor
 from . import session as mapping_session
 
 if TYPE_CHECKING:
-    from lol_audio_unpack.app.context import AppContext
+    from lol_audio_unpack.app.types import AppContext
 
 
 def _ensure_version_dirs(reader: DataReader, *, ctx: AppContext) -> tuple[Path, Path]:
@@ -579,4 +579,5 @@ def build_map(  # noqa: PLR0913
     except ValueError as exc:
         logger.error(str(exc))
         return {}
+
 

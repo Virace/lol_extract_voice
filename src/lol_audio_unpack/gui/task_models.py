@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from lol_audio_unpack.app.context import OperationOptions, WavOutputOptions
+from lol_audio_unpack.app.types import OperationOptions, WavOutputOptions
 from lol_audio_unpack.config import SettingKey
 
 TASK_STATUS_WAITING = "等待中"
@@ -218,4 +218,5 @@ class OutputStateRefreshRequest:
     def has_incremental_targets(self) -> bool:
         """返回当前请求是否包含可增量刷新的实体目标。"""
         return bool(self.champion_ids or self.map_ids)
+
 

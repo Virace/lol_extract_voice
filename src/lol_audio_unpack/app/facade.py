@@ -7,7 +7,7 @@ Manager 与流程函数。
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 
 from loguru import logger
@@ -26,31 +26,12 @@ from lol_audio_unpack.runtime.remote import RemotePreparer
 from lol_audio_unpack.unpack import unpack_all, unpack_champions, unpack_maps
 from lol_audio_unpack.utils.path_constants import format_entity_folder_name, get_output_dir_name
 
-from .context import AppContext, OperationOptions, SourceMode
+from .remote import RemoteEntityCallbackPayload, RemoteEntityWorkItem
+from .types import AppContext, OperationOptions, SourceMode
 
 DEFAULT_REMOTE_DOWNLOAD_RETRY_ATTEMPTS = 3
 DEFAULT_REMOTE_ENTITY_RETRY_ATTEMPTS = 3
 UPDATE_DATA_PREPARED_FORCE_CACHE_KEY = "update_data_prepared_force"
-
-
-@dataclass(frozen=True)
-class RemoteEntityWorkItem:
-    """remote 模式下的最小实体工作项。"""
-
-    entity_type: str
-    entity_id: int
-    need_extract: bool
-    need_mapping: bool
-
-
-@dataclass(frozen=True)
-class RemoteEntityCallbackPayload:
-    """remote 单位驱动完成后的回调载荷。"""
-
-    entity_type: str
-    entity_id: int
-    audio_output_paths: tuple[Path, ...] = ()
-    mapping_output_path: Path | None = None
 
 
 class LolAudioUnpackApp:

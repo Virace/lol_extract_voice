@@ -10,7 +10,7 @@ import argparse
 from typing import Literal
 
 from .. import __version__
-from ..app.context import SourceMode
+from ..app.types import SourceMode
 from .invocation import DEFAULT_CLI_MAX_WORKERS
 from .text import text
 
@@ -319,4 +319,5 @@ __all__ = [
     "EntryMode",
     "create_parser",
 ]
+
 

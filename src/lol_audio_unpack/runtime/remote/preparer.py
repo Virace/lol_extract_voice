@@ -22,7 +22,7 @@ from . import lcu as remote_lcu
 if TYPE_CHECKING:
     from riotmanifest import PatcherFile
 
-    from lol_audio_unpack.app.context import AppContext
+    from lol_audio_unpack.app.types import AppContext
     from lol_audio_unpack.manager import DataReader
 
 LCU_PLUGIN_SUFFIX = "plugins/rcp-be-lol-game-data"
@@ -404,4 +404,5 @@ class RemotePreparer:
     def _prune_empty_tree(root: Path) -> None:
         """删除根目录下的空目录。"""
         remote_cleanup.prune_empty_tree(root)
+
 

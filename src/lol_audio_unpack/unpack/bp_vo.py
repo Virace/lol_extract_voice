@@ -14,7 +14,7 @@ from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.utils.path_constants import format_entity_folder_name, get_output_dir_name
 
 if TYPE_CHECKING:
-    from lol_audio_unpack.app.context import AppContext
+    from lol_audio_unpack.app.types import AppContext
 
 
 def find_bp_vo_source(
@@ -120,4 +120,5 @@ def attach_bp_vo(
         target = target_dir / target_name
         mode = link_or_copy(source, target)
         logger.debug(f"大厅语音已写入: {target} (mode={mode})")
+
 

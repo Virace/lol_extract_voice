@@ -13,8 +13,8 @@ from pathlib import Path
 from loguru import logger
 
 from .. import setup_app
-from ..app.context import AppContext, AppContextValidationError, OperationOptions, SourceMode, WavOutputOptions
 from ..app.facade import LolAudioUnpackApp
+from ..app.types import AppContext, AppContextValidationError, OperationOptions, SourceMode, WavOutputOptions
 from ..config import (
     CONTEXT_OPTION_ATTRS,
     ConfigSection,
@@ -366,5 +366,6 @@ __all__ = [
     "resolve_champion_ids",
     "validate_args",
 ]
+
 
 

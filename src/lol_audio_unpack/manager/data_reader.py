@@ -13,7 +13,7 @@ from lol_audio_unpack.utils.common import Singleton
 from lol_audio_unpack.utils.logging import performance_monitor
 
 if TYPE_CHECKING:
-    from lol_audio_unpack.app.context import AppContext
+    from lol_audio_unpack.app.types import AppContext
 
 
 def get_default_hidden_champion_markers(champion: Mapping[str, Any]) -> tuple[str, ...]:
@@ -337,4 +337,5 @@ class DataReader(metaclass=Singleton):
         :returns: 地图信息列表
         """
         return list(self.data.get("maps", {}).values())
+
 

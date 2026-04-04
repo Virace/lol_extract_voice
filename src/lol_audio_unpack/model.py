@@ -9,7 +9,7 @@ from lol_audio_unpack.manager.data_reader import get_default_visible_champions
 from lol_audio_unpack.utils.common import sanitize_filename
 
 if TYPE_CHECKING:
-    from lol_audio_unpack.app.context import AppContext
+    from lol_audio_unpack.app.types import AppContext
 
 
 @dataclass
@@ -294,4 +294,5 @@ def generate_map_tasks(reader: DataReader, map_ids: list[int] | None = None) -> 
 
         # 生成指定ID的任务
         return [("map", mid, f"地图ID {mid}") for mid in map_ids]
+
 
