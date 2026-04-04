@@ -13,13 +13,9 @@ from typing import TYPE_CHECKING, Any
 from league_tools.formats import BIN, WAD
 from loguru import logger
 
-from lol_audio_unpack.manager.utils import (
-    create_metadata_object,
-    needs_update,
-    read_data,
-    resolve_context_version,
-    write_data,
-)
+from lol_audio_unpack.app.game_version import resolve_game_version
+from lol_audio_unpack.manager.files import needs_update, read_data, write_data
+from lol_audio_unpack.manager.utils import build_metadata_payload
 from lol_audio_unpack.utils.logging import performance_monitor
 from lol_audio_unpack.utils.run_summary import record_runtime_note
 
@@ -61,7 +57,7 @@ class BinUpdater:
 
         self.force_update = force_update
         self.process_events = process_events
-        self.version: str = resolve_context_version(self.ctx)
+        self.version: str = resolve_game_version(self.ctx)
         self.version_manifest_path: Path = self.manifest_path / self.version
         self.data_file_base: Path = self.version_manifest_path / "data"
         self.use_local_bin_flag_file: Path = self.version_manifest_path / ".use_local_bin"
@@ -117,7 +113,7 @@ class BinUpdater:
             if champion_ids and filtered_data.get("champions"):
                 self._update_champions(filtered_data)
             if map_ids and filtered_data.get("maps"):
-                self._record_targeted_map_event_scope_note(map_ids)
+                self._record_map_event_scope_note(map_ids)
                 self._update_maps(filtered_data)
             logger.success(f"BinUpdater 更新完成（精确模式）：英雄 {champion_count} 个，地图 {map_count} 个")
         else:
@@ -135,7 +131,7 @@ class BinUpdater:
                 self._update_maps(data)
             logger.success(f"BinUpdater 更新完成（批量模式）：英雄 {champion_count} 个，地图 {map_count} 个")
 
-    def _record_targeted_map_event_scope_note(self, map_ids: list[str]) -> None:
+    def _record_map_event_scope_note(self, map_ids: list[str]) -> None:
         """记录精确地图更新在未包含 Common 地图时的事件差异说明。"""
         if not self.process_events or "0" in map_ids:
             return
@@ -239,9 +235,7 @@ class BinUpdater:
             bin_raws.append(file_data)
 
         if missing_count > 0:
-            logger.debug(
-                f"{entity_label} 本地BIN存在缺失或空文件，已按缺失处理: {missing_count}/{len(bin_paths)}"
-            )
+            logger.debug(f"{entity_label} 本地BIN存在缺失或空文件，已按缺失处理: {missing_count}/{len(bin_paths)}")
 
         logger.trace(f"{entity_label} 使用本地BIN目录读取: {self.local_bin_input_dir}")
         return bin_raws
@@ -370,9 +364,9 @@ class BinUpdater:
         banks_file_base = self.champion_banks_dir / champion_id
         events_file_base = self.champion_events_dir / champion_id
 
-        if not needs_update(banks_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()) and not needs_update(
-            events_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()
-        ):
+        if not needs_update(
+            banks_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()
+        ) and not needs_update(events_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()):
             logger.trace(f"英雄 {champion_id} ({alias}) 的数据已是最新，跳过处理")
             return
 
@@ -503,9 +497,9 @@ class BinUpdater:
         banks_file_base = self.map_banks_dir / map_id
         events_file_base = self.map_events_dir / map_id
 
-        if not needs_update(banks_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()) and not needs_update(
-            events_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()
-        ):
+        if not needs_update(
+            banks_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()
+        ) and not needs_update(events_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()):
             logger.trace(f"地图 {map_id} 的数据已是最新，跳过处理")
             return
 
@@ -878,7 +872,7 @@ class BinUpdater:
         :return: 包含元数据和附加字段的基础字典
         """
         # 使用通用函数创建包含所有标准元数据的对象
-        base_data = create_metadata_object(self.version, self.languages)
+        base_data = build_metadata_payload(self.version, self.languages)
 
         # 检查是否为事件文件（通过是否存在'skins'或'map'顶级键来判断）
         is_event_file = "skins" in extra_fields or "map" in extra_fields
@@ -915,5 +909,3 @@ class BinUpdater:
 
         # 回退到默认语言
         return names.get("default", map_data.get("mapStringId", ""))
-
-

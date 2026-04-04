@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from lol_audio_unpack.app.path_layout import format_entity_folder_name, get_output_dir_name
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.model import AudioEntityData
-from lol_audio_unpack.utils.path_constants import format_entity_folder_name, get_output_dir_name
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
@@ -120,5 +120,3 @@ def attach_bp_vo(
         target = target_dir / target_name
         mode = link_or_copy(source, target)
         logger.debug(f"大厅语音已写入: {target} (mode={mode})")
-
-

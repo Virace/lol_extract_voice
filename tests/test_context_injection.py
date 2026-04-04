@@ -227,7 +227,7 @@ def test_mapping_execute_tasks_uses_warning_summary_for_partial_failures(
     def _fail_unpack_map(*_args, **_kwargs) -> None:
         raise RuntimeError("map boom")
 
-    reader = SimpleNamespace(write_unknown_categories_to_file=lambda: None)
+    reader = SimpleNamespace(write_unknown_categories=lambda: None)
 
     monkeypatch.setattr(unpack_batch, "logger", fake_logger)
     monkeypatch.setattr(unpack_batch, "unpack_champion", _fake_unpack_champion)

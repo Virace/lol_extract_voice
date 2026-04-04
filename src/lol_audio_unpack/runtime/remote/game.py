@@ -7,7 +7,7 @@ from typing import Any
 
 from loguru import logger
 
-from lol_audio_unpack.manager.data_reader import get_default_visible_champions
+from lol_audio_unpack.app.targets import iter_entity_refs
 
 
 def build_bin_plan(
@@ -29,22 +29,24 @@ def build_bin_plan(
         WAD 到 BIN 相对路径列表的映射。
     """
     extraction_plan: dict[str, list[str]] = {}
+    include_champions = target in {"skin", "all"}
+    include_maps = target in {"map", "all"}
 
-    if champion_ids is not None:
-        for champion_id in champion_ids:
-            champion = reader.get_champion(champion_id)
+    for entity_type, entity_id in iter_entity_refs(
+        reader,
+        champion_ids=champion_ids,
+        map_ids=map_ids,
+        include_champions=include_champions,
+        include_maps=include_maps,
+    ):
+        if entity_type == "champion":
+            champion = reader.get_champion(entity_id)
             add_champion_bins(extraction_plan, champion)
-    elif target in {"skin", "all"}:
-        for champion in get_default_visible_champions(reader):
-            add_champion_bins(extraction_plan, champion)
-
-    if map_ids is not None:
-        for map_id in map_ids:
-            map_data = reader.get_map(map_id)
+            continue
+        if entity_type == "map":
+            map_data = reader.get_map(entity_id)
             add_map_bins(extraction_plan, map_data)
-    elif target in {"map", "all"}:
-        for map_data in reader.get_maps():
-            add_map_bins(extraction_plan, map_data)
+            continue
 
     for wad_path, bin_paths in extraction_plan.items():
         extraction_plan[wad_path] = list(dict.fromkeys(bin_paths))
@@ -73,50 +75,30 @@ def build_extract_plan(
     include_types = set(reader.ctx.config.include_types)
     wad_paths: set[str] = set()
 
-    if champion_ids is not None:
-        for champion_id in champion_ids:
+    for entity_type, entity_id in iter_entity_refs(
+        reader,
+        champion_ids=champion_ids,
+        map_ids=map_ids,
+        include_champions=include_champions,
+        include_maps=include_maps,
+    ):
+        if entity_type == "champion":
             add_champion_extract_wads(
                 wad_paths=wad_paths,
-                champion=reader.get_champion(champion_id),
-                champion_banks=reader.get_champion_banks(champion_id),
+                champion=reader.get_champion(entity_id),
+                champion_banks=reader.get_champion_banks(entity_id),
                 reader=reader,
                 include_types=include_types,
             )
-    elif include_champions:
-        for champion in get_default_visible_champions(reader):
-            champion_id = champion.get("id")
-            if champion_id is None:
-                continue
-            add_champion_extract_wads(
-                wad_paths=wad_paths,
-                champion=champion,
-                champion_banks=reader.get_champion_banks(int(champion_id)),
-                reader=reader,
-                include_types=include_types,
-            )
-
-    if map_ids is not None:
-        for map_id in map_ids:
+            continue
+        if entity_type == "map":
             add_map_extract_wads(
                 wad_paths=wad_paths,
-                map_data=reader.get_map(map_id),
-                map_banks=reader.get_map_banks(map_id),
+                map_data=reader.get_map(entity_id),
+                map_banks=reader.get_map_banks(entity_id),
                 reader=reader,
                 include_types=include_types,
             )
-    elif include_maps:
-        for map_data in reader.get_maps():
-            map_id = map_data.get("id")
-            if map_id is None:
-                continue
-            add_map_extract_wads(
-                wad_paths=wad_paths,
-                map_data=map_data,
-                map_banks=reader.get_map_banks(int(map_id)),
-                reader=reader,
-                include_types=include_types,
-            )
-
     return wad_paths
 
 
@@ -142,47 +124,28 @@ def build_mapping_plan(
     """
     wad_paths: set[str] = set()
 
-    if champion_ids is not None:
-        for champion_id in champion_ids:
+    for entity_type, entity_id in iter_entity_refs(
+        reader,
+        champion_ids=champion_ids,
+        map_ids=map_ids,
+        include_champions=include_champions,
+        include_maps=include_maps,
+    ):
+        if entity_type == "champion":
             add_champion_mapping_wads(
                 wad_paths=wad_paths,
-                champion=reader.get_champion(champion_id),
-                champion_banks=reader.get_champion_banks(champion_id),
-                champion_events=reader.get_champion_events(champion_id),
+                champion=reader.get_champion(entity_id),
+                champion_banks=reader.get_champion_banks(entity_id),
+                champion_events=reader.get_champion_events(entity_id),
                 reader=reader,
             )
-    elif include_champions:
-        for champion in get_default_visible_champions(reader):
-            champion_id = champion.get("id")
-            if champion_id is None:
-                continue
-            add_champion_mapping_wads(
-                wad_paths=wad_paths,
-                champion=champion,
-                champion_banks=reader.get_champion_banks(int(champion_id)),
-                champion_events=reader.get_champion_events(int(champion_id)),
-                reader=reader,
-            )
-
-    if map_ids is not None:
-        for map_id in map_ids:
+            continue
+        if entity_type == "map":
             add_map_mapping_wads(
                 wad_paths=wad_paths,
-                map_data=reader.get_map(map_id),
-                map_banks=reader.get_map_banks(map_id),
-                map_events=reader.get_map_events(map_id),
-                reader=reader,
-            )
-    elif include_maps:
-        for map_data in reader.get_maps():
-            map_id = map_data.get("id")
-            if map_id is None:
-                continue
-            add_map_mapping_wads(
-                wad_paths=wad_paths,
-                map_data=map_data,
-                map_banks=reader.get_map_banks(int(map_id)),
-                map_events=reader.get_map_events(int(map_id)),
+                map_data=reader.get_map(entity_id),
+                map_banks=reader.get_map_banks(entity_id),
+                map_events=reader.get_map_events(entity_id),
                 reader=reader,
             )
 
@@ -280,7 +243,7 @@ def add_map_extract_wads(
     needs_root = False
     needs_language = False
 
-    for category in (map_banks.get("banks") or {}):
+    for category in map_banks.get("banks") or {}:
         audio_type = reader.get_audio_type(category)
         if audio_type not in include_types:
             continue
@@ -368,7 +331,7 @@ def add_map_mapping_wads(
     needs_language = False
 
     event_categories = map_events.get("events", {})
-    for category in (map_banks.get("banks") or {}):
+    for category in map_banks.get("banks") or {}:
         if not event_categories.get(category):
             continue
         if "VO" in category:
@@ -435,11 +398,7 @@ def prepare_wads(
     Returns:
         `GameWadResult` 或 `None`。
     """
-    normalized_paths = {
-        normalized
-        for path in wad_paths
-        if (normalized := normalize_wad_path(path)) is not None
-    }
+    normalized_paths = {normalized for path in wad_paths if (normalized := normalize_wad_path(path)) is not None}
     if not normalized_paths:
         logger.warning("远端 GAME 快照未规划到任何 WAD 下载目标，已跳过实体 WAD 准备。")
         return None

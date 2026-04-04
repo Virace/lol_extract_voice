@@ -15,5 +15,6 @@ def test_root_package_can_import_model_module() -> None:
 def test_model_package_exports_audio_entity_contract() -> None:
     """`model` 包应暴露稳定的音频实体类型与任务 helper。"""
     assert model_pkg.AudioEntityData is model_entity_pkg.AudioEntityData
+    assert callable(model_pkg.AudioEntityData.from_entity)
     assert callable(model_pkg.generate_champion_tasks)
     assert callable(model_pkg.generate_map_tasks)

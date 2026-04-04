@@ -9,7 +9,8 @@ from league_tools import AudioEventMapper, WwiserManager
 from loguru import logger
 
 from lol_audio_unpack.manager import DataReader
-from lol_audio_unpack.manager.utils import create_metadata_object, write_data
+from lol_audio_unpack.manager.files import write_data
+from lol_audio_unpack.manager.utils import build_metadata_payload
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.utils.logging import performance_monitor
 
@@ -51,7 +52,7 @@ def _build_mapping_result(entity_data: AudioEntityData, reader: DataReader) -> t
         ValueError: 实体类型未知时抛出。
     """
 
-    base_data = create_metadata_object(reader.version, reader.get_languages())
+    base_data = build_metadata_payload(reader.version, reader.get_languages())
     if entity_data.entity_type == "champion":
         base_data["championId"] = entity_data.entity_id
         base_data["alias"] = entity_data.entity_alias
@@ -529,7 +530,13 @@ def build_champion(  # noqa: PLR0913
     """
 
     try:
-        entity_data = AudioEntityData.from_champion(champion_id, reader, include_events=True, ctx=ctx)
+        entity_data = AudioEntityData.from_entity(
+            "champion",
+            champion_id,
+            reader,
+            include_events=True,
+            ctx=ctx,
+        )
         return build_entity(
             entity_data,
             reader,
@@ -567,7 +574,13 @@ def build_map(  # noqa: PLR0913
     """
 
     try:
-        entity_data = AudioEntityData.from_map(map_id, reader, include_events=True, ctx=ctx)
+        entity_data = AudioEntityData.from_entity(
+            "map",
+            map_id,
+            reader,
+            include_events=True,
+            ctx=ctx,
+        )
         return build_entity(
             entity_data,
             reader,
@@ -579,5 +592,3 @@ def build_map(  # noqa: PLR0913
     except ValueError as exc:
         logger.error(str(exc))
         return {}
-
-

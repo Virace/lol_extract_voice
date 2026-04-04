@@ -7,7 +7,7 @@ import pytest
 
 import lol_audio_unpack.app.facade as m_facade
 from lol_audio_unpack.app.facade import LolAudioUnpackApp
-from lol_audio_unpack.manager.data_reader import (
+from lol_audio_unpack.app.targets import (
     filter_default_visible_champions,
     get_default_hidden_champion_markers,
     should_hide_champion_by_default,

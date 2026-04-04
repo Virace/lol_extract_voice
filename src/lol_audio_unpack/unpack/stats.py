@@ -8,7 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from ..manager.utils import create_metadata_object
+from ..manager.utils import build_metadata_payload
 from ..utils.common import dump_yaml, format_duration
 
 
@@ -455,7 +455,7 @@ class EntityUnpackStats:
 
         :returns: 简洁清晰的报告字典
         """
-        metadata = create_metadata_object(self.game_version, self.languages)
+        metadata = build_metadata_payload(self.game_version, self.languages)
 
         duration_ms = self.get_processing_duration()
 

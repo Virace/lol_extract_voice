@@ -10,6 +10,7 @@ from loguru import logger
 
 from lol_audio_unpack.app.context import create_app_context
 from lol_audio_unpack.app.facade import LolAudioUnpackApp
+from lol_audio_unpack.app.targets import resolve_scope
 from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.gui.common.packaged_remote_mode_policy import normalize_app_context_settings
 from lol_audio_unpack.gui.task_models import (
@@ -49,19 +50,10 @@ def _resolve_task_scope(task: QueuedExecutionTask) -> tuple[str, bool, bool]:
         ``(target, include_champions, include_maps)`` 元组。
     """
     task_params = task.draft.task_params
-    champion_ids = task_params.champion_ids
-    map_ids = task_params.map_ids
-
-    include_champions = champion_ids is None or len(champion_ids) > 0
-    include_maps = map_ids is None or len(map_ids) > 0
-
-    if champion_ids is not None and map_ids is not None:
-        return "all", True, True
-    if champion_ids is not None:
-        return "skin", True, False
-    if map_ids is not None:
-        return "map", False, True
-    return "all", include_champions, include_maps
+    return resolve_scope(
+        champion_ids=task_params.champion_ids,
+        map_ids=task_params.map_ids,
+    )
 
 
 def _build_runtime_settings(
@@ -184,6 +176,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     message="基础数据刷新完成",
                 )
             elif step_name == "音频解包":
+
                 def emit_extract_progress(
                     entity_type: str,
                     current: int,
@@ -230,9 +223,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     current=1,
                     total=1,
                     message=(
-                        "音频解包阶段已结束，WAV 转码已转入后台"
-                        if options.wav_output.enabled
-                        else "音频解包阶段已结束"
+                        "音频解包阶段已结束，WAV 转码已转入后台" if options.wav_output.enabled else "音频解包阶段已结束"
                     ),
                     stage_finished=True,
                 )
@@ -316,5 +307,3 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
         wav_background_process=active_background_wav_process,
         wav_background_notice=wav_background_notice,
     )
-
-

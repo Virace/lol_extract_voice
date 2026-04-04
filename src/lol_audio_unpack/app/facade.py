@@ -14,7 +14,6 @@ from loguru import logger
 from riotmanifest import DecompressError, DownloadBatchError, DownloadError
 
 from lol_audio_unpack.manager import BinUpdater, DataReader, DataUpdater
-from lol_audio_unpack.manager.data_reader import get_default_visible_champions
 from lol_audio_unpack.mapping import (
     build_all,
     build_champions,
@@ -24,9 +23,11 @@ from lol_audio_unpack.mapping import (
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.runtime.remote import RemotePreparer
 from lol_audio_unpack.unpack import unpack_all, unpack_champions, unpack_maps
-from lol_audio_unpack.utils.path_constants import format_entity_folder_name, get_output_dir_name
 
+from .artifacts import resolve_audio_paths, resolve_mapping_path
+from .path_layout import get_output_dir_name
 from .remote import RemoteEntityCallbackPayload, RemoteEntityWorkItem
+from .targets import iter_entity_refs
 from .types import AppContext, OperationOptions, SourceMode
 
 DEFAULT_DOWNLOAD_RETRIES = 3
@@ -155,7 +156,7 @@ class LolAudioUnpackApp:
 
         return tuple(resolved_ids)
 
-    def _create_preparer(self) -> RemotePreparer | None:
+    def _create_remote_preparer(self) -> RemotePreparer | None:
         """按需创建远端准备器。"""
         if self.ctx.config.source_mode is not SourceMode.REMOTE_SNAPSHOT:
             return None
@@ -204,59 +205,20 @@ class LolAudioUnpackApp:
         if opts is None:
             return
 
-        has_explicit_targets = False
-        if opts.champion_ids is not None:
-            has_explicit_targets = True
-            if include_champions:
-                for champion_id in opts.champion_ids:
-                    self._merge_remote_work_item(
-                        work_items,
-                        entity_type="champion",
-                        entity_id=champion_id,
-                        need_extract=need_extract,
-                        need_mapping=need_mapping,
-                    )
-
-        if opts.map_ids is not None:
-            has_explicit_targets = True
-            if include_maps:
-                for map_id in opts.map_ids:
-                    self._merge_remote_work_item(
-                        work_items,
-                        entity_type="map",
-                        entity_id=map_id,
-                        need_extract=need_extract,
-                        need_mapping=need_mapping,
-                    )
-
-        if has_explicit_targets:
-            return
-
-        if include_champions:
-            for champion in get_default_visible_champions(reader):
-                champion_id = champion.get("id")
-                if champion_id is None:
-                    continue
-                self._merge_remote_work_item(
-                    work_items,
-                    entity_type="champion",
-                    entity_id=int(champion_id),
-                    need_extract=need_extract,
-                    need_mapping=need_mapping,
-                )
-
-        if include_maps:
-            for map_data in reader.get_maps():
-                map_id = map_data.get("id")
-                if map_id is None:
-                    continue
-                self._merge_remote_work_item(
-                    work_items,
-                    entity_type="map",
-                    entity_id=int(map_id),
-                    need_extract=need_extract,
-                    need_mapping=need_mapping,
-                )
+        for entity_type, entity_id in iter_entity_refs(
+            reader,
+            champion_ids=opts.champion_ids,
+            map_ids=opts.map_ids,
+            include_champions=include_champions,
+            include_maps=include_maps,
+        ):
+            self._merge_remote_work_item(
+                work_items,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                need_extract=need_extract,
+                need_mapping=need_mapping,
+            )
 
     @staticmethod
     def _build_entity_options(
@@ -282,49 +244,27 @@ class LolAudioUnpackApp:
         include_events: bool = False,
     ) -> AudioEntityData:
         """根据工作项构建实体数据。"""
-        if entity_type == "champion":
-            return AudioEntityData.from_champion(entity_id, reader, include_events=include_events, ctx=self.ctx)
-        return AudioEntityData.from_map(entity_id, reader, include_events=include_events, ctx=self.ctx)
+        return AudioEntityData.from_entity(
+            entity_type,
+            entity_id,
+            reader,
+            include_events=include_events,
+            ctx=self.ctx,
+        )
 
     def _resolve_audio_paths(self, entity_data: AudioEntityData) -> tuple[Path, ...]:
         """解析实体解包后的实际输出目录。"""
-        audio_base = Path(self.ctx.paths.audio_path)
-        entity_dir = get_output_dir_name(entity_data.entity_type)
-        entity_folder_name = format_entity_folder_name(
-            entity_data.entity_id,
-            entity_data.entity_alias,
-            entity_data.entity_name,
-            entity_data.entity_title,
-        )
-        version_audio_root = audio_base / self._create_reader().version
-
-        if self.ctx.config.group_by_type:
-            paths = tuple(
-                candidate
-                for audio_type in self.ctx.config.include_types
-                if (candidate := version_audio_root / audio_type / entity_dir / entity_folder_name).exists()
-            )
-            return paths
-
-        candidate = version_audio_root / entity_dir / entity_folder_name
-        if candidate.exists():
-            return (candidate,)
-        return ()
+        return resolve_audio_paths(self.ctx, entity_data, self._create_reader().version)
 
     def _resolve_mapping_path(self, *, entity_type: str, entity_id: int, integrate_data: bool) -> Path | None:
         """解析实体 mapping 的最终产物路径。"""
-        version_hash_root = Path(self.ctx.paths.hash_path) / self._create_reader().version
-        entity_dir = get_output_dir_name(entity_type)
-        if integrate_data:
-            base_path = version_hash_root / "integrated" / entity_dir / str(entity_id)
-        else:
-            base_path = version_hash_root / entity_dir / str(entity_id)
-
-        suffix = ".yml" if self.ctx.config.dev_mode else ".msgpack"
-        output_path = base_path.with_suffix(suffix)
-        if output_path.exists():
-            return output_path
-        return None
+        return resolve_mapping_path(
+            self.ctx,
+            entity_dir=get_output_dir_name(entity_type),
+            entity_id=entity_id,
+            version=self._create_reader().version,
+            integrate_data=integrate_data,
+        )
 
     @staticmethod
     def _is_retryable_download_error(exc: BaseException) -> bool:
@@ -398,7 +338,7 @@ class LolAudioUnpackApp:
             logger.info("remote_snapshot 模式已显式关闭自动清理，保留远端准备产物。")
             return
 
-        preparer = self._create_preparer()
+        preparer = self._create_remote_preparer()
         if preparer is None:
             return
         cleanup_result = preparer.cleanup_artifacts()
@@ -686,7 +626,7 @@ class LolAudioUnpackApp:
             progress_callback: 每个实体处理结束后的可选进度回调。
         """
         reader = self._create_reader()
-        remote_preparer = self._create_preparer()
+        remote_preparer = self._create_remote_preparer()
         if prepare_remote and remote_preparer is not None:
             remote_preparer.prepare_extract_wads(
                 reader=reader,
@@ -751,7 +691,7 @@ class LolAudioUnpackApp:
         """执行映射流程。"""
         backend_label = self._describe_mapping_backend()
         reader = self._create_reader()
-        remote_preparer = self._create_preparer()
+        remote_preparer = self._create_remote_preparer()
         if prepare_remote and remote_preparer is not None:
             remote_preparer.prepare_mapping_wads(
                 reader=reader,

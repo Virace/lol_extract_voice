@@ -411,12 +411,7 @@ def execute_tasks(  # noqa: PLR0913
                 f"失败 {transcode_summary.failed_wav_job_count} 个，"
                 f"跳过 {transcode_summary.skipped_wav_job_count} 个"
             )
-    elif (
-        detach_wav
-        and detached_manifest_recorder is not None
-        and wav_output is not None
-        and wav_error_detail is None
-    ):
+    elif detach_wav and detached_manifest_recorder is not None and wav_output is not None and wav_error_detail is None:
         try:
             detached_wav_handle = launch_detached(
                 ctx=ctx,
@@ -447,7 +442,7 @@ def execute_tasks(  # noqa: PLR0913
     else:
         logger.success(summary_message)
 
-    reader.write_unknown_categories_to_file()
+    reader.write_unknown_categories()
     return detached_wav_handle
 
 
@@ -592,6 +587,3 @@ def unpack_maps(  # noqa: PLR0913
         detach_wav=detach_wav,
         wav_job_label=wav_job_label,
     )
-
-
-

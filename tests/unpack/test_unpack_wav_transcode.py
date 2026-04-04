@@ -129,9 +129,7 @@ def test_execute_tasks_transcode_submit_error_does_not_fail_main_flow(
 
     reader = SimpleNamespace(
         version="15.8",
-        write_unknown_categories_to_file=lambda: writes.__setitem__(
-            "unknown_categories", writes["unknown_categories"] + 1
-        ),
+        write_unknown_categories=lambda: writes.__setitem__("unknown_categories", writes["unknown_categories"] + 1),
     )
     ctx = SimpleNamespace(
         config=SimpleNamespace(dev_mode=False),
@@ -195,9 +193,7 @@ def test_execute_tasks_transcode_finish_error_does_not_fail_main_flow(
 
     reader = SimpleNamespace(
         version="15.8",
-        write_unknown_categories_to_file=lambda: writes.__setitem__(
-            "unknown_categories", writes["unknown_categories"] + 1
-        ),
+        write_unknown_categories=lambda: writes.__setitem__("unknown_categories", writes["unknown_categories"] + 1),
     )
     ctx = SimpleNamespace(
         config=SimpleNamespace(dev_mode=False),
@@ -267,7 +263,7 @@ def test_execute_tasks_detaches_wav_transcode_into_background_handle(
 
     reader = SimpleNamespace(
         version="15.8",
-        write_unknown_categories_to_file=lambda: None,
+        write_unknown_categories=lambda: None,
     )
     ctx = SimpleNamespace(
         config=SimpleNamespace(dev_mode=False),
@@ -415,7 +411,7 @@ def test_execute_tasks_bridges_wav_progress_to_logs_and_callback(
 
     reader = SimpleNamespace(
         version="15.8",
-        write_unknown_categories_to_file=lambda: None,
+        write_unknown_categories=lambda: None,
     )
     ctx = SimpleNamespace(
         config=SimpleNamespace(dev_mode=False),

@@ -10,15 +10,15 @@ from typing import TYPE_CHECKING, Any
 from league_tools.formats import BNK, WAD, WPK
 from loguru import logger
 
-from lol_audio_unpack.manager import DataReader
-from lol_audio_unpack.model import AudioEntityData
-from lol_audio_unpack.runtime.wad import get_wad
-from lol_audio_unpack.utils.logging import performance_monitor
-from lol_audio_unpack.utils.path_constants import (
+from lol_audio_unpack.app.path_layout import (
     format_entity_folder_name,
     format_sub_entity_folder_name,
     get_output_dir_name,
 )
+from lol_audio_unpack.manager import DataReader
+from lol_audio_unpack.model import AudioEntityData
+from lol_audio_unpack.runtime.wad import get_wad
+from lol_audio_unpack.utils.logging import performance_monitor
 
 from .bp_vo import attach_bp_vo
 from .stats import FileProcessResult, ProcessingStatsContext
@@ -50,6 +50,7 @@ def _persist_wem(
         persisted_wem_callback(destination_path)
     if wav_submitter is not None:
         wav_submitter(destination_path)
+
 
 def _get_wad_instance(
     wad_path: Path,
@@ -444,7 +445,12 @@ def unpack_champion(  # noqa: PLR0913
         wav_submitter: WAV sidecar 提交回调。
     """
     try:
-        entity_data = AudioEntityData.from_champion(champion_id, reader, ctx=ctx)
+        entity_data = AudioEntityData.from_entity(
+            "champion",
+            champion_id,
+            reader,
+            ctx=ctx,
+        )
         unpack_entity(
             entity_data,
             reader,
@@ -482,7 +488,12 @@ def unpack_map(  # noqa: PLR0913
         wav_submitter: WAV sidecar 提交回调。
     """
     try:
-        entity_data = AudioEntityData.from_map(map_id, reader, ctx=ctx)
+        entity_data = AudioEntityData.from_entity(
+            "map",
+            map_id,
+            reader,
+            ctx=ctx,
+        )
         unpack_entity(
             entity_data,
             reader,
@@ -495,6 +506,3 @@ def unpack_map(  # noqa: PLR0913
     except ValueError as e:
         logger.error(str(e))
         return
-
-
-

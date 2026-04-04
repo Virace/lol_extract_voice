@@ -305,14 +305,12 @@ def test_update_logs_stage_start_and_summary_for_targeted_mode(tmp_path, monkeyp
     )
     monkeypatch.setattr(updater, "_is_local_bin_mode_enabled", lambda: True)
     monkeypatch.setattr(updater, "_update_champions", lambda _data: None)
-    monkeypatch.setattr(updater, "_record_targeted_map_event_scope_note", lambda _map_ids: None)
+    monkeypatch.setattr(updater, "_record_map_event_scope_note", lambda _map_ids: None)
     monkeypatch.setattr(updater, "_update_maps", lambda _data: None)
 
     updater.update(target="all", champion_ids=["1"], map_ids=["11"])
 
-    assert info_messages == [
-        "开始更新 BIN 数据（精确模式）：英雄 1 个，地图 1 个，事件处理=开启，本地BIN模式=开启"
-    ]
+    assert info_messages == ["开始更新 BIN 数据（精确模式）：英雄 1 个，地图 1 个，事件处理=开启，本地BIN模式=开启"]
     assert success_messages == ["BinUpdater 更新完成（精确模式）：英雄 1 个，地图 1 个"]
 
 
@@ -363,7 +361,9 @@ def test_process_single_map_records_note_when_common_dedup_removes_all_events(tm
     )
 
     summary = get_or_create_run_summary(updater.ctx.runtime_cache)
-    assert any("地图 33 (Map33) 的事件在与 地图 0 的公共事件去重后为空" in note for note in summary.stages["update"].notes)
+    assert any(
+        "地图 33 (Map33) 的事件在与 地图 0 的公共事件去重后为空" in note for note in summary.stages["update"].notes
+    )
     assert any("category=AMB_SFX" in detail for detail in summary.stages["update"].debug_details)
 
 

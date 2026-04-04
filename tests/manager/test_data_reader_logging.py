@@ -21,13 +21,17 @@ def test_write_unknown_categories_to_file_logs_error_with_exception(monkeypatch,
     opt_calls: list[dict[str, object]] = []
     errors: list[str] = []
 
-    monkeypatch.setattr(data_reader_module, "logger", SimpleNamespace(
-        info=lambda _message: None,
-        opt=lambda **kwargs: opt_calls.append(kwargs) or SimpleNamespace(error=errors.append),
-    ))
+    monkeypatch.setattr(
+        data_reader_module,
+        "logger",
+        SimpleNamespace(
+            info=lambda _message: None,
+            opt=lambda **kwargs: opt_calls.append(kwargs) or SimpleNamespace(error=errors.append),
+        ),
+    )
     monkeypatch.setattr(builtins, "open", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("disk full")))
 
-    reader.write_unknown_categories_to_file()
+    reader.write_unknown_categories()
 
     assert opt_calls == [{"exception": True}]
     assert errors == ["写入未知分类文件时出错: disk full"]
@@ -108,7 +112,9 @@ def test_get_champion_banks_logs_error_with_exception_on_unexpected_failure(monk
             opt=lambda **kwargs: opt_calls.append(kwargs) or SimpleNamespace(error=errors.append),
         ),
     )
-    monkeypatch.setattr(data_reader_module, "read_data", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        data_reader_module, "read_data", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
 
     result = reader.get_champion_banks(1)
 
@@ -138,7 +144,9 @@ def test_get_map_events_logs_error_with_exception_on_unexpected_failure(monkeypa
             opt=lambda **kwargs: opt_calls.append(kwargs) or SimpleNamespace(error=errors.append),
         ),
     )
-    monkeypatch.setattr(data_reader_module, "read_data", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        data_reader_module, "read_data", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
 
     result = reader.get_map_events(11)
 

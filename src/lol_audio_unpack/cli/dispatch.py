@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from loguru import logger
 
 from ..app.facade import LolAudioUnpackApp
+from ..app.targets import resolve_scope
 from ..config import SettingKey
 from ..runtime.wav import JobHandle
 from .runtime import build_options, parse_int_ids, resolve_champion_ids
@@ -65,13 +66,10 @@ def _target_scope(
     map_ids: tuple[int, ...] | None,
 ) -> tuple[str, bool, bool]:
     """根据共享目标范围推导门面目标范围。"""
-    if champion_ids is None and map_ids is None:
-        return "all", True, True
-    if champion_ids is not None and map_ids is not None:
-        return "all", True, True
-    if champion_ids is not None:
-        return "skin", True, False
-    return "map", False, True
+    return resolve_scope(
+        champion_ids=champion_ids,
+        map_ids=map_ids,
+    )
 
 
 def _target_detail(
@@ -369,4 +367,3 @@ __all__ = [
     "run_remote_workflow",
     "run_update",
 ]
-

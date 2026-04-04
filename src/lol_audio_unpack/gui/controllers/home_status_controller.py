@@ -8,8 +8,8 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QThreadPool, Signal
 
+from lol_audio_unpack.app.game_version import get_game_version
 from lol_audio_unpack.gui.workers import TaskWorker
-from lol_audio_unpack.manager.utils import get_game_version
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,18 +174,14 @@ class HomeStatusController(QObject):
                 output_path=output_path,
             )
         )
-        worker.signals.failed.connect(
-            lambda _error: self._emit_failure_state()
-        )
+        worker.signals.failed.connect(lambda _error: self._emit_failure_state())
         self._active_worker = worker
         self._start_worker(worker)
 
     def _emit_finished_state(self, *, result: HomeCheckResult, output_path: Path) -> None:
         """广播首页状态检查成功结果，并释放当前 worker 引用。"""
         self._active_worker = None
-        self.display_state_ready.emit(
-            self.build_display_state(result=result, output_path=output_path)
-        )
+        self.display_state_ready.emit(self.build_display_state(result=result, output_path=output_path))
 
     def _emit_failure_state(self) -> None:
         """广播首页状态检查失败结果，并释放当前 worker 引用。"""

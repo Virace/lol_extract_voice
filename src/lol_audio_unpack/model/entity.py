@@ -85,6 +85,47 @@ class AudioEntityData:
         return full_path if full_path.exists() else None
 
     @classmethod
+    def from_entity(
+        cls,
+        entity_type: str,
+        entity_id: int,
+        reader: DataReader,
+        include_events: bool = False,
+        *,
+        ctx: AppContext,
+    ) -> AudioEntityData:
+        """按实体类型构建统一的音频实体。
+
+        Args:
+            entity_type: 实体类型，支持 ``"champion"`` 或 ``"map"``。
+            entity_id: 实体 ID。
+            reader: 数据读取器实例。
+            include_events: 是否附带事件数据。
+            ctx: 运行时上下文。
+
+        Returns:
+            AudioEntityData: 对应实体的音频实体。
+
+        Raises:
+            ValueError: 当实体类型未知或底层实体构建失败时抛出。
+        """
+        if entity_type == "champion":
+            return cls.from_champion(
+                entity_id,
+                reader,
+                include_events=include_events,
+                ctx=ctx,
+            )
+        if entity_type == "map":
+            return cls.from_map(
+                entity_id,
+                reader,
+                include_events=include_events,
+                ctx=ctx,
+            )
+        raise ValueError(f"未知的实体类型: {entity_type}")
+
+    @classmethod
     def from_champion(
         cls,
         champion_id: int,
