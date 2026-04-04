@@ -1,6 +1,6 @@
 # Remote 模式（运行与接入）
 
-本文档说明 `lol_audio_unpack` 当前 `remote_snapshot` 模式的推荐配置方式、CLI 调用方式与 Python API 接入方式。
+本文档说明当前 `remote_snapshot` 模式的配置方式、CLI 用法与 Python 接入方式。
 
 ## 1. 适用场景
 
@@ -22,10 +22,13 @@
 
 当前默认行为：
 
-- 使用 `LeagueManifestResolver.resolve_manifest_pair(...)` 自动解析最新 live 快照
-- 未显式固定快照时，按 `remote_live_region` 选择 live 区服，默认 `EUW`
+- 未显式固定快照时，按 `REMOTE_LIVE_REGION` 解析最新 live 快照
+- 默认区服：`EUW`
+- `update` 全局执行一次
+- `extract / mapping` 通过 `LolAudioUnpackApp.run_workflow(...)` 按实体顺序执行
+- 单实体完成后会清理当前远端 WAD（除非显式关闭）
 
-若要固定某个快照，则必须同时提供：
+若要固定某个快照，则需要同时提供：
 
 - `REMOTE_VERSION`
 - `REMOTE_LCU_MANIFEST_URL`
@@ -45,8 +48,6 @@ uv run unpack update extract \
 
 ### 3.2 配置文件模式
 
-示例配置：
-
 ```ini
 [app]
 source_mode = remote_snapshot
@@ -62,12 +63,6 @@ max_workers = 4
 
 [extract]
 wav = false
-
-[wav]
-wav_workers = 2
-wav_timeout = 5
-wav_retries = 3
-wav_format = pcm16
 ```
 
 调用方式：
@@ -78,7 +73,7 @@ uv run unpack extract -c ./config/lol-audio-unpack.remote.ini
 
 ### 3.3 若要执行 mapping
 
-额外提供 `wwiser_path`：
+需要额外提供 `wwiser_path`：
 
 ```bash
 uv run unpack mapping \
@@ -89,34 +84,16 @@ uv run unpack mapping \
   --wwiser-path "/path/to/wwiser.pyz"
 ```
 
-## 4. CLI 执行方式
+## 4. CLI 执行语义
 
-### 4.1 典型命令
+在 remote 模式下：
 
-```bash
-uv run unpack update extract \
-  --output-path "/tmp/lol-remote" \
-  --game-region zh_CN \
-  --source-mode remote_snapshot \
-  --champions 1,103,555
-```
-
-```bash
-uv run unpack extract \
-  --output-path "/tmp/lol-remote" \
-  --game-region zh_CN \
-  --source-mode remote_snapshot \
-  --champions 1,103,555
-```
-
-```bash
-uv run unpack mapping \
-  --output-path "/tmp/lol-remote" \
-  --game-region zh_CN \
-  --source-mode remote_snapshot \
-  --champions 1,103,555 \
-  --wwiser-path "/path/to/wwiser.pyz"
-```
+1. `update` 先完成全局数据准备
+2. `extract` / `mapping` 再按实体逐个执行
+3. 每个实体只准备当前所需的 WAD 与 BIN 输入
+4. 单实体完成后会清理当前实体远端产物
+5. 下载类错误默认重试 3 次
+6. 单实体完整流程默认最多重试 3 次
 
 保留现场、关闭自动清理：
 
@@ -129,23 +106,14 @@ uv run unpack extract \
   --no-cleanup-remote
 ```
 
-### 4.2 执行语义
+## 5. Python API
 
-在 remote 模式下：
+### 5.1 `run_workflow(...)`
 
-1. `update` 仍全局执行一次
-2. `extract` / `mapping` 会按实体逐个执行
-3. 单实体完成后会清理当前实体远端 WAD（除非关闭清理）
-4. 下载类错误默认重试 3 次
-5. 单实体完整流程默认最多重试 3 次
-
-## 5. Python API 调用方式
-
-最小 `update -> extract` 示例：
+最常用的 Python 入口是：
 
 ```python
-from lol_audio_unpack import LolAudioUnpackApp, OperationOptions
-from lol_audio_unpack.app_context import create_app_context
+from lol_audio_unpack.app import LolAudioUnpackApp, OperationOptions, create_app_context
 
 ctx = create_app_context(
     settings={
@@ -153,59 +121,66 @@ ctx = create_app_context(
         "OUTPUT_PATH": "./out",
         "GAME_REGION": "zh_CN",
         "REMOTE_LIVE_REGION": "EUW",
-    }
-)
-
-app = LolAudioUnpackApp(ctx)
-app.run_remote_entity_workflow(
-    update_options=OperationOptions(champion_ids=(1, 103)),
-    update_target="skin",
-    extract_options=OperationOptions(champion_ids=(1, 103), max_workers=4),
-    extract_include_champions=True,
-)
-```
-
-带 mapping 的示例：
-
-```python
-from lol_audio_unpack import LolAudioUnpackApp, OperationOptions
-from lol_audio_unpack.app_context import create_app_context
-
-ctx = create_app_context(
-    settings={
-        "SOURCE_MODE": "remote_snapshot",
-        "OUTPUT_PATH": "./out",
-        "GAME_REGION": "zh_CN",
         "WWISER_PATH": "./wwiser.pyz",
     }
 )
-
 app = LolAudioUnpackApp(ctx)
-app.run_remote_entity_workflow(
+
+app.run_workflow(
     update_options=OperationOptions(champion_ids=(1, 103)),
-    update_target="skin",
     extract_options=OperationOptions(champion_ids=(1, 103), max_workers=4),
-    mapping_options=OperationOptions(champion_ids=(103,), max_workers=1, integrate_data=True),
+    mapping_options=OperationOptions(champion_ids=(1, 103), max_workers=1, integrate_data=True),
     extract_include_champions=True,
     mapping_include_champions=True,
 )
 ```
 
-## 6. 资源与清理规则
+### 5.2 `build_work_items(...)`
+
+如果只想先看 remote 单位驱动会生成哪些实体队列，可以先调用：
+
+```python
+work_items = app.build_work_items(
+    extract_options=OperationOptions(champion_ids=(1, 103)),
+    mapping_options=OperationOptions(champion_ids=(1, 103), integrate_data=True),
+    extract_include_champions=True,
+    mapping_include_champions=True,
+)
+```
+
+返回值是按实体类型与 ID 排序的 `RemoteEntityWorkItem` 列表。
+
+### 5.3 低层准备入口
+
+需要手动控制 LCU / BIN / GAME 资源准备时，可直接使用：
+
+```python
+from lol_audio_unpack.runtime.remote import RemotePreparer
+
+preparer = RemotePreparer(ctx=ctx)
+```
+
+它提供：
+
+- `prepare_lcu_data()`
+- `prepare_bin_inputs(...)`
+- `prepare_extract_wads(...)`
+- `prepare_mapping_wads(...)`
+- `cleanup_artifacts(...)`
+
+## 6. 资源与清理
 
 默认：
 
 - `cleanup_remote = True`
 
-全局 `update` 完成后会清理：
+清理范围包括：
 
-- LCU assets.wad
-- `manifest/<version>/bin_input/**`
-- `.use_local_bin`
+- 全局 `update` 之后登记的 LCU bundle 与 BIN 输入
+- 单实体 `extract / mapping` 之后登记的 GAME WAD
+- `_prepared_game` 下的最小远端运行时产物
 
-实体级 `extract` / `mapping` 完成后会清理当前实体的 GAME WAD。
-
-## 7. 真实长测
+## 7. 验证与测试
 
 真实远端 live 下载测试统一使用 `remote_live` marker。
 

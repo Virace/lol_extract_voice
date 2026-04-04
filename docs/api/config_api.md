@@ -1,104 +1,103 @@
-# 配置与数据读写 API
+# 配置与上下文 API
 
 ## 1. 当前配置主线
 
-当前仓库的共享配置已经收口为：
+当前配置链路由三部分组成：
 
-1. `settings`：显式传入的共享配置映射
-2. 标准 INI 配置文件：由外部显式读取，再转成 `settings`
-3. `AppContext`：只消费 `settings`，不再负责来源解析
+1. `settings`：传给 `create_app_context(...)` 的共享设置映射
+2. 标准 INI：`lol_audio_unpack.config.ini` 负责读写
+3. `AppContext`：只消费已经解析好的共享配置
 
-已移除的主线：
+## 2. `lol_audio_unpack.config`
 
-- `.lol.env` / `.lol.env.dev`
-- 系统环境变量 `LOL_*`
-- `initialize_context_from_env(...)`
-- `cli_overrides`
+### 2.1 schema 层
 
-## 2. 共享配置 schema
+共享配置 schema 位于：
 
-集中定义位于：
-
-- `src/lol_audio_unpack/config_schema.py`
+- `src/lol_audio_unpack/config/schema.py`
 
 这里维护：
 
-- 内部 settings key
-- INI 文件中的小写 key
-- CLI 对应的 argparse attr 名
-- 默认值
+- `SettingKey`
+- `ConfigSection`
+- `SharedSettingField`
+- `CommandConfigField`
+- `SHARED_SETTING_FIELDS`
+- `SHARED_FIELDS_BY_KEY`
+- `SHARED_FIELDS_BY_INI_KEY`
+- `SHARED_FIELDS_BY_CLI_ATTR`
+- `SUPPORTED_SETTING_KEYS`
+- `DEFAULT_SHARED_SETTINGS`
+- `DEFAULT_REMOTE_LIVE_REGION`
+- `COMMAND_CONFIG_FIELDS`
+- `CONTEXT_OPTION_ATTRS`
+- `build_settings(args)`
 
-新增、删除或重命名共享配置字段时，应优先修改这个 schema 文件。
+`build_settings(args)` 会从 argparse namespace 中提取共享配置字段，产出 `create_app_context(...)` 可直接消费的 `dict[str, Any]`。
 
-## 3. 上下文构建入口
+### 2.2 INI 层
 
-```python
-def create_app_context(
-    *,
-    settings: Mapping[str, Any] | None = None,
-    force_reload: bool = False,
-    dev_mode: bool = False,
-    runtime_cache: dict[str, Any] | None = None,
-) -> AppContext
-```
+标准 INI 读写位于：
 
-```python
-def setup_app(
-    dev_mode: bool = False,
-    log_level: str = "INFO",
-    **kwargs,
-) -> AppContext
-```
+- `src/lol_audio_unpack/config/ini.py`
 
-`setup_app(...)` 是对外便捷入口：会在构建 `AppContext` 的同时完成日志初始化。
-
-## 4. 配置文件 API
-
-标准 INI 配置加载位于：
-
-- `src/lol_audio_unpack/config_loading.py`
-
-当前公开的核心 helper：
+当前公开 helper：
 
 ```python
-def resolve_default_config_file_path(
+def resolve_default_path(
     *,
     dev_mode: bool = False,
     runtime_paths: RuntimePaths | None = None,
 ) -> Path
 
 
-def load_settings_from_config_file(
+def load_settings(
     config_file: StrPath,
     *,
     require_exists: bool = True,
 ) -> dict[str, str]
 
 
-def load_command_config_from_file(
+def write_settings(
+    config_file: StrPath,
+    settings: dict[str, Any],
+) -> None
+
+
+def load_command_config(
     config_file: StrPath,
     *,
-    command: str,
+    command: str | None,
     require_exists: bool = True,
 ) -> dict[str, Any]
 
 
-def write_settings_to_config_file(
+def write_command_config(
     config_file: StrPath,
-    settings: dict[str, Any],
+    *,
+    command: str,
+    values: dict[str, Any],
 ) -> None
 ```
 
-默认配置文件名：
+默认文件名：
 
 - `lol-audio-unpack.ini`
 - `lol-audio-unpack.dev.ini`
 
-当前 CLI 约束：
+## 3. 运行时默认路径
 
-- `-c` 模式默认只读取 `lol-audio-unpack.ini`
-- 如果 CLI 需要读取 dev 配置，请显式传入 `-c ./lol-audio-unpack.dev.ini`
-- 这是因为当前 CLI 的 `-c` 模式与 `--dev` 绝对互斥
+`resolve_default_path(...)` 基于 `detect_runtime_paths()` 的 `config_root` 选择默认配置目录：
+
+- 源码态：默认取当前工作目录
+- 冻结态：默认取可执行文件所在目录
+
+也就是说：
+
+- 源码运行 GUI/CLI 时，默认配置文件落在当前启动目录
+- 打包运行 GUI 时，默认配置文件落在可执行文件同目录
+
+## 4. 标准 INI 结构
 
 标准 section：
 
@@ -119,20 +118,11 @@ def write_settings_to_config_file(
 - `[wav]`：`wav_workers`、`wav_timeout`、`wav_retries`、`wav_format`
 - `[mapping]`：`integrate_data`
 
-GUI 语义：
+GUI 只读取 `[app]`。其余 section 仅供 CLI 配置文件模式使用。
 
-- GUI 只读取 `[app]`
-- `[targets] / [runtime] / [update] / [extract] / [wav] / [mapping]` 仅供 CLI 的配置文件模式使用
-- GUI 执行中心的“前置强制更新”属于 GUI 自身的调度包装，语义上等价于任务开始前插入一次 `update --force`
+## 5. 共享设置字段
 
-建议示例风格：
-
-- 必填或关键项保持未注释
-- 只是默认值说明的项保留为注释，用户按需取消注释覆盖
-
-## 5. `settings` 结构
-
-常用字段：
+常用共享设置 key：
 
 - `SOURCE_MODE`
 - `GAME_PATH`
@@ -148,49 +138,7 @@ GUI 语义：
 - `REMOTE_LCU_MANIFEST_URL`
 - `REMOTE_GAME_MANIFEST_URL`
 
-示例：
-
-```python
-settings = {
-    "GAME_PATH": "/path/to/League of Legends",
-    "OUTPUT_PATH": "./output",
-    "GAME_REGION": "zh_CN",
-}
-
-ctx = create_app_context(settings=settings)
-```
-
-Remote 模式最小示例：
-
-```python
-settings = {
-    "SOURCE_MODE": "remote_snapshot",
-    "OUTPUT_PATH": "./out",
-    "GAME_REGION": "zh_CN",
-    "REMOTE_LIVE_REGION": "EUW",
-}
-
-ctx = create_app_context(settings=settings)
-```
-
-固定快照示例：
-
-```python
-settings = {
-    "SOURCE_MODE": "remote_snapshot",
-    "OUTPUT_PATH": "./out",
-    "GAME_REGION": "zh_CN",
-    "REMOTE_VERSION": "16.5",
-    "REMOTE_LCU_MANIFEST_URL": "https://...",
-    "REMOTE_GAME_MANIFEST_URL": "https://...",
-}
-
-ctx = create_app_context(settings=settings)
-```
-
-## 6. 默认值与校验
-
-默认值来自 `config_schema.py`，当前包括：
+当前默认值：
 
 - `GAME_REGION = "zh_CN"`
 - `EXCLUDE_TYPE = "SFX,MUSIC"`
@@ -200,24 +148,36 @@ ctx = create_app_context(settings=settings)
 - `REMOTE_LIVE_REGION = "EUW"`
 - `WITH_BP_VO = False`
 
-关键校验规则：
+## 6. 上下文构建
 
-- `local_path` 模式必须能解析到有效 `GAME_PATH`
-- `remote_snapshot` 模式下，若未显式提供 `GAME_PATH`，会默认派生为 `OUTPUT_PATH/_prepared_game`
-- `remote_snapshot` 模式下，若显式指定固定快照，则 `REMOTE_VERSION` / `REMOTE_LCU_MANIFEST_URL` / `REMOTE_GAME_MANIFEST_URL` 必须同时提供
+```python
+def create_app_context(
+    *,
+    settings: Mapping[str, Any] | None = None,
+    force_reload: bool = False,
+    dev_mode: bool = False,
+    runtime_cache: dict[str, Any] | None = None,
+) -> AppContext
+```
 
-关键归一化规则：
+```python
+def setup_app(
+    dev_mode: bool = False,
+    log_level: str = "INFO",
+    **kwargs,
+) -> AppContext
+```
 
-- `GAME_REGION=en_us` 会归一化为 `default`
-- `EXCLUDE_TYPE` 支持字符串或可迭代输入，内部统一转为大写元组
-- `REMOTE_LIVE_REGION` 统一转为大写 live 区服代码
-- `REMOTE_VERSION` 统一转为 `major.minor`
+- `create_app_context(...)` 负责：
+  - 标准化共享配置
+  - 构建 `AppConfig`
+  - 派生 `AppPaths`
+  - 产出 `AppContext`
+- `setup_app(...)` 在此基础上额外完成日志初始化
 
-## 7. 路径派生
+## 7. 路径派生结果
 
-`create_app_context(...)` 只负责派生路径，不会在初始化阶段统一创建目录。
-
-派生结果包括：
+`create_app_context(...)` 会派生以下路径根：
 
 - `audios`
 - `wavs`
@@ -227,21 +187,61 @@ ctx = create_app_context(settings=settings)
 - `hashes`
 - `reports`
 - `manifest`
+- `game_version`
+- `Game/DATA/FINAL/Champions`
+- `Game/DATA/FINAL/Maps/Shipping`
+- `LeagueClient/Plugins/rcp-be-lol-game-data`
 
-在 `remote_snapshot` 模式下，还会按需派生：
+在 `remote_snapshot` 模式下：
 
-- `_prepared_game`
-- `cache/remote/<version>/lcu`
-- `cache/remote/<version>/game`
+- `game_path` 默认落在 `OUTPUT_PATH/_prepared_game`
+- `cache/remote/<version>/...` 用于缓存 manifest、LCU bundle 与 GAME WAD
 
-## 8. 数据读写辅助
+## 8. 配置示例
 
-`manager/utils.py` 中的读写 helper 仍保持不变：
+### 8.1 本地模式
 
-- `find_data_file(...)`
-- `read_data(...)`
-- `write_data(...)`
-- `resolve_context_version(...)`
-- `needs_update(...)`
+```python
+from lol_audio_unpack.app import create_app_context
 
-这些 helper 依赖 `AppContext` 的显式配置与派生路径，不再依赖外部全局配置。
+ctx = create_app_context(
+    settings={
+        "GAME_PATH": "/path/to/League of Legends",
+        "OUTPUT_PATH": "./output",
+        "GAME_REGION": "zh_CN",
+    }
+)
+```
+
+### 8.2 remote 模式
+
+```python
+from lol_audio_unpack.app import create_app_context
+
+ctx = create_app_context(
+    settings={
+        "SOURCE_MODE": "remote_snapshot",
+        "OUTPUT_PATH": "./out",
+        "GAME_REGION": "zh_CN",
+        "REMOTE_LIVE_REGION": "EUW",
+        "WWISER_PATH": "./wwiser.pyz",
+    }
+)
+```
+
+### 8.3 直接读写 INI
+
+```python
+from lol_audio_unpack.config import load_settings, resolve_default_path, write_settings
+
+config_file = resolve_default_path()
+write_settings(
+    config_file,
+    {
+        "GAME_PATH": "/path/to/League of Legends",
+        "OUTPUT_PATH": "./output",
+        "GROUP_BY_TYPE": True,
+    },
+)
+settings = load_settings(config_file)
+```

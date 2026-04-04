@@ -16,6 +16,7 @@
 ---
 
 - [介绍](#介绍)
+- [当前代码结构](#当前代码结构)
 - [使用方法](#使用方法)
 - [后续处理](#后续处理)
 - [维护者](#维护者)
@@ -32,6 +33,18 @@
 文档导航、GUI 当前状态、Remote 模式、基准测试与设计说明见：
 
 - [docs/README.md](./docs/README.md)
+- [docs/API.md](./docs/API.md)
+
+## 当前代码结构
+
+- 根包 `lol_audio_unpack`：保留 `setup_app` 与 `__version__` 两个顶层入口。
+- 应用编排层：`src/lol_audio_unpack/app/`，负责 `AppContext`、`OperationOptions`、`LolAudioUnpackApp` 与 remote 工作流。
+- 配置层：`src/lol_audio_unpack/config/`，集中维护共享设置 schema 与标准 INI 读写。
+- CLI 入口：`src/lol_audio_unpack/cli/`，`unpack` / `mapping` console script 共用同一套动作式解析与调度实现。
+- 核心流水线：`src/lol_audio_unpack/unpack/` 负责音频解包，`src/lol_audio_unpack/mapping/` 负责事件映射。
+- 运行时支持：`src/lol_audio_unpack/runtime/remote/` 负责 remote 准备，`src/lol_audio_unpack/runtime/wav/` 负责 WAV sidecar 转码。
+- 共享模型与数据层：`src/lol_audio_unpack/model/`、`src/lol_audio_unpack/manager/`。
+- GUI：`src/lol_audio_unpack/gui/`，当前围绕执行中心、总览与设置页展开。
 
 ## 使用方法
 

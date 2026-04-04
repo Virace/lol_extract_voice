@@ -1,6 +1,10 @@
 # CLI API（命令行参数与执行语义）
 
-主入口：`unpack`（对应 `lol_audio_unpack.__main__:main`）
+当前入口：
+
+- `unpack`：对应 `lol_audio_unpack.cli.cli:main`
+- `mapping`：同样对应 `lol_audio_unpack.cli.cli:main`，但默认以 `mapping` 模式启动
+- `python -m lol_audio_unpack`：薄壳转发到同一套 CLI 主入口
 
 ## 1. 基础命令
 
@@ -8,7 +12,13 @@
 uv run unpack <ACTION...> [OPTIONS]
 ```
 
-兼容模块入口仍可用：
+单独运行映射命令时，也可以直接使用：
+
+```bash
+uv run mapping [OPTIONS]
+```
+
+模块入口仍可用：
 
 ```bash
 python -m lol_audio_unpack <ACTION...> [OPTIONS]

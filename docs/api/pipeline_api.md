@@ -1,19 +1,51 @@
 # 解包与映射 API（核心流水线）
 
-## 1. 解包 API（`unpack.py`）
+## 1. 解包入口
 
-### 1.1 核心函数签名
+公开包：`lol_audio_unpack.unpack`
+
+### 1.1 单实体入口
 
 ```python
-def unpack_audio_entity(
+def unpack_entity(
     entity_data: AudioEntityData,
     reader: DataReader,
     wad_cache: dict[Path, WAD] | None = None,
     cache_lock: threading.Lock | None = None,
     *,
     ctx: AppContext,
+    persisted_wem_callback: Callable[[Path], None] | None = None,
+    wav_submitter: Callable[[Path], None] | None = None,
 ) -> None
 ```
+
+```python
+def unpack_champion(..., *, ctx: AppContext, ...) -> None
+def unpack_map(..., *, ctx: AppContext, ...) -> None
+```
+
+### 1.2 批量入口
+
+```python
+def unpack_all(
+    reader: DataReader,
+    max_workers: int = 4,
+    include_champions: bool = True,
+    include_maps: bool = True,
+    *,
+    ctx: AppContext,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
+    persisted_wem_callback: Callable[[Path], None] | None = None,
+    wav_output: WavOutputOptions | None = None,
+) -> None
+```
+
+```python
+def unpack_champions(..., *, ctx: AppContext, wav_output: WavOutputOptions | None = None) -> None
+def unpack_maps(..., *, ctx: AppContext, wav_output: WavOutputOptions | None = None) -> None
+```
+
+### 1.3 输出路径规则
 
 ```python
 def generate_output_path(
@@ -26,122 +58,132 @@ def generate_output_path(
 ) -> Path
 ```
 
-```python
-def unpack_audio_all(..., *, ctx: AppContext) -> None
-def unpack_champions(..., *, ctx: AppContext) -> None
-def unpack_maps(..., *, ctx: AppContext) -> None
-```
+`generate_output_path(...)` 受 `ctx.config.group_by_type` 影响：
 
-### 1.2 输出路径规则
+- `True`：优先按音频类型分层
+- `False`：优先按实体目录分层
 
-`generate_output_path` 受 `ctx.config.group_by_type` 影响：
+实体与子实体目录命名规则统一复用 `app/path_layout.py`。
 
-- `True`：`audios/<type>/<entity_path>`
-- `False`：`audios/<entity_path>/<type>`
+### 1.4 解包过程
 
-其中 `<entity_path>` 使用 `utils/path_constants.py` 的命名约定（`ID·alias·name...`）。
+单实体解包主线：
 
-### 1.3 解包过程（单实体）
+1. 根据 `AudioEntityData` 收集 VO 与非 VO bank 路径
+2. 分别从语言 WAD / 根 WAD 提取原始 bank 数据
+3. 解析 `BNK` / `WPK` 并输出 `.wem`
+4. 可选把输出 `.wem` 通过 `wav_submitter` 投递给 WAV sidecar
+5. 记录统计信息与报告
 
-1. 收集 VO 与非 VO bank 路径。
-2. 分别从语言 WAD / 根 WAD 批量提取原始数据。
-3. 解析 `BNK` / `WPK` 并输出 `.wem`。
-4. 记录统计信息并写出 `_metadata.yaml` 报告。
-5. 英雄解包在 `WITH_BP_VO` 启用时附带写入大厅选用/禁用语音。
+英雄解包在 `ctx.config.with_bp_vo` 启用时会额外处理大厅 BP 语音。
 
-### 1.4 remote 模式下的解包准备
+## 2. 映射入口
 
-在 `remote_snapshot` 模式下，`facade.extract()` 会先准备当前操作所需的实体 WAD：
+公开包：`lol_audio_unpack.mapping`
 
-- 仅 `VO`：只准备语言 WAD
-- 含 `SFX/MUSIC`：准备 root WAD
-- 若同一实体同时命中两类内容：两者都准备
-
-## 2. 映射 API（`mapping.py`）
-
-### 2.1 核心函数签名
+### 2.1 单实体入口
 
 ```python
-def build_audio_event_mapping(
+def build_entity(
     entity_data: AudioEntityData,
     reader: DataReader,
     wwiser_manager: WwiserManager | None = None,
     integrate_data: bool = False,
-    runtime_cache: MappingRuntimeCache | None = None,
+    runtime_cache: RuntimeCache | None = None,
     *,
     ctx: AppContext,
 ) -> dict[str, Any]
 ```
 
 ```python
-def build_mapping_all(..., *, ctx: AppContext) -> None
-def build_champions_mapping(..., *, ctx: AppContext) -> None
-def build_maps_mapping(..., *, ctx: AppContext) -> None
+def build_champion(..., *, ctx: AppContext) -> dict[str, Any]
+def build_map(..., *, ctx: AppContext) -> dict[str, Any]
 ```
 
-### 2.2 映射结果写入
+### 2.2 批量入口
 
-- 普通映射：写入 `hashes/<version>/<champions|maps>/<id>.*`
-- 整合数据（`integrate_data=True`）：写入 `hashes/<version>/integrated/<champions|maps>/<id>.*`
+```python
+def execute_tasks(
+    tasks: list[EntityTask],
+    reader: DataReader,
+    max_workers: int = 4,
+    integrate_data: bool = False,
+    *,
+    ctx: AppContext,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
+) -> None
+```
 
-### 2.3 缓存机制
+```python
+def build_all(..., *, ctx: AppContext) -> None
+def build_champions(..., *, ctx: AppContext) -> None
+def build_maps(..., *, ctx: AppContext) -> None
+```
 
-`MappingRuntimeCache` 包含：
+### 2.3 整合入口
 
-- `wad_cache`：复用 WAD 对象
-- `extract_cache`：避免重复提取同一 bnk
-- `hirc_cache`：复用 HIRC 解析对象
-- `cache_lock`：并发访问保护
+```python
+def integrate_entity(
+    entity_data: AudioEntityData,
+    reader: DataReader,
+    mapping_result: dict[str, Any],
+) -> dict[str, Any]
+```
 
-### 2.4 当前 `mapping` 的真实处理边界
+当 `integrate_data=True` 时，映射结果会与实体原始 banks / events 数据整合后再写出。
 
-`mapping` 当前不是只处理 `VO`。
+### 2.4 `RuntimeCache`
 
-真实语义是：
+`mapping.session.RuntimeCache` 提供映射阶段的运行时缓存：
 
-1. 只要某个 `category` 同时出现在 `banks` 与 `events` 中，就会尝试构建映射
-2. 再根据 `category` 是否包含 `VO` 决定 WAD 来源：
-   - 包含 `VO`：语言 WAD
-   - 其他：root WAD
+- `wad_cache`
+- `extract_cache`
+- `hirc_cache`
+- `cache_lock`
+
+### 2.5 当前映射语义
+
+映射阶段会遍历同时存在于 `banks` 与 `events` 的分类。
+
+WAD 选择规则：
+
+- 分类名包含 `VO`：优先语言 WAD
+- 其他分类：使用根 WAD
 
 因此：
 
-- `mapping` 通常会同时需要 root + 语言两类 WAD
-- 它不受 `include_types` 约束
-- 地图 `mapping` 往往会更慢，因为常同时卷入环境音效、音乐和 VO/NPC 事件
+- `mapping` 通常会同时使用语言 WAD 与根 WAD
+- 它不受 `ctx.config.include_types` 的过滤约束
+- 地图映射往往会比英雄链路更重
 
-## 3. 上下文约束
+## 3. 编排层入口
 
-- `DataReader` 构造必须传入 `ctx: AppContext`。
-- `AudioEntityData.from_champion/from_map` 必须传入 `ctx`。
-- 解包与映射主函数均要求 `ctx`，不再支持全局配置回退。
+`lol_audio_unpack.app.LolAudioUnpackApp` 负责把 update / extract / mapping 串成完整工作流。
+
+常用方法：
+
+- `update(opts, *, target="all")`
+- `extract(opts, *, include_champions=True, include_maps=True, prepare_remote=True, ...)`
+- `mapping(opts, *, include_champions=True, include_maps=True, prepare_remote=True, ...)`
+- `build_work_items(...)`
+- `run_workflow(...)`
+- `cleanup_remote_artifacts()`
 
 ## 4. remote 模式执行顺序
 
-在 `remote_snapshot` 模式下，CLI 不再简单地整批执行 `extract` / `mapping`，而是：
+在 `remote_snapshot` 模式下，按实体拆批执行的主线是：
 
-1. 全局完成 `update`
-2. 构建实体 work item 队列
-3. 单位执行：
-   - 准备当前实体所需 WAD 并集
-   - 运行 `extract`
-   - 运行 `mapping`
-   - 清理当前实体远端 WAD
+1. 可选先执行一次全局 `update`
+2. 通过 `build_work_items(...)` 构建实体工作项队列
+3. 单实体依次准备所需 WAD
+4. 执行 `extract`
+5. 执行 `mapping`
+6. 清理当前实体远端产物
 
-这样做的目标是降低峰值空间占用，而不是追求 `extract + mapping` 的逻辑融合。
+目标是降低磁盘峰值，而不是把 `extract + mapping` 合并成一个大步骤。
 
-## 5. 半稳定与内部边界
+## 5. 上下文约束
 
-建议直接调用：
-
-- `unpack_audio_all` / `unpack_champions` / `unpack_maps`
-- `build_mapping_all` / `build_champions_mapping` / `build_maps_mapping`
-
-不建议外部直接依赖：
-
-- `_get_wad_instance`
-- `_generate_relative_path`
-- `_get_cached_hirc`
-- `_is_bnk_extracted` / `_mark_bnk_extracted`
-
-这些内部函数可能在后续优化时重构而不做兼容承诺。
+- `DataReader` 构造必须传入 `ctx: AppContext`
+- `AudioEntityData.from_champion/from_map` 必须传入 `ctx`
+- 解包、映射、remote 准备相关主函数都要求显式上下文
