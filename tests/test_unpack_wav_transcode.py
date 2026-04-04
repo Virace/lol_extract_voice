@@ -1,4 +1,4 @@
-"""解包阶段接入 WAV sidecar 的定向测试。"""
+"""解包阶段接入 WAV 转码的定向测试。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from lol_audio_unpack.runtime.wav import WavSidecarProgressSnapshot
+from lol_audio_unpack.runtime.wav import TranscodeProgress
 from lol_audio_unpack.unpack import batch as unpack_batch
 from lol_audio_unpack.unpack import entity as unpack_entity
 from lol_audio_unpack.utils.run_summary import get_or_create_run_summary
@@ -21,11 +21,11 @@ def test_unpack_wav_bridge_module_is_removed() -> None:
     assert find_spec("lol_audio_unpack.unpack.wav") is None
 
 
-def test_persisted_wem_is_submitted_to_sidecar(tmp_path: Path) -> None:
+def test_persisted_wem_is_submitted_to_transcode(tmp_path: Path) -> None:
     submitted: list[Path] = []
 
     class FakeCoordinator:
-        def submit_persisted_wem(self, wem_path: Path, **_kwargs) -> None:
+        def submit(self, wem_path: Path, **_kwargs) -> None:
             submitted.append(wem_path)
 
     file = SimpleNamespace(save_file=lambda path: Path(path).write_bytes(b"wem-bytes"))
@@ -34,7 +34,7 @@ def test_persisted_wem_is_submitted_to_sidecar(tmp_path: Path) -> None:
     unpack_entity._persist_wem(
         file,
         destination,
-        wav_submitter=FakeCoordinator().submit_persisted_wem,
+        wav_submitter=FakeCoordinator().submit,
     )
 
     assert submitted == [destination]
@@ -59,24 +59,24 @@ def test_failed_wem_write_is_not_submitted(tmp_path: Path) -> None:
     assert submitted == []
 
 
-def test_execute_tasks_sidecar_submit_error_does_not_fail_main_flow(
+def test_execute_tasks_transcode_submit_error_does_not_fail_main_flow(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    writes = {"unknown_categories": 0, "mark_finished": 0, "finalize": 0}
+    writes = {"unknown_categories": 0, "finish_extract": 0, "finish": 0}
 
     class FakeCoordinator:
         def __init__(self, **_kwargs) -> None:
             return None
 
-        def submit_persisted_wem(self, _wem_path: Path, **_kwargs) -> None:
+        def submit(self, _wem_path: Path, **_kwargs) -> None:
             raise RuntimeError("submit boom")
 
-        def mark_extract_finished(self) -> None:
-            writes["mark_finished"] += 1
+        def finish_extract(self) -> None:
+            writes["finish_extract"] += 1
 
-        def finalize(self) -> SimpleNamespace:
-            writes["finalize"] += 1
+        def finish(self) -> SimpleNamespace:
+            writes["finish"] += 1
             return SimpleNamespace(
                 breaker_open=False,
                 breaker_reason=None,
@@ -98,7 +98,7 @@ def test_execute_tasks_sidecar_submit_error_does_not_fail_main_flow(
         if wav_submitter is not None:
             wav_submitter(tmp_path / "audios" / "15.8" / "champion-1.wem")
 
-    monkeypatch.setattr(unpack_batch, "WavTranscodeCoordinator", FakeCoordinator)
+    monkeypatch.setattr(unpack_batch, "TranscodeCoordinator", FakeCoordinator)
     monkeypatch.setattr(unpack_batch, "unpack_champion", fake_unpack_champion)
 
     reader = SimpleNamespace(
@@ -127,29 +127,29 @@ def test_execute_tasks_sidecar_submit_error_does_not_fail_main_flow(
     )
 
     summary = get_or_create_run_summary(ctx.runtime_cache)
-    assert writes == {"unknown_categories": 1, "mark_finished": 1, "finalize": 1}
+    assert writes == {"unknown_categories": 1, "finish_extract": 1, "finish": 1}
     assert "extract" in summary.stages
-    assert any("sidecar 内部异常" in note for note in summary.stages["extract"].notes)
+    assert any("内部异常" in note for note in summary.stages["extract"].notes)
 
 
-def test_execute_tasks_sidecar_finalize_error_does_not_fail_main_flow(
+def test_execute_tasks_transcode_finish_error_does_not_fail_main_flow(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    writes = {"unknown_categories": 0, "mark_finished": 0}
+    writes = {"unknown_categories": 0, "finish_extract": 0}
 
     class FakeCoordinator:
         def __init__(self, **_kwargs) -> None:
             return None
 
-        def submit_persisted_wem(self, _wem_path: Path, **_kwargs) -> None:
+        def submit(self, _wem_path: Path, **_kwargs) -> None:
             return None
 
-        def mark_extract_finished(self) -> None:
-            writes["mark_finished"] += 1
+        def finish_extract(self) -> None:
+            writes["finish_extract"] += 1
 
-        def finalize(self) -> SimpleNamespace:
-            raise RuntimeError("finalize boom")
+        def finish(self) -> SimpleNamespace:
+            raise RuntimeError("finish boom")
 
     def fake_unpack_champion(
         _champion_id: int,
@@ -164,7 +164,7 @@ def test_execute_tasks_sidecar_finalize_error_does_not_fail_main_flow(
         if wav_submitter is not None:
             wav_submitter(tmp_path / "audios" / "15.8" / "champion-1.wem")
 
-    monkeypatch.setattr(unpack_batch, "WavTranscodeCoordinator", FakeCoordinator)
+    monkeypatch.setattr(unpack_batch, "TranscodeCoordinator", FakeCoordinator)
     monkeypatch.setattr(unpack_batch, "unpack_champion", fake_unpack_champion)
 
     reader = SimpleNamespace(
@@ -193,12 +193,12 @@ def test_execute_tasks_sidecar_finalize_error_does_not_fail_main_flow(
     )
 
     summary = get_or_create_run_summary(ctx.runtime_cache)
-    assert writes == {"unknown_categories": 1, "mark_finished": 1}
+    assert writes == {"unknown_categories": 1, "finish_extract": 1}
     assert "extract" in summary.stages
-    assert any("sidecar 内部异常" in note for note in summary.stages["extract"].notes)
+    assert any("内部异常" in note for note in summary.stages["extract"].notes)
 
 
-def test_execute_tasks_detaches_wav_sidecar_into_background_handle(
+def test_execute_tasks_detaches_wav_transcode_into_background_handle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -229,13 +229,13 @@ def test_execute_tasks_detaches_wav_sidecar_into_background_handle(
 
     monkeypatch.setattr(
         unpack_batch,
-        "WavTranscodeCoordinator",
+        "TranscodeCoordinator",
         lambda **_kwargs: pytest.fail("detached 模式不应创建阻塞 coordinator"),
     )
     monkeypatch.setattr(unpack_batch, "unpack_champion", fake_unpack_champion)
     monkeypatch.setattr(
         unpack_batch,
-        "launch_detached_wav",
+        "launch_detached",
         lambda **kwargs: launches.append(kwargs["manifest_recorder"]) or FakeHandle(),
     )
 
@@ -260,7 +260,7 @@ def test_execute_tasks_detaches_wav_sidecar_into_background_handle(
         max_workers=1,
         ctx=ctx,
         wav_output=wav_output,
-        detach_wav_sidecar=True,
+        detach_wav=True,
         wav_job_label="cli-test",
     )
 
@@ -274,7 +274,7 @@ def test_execute_tasks_bridges_wav_progress_to_logs_and_callback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """主线应把 sidecar 进度桥接成日志和结构化进度。"""
+    """主线应把转码进度桥接成日志和结构化进度。"""
     infos: list[str] = []
     progress_events: list[tuple[str, int, int, str]] = []
 
@@ -309,10 +309,10 @@ def test_execute_tasks_bridges_wav_progress_to_logs_and_callback(
         def __init__(self, *, progress_callback=None, **_kwargs) -> None:
             self._progress_callback = progress_callback
 
-        def submit_persisted_wem(self, _wem_path: Path, **_kwargs) -> None:
+        def submit(self, _wem_path: Path, **_kwargs) -> None:
             if self._progress_callback is not None:
                 self._progress_callback(
-                    WavSidecarProgressSnapshot(
+                    TranscodeProgress(
                         phase="submitted",
                         extract_finished=False,
                         produced_wem_count=1,
@@ -327,10 +327,10 @@ def test_execute_tasks_bridges_wav_progress_to_logs_and_callback(
                     )
                 )
 
-        def mark_extract_finished(self) -> None:
+        def finish_extract(self) -> None:
             if self._progress_callback is not None:
                 self._progress_callback(
-                    WavSidecarProgressSnapshot(
+                    TranscodeProgress(
                         phase="draining",
                         extract_finished=True,
                         produced_wem_count=1,
@@ -345,11 +345,11 @@ def test_execute_tasks_bridges_wav_progress_to_logs_and_callback(
                     )
                 )
 
-        def finalize(self) -> SimpleNamespace:
+        def finish(self) -> SimpleNamespace:
             if self._progress_callback is not None:
                 self._progress_callback(
-                    WavSidecarProgressSnapshot(
-                        phase="finalized",
+                    TranscodeProgress(
+                        phase="done",
                         extract_finished=True,
                         produced_wem_count=1,
                         submitted_wav_job_count=1,
@@ -384,7 +384,7 @@ def test_execute_tasks_bridges_wav_progress_to_logs_and_callback(
             wav_submitter(tmp_path / "audios" / "15.8" / "champion-1.wem")
 
     monkeypatch.setattr(unpack_batch, "logger", FakeLogger())
-    monkeypatch.setattr(unpack_batch, "WavTranscodeCoordinator", FakeCoordinator)
+    monkeypatch.setattr(unpack_batch, "TranscodeCoordinator", FakeCoordinator)
     monkeypatch.setattr(unpack_batch, "unpack_champion", fake_unpack_champion)
 
     reader = SimpleNamespace(

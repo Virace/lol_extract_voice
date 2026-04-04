@@ -23,7 +23,7 @@ from lol_audio_unpack.mapping import (
     describe_hirc_backend,
 )
 from lol_audio_unpack.model import AudioEntityData
-from lol_audio_unpack.runtime import RemoteSnapshotPreparer
+from lol_audio_unpack.runtime.remote import RemotePreparer
 from lol_audio_unpack.unpack import unpack_all, unpack_champions, unpack_maps
 from lol_audio_unpack.utils.path_constants import format_entity_folder_name, get_output_dir_name
 
@@ -78,13 +78,13 @@ class LolAudioUnpackApp:
         """返回 mapping 流程使用的 HIRC 后端。"""
         return describe_hirc_backend(self.ctx)
 
-    def _prepare_remote_snapshot_for_update(self) -> RemoteSnapshotPreparer | None:
+    def _prepare_remote_snapshot_for_update(self) -> RemotePreparer | None:
         """在远端快照模式下准备更新流程所需的远端资源。"""
         if self.ctx.config.source_mode is not SourceMode.REMOTE_SNAPSHOT:
             return None
 
         logger.info("检测到 remote_snapshot 模式，开始准备 LCU 最小运行环境...")
-        preparer = RemoteSnapshotPreparer(ctx=self.ctx)
+        preparer = RemotePreparer(ctx=self.ctx)
         preparer.prepare_lcu_data()
         return preparer
 
@@ -97,7 +97,7 @@ class LolAudioUnpackApp:
             return True
         return False
 
-    def prepare_update_data(self, *, force_update: bool = False) -> RemoteSnapshotPreparer | None:
+    def prepare_update_data(self, *, force_update: bool = False) -> RemotePreparer | None:
         """预热 update 所需结构化数据，并复用当前运行中的缓存状态。
 
         Args:
@@ -173,11 +173,11 @@ class LolAudioUnpackApp:
 
         return tuple(resolved_ids)
 
-    def _build_remote_preparer(self) -> RemoteSnapshotPreparer | None:
+    def _build_remote_preparer(self) -> RemotePreparer | None:
         """按需创建远端准备器。"""
         if self.ctx.config.source_mode is not SourceMode.REMOTE_SNAPSHOT:
             return None
-        return RemoteSnapshotPreparer(ctx=self.ctx)
+        return RemotePreparer(ctx=self.ctx)
 
     @staticmethod
     def _merge_remote_work_item(
@@ -351,7 +351,7 @@ class LolAudioUnpackApp:
 
     def _prepare_remote_entity_wads_with_retries(  # noqa: PLR0913
         self,
-        remote_preparer: RemoteSnapshotPreparer,
+        remote_preparer: RemotePreparer,
         *,
         reader: DataReader,
         champion_ids: tuple[int, ...] | None,
@@ -541,7 +541,7 @@ class LolAudioUnpackApp:
         total_work_items = len(work_items)
         logger.info(f"remote 模式启用单位驱动执行，共 {total_work_items} 个实体工作项。")
         reader = self._create_reader()
-        remote_preparer = RemoteSnapshotPreparer(ctx=self.ctx)
+        remote_preparer = RemotePreparer(ctx=self.ctx)
 
         for index, work_item in enumerate(work_items, start=1):
             logger.info(
@@ -591,7 +591,7 @@ class LolAudioUnpackApp:
                             include_champions=is_champion,
                             include_maps=not is_champion,
                             prepare_remote=False,
-                            detach_wav_sidecar=bool(extract_options.wav_output.enabled),
+                            detach_wav=bool(extract_options.wav_output.enabled),
                             wav_job_label=f"remote-{work_item.entity_type}-{work_item.entity_id}",
                         )
                         if remote_wav_handle is not None and remote_wav_handle.poll() is None:
@@ -690,7 +690,7 @@ class LolAudioUnpackApp:
         include_maps: bool = True,
         prepare_remote: bool = True,
         progress_callback: Callable[[str, int, int, str], None] | None = None,
-        detach_wav_sidecar: bool = False,
+        detach_wav: bool = False,
         wav_job_label: str | None = None,
         persisted_wem_callback: Callable[[Path], None] | None = None,
     ) -> object | None:
@@ -727,7 +727,7 @@ class LolAudioUnpackApp:
                 ctx=self.ctx,
                 progress_callback=progress_callback,
                 wav_output=opts.wav_output,
-                detach_wav_sidecar=detach_wav_sidecar,
+                detach_wav=detach_wav,
                 wav_job_label=wav_job_label,
                 persisted_wem_callback=persisted_wem_callback,
             )
@@ -739,7 +739,7 @@ class LolAudioUnpackApp:
                 ctx=self.ctx,
                 progress_callback=progress_callback,
                 wav_output=opts.wav_output,
-                detach_wav_sidecar=detach_wav_sidecar,
+                detach_wav=detach_wav,
                 wav_job_label=wav_job_label,
                 persisted_wem_callback=persisted_wem_callback,
             )
@@ -752,7 +752,7 @@ class LolAudioUnpackApp:
             ctx=self.ctx,
             progress_callback=progress_callback,
             wav_output=opts.wav_output,
-            detach_wav_sidecar=detach_wav_sidecar,
+            detach_wav=detach_wav,
             wav_job_label=wav_job_label,
             persisted_wem_callback=persisted_wem_callback,
         )

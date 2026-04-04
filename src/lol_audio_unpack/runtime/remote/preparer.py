@@ -32,7 +32,7 @@ MANIFEST_HEADERS = {"User-Agent": "Mozilla/5.0"}
 
 
 @dataclass(frozen=True)
-class LcuPrepareResult:
+class LcuResult:
     """LCU 最小准备结果。"""
 
     manifest_cache_path: Path
@@ -42,7 +42,7 @@ class LcuPrepareResult:
 
 
 @dataclass(frozen=True)
-class BinInputPrepareResult:
+class BinInputResult:
     """远端 BIN 输入准备结果。"""
 
     manifest_cache_path: Path
@@ -51,7 +51,7 @@ class BinInputPrepareResult:
 
 
 @dataclass(frozen=True)
-class GameWadPrepareResult:
+class GameWadResult:
     """远端 GAME WAD 准备结果。"""
 
     manifest_cache_path: Path
@@ -60,14 +60,14 @@ class GameWadPrepareResult:
 
 
 __all__ = [
-    "RemoteSnapshotPreparer",
-    "LcuPrepareResult",
-    "BinInputPrepareResult",
-    "GameWadPrepareResult",
+    "RemotePreparer",
+    "LcuResult",
+    "BinInputResult",
+    "GameWadResult",
 ]
 
 
-class RemoteSnapshotPreparer:
+class RemotePreparer:
     """为 `remote_snapshot` 模式准备最小运行环境。"""
 
     def __init__(self, *, ctx: AppContext) -> None:
@@ -122,7 +122,7 @@ class RemoteSnapshotPreparer:
 
         return cleanup_counts
 
-    def prepare_lcu_data(self) -> LcuPrepareResult:
+    def prepare_lcu_data(self) -> LcuResult:
         """准备 `DataUpdater` 所需的 LCU 基础资源。
 
         Returns:
@@ -155,7 +155,7 @@ class RemoteSnapshotPreparer:
             self.ctx.config.game_region,
             len(bundle_cache_paths),
         )
-        return LcuPrepareResult(
+        return LcuResult(
             manifest_cache_path=manifest_cache_path,
             description_cache_path=description_cache_path,
             bundle_cache_paths=bundle_cache_paths,
@@ -169,7 +169,7 @@ class RemoteSnapshotPreparer:
         target: str,
         champion_ids: tuple[int, ...] | None = None,
         map_ids: tuple[int, ...] | None = None,
-    ) -> BinInputPrepareResult | None:
+    ) -> BinInputResult | None:
         """从远端 GAME manifest 提取 `BinUpdater` 所需的 BIN 输入。
 
         Args:
@@ -230,7 +230,7 @@ class RemoteSnapshotPreparer:
             self._track_cleanup_paths("bin_input_files", extracted_paths)
             self._track_cleanup_paths("bin_input_flags", [flag_file_path])
             logger.info("远端 BIN 输入准备完成：共提取 {} 个文件。", extracted_count)
-            return BinInputPrepareResult(
+            return BinInputResult(
                 manifest_cache_path=manifest_cache_path,
                 extracted_file_count=extracted_count,
                 flag_file_path=flag_file_path,
@@ -247,7 +247,7 @@ class RemoteSnapshotPreparer:
         map_ids: tuple[int, ...] | None,
         include_champions: bool,
         include_maps: bool,
-    ) -> GameWadPrepareResult | None:
+    ) -> GameWadResult | None:
         """准备远端 `extract` 阶段所需的实体 WAD。"""
         wad_paths = self._build_extract_plan(
             reader=reader,
@@ -266,7 +266,7 @@ class RemoteSnapshotPreparer:
         map_ids: tuple[int, ...] | None,
         include_champions: bool,
         include_maps: bool,
-    ) -> GameWadPrepareResult | None:
+    ) -> GameWadResult | None:
         """准备远端 `mapping` 阶段所需的实体 WAD。"""
         wad_paths = self._build_mapping_plan(
             reader=reader,
@@ -287,7 +287,7 @@ class RemoteSnapshotPreparer:
         include_maps: bool,
         need_extract: bool,
         need_mapping: bool,
-    ) -> GameWadPrepareResult | None:
+    ) -> GameWadResult | None:
         """为单个实体工作项准备所需 WAD 并集。"""
         wad_paths: set[str] = set()
         if need_extract:
@@ -502,13 +502,13 @@ class RemoteSnapshotPreparer:
         """把本地 `wad.root` 相对路径转换为 GAME manifest 可识别路径。"""
         return remote_game.normalize_wad_path(wad_root)
 
-    def _prepare_wads(self, wad_paths: set[str]) -> GameWadPrepareResult | None:
+    def _prepare_wads(self, wad_paths: set[str]) -> GameWadResult | None:
         """下载并同步远端 GAME WAD 到最小运行目录。"""
         return remote_game.prepare_wads(
             preparer=self,
             wad_paths=wad_paths,
             manifest_class=PatcherManifest,
-            result_class=GameWadPrepareResult,
+            result_class=GameWadResult,
         )
 
     def _sync_lcu_file(self, source_path: Path) -> Path:

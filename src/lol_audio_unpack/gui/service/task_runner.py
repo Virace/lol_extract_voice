@@ -220,7 +220,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     include_champions=include_champions,
                     include_maps=include_maps,
                     progress_callback=emit_extract_progress,
-                    detach_wav_sidecar=options.wav_output.enabled,
+                    detach_wav=options.wav_output.enabled,
                     wav_job_label=f"gui-task-{task.task_id}",
                 )
                 _emit_stage_progress(

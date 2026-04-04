@@ -14,12 +14,13 @@ from loguru import logger
 
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.model import generate_champion_tasks, generate_map_tasks
-from lol_audio_unpack.runtime import WavBackgroundProcessHandle, WavManifestRecorder
 from lol_audio_unpack.runtime.wav import (
-    WavSidecarProgressSnapshot,
-    WavTranscodeCoordinator,
-    build_manifest_recorder,
-    launch_detached_wav,
+    JobHandle,
+    ManifestRecorder,
+    TranscodeCoordinator,
+    TranscodeProgress,
+    build_recorder,
+    launch_detached,
 )
 from lol_audio_unpack.utils.run_summary import record_runtime_note
 
@@ -29,38 +30,38 @@ if TYPE_CHECKING:
     from lol_audio_unpack.app_context import AppContext, WavOutputOptions
 
 
-INTERNAL_ERROR_NOTE = "已启用 WAV 转码，但 sidecar 内部异常，已自动降级为仅保留 WEM。"
-_SUBMITTED_LOG_INTERVAL = 25
-_PROCESSED_LOG_INTERVAL = 10
+WAV_ERROR_NOTE = "已启用 WAV 转码，但内部异常导致已自动降级为仅保留 WEM。"
+_WAV_SUBMIT_LOG_INTERVAL = 25
+_WAV_PROGRESS_LOG_INTERVAL = 10
 
 
-def _record_internal_error(
+def _record_wav_error(
     ctx: AppContext,
     error: Exception,
     *,
     phase: str,
     show_exception: bool,
 ) -> str:
-    """记录 WAV sidecar 内部异常并返回调试详情。"""
+    """记录 WAV 转码内部异常并返回调试详情。"""
     detail = f"phase={phase}, error_type={type(error).__name__}, error={error}"
-    logger.opt(exception=show_exception).warning(f"WAV sidecar {phase} 失败，已自动降级为仅保留 WEM: {error}")
+    logger.opt(exception=show_exception).warning(f"WAV 转码 {phase} 失败，已自动降级为仅保留 WEM: {error}")
     record_runtime_note(
         ctx.runtime_cache,
         "extract",
-        INTERNAL_ERROR_NOTE,
+        WAV_ERROR_NOTE,
         label="音频解包",
         detail=detail,
     )
     return detail
 
 
-def _processed_count(snapshot: WavSidecarProgressSnapshot) -> int:
+def _count_wav_done(snapshot: TranscodeProgress) -> int:
     """返回当前已处理完成的 WAV 任务数。"""
     return snapshot.completed_wav_job_count + snapshot.failed_wav_job_count + snapshot.skipped_wav_job_count
 
 
-def _format_progress(snapshot: WavSidecarProgressSnapshot) -> str:
-    """将 WAV sidecar 快照格式化为可读文案。"""
+def _format_wav_progress(snapshot: TranscodeProgress) -> str:
+    """将 WAV 转码快照格式化为可读文案。"""
     counters = [
         f"已提交 {snapshot.submitted_wav_job_count}",
         f"运行中 {snapshot.running_wav_job_count}",
@@ -72,10 +73,10 @@ def _format_progress(snapshot: WavSidecarProgressSnapshot) -> str:
     if snapshot.skipped_wav_job_count:
         counters.append(f"跳过 {snapshot.skipped_wav_job_count}")
 
-    if snapshot.phase == "draining":
-        prefix = "音频解包已完成，正在等待 WAV 转码收尾"
-    elif snapshot.phase == "finalized":
-        prefix = "WAV 转码已完成"
+        if snapshot.phase == "draining":
+            prefix = "音频解包已完成，正在等待 WAV 转码收尾"
+        elif snapshot.phase == "done":
+            prefix = "WAV 转码已完成"
     elif snapshot.phase == "breaker_opened":
         prefix = "WAV 转码已触发熔断，后续任务将跳过"
     elif snapshot.phase == "retrying":
@@ -85,30 +86,30 @@ def _format_progress(snapshot: WavSidecarProgressSnapshot) -> str:
     return f"{prefix}：{'，'.join(counters)}"
 
 
-def _emit_degraded_progress(
+def _emit_wav_fallback(
     *,
     progress_callback: Callable[[str, int, int, str], None] | None,
 ) -> None:
-    """向上游发出 WAV sidecar 已降级的进度提示。"""
+    """向上游发出 WAV 转码已降级的进度提示。"""
     if progress_callback is None:
         return
     progress_callback("wav", 1, 1, "WAV 转码不可用，已自动降级为仅保留 WEM。")
 
 
-def _build_progress_handler(
+def _build_wav_progress_handler(
     *,
     progress_callback: Callable[[str, int, int, str], None] | None,
-) -> Callable[[WavSidecarProgressSnapshot], None]:
-    """构造 WAV sidecar 到日志/GUI 进度的桥接回调。"""
+) -> Callable[[TranscodeProgress], None]:
+    """构造 WAV 转码到日志/GUI 进度的桥接回调。"""
     last_logged_submitted = 0
     last_logged_processed = 0
 
-    def handle(snapshot: WavSidecarProgressSnapshot) -> None:
+    def handle(snapshot: TranscodeProgress) -> None:
         nonlocal last_logged_processed, last_logged_submitted
 
-        processed = _processed_count(snapshot)
+        processed = _count_wav_done(snapshot)
         total = max(snapshot.submitted_wav_job_count, 1)
-        message = _format_progress(snapshot)
+        message = _format_wav_progress(snapshot)
 
         if progress_callback is not None:
             progress_callback("wav", processed, total, message)
@@ -122,13 +123,13 @@ def _build_progress_handler(
             log_fn = logger.warning
         elif snapshot.phase == "submitted":
             submitted = snapshot.submitted_wav_job_count
-            if submitted == 1 or submitted - last_logged_submitted >= _SUBMITTED_LOG_INTERVAL:
+            if submitted == 1 or submitted - last_logged_submitted >= _WAV_SUBMIT_LOG_INTERVAL:
                 should_log = True
                 last_logged_submitted = submitted
         elif snapshot.phase in {"completed", "failed"}:
             if processed in {1, snapshot.submitted_wav_job_count}:
                 should_log = True
-            elif processed - last_logged_processed >= _PROCESSED_LOG_INTERVAL:
+            elif processed - last_logged_processed >= _WAV_PROGRESS_LOG_INTERVAL:
                 should_log = True
             if should_log:
                 last_logged_processed = processed
@@ -148,9 +149,9 @@ def execute_tasks(  # noqa: PLR0913
     progress_callback: Callable[[str, int, int, str], None] | None = None,
     persisted_wem_callback: Callable[[Path], None] | None = None,
     wav_output: WavOutputOptions | None = None,
-    detach_wav_sidecar: bool = False,
+    detach_wav: bool = False,
     wav_job_label: str | None = None,
-) -> WavBackgroundProcessHandle | None:
+) -> JobHandle | None:
     """执行批量解包任务。
 
     Args:
@@ -161,7 +162,7 @@ def execute_tasks(  # noqa: PLR0913
         progress_callback: 每个实体处理结束后的可选进度回调。
         persisted_wem_callback: WEM 落盘后的附加回调。
         wav_output: WAV 输出配置。
-        detach_wav_sidecar: 是否转入后台 WAV 进程。
+        detach_wav: 是否转入后台 WAV 进程。
         wav_job_label: 后台 WAV 任务标签。
 
     Returns:
@@ -203,9 +204,9 @@ def execute_tasks(  # noqa: PLR0913
     wad_cache: dict[Path, WAD] = {}
     cache_lock = threading.Lock() if max_workers > 1 else None
     coordinator = None
-    detached_wav_handle: WavBackgroundProcessHandle | None = None
-    detached_manifest_recorder: WavManifestRecorder | None = None
-    detached_job_label = wav_job_label or f"wav-sidecar-{int(start_time * 1000)}"
+    detached_wav_handle: JobHandle | None = None
+    detached_manifest_recorder: ManifestRecorder | None = None
+    detached_job_label = wav_job_label or f"wav-job-{int(start_time * 1000)}"
     if wav_output and wav_output.enabled:
         logger.info(
             "WAV 转码已启用：workers={}，timeout={}s，retries={}，format={}",
@@ -214,14 +215,14 @@ def execute_tasks(  # noqa: PLR0913
             wav_output.max_retries,
             wav_output.format,
         )
-        if detach_wav_sidecar:
+        if detach_wav:
             try:
-                detached_manifest_recorder = build_manifest_recorder(
+                detached_manifest_recorder = build_recorder(
                     ctx=ctx,
                     job_label=detached_job_label,
                 )
             except Exception as exc:  # noqa: BLE001
-                wav_error_detail = _record_internal_error(
+                wav_error_detail = _record_wav_error(
                     ctx,
                     exc,
                     phase="initialize_detached_manifest",
@@ -229,26 +230,26 @@ def execute_tasks(  # noqa: PLR0913
                 )
         else:
             try:
-                coordinator = WavTranscodeCoordinator(
+                coordinator = TranscodeCoordinator(
                     options=wav_output,
                     audio_root=Path(ctx.paths.audio_path) / reader.version,
                     wav_root=Path(ctx.paths.wav_path) / reader.version,
                     report_root=Path(ctx.paths.report_path) / reader.version / "transcode_wav",
-                    progress_callback=_build_progress_handler(
+                    progress_callback=_build_wav_progress_handler(
                         progress_callback=progress_callback,
                     ),
                 )
             except Exception as exc:  # noqa: BLE001
-                wav_error_detail = _record_internal_error(
+                wav_error_detail = _record_wav_error(
                     ctx,
                     exc,
                     phase="initialize",
                     show_exception=show_exception,
                 )
-                _emit_degraded_progress(progress_callback=progress_callback)
+                _emit_wav_fallback(progress_callback=progress_callback)
 
     def safe_wav_submitter(wem_path: Path) -> None:
-        """安全提交 WAV sidecar 任务。
+        """安全提交 WAV 转码任务。
 
         Args:
             wem_path: 已成功落盘的 ``.wem`` 路径。
@@ -257,15 +258,15 @@ def execute_tasks(  # noqa: PLR0913
         if coordinator is None or wav_error_detail is not None:
             return
         try:
-            coordinator.submit_persisted_wem(wem_path)
+            coordinator.submit(wem_path)
         except Exception as exc:  # noqa: BLE001
-            wav_error_detail = _record_internal_error(
+            wav_error_detail = _record_wav_error(
                 ctx,
                 exc,
                 phase="submit",
                 show_exception=show_exception,
             )
-            _emit_degraded_progress(progress_callback=progress_callback)
+            _emit_wav_fallback(progress_callback=progress_callback)
 
     def safe_detached_wav_submitter(wem_path: Path) -> None:
         """安全记录 detached WAV 清单。
@@ -279,14 +280,14 @@ def execute_tasks(  # noqa: PLR0913
         try:
             detached_manifest_recorder.record(wem_path)
         except Exception as exc:  # noqa: BLE001
-            wav_error_detail = _record_internal_error(
+            wav_error_detail = _record_wav_error(
                 ctx,
                 exc,
                 phase="record_detached_manifest",
                 show_exception=show_exception,
             )
 
-    if detach_wav_sidecar:
+    if detach_wav:
         wav_submitter = None if detached_manifest_recorder is None else safe_detached_wav_submitter
     else:
         wav_submitter = None if coordinator is None else safe_wav_submitter
@@ -366,27 +367,27 @@ def execute_tasks(  # noqa: PLR0913
     transcode_summary = None
     if coordinator is not None:
         try:
-            coordinator.mark_extract_finished()
+            coordinator.finish_extract()
         except Exception as exc:  # noqa: BLE001
             if wav_error_detail is None:
-                wav_error_detail = _record_internal_error(
+                wav_error_detail = _record_wav_error(
                     ctx,
                     exc,
-                    phase="mark_extract_finished",
+                    phase="finish_extract",
                     show_exception=show_exception,
                 )
-                _emit_degraded_progress(progress_callback=progress_callback)
+                _emit_wav_fallback(progress_callback=progress_callback)
         try:
-            transcode_summary = coordinator.finalize()
+            transcode_summary = coordinator.finish()
         except Exception as exc:  # noqa: BLE001
             if wav_error_detail is None:
-                wav_error_detail = _record_internal_error(
+                wav_error_detail = _record_wav_error(
                     ctx,
                     exc,
-                    phase="finalize",
+                    phase="finish",
                     show_exception=show_exception,
                 )
-                _emit_degraded_progress(progress_callback=progress_callback)
+                _emit_wav_fallback(progress_callback=progress_callback)
             transcode_summary = None
         if transcode_summary is not None and transcode_summary.breaker_open:
             record_runtime_note(
@@ -403,20 +404,20 @@ def execute_tasks(  # noqa: PLR0913
                 f"跳过 {transcode_summary.skipped_wav_job_count} 个"
             )
     elif (
-        detach_wav_sidecar
+        detach_wav
         and detached_manifest_recorder is not None
         and wav_output is not None
         and wav_error_detail is None
     ):
         try:
-            detached_wav_handle = launch_detached_wav(
+            detached_wav_handle = launch_detached(
                 ctx=ctx,
                 wav_output=wav_output,
                 manifest_recorder=detached_manifest_recorder,
                 job_label=detached_job_label,
             )
         except Exception as exc:  # noqa: BLE001
-            wav_error_detail = _record_internal_error(
+            wav_error_detail = _record_wav_error(
                 ctx,
                 exc,
                 phase="launch_detached_process",
@@ -426,7 +427,7 @@ def execute_tasks(  # noqa: PLR0913
             logger.info("WAV 转码已转入后台进程，主流程将继续推进。")
             summary_message = f"{summary_message}；WAV 已转入后台进程"
     if wav_error_detail is not None:
-        summary_message = f"{summary_message}；WAV sidecar 内部异常，已降级为仅保留 WEM"
+        summary_message = f"{summary_message}；WAV 转码内部异常，已降级为仅保留 WEM"
 
     has_wav_issue = transcode_summary is not None and (
         transcode_summary.failed_wav_job_count > 0 or transcode_summary.skipped_wav_job_count > 0
@@ -452,9 +453,9 @@ def unpack_all(  # noqa: PLR0913
     progress_callback: Callable[[str, int, int, str], None] | None = None,
     persisted_wem_callback: Callable[[Path], None] | None = None,
     wav_output: WavOutputOptions | None = None,
-    detach_wav_sidecar: bool = False,
+    detach_wav: bool = False,
     wav_job_label: str | None = None,
-) -> WavBackgroundProcessHandle | None:
+) -> JobHandle | None:
     """解包全部实体音频。
 
     Args:
@@ -466,7 +467,7 @@ def unpack_all(  # noqa: PLR0913
         progress_callback: 每个实体处理结束后的可选进度回调。
         persisted_wem_callback: WEM 落盘后的附加回调。
         wav_output: WAV 输出配置。
-        detach_wav_sidecar: 是否转入后台 WAV 进程。
+        detach_wav: 是否转入后台 WAV 进程。
         wav_job_label: 后台 WAV 任务标签。
 
     Returns:
@@ -496,7 +497,7 @@ def unpack_all(  # noqa: PLR0913
         progress_callback=progress_callback,
         persisted_wem_callback=persisted_wem_callback,
         wav_output=wav_output,
-        detach_wav_sidecar=detach_wav_sidecar,
+        detach_wav=detach_wav,
         wav_job_label=wav_job_label,
     )
 
@@ -510,9 +511,9 @@ def unpack_champions(  # noqa: PLR0913
     progress_callback: Callable[[str, int, int, str], None] | None = None,
     persisted_wem_callback: Callable[[Path], None] | None = None,
     wav_output: WavOutputOptions | None = None,
-    detach_wav_sidecar: bool = False,
+    detach_wav: bool = False,
     wav_job_label: str | None = None,
-) -> WavBackgroundProcessHandle | None:
+) -> JobHandle | None:
     """解包指定英雄音频。
 
     Args:
@@ -523,7 +524,7 @@ def unpack_champions(  # noqa: PLR0913
         progress_callback: 每个实体处理结束后的可选进度回调。
         persisted_wem_callback: WEM 落盘后的附加回调。
         wav_output: WAV 输出配置。
-        detach_wav_sidecar: 是否转入后台 WAV 进程。
+        detach_wav: 是否转入后台 WAV 进程。
         wav_job_label: 后台 WAV 任务标签。
 
     Returns:
@@ -538,7 +539,7 @@ def unpack_champions(  # noqa: PLR0913
         progress_callback=progress_callback,
         persisted_wem_callback=persisted_wem_callback,
         wav_output=wav_output,
-        detach_wav_sidecar=detach_wav_sidecar,
+        detach_wav=detach_wav,
         wav_job_label=wav_job_label,
     )
 
@@ -552,9 +553,9 @@ def unpack_maps(  # noqa: PLR0913
     progress_callback: Callable[[str, int, int, str], None] | None = None,
     persisted_wem_callback: Callable[[Path], None] | None = None,
     wav_output: WavOutputOptions | None = None,
-    detach_wav_sidecar: bool = False,
+    detach_wav: bool = False,
     wav_job_label: str | None = None,
-) -> WavBackgroundProcessHandle | None:
+) -> JobHandle | None:
     """解包指定地图音频。
 
     Args:
@@ -565,7 +566,7 @@ def unpack_maps(  # noqa: PLR0913
         progress_callback: 每个实体处理结束后的可选进度回调。
         persisted_wem_callback: WEM 落盘后的附加回调。
         wav_output: WAV 输出配置。
-        detach_wav_sidecar: 是否转入后台 WAV 进程。
+        detach_wav: 是否转入后台 WAV 进程。
         wav_job_label: 后台 WAV 任务标签。
 
     Returns:
@@ -580,7 +581,7 @@ def unpack_maps(  # noqa: PLR0913
         progress_callback=progress_callback,
         persisted_wem_callback=persisted_wem_callback,
         wav_output=wav_output,
-        detach_wav_sidecar=detach_wav_sidecar,
+        detach_wav=detach_wav,
         wav_job_label=wav_job_label,
     )
 

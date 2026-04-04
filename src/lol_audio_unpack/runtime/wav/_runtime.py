@@ -1,4 +1,4 @@
-"""WAV sidecar 的低层数据结构与尝试执行器。"""
+"""WAV 转码的低层数据结构与尝试执行器。"""
 
 from __future__ import annotations
 
@@ -15,8 +15,8 @@ from pyvgmstream import DecodeConfig, SampleFormat, decode_to_wav_file
 
 
 @dataclass(frozen=True)
-class WavJob:
-    """描述单个待转码的 WAV 任务。"""
+class Job:
+    """描述单个待转码任务。"""
 
     wem_path: Path
     wav_path: Path
@@ -28,7 +28,7 @@ class WavJob:
 
 
 @dataclass(frozen=True)
-class WavJobFailure:
+class JobFailure:
     """描述最终失败的 WAV 转码任务。"""
 
     wem_path: Path
@@ -56,8 +56,8 @@ class WavJobFailure:
 
 
 @dataclass(frozen=True)
-class WavSidecarSummary:
-    """描述整轮 WAV sidecar 的汇总结果。"""
+class TranscodeSummary:
+    """描述整轮 WAV 转码的汇总结果。"""
 
     produced_wem_count: int
     submitted_wav_job_count: int
@@ -102,7 +102,7 @@ class AttemptResult:
         )
 
 
-def build_wav_output_path(wem_path: Path, *, audio_root: Path, wav_root: Path) -> Path:
+def build_output_path(wem_path: Path, *, audio_root: Path, wav_root: Path) -> Path:
     """根据镜像规则构造 WAV 输出路径。
 
     Args:
@@ -117,7 +117,7 @@ def build_wav_output_path(wem_path: Path, *, audio_root: Path, wav_root: Path) -
     return (wav_root / relative_path).with_suffix(".wav")
 
 
-def resolve_wav_decode_config(raw_format: str) -> DecodeConfig | None:
+def resolve_decode_config(raw_format: str) -> DecodeConfig | None:
     """将 CLI 格式名映射为 `pyvgmstream` 解码配置。
 
     Args:
@@ -146,7 +146,7 @@ def resolve_wav_decode_config(raw_format: str) -> DecodeConfig | None:
     return DecodeConfig(sample_format=sample_format)
 
 
-def default_worker_entry(job: WavJob, queue: Queue[Any]) -> None:
+def run_worker(job: Job, queue: Queue[Any]) -> None:
     """执行单个 WAV 转码任务。
 
     Args:
@@ -155,7 +155,7 @@ def default_worker_entry(job: WavJob, queue: Queue[Any]) -> None:
     """
     try:
         job.wav_path.parent.mkdir(parents=True, exist_ok=True)
-        result = decode_to_wav_file(job.wem_path, job.wav_path, config=resolve_wav_decode_config(job.wav_format))
+        result = decode_to_wav_file(job.wem_path, job.wav_path, config=resolve_decode_config(job.wav_format))
         queue.put({"ok": True, "byte_count": result.byte_count})
     except Exception as exc:  # noqa: BLE001
         queue.put(
@@ -167,11 +167,11 @@ def default_worker_entry(job: WavJob, queue: Queue[Any]) -> None:
         )
 
 
-def _run_attempt_with_timeout(
-    job: WavJob,
+def _run_attempt(
+    job: Job,
     *,
     timeout_seconds: int,
-    worker_entry: Callable[[WavJob, Queue[Any]], None],
+    worker_entry: Callable[[Job, Queue[Any]], None],
 ) -> AttemptResult:
     """在独立子进程中运行单次转码并施加硬超时。
 
@@ -226,10 +226,11 @@ def _run_attempt_with_timeout(
 
 
 __all__ = [
-    "WavJob",
-    "WavJobFailure",
-    "WavSidecarSummary",
-    "build_wav_output_path",
-    "default_worker_entry",
-    "resolve_wav_decode_config",
+    "AttemptResult",
+    "Job",
+    "JobFailure",
+    "TranscodeSummary",
+    "build_output_path",
+    "run_worker",
+    "resolve_decode_config",
 ]

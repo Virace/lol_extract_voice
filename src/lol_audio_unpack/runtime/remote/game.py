@@ -433,7 +433,7 @@ def prepare_wads(
         result_class: 结果对象类型。
 
     Returns:
-        `GameWadPrepareResult` 或 `None`。
+        `GameWadResult` 或 `None`。
     """
     normalized_paths = {
         normalized

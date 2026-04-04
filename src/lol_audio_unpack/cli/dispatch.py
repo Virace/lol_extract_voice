@@ -15,12 +15,12 @@ from loguru import logger
 
 from ..config_schema import SettingKey
 from ..facade import LolAudioUnpackApp
-from ..runtime import WavBackgroundProcessHandle
+from ..runtime.wav import JobHandle
 from .runtime import build_options, parse_int_ids, resolve_champion_ids
 
 
 @dataclass(slots=True, frozen=True)
-class WavProgress:
+class WavJobProgress:
     """CLI 侧使用的 WAV 后台进度快照。"""
 
     status: str
@@ -96,7 +96,7 @@ def _extract_detail(base_detail: str, *, wav_enabled: bool) -> str:
     """拼接音频解包阶段摘要。"""
     if not wav_enabled:
         return base_detail
-    return f"{base_detail} + WAV sidecar"
+    return f"{base_detail} + WAV 转码"
 
 
 def _log_stage_start(stage: str, detail: str | None = None) -> None:
@@ -115,9 +115,9 @@ def _log_stage_done(stage: str, detail: str | None = None) -> None:
     logger.opt(depth=1).success(message)
 
 
-def _progress_from_snapshot(snapshot: dict[str, object]) -> WavProgress:
+def _wav_progress_from_snapshot(snapshot: dict[str, object]) -> WavJobProgress:
     """将后端原始快照转换为 CLI 侧进度对象。"""
-    return WavProgress(
+    return WavJobProgress(
         status=str(snapshot.get("status", "running")),
         phase=str(snapshot.get("phase", "unknown")),
         queued=int(snapshot.get("submitted_wav_job_count", 0)),
@@ -129,7 +129,7 @@ def _progress_from_snapshot(snapshot: dict[str, object]) -> WavProgress:
     )
 
 
-def _progress_signature(progress: WavProgress) -> tuple[object, ...]:
+def _wav_progress_key(progress: WavJobProgress) -> tuple[object, ...]:
     """返回用于去重比较的进度签名。"""
     return (
         progress.status,
@@ -143,7 +143,7 @@ def _progress_signature(progress: WavProgress) -> tuple[object, ...]:
     )
 
 
-def _format_progress(progress: WavProgress) -> str:
+def _format_wav_progress(progress: WavJobProgress) -> str:
     """将进度对象格式化为 CLI 文案。"""
     if progress.status != "running":
         return progress.detail or progress.status
@@ -158,7 +158,7 @@ def _format_progress(progress: WavProgress) -> str:
 
 
 def _report_wav_progress(
-    handle: WavBackgroundProcessHandle | None,
+    handle: JobHandle | None,
     *,
     last_signature: tuple[object, ...] | None,
     force: bool = False,
@@ -170,12 +170,12 @@ def _report_wav_progress(
     if snapshot is None:
         return last_signature
 
-    progress = _progress_from_snapshot(snapshot)
-    signature = _progress_signature(progress)
+    progress = _wav_progress_from_snapshot(snapshot)
+    signature = _wav_progress_key(progress)
     if not force and signature == last_signature:
         return last_signature
 
-    message = _format_progress(progress)
+    message = _format_wav_progress(progress)
     if progress.status == "completed":
         logger.success(f"WAV 后台进度[{handle.job_label}]：{message}")
     elif progress.status == "failed":
@@ -247,7 +247,7 @@ def run_update(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
     _log_stage_done("数据更新", detail)
 
 
-def run_extract(args: argparse.Namespace, app: LolAudioUnpackApp) -> WavBackgroundProcessHandle | None:
+def run_extract(args: argparse.Namespace, app: LolAudioUnpackApp) -> JobHandle | None:
     """执行音频解包操作。"""
     if not _has_extract(args):
         return None
@@ -274,7 +274,7 @@ def run_extract(args: argparse.Namespace, app: LolAudioUnpackApp) -> WavBackgrou
         build_options(args, champion_ids=champion_ids, map_ids=map_ids),
         include_champions=include_champions,
         include_maps=include_maps,
-        detach_wav_sidecar=args.wav,
+        detach_wav=args.wav,
         wav_job_label=f"cli-{int(time.time() * 1000)}",
     )
     _log_stage_done("音频解包", detail)
@@ -301,7 +301,7 @@ def run_mapping(
     args: argparse.Namespace,
     app: LolAudioUnpackApp,
     *,
-    wav_handle: WavBackgroundProcessHandle | None = None,
+    wav_handle: JobHandle | None = None,
 ) -> None:
     """执行事件映射操作。"""
     if not _has_mapping(args):

@@ -1,4 +1,4 @@
-"""WAV sidecar 转码协调器与报告写出。"""
+"""WAV 转码协调器与报告写出。"""
 
 from __future__ import annotations
 
@@ -17,12 +17,12 @@ from loguru import logger
 from ...app_context import WavOutputOptions
 from ._runtime import (
     AttemptResult,
-    WavJob,
-    WavJobFailure,
-    WavSidecarSummary,
-    _run_attempt_with_timeout,
-    build_wav_output_path,
-    default_worker_entry,
+    Job,
+    JobFailure,
+    TranscodeSummary,
+    _run_attempt,
+    build_output_path,
+    run_worker,
 )
 
 _BREAKER_CONSECUTIVE_FAILURES = 8
@@ -33,13 +33,13 @@ _POLL_INTERVAL_SECONDS = 0.05
 
 @dataclass
 class _QueuedJob:
-    job: WavJob
+    job: Job
     attempt_count: int = 0
 
 
 @dataclass(frozen=True)
-class WavSidecarProgressSnapshot:
-    """描述 WAV sidecar 当前进度与生命周期状态。"""
+class TranscodeProgress:
+    """描述 WAV 转码当前进度与生命周期状态。"""
 
     phase: str
     extract_finished: bool
@@ -54,8 +54,8 @@ class WavSidecarProgressSnapshot:
     breaker_reason: str | None
 
 
-class WavTranscodeCoordinator:
-    """协调 WAV sidecar 转码生命周期。"""
+class TranscodeCoordinator:
+    """协调 WAV 转码生命周期。"""
 
     def __init__(  # noqa: PLR0913
         self,
@@ -64,13 +64,13 @@ class WavTranscodeCoordinator:
         audio_root: Path,
         wav_root: Path,
         report_root: Path,
-        worker_entry: Callable[[WavJob, Queue[Any]], None] = default_worker_entry,
-        progress_callback: Callable[[WavSidecarProgressSnapshot], None] | None = None,
+        worker_entry: Callable[[Job, Queue[Any]], None] = run_worker,
+        progress_callback: Callable[[TranscodeProgress], None] | None = None,
     ) -> None:
         """初始化协调器。
 
         Args:
-            options: WAV sidecar 运行配置。
+            options: WAV 转码运行配置。
             audio_root: 权威音频根目录。
             wav_root: 镜像 WAV 根目录。
             report_root: 报告输出目录。
@@ -89,10 +89,10 @@ class WavTranscodeCoordinator:
         self.report_root = report_root
         self._worker_entry = worker_entry
         self._progress_callback = progress_callback
-        self._executor = ThreadPoolExecutor(max_workers=options.worker_count, thread_name_prefix="wav-sidecar")
+        self._executor = ThreadPoolExecutor(max_workers=options.worker_count, thread_name_prefix="wav-transcode")
         self._pending_jobs: deque[_QueuedJob] = deque()
         self._running_jobs: dict[Future[AttemptResult], _QueuedJob] = {}
-        self._final_failures: list[WavJobFailure] = []
+        self._final_failures: list[JobFailure] = []
         self._retried_wem_paths: set[Path] = set()
         self._recent_final_outcomes: deque[bool] = deque(maxlen=_BREAKER_RECENT_WINDOW)
         self._consecutive_final_failures = 0
@@ -110,7 +110,7 @@ class WavTranscodeCoordinator:
         self.breaker_open = False
         self.breaker_reason: str | None = None
 
-    def submit_persisted_wem(
+    def submit(
         self,
         wem_path: Path,
         *,
@@ -119,7 +119,7 @@ class WavTranscodeCoordinator:
         sub_id: str | None = None,
         audio_type: str | None = None,
     ) -> None:
-        """接收已落盘的 ``.wem`` 并加入 sidecar 队列。
+        """接收已落盘的 ``.wem`` 并加入转码队列。
 
         Args:
             wem_path: 成功落盘的 ``.wem`` 路径。
@@ -134,9 +134,9 @@ class WavTranscodeCoordinator:
             self.skipped_wav_job_count += 1
             return
 
-        job = WavJob(
+        job = Job(
             wem_path=wem_path,
-            wav_path=build_wav_output_path(wem_path, audio_root=self.audio_root, wav_root=self.wav_root),
+            wav_path=build_output_path(wem_path, audio_root=self.audio_root, wav_root=self.wav_root),
             wav_format=self.options.format,
             entity_type=entity_type,
             entity_id=entity_id,
@@ -146,20 +146,20 @@ class WavTranscodeCoordinator:
         self.submitted_wav_job_count += 1
         self._pending_jobs.append(_QueuedJob(job=job))
         self._dispatch_available_jobs()
-        self._emit_progress("submitted")
+        self._emit("submitted")
 
-    def mark_extract_finished(self) -> None:
+    def finish_extract(self) -> None:
         """标记主 extraction 已结束。"""
         self._extract_finished = True
         self._poll_finished_attempts()
         self._dispatch_available_jobs()
-        self._emit_progress("draining")
+        self._emit("draining")
 
-    def finalize(self) -> WavSidecarSummary:
+    def finish(self) -> TranscodeSummary:
         """等待所有可执行任务结束并写出报告。
 
         Returns:
-            当前整轮 sidecar 的汇总结果。
+            当前整轮转码的汇总结果。
         """
         while self._pending_jobs or self._running_jobs or not self._extract_finished:
             self._dispatch_available_jobs()
@@ -172,7 +172,7 @@ class WavTranscodeCoordinator:
             self._executor.shutdown(wait=True)
             self._finalized = True
 
-        summary = WavSidecarSummary(
+        summary = TranscodeSummary(
             produced_wem_count=self.produced_wem_count,
             submitted_wav_job_count=self.submitted_wav_job_count,
             completed_wav_job_count=self.completed_wav_job_count,
@@ -182,9 +182,9 @@ class WavTranscodeCoordinator:
             breaker_open=self.breaker_open,
             breaker_reason=self.breaker_reason,
         )
-        self._write_summary_json(summary)
-        self._write_failures_jsonl()
-        self._emit_progress("finalized")
+        self._write_summary(summary)
+        self._write_failures()
+        self._emit("done")
         return summary
 
     def _dispatch_available_jobs(self) -> None:
@@ -192,13 +192,13 @@ class WavTranscodeCoordinator:
             queued_job = self._pending_jobs.popleft()
             queued_job.attempt_count += 1
             future = self._executor.submit(
-                _run_attempt_with_timeout,
+                _run_attempt,
                 queued_job.job,
                 timeout_seconds=self.options.timeout_seconds,
                 worker_entry=self._worker_entry,
             )
             self._running_jobs[future] = queued_job
-            self._emit_progress("started")
+            self._emit("started")
 
     def _poll_finished_attempts(self, *, block: bool = False) -> None:
         if not self._running_jobs:
@@ -229,7 +229,7 @@ class WavTranscodeCoordinator:
         if result.ok:
             self.completed_wav_job_count += 1
             self._record_final_outcome(False)
-            self._emit_progress("completed")
+            self._emit("completed")
             return
 
         if queued_job.attempt_count < self.options.max_retries:
@@ -237,12 +237,12 @@ class WavTranscodeCoordinator:
                 self._retried_wem_paths.add(queued_job.job.wem_path)
                 self.retried_wav_job_count += 1
             self._pending_jobs.append(queued_job)
-            self._emit_progress("retrying")
+            self._emit("retrying")
             return
 
         self.failed_wav_job_count += 1
         self._final_failures.append(
-            WavJobFailure(
+            JobFailure(
                 wem_path=queued_job.job.wem_path,
                 wav_path=queued_job.job.wav_path,
                 attempt_count=queued_job.attempt_count,
@@ -258,7 +258,7 @@ class WavTranscodeCoordinator:
         )
         self._record_final_outcome(True)
         self._maybe_open_breaker()
-        self._emit_progress("failed")
+        self._emit("failed")
 
     def _record_final_outcome(self, failed: bool) -> None:
         self._recent_final_outcomes.append(failed)
@@ -281,11 +281,11 @@ class WavTranscodeCoordinator:
             self.skipped_wav_job_count += len(self._pending_jobs)
             self._pending_jobs.clear()
         if self.breaker_open:
-            self._emit_progress("breaker_opened")
+            self._emit("breaker_opened")
 
-    def _build_progress_snapshot(self, phase: str) -> WavSidecarProgressSnapshot:
-        """构造当前 sidecar 进度快照。"""
-        return WavSidecarProgressSnapshot(
+    def _snapshot(self, phase: str) -> TranscodeProgress:
+        """构造当前转码进度快照。"""
+        return TranscodeProgress(
             phase=phase,
             extract_finished=self._extract_finished,
             produced_wem_count=self.produced_wem_count,
@@ -299,17 +299,17 @@ class WavTranscodeCoordinator:
             breaker_reason=self.breaker_reason,
         )
 
-    def _emit_progress(self, phase: str) -> None:
+    def _emit(self, phase: str) -> None:
         """将当前进度快照安全地发给主流程。"""
         if self._progress_callback is None:
             return
-        snapshot = self._build_progress_snapshot(phase)
+        snapshot = self._snapshot(phase)
         try:
             self._progress_callback(snapshot)
         except Exception as exc:  # noqa: BLE001
-            logger.debug(f"WAV sidecar progress callback failed: {exc}")
+            logger.debug(f"WAV transcode progress callback failed: {exc}")
 
-    def _write_summary_json(self, summary: WavSidecarSummary) -> None:
+    def _write_summary(self, summary: TranscodeSummary) -> None:
         self.report_root.mkdir(parents=True, exist_ok=True)
         finished_at = self._finished_at or datetime.now(UTC)
         payload = {
@@ -330,7 +330,7 @@ class WavTranscodeCoordinator:
         }
         (self.report_root / "summary.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
-    def _write_failures_jsonl(self) -> None:
+    def _write_failures(self) -> None:
         self.report_root.mkdir(parents=True, exist_ok=True)
         target_path = self.report_root / "failures.jsonl"
         lines = [json.dumps(failure.to_payload(), ensure_ascii=False) for failure in self._final_failures]
@@ -338,6 +338,6 @@ class WavTranscodeCoordinator:
 
 
 __all__ = [
-    "WavSidecarProgressSnapshot",
-    "WavTranscodeCoordinator",
+    "TranscodeProgress",
+    "TranscodeCoordinator",
 ]

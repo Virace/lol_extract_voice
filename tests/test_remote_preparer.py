@@ -19,7 +19,7 @@ from lol_audio_unpack.app_context import (
     SourceMode,
 )
 from lol_audio_unpack.facade import LolAudioUnpackApp, RemoteEntityCallbackPayload, RemoteEntityWorkItem
-from lol_audio_unpack.runtime import RemoteSnapshotPreparer
+from lol_audio_unpack.runtime.remote import RemotePreparer
 
 pytestmark = pytest.mark.unit
 EXPECTED_BUNDLE_COUNT = 3
@@ -109,7 +109,7 @@ def test_remote_snapshot_preparer_downloads_description_and_required_bundles(
 
     monkeypatch.setattr(m_remote, "PatcherManifest", FakePatcherManifest)
 
-    result = RemoteSnapshotPreparer(ctx=ctx).prepare_lcu_data()
+    result = RemotePreparer(ctx=ctx).prepare_lcu_data()
 
     assert result.manifest_cache_path.exists()
     assert result.description_cache_path.exists()
@@ -136,7 +136,7 @@ def test_ensure_manifest_cached_sends_user_agent_header(
 
     monkeypatch.setattr(m_remote, "urlopen", fake_urlopen)
 
-    preparer = RemoteSnapshotPreparer(ctx=ctx)
+    preparer = RemotePreparer(ctx=ctx)
     manifest_path = preparer._ensure_manifest_cached(
         manifest_url=ctx.config.remote_snapshot.lcu_manifest_url,
         manifest_cache_dir=preparer.lcu_manifest_cache_dir,
@@ -195,7 +195,7 @@ def test_facade_update_prepares_remote_snapshot_before_updaters(
             assert map_ids is None
             call_order.append("bin")
 
-    monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
+    monkeypatch.setattr(m_facade, "RemotePreparer", FakePreparer)
     monkeypatch.setattr(m_facade, "DataUpdater", FakeDataUpdater)
     monkeypatch.setattr(m_facade, "BinUpdater", FakeBinUpdater)
     monkeypatch.setattr(m_facade, "DataReader", lambda ctx: SimpleNamespace(ctx=ctx))
@@ -296,7 +296,7 @@ def test_prepare_update_data_warms_remote_data_once_per_run(monkeypatch: pytest.
             assert map_ids is None
             call_order.append("bin")
 
-    monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
+    monkeypatch.setattr(m_facade, "RemotePreparer", FakePreparer)
     monkeypatch.setattr(m_facade, "DataUpdater", FakeDataUpdater)
     monkeypatch.setattr(m_facade, "BinUpdater", FakeBinUpdater)
     monkeypatch.setattr(m_facade, "DataReader", lambda ctx: SimpleNamespace(ctx=ctx))
@@ -387,7 +387,7 @@ def test_remote_snapshot_preparer_extracts_bin_inputs_for_bin_updater(
     monkeypatch.setattr(m_remote, "PatcherManifest", FakePatcherManifest)
     monkeypatch.setattr(m_remote, "WADExtractor", FakeWADExtractor)
 
-    result = RemoteSnapshotPreparer(ctx=ctx).prepare_bin_inputs(reader=reader, target="all")
+    result = RemotePreparer(ctx=ctx).prepare_bin_inputs(reader=reader, target="all")
 
     assert result is not None
     assert result.extracted_file_count == EXPECTED_EXTRACTED_BIN_COUNT
@@ -405,7 +405,7 @@ def test_remote_snapshot_preparer_logs_bin_input_plan_summary(
 ) -> None:
     ctx = _build_remote_ctx(tmp_path, game_region="zh_CN")
     reader = SimpleNamespace()
-    preparer = RemoteSnapshotPreparer(ctx=ctx)
+    preparer = RemotePreparer(ctx=ctx)
     log_lines: list[str] = []
 
     monkeypatch.setattr(
@@ -458,7 +458,7 @@ def test_remote_snapshot_preparer_logs_entity_wad_scope_before_prepare(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ctx = _build_remote_ctx(tmp_path, game_region="zh_CN")
-    preparer = RemoteSnapshotPreparer(ctx=ctx)
+    preparer = RemotePreparer(ctx=ctx)
     log_lines: list[str] = []
 
     monkeypatch.setattr(
@@ -546,7 +546,7 @@ def test_remote_snapshot_preparer_prepare_extract_wads_only_downloads_language_w
 
     monkeypatch.setattr(m_remote, "PatcherManifest", FakePatcherManifest)
 
-    result = RemoteSnapshotPreparer(ctx=ctx).prepare_extract_wads(
+    result = RemotePreparer(ctx=ctx).prepare_extract_wads(
         reader=reader,
         champion_ids=(1,),
         map_ids=None,
@@ -626,7 +626,7 @@ def test_remote_snapshot_preparer_prepare_mapping_wads_downloads_root_and_langua
 
     monkeypatch.setattr(m_remote, "PatcherManifest", FakePatcherManifest)
 
-    result = RemoteSnapshotPreparer(ctx=ctx).prepare_mapping_wads(
+    result = RemotePreparer(ctx=ctx).prepare_mapping_wads(
         reader=reader,
         champion_ids=(1,),
         map_ids=None,
@@ -664,7 +664,7 @@ def test_facade_extract_prepares_remote_wads_before_unpack(monkeypatch: pytest.M
             assert include_maps is True
             call_order.append("prepare_extract")
 
-    monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
+    monkeypatch.setattr(m_facade, "RemotePreparer", FakePreparer)
     monkeypatch.setattr(m_facade, "DataReader", lambda ctx: SimpleNamespace(ctx=ctx, version="16.5"))
     monkeypatch.setattr(m_facade, "unpack_all", lambda **_kwargs: call_order.append("extract"))
 
@@ -698,7 +698,7 @@ def test_facade_mapping_prepares_remote_wads_before_mapping(monkeypatch: pytest.
             assert include_maps is True
             call_order.append("prepare_mapping")
 
-    monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
+    monkeypatch.setattr(m_facade, "RemotePreparer", FakePreparer)
     monkeypatch.setattr(m_facade, "DataReader", lambda ctx: SimpleNamespace(ctx=ctx, version="16.5"))
     monkeypatch.setattr(m_facade, "build_mapping_all", lambda **_kwargs: call_order.append("mapping"))
 
@@ -747,7 +747,7 @@ def test_facade_run_remote_entity_workflow_runs_per_entity_and_cleans_between_en
         def prepare_entity_wads(self, **kwargs) -> None:  # noqa: ANN003
             call_order.append(("prepare", kwargs["champion_ids"], kwargs["need_extract"], kwargs["need_mapping"]))
 
-    monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
+    monkeypatch.setattr(m_facade, "RemotePreparer", FakePreparer)
     monkeypatch.setattr(m_facade, "DataReader", lambda ctx: reader)
     app._build_entity_data = lambda reader, **kwargs: SimpleNamespace(  # type: ignore[method-assign]
         entity_id=str(kwargs["entity_id"]),
@@ -815,7 +815,7 @@ def test_facade_run_remote_entity_workflow_logs_completion_summary(
             RemoteEntityWorkItem(entity_type="champion", entity_id=1, need_extract=True, need_mapping=False)
         ],
     )
-    monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
+    monkeypatch.setattr(m_facade, "RemotePreparer", FakePreparer)
     monkeypatch.setattr(m_facade, "DataReader", lambda ctx: reader)
     app._build_entity_data = lambda reader, **kwargs: SimpleNamespace(  # type: ignore[method-assign]
         entity_id=str(kwargs["entity_id"]),
@@ -883,7 +883,7 @@ def test_facade_run_remote_entity_workflow_invokes_callback_with_extract_and_map
         mapping_file.parent.mkdir(parents=True, exist_ok=True)
         mapping_file.write_bytes(b"mapping")
 
-    monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
+    monkeypatch.setattr(m_facade, "RemotePreparer", FakePreparer)
     monkeypatch.setattr(m_facade, "DataReader", lambda ctx: reader)
     app._build_entity_data = lambda reader, **kwargs: entity_data  # type: ignore[method-assign]
     app.extract = fake_extract  # type: ignore[method-assign]
@@ -947,7 +947,7 @@ def test_facade_run_remote_entity_workflow_callback_returns_multiple_audio_paths
         vo_dir.mkdir(parents=True, exist_ok=True)
         sfx_dir.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
+    monkeypatch.setattr(m_facade, "RemotePreparer", FakePreparer)
     monkeypatch.setattr(m_facade, "DataReader", lambda ctx: reader)
     app._build_entity_data = lambda reader, **kwargs: entity_data  # type: ignore[method-assign]
     app.extract = fake_extract  # type: ignore[method-assign]
@@ -990,7 +990,7 @@ def test_facade_run_remote_entity_workflow_retries_download_errors_before_succes
             if attempts["prepare"] < download_retry_attempts:
                 raise DownloadError("network")
 
-    monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
+    monkeypatch.setattr(m_facade, "RemotePreparer", FakePreparer)
     monkeypatch.setattr(m_facade, "DataReader", lambda ctx: reader)
     app._build_entity_data = lambda reader, **kwargs: SimpleNamespace(  # type: ignore[method-assign]
         entity_id=str(kwargs["entity_id"]),
@@ -1034,7 +1034,7 @@ def test_facade_run_remote_entity_workflow_raises_after_entity_retry_threshold(
         def prepare_entity_wads(self, **kwargs) -> None:  # noqa: ANN003
             call_order.append(("prepare", kwargs["champion_ids"]))
 
-    monkeypatch.setattr(m_facade, "RemoteSnapshotPreparer", FakePreparer)
+    monkeypatch.setattr(m_facade, "RemotePreparer", FakePreparer)
     monkeypatch.setattr(m_facade, "DataReader", lambda ctx: reader)
     app._build_entity_data = lambda reader, **kwargs: SimpleNamespace(  # type: ignore[method-assign]
         entity_id=str(kwargs["entity_id"]),
@@ -1135,7 +1135,7 @@ def test_remote_snapshot_preparer_cleanup_artifacts_supports_dry_run(
     monkeypatch.setattr(m_remote, "PatcherManifest", FakePatcherManifest)
     monkeypatch.setattr(m_remote, "WADExtractor", FakeWADExtractor)
 
-    preparer = RemoteSnapshotPreparer(ctx=ctx)
+    preparer = RemotePreparer(ctx=ctx)
     lcu_result = preparer.prepare_lcu_data()
     reader = SimpleNamespace(
         get_champions=lambda: [

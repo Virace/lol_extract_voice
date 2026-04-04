@@ -1,4 +1,4 @@
-"""WAV sidecar 协调器的定向单元测试。"""
+"""WAV 转码协调器的定向单元测试。"""
 
 from __future__ import annotations
 
@@ -13,12 +13,12 @@ from pyvgmstream import SampleFormat
 
 from lol_audio_unpack.app_context import WavOutputOptions
 from lol_audio_unpack.runtime.wav import (
-    WavSidecarProgressSnapshot,
-    WavTranscodeCoordinator,
-    build_wav_output_path,
-    resolve_wav_decode_config,
+    TranscodeCoordinator,
+    TranscodeProgress,
+    build_output_path,
+    resolve_decode_config,
 )
-from lol_audio_unpack.runtime.wav._runtime import WavJob, default_worker_entry
+from lol_audio_unpack.runtime.wav._runtime import Job, run_worker
 
 pytestmark = pytest.mark.unit
 
@@ -47,18 +47,18 @@ def instant_success_worker_entry(_job: Any, queue: Queue[Any]) -> None:
     queue.put({"ok": True, "byte_count": 123})
 
 
-def test_build_wav_output_path_mirrors_audio_tree(tmp_path: Path) -> None:
+def test_build_output_path_mirrors_audio_tree(tmp_path: Path) -> None:
     audio_root = tmp_path / "audios" / "15.8"
     wav_root = tmp_path / "wavs" / "15.8"
     wem_path = audio_root / "champions" / "1·annie" / "1000·base" / "VO" / "123456.wem"
 
-    wav_path = build_wav_output_path(wem_path, audio_root=audio_root, wav_root=wav_root)
+    wav_path = build_output_path(wem_path, audio_root=audio_root, wav_root=wav_root)
 
     assert wav_path == wav_root / "champions" / "1·annie" / "1000·base" / "VO" / "123456.wav"
 
 
-def test_resolve_wav_decode_config_returns_none_for_auto() -> None:
-    assert resolve_wav_decode_config("auto") is None
+def test_resolve_decode_config_returns_none_for_auto() -> None:
+    assert resolve_decode_config("auto") is None
 
 
 @pytest.mark.parametrize(
@@ -70,14 +70,14 @@ def test_resolve_wav_decode_config_returns_none_for_auto() -> None:
         ("float", SampleFormat.FLOAT),
     ],
 )
-def test_resolve_wav_decode_config_maps_known_formats(raw_format: str, sample_format: SampleFormat) -> None:
-    config = resolve_wav_decode_config(raw_format)
+def test_resolve_decode_config_maps_known_formats(raw_format: str, sample_format: SampleFormat) -> None:
+    config = resolve_decode_config(raw_format)
 
     assert config is not None
     assert config.sample_format is sample_format
 
 
-def test_default_worker_entry_passes_resolved_decode_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_run_worker_passes_resolved_decode_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     captured: dict[str, Any] = {}
 
     class FakeDecodeResult:
@@ -92,13 +92,13 @@ def test_default_worker_entry_passes_resolved_decode_config(monkeypatch: pytest.
     queue: Queue[Any] = SimpleQueueAdapter()
     monkeypatch.setattr("lol_audio_unpack.runtime.wav._runtime.decode_to_wav_file", fake_decode_to_wav_file)
 
-    job = WavJob(
+    job = Job(
         wem_path=tmp_path / "sample.wem",
         wav_path=tmp_path / "sample.wav",
         wav_format="pcm24",
     )
 
-    default_worker_entry(job, queue)
+    run_worker(job, queue)
 
     assert captured["config"] is not None
     assert captured["config"].sample_format is SampleFormat.PCM24
@@ -116,7 +116,7 @@ class SimpleQueueAdapter:
 
 def test_timeout_attempt_is_retried_and_final_failure_is_recorded(tmp_path: Path) -> None:
     options = WavOutputOptions(enabled=True, worker_count=2, timeout_seconds=1, max_retries=3)
-    coordinator = WavTranscodeCoordinator(
+    coordinator = TranscodeCoordinator(
         options=options,
         audio_root=tmp_path / "audios" / "15.8",
         wav_root=tmp_path / "wavs" / "15.8",
@@ -124,9 +124,9 @@ def test_timeout_attempt_is_retried_and_final_failure_is_recorded(tmp_path: Path
         worker_entry=slow_worker_entry,
     )
 
-    coordinator.submit_persisted_wem(tmp_path / "audios" / "15.8" / "sample.wem")
-    coordinator.mark_extract_finished()
-    summary = coordinator.finalize()
+    coordinator.submit(tmp_path / "audios" / "15.8" / "sample.wem")
+    coordinator.finish_extract()
+    summary = coordinator.finish()
 
     assert summary.failed_wav_job_count == 1
     assert summary.retried_wav_job_count == 1
@@ -135,7 +135,7 @@ def test_timeout_attempt_is_retried_and_final_failure_is_recorded(tmp_path: Path
 
 def test_breaker_opens_after_repeated_final_failures(tmp_path: Path) -> None:
     options = WavOutputOptions(enabled=True, worker_count=2, timeout_seconds=1, max_retries=3)
-    coordinator = WavTranscodeCoordinator(
+    coordinator = TranscodeCoordinator(
         options=options,
         audio_root=tmp_path / "audios" / "15.8",
         wav_root=tmp_path / "wavs" / "15.8",
@@ -144,19 +144,19 @@ def test_breaker_opens_after_repeated_final_failures(tmp_path: Path) -> None:
     )
 
     for index in range(BREAKER_FAILURE_THRESHOLD):
-        coordinator.submit_persisted_wem(tmp_path / "audios" / "15.8" / f"{index}.wem")
+        coordinator.submit(tmp_path / "audios" / "15.8" / f"{index}.wem")
 
-    coordinator.mark_extract_finished()
-    summary = coordinator.finalize()
+    coordinator.finish_extract()
+    summary = coordinator.finish()
 
     assert summary.breaker_open is True
     assert summary.failed_wav_job_count >= BREAKER_FAILURE_THRESHOLD
 
 
-def test_finalize_writes_summary_and_failures_reports(tmp_path: Path) -> None:
+def test_finish_writes_summary_and_failures_reports(tmp_path: Path) -> None:
     options = WavOutputOptions(enabled=True, worker_count=1, timeout_seconds=1, max_retries=1)
     report_root = tmp_path / "reports" / "15.8" / "transcode_wav"
-    coordinator = WavTranscodeCoordinator(
+    coordinator = TranscodeCoordinator(
         options=options,
         audio_root=tmp_path / "audios" / "15.8",
         wav_root=tmp_path / "wavs" / "15.8",
@@ -165,10 +165,10 @@ def test_finalize_writes_summary_and_failures_reports(tmp_path: Path) -> None:
     )
 
     for index in range(BREAKER_FAILURE_THRESHOLD + 1):
-        coordinator.submit_persisted_wem(tmp_path / "audios" / "15.8" / f"{index}.wem")
+        coordinator.submit(tmp_path / "audios" / "15.8" / f"{index}.wem")
 
-    coordinator.mark_extract_finished()
-    summary = coordinator.finalize()
+    coordinator.finish_extract()
+    summary = coordinator.finish()
 
     summary_path = report_root / "summary.json"
     failures_path = report_root / "failures.jsonl"
@@ -181,11 +181,11 @@ def test_finalize_writes_summary_and_failures_reports(tmp_path: Path) -> None:
     assert len(failures_path.read_text(encoding="utf-8").strip().splitlines()) == summary.failed_wav_job_count
 
 
-def test_progress_callback_receives_sidecar_lifecycle_snapshots(tmp_path: Path) -> None:
+def test_progress_callback_receives_transcode_lifecycle_snapshots(tmp_path: Path) -> None:
     """协调器应在关键生命周期节点发出结构化进度快照。"""
-    snapshots: list[WavSidecarProgressSnapshot] = []
+    snapshots: list[TranscodeProgress] = []
     options = WavOutputOptions(enabled=True, worker_count=1, timeout_seconds=1, max_retries=1)
-    coordinator = WavTranscodeCoordinator(
+    coordinator = TranscodeCoordinator(
         options=options,
         audio_root=tmp_path / "audios" / "15.8",
         wav_root=tmp_path / "wavs" / "15.8",
@@ -194,12 +194,12 @@ def test_progress_callback_receives_sidecar_lifecycle_snapshots(tmp_path: Path) 
         progress_callback=snapshots.append,
     )
 
-    coordinator.submit_persisted_wem(tmp_path / "audios" / "15.8" / "sample.wem")
-    coordinator.mark_extract_finished()
-    summary = coordinator.finalize()
+    coordinator.submit(tmp_path / "audios" / "15.8" / "sample.wem")
+    coordinator.finish_extract()
+    summary = coordinator.finish()
 
     assert any(snapshot.phase == "submitted" for snapshot in snapshots)
     assert any(snapshot.phase == "draining" and snapshot.extract_finished for snapshot in snapshots)
-    assert snapshots[-1].phase == "finalized"
+    assert snapshots[-1].phase == "done"
     assert snapshots[-1].completed_wav_job_count == summary.completed_wav_job_count
     assert snapshots[-1].running_wav_job_count == 0

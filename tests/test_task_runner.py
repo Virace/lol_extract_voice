@@ -247,8 +247,8 @@ def test_run_execution_task_detaches_wav_process_from_mapping(monkeypatch, tmp_p
 
         def extract(self, options, **kwargs) -> None:
             assert options.wav_output.enabled is True
-            assert kwargs["detach_wav_sidecar"] is True
-            events.append(("extract", kwargs["detach_wav_sidecar"]))
+            assert kwargs["detach_wav"] is True
+            events.append(("extract", kwargs["detach_wav"]))
             return fake_process
 
         def mapping(self, _options, **_kwargs) -> None:

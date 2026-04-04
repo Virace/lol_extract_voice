@@ -14,11 +14,11 @@ from typing import Any
 from loguru import logger
 
 from ...app_context import AppContext, WavOutputOptions
-from .coordinator import WavSidecarProgressSnapshot, WavTranscodeCoordinator
+from .transcode import TranscodeCoordinator, TranscodeProgress
 
 
 @dataclass(slots=True, frozen=True)
-class WavBackgroundJobSpec:
+class JobSpec:
     """描述单个后台 WAV 转码作业。
 
     Args:
@@ -47,7 +47,7 @@ class WavBackgroundJobSpec:
 
 
 @dataclass(slots=True)
-class WavBackgroundProcessHandle:
+class JobHandle:
     """封装后台 WAV 转码进程与可轮询元数据。"""
 
     job_label: str
@@ -73,7 +73,7 @@ class WavBackgroundProcessHandle:
             return None
 
 
-class WavManifestRecorder:
+class ManifestRecorder:
     """以线程安全方式记录本轮解包产出的 WEM 清单。"""
 
     def __init__(self, manifest_path: Path) -> None:
@@ -100,15 +100,15 @@ class WavManifestRecorder:
         return self.recorded_count > 0
 
 
-def build_manifest_recorder(*, ctx: AppContext, job_label: str) -> WavManifestRecorder:
-    """为 detached WAV sidecar 构造清单记录器。"""
+def build_recorder(*, ctx: AppContext, job_label: str) -> ManifestRecorder:
+    """为 detached WAV 转码作业构造清单记录器。"""
     manifest_path = Path(ctx.paths.report_path) / "_wav_manifests" / f"{job_label}.txt"
     if manifest_path.exists():
         manifest_path.unlink(missing_ok=True)
-    return WavManifestRecorder(manifest_path)
+    return ManifestRecorder(manifest_path)
 
 
-def build_wav_background_job_spec_from_paths(  # noqa: PLR0913
+def build_job_spec(  # noqa: PLR0913
     *,
     job_label: str,
     manifest_path: Path,
@@ -119,9 +119,9 @@ def build_wav_background_job_spec_from_paths(  # noqa: PLR0913
     timeout_seconds: int,
     max_retries: int,
     wav_format: str,
-) -> WavBackgroundJobSpec:
+) -> JobSpec:
     """根据路径与运行参数构造后台 WAV 作业规格。"""
-    return WavBackgroundJobSpec(
+    return JobSpec(
         job_label=job_label,
         manifest_path=manifest_path,
         audio_root=audio_root,
@@ -135,12 +135,12 @@ def build_wav_background_job_spec_from_paths(  # noqa: PLR0913
     )
 
 
-def launch_wav_background_process(spec: WavBackgroundJobSpec) -> WavBackgroundProcessHandle:
+def launch_job(spec: JobSpec) -> JobHandle:
     """启动独立的后台 WAV 转码进程。"""
     command = [
         sys.executable,
         "-m",
-        "lol_audio_unpack.runtime.wav.background_job",
+        "lol_audio_unpack.runtime.wav.job",
         "--task-id",
         spec.job_label,
         "--manifest",
@@ -169,7 +169,7 @@ def launch_wav_background_process(spec: WavBackgroundJobSpec) -> WavBackgroundPr
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    return WavBackgroundProcessHandle(
+    return JobHandle(
         job_label=spec.job_label,
         process=process,
         progress_path=spec.progress_path,
@@ -177,20 +177,20 @@ def launch_wav_background_process(spec: WavBackgroundJobSpec) -> WavBackgroundPr
     )
 
 
-def launch_detached_wav(
+def launch_detached(
     *,
     ctx: AppContext,
     wav_output: WavOutputOptions,
-    manifest_recorder: WavManifestRecorder,
+    recorder: ManifestRecorder,
     job_label: str,
-) -> WavBackgroundProcessHandle | None:
+) -> JobHandle | None:
     """根据已记录的 WEM 清单启动后台 WAV 进程。"""
-    if not manifest_recorder.has_records() or not manifest_recorder.manifest_path.exists():
+    if not recorder.has_records() or not recorder.manifest_path.exists():
         return None
 
     manifest_lines = [
         line.strip()
-        for line in manifest_recorder.manifest_path.read_text(encoding="utf-8").splitlines()
+        for line in recorder.manifest_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     if not manifest_lines:
@@ -203,9 +203,9 @@ def launch_detached_wav(
         return None
 
     version = relative_parts[0]
-    spec = build_wav_background_job_spec_from_paths(
+    spec = build_job_spec(
         job_label=job_label,
-        manifest_path=manifest_recorder.manifest_path,
+        manifest_path=recorder.manifest_path,
         audio_root=audio_root / version,
         wav_root=Path(ctx.paths.wav_path) / version,
         report_root=Path(ctx.paths.report_path) / version / "transcode_wav" / job_label,
@@ -214,11 +214,11 @@ def launch_detached_wav(
         max_retries=wav_output.max_retries,
         wav_format=wav_output.format,
     )
-    return launch_wav_background_process(spec)
+    return launch_job(spec)
 
 
-def _write_progress_snapshot(progress_path: Path, snapshot: WavSidecarProgressSnapshot) -> None:
-    """将当前 sidecar 快照写入 JSON 进度文件。"""
+def _write_progress(progress_path: Path, snapshot: TranscodeProgress) -> None:
+    """将当前转码快照写入 JSON 进度文件。"""
     progress_path.parent.mkdir(parents=True, exist_ok=True)
     progress_path.write_text(
         json.dumps(
@@ -233,7 +233,7 @@ def _write_progress_snapshot(progress_path: Path, snapshot: WavSidecarProgressSn
     )
 
 
-def _write_terminal_progress(progress_path: Path, *, status: str, job_label: str, detail: str = "") -> None:
+def _write_status(progress_path: Path, *, status: str, job_label: str, detail: str = "") -> None:
     """写入后台 WAV 作业的终态快照。"""
     progress_path.parent.mkdir(parents=True, exist_ok=True)
     progress_path.write_text(
@@ -250,7 +250,7 @@ def _write_terminal_progress(progress_path: Path, *, status: str, job_label: str
     )
 
 
-def run_wav_background_job(spec: WavBackgroundJobSpec) -> int:
+def run_job(spec: JobSpec) -> int:
     """执行后台 WAV 转码作业并返回退出码。"""
     manifest_lines = []
     if spec.manifest_path.exists():
@@ -260,10 +260,10 @@ def run_wav_background_job(spec: WavBackgroundJobSpec) -> int:
             if line.strip()
         ]
     if not manifest_lines:
-        _write_terminal_progress(spec.progress_path, status="skipped", job_label=spec.job_label, detail="no_wem_paths")
+        _write_status(spec.progress_path, status="skipped", job_label=spec.job_label, detail="no_wem_paths")
         return 0
 
-    coordinator = WavTranscodeCoordinator(
+    coordinator = TranscodeCoordinator(
         options=WavOutputOptions(
             enabled=True,
             worker_count=spec.worker_count,
@@ -274,7 +274,7 @@ def run_wav_background_job(spec: WavBackgroundJobSpec) -> int:
         audio_root=spec.audio_root,
         wav_root=spec.wav_root,
         report_root=spec.report_root,
-        progress_callback=lambda snapshot: _write_progress_snapshot(spec.progress_path, snapshot),
+        progress_callback=lambda snapshot: _write_progress(spec.progress_path, snapshot),
     )
 
     try:
@@ -288,10 +288,10 @@ def run_wav_background_job(spec: WavBackgroundJobSpec) -> int:
             spec.wav_format,
         )
         for raw_path in manifest_lines:
-            coordinator.submit_persisted_wem(Path(raw_path))
-        coordinator.mark_extract_finished()
-        summary = coordinator.finalize()
-        _write_terminal_progress(
+            coordinator.submit(Path(raw_path))
+        coordinator.finish_extract()
+        summary = coordinator.finish()
+        _write_status(
             spec.progress_path,
             status="completed",
             job_label=spec.job_label,
@@ -304,7 +304,7 @@ def run_wav_background_job(spec: WavBackgroundJobSpec) -> int:
         return 0
     except Exception as exc:  # noqa: BLE001
         logger.exception(f"[WAV 后台] 作业 {spec.job_label} 转码失败: {exc}")
-        _write_terminal_progress(
+        _write_status(
             spec.progress_path,
             status="failed",
             job_label=spec.job_label,
@@ -316,7 +316,7 @@ def run_wav_background_job(spec: WavBackgroundJobSpec) -> int:
             spec.manifest_path.unlink(missing_ok=True)
 
 
-def build_wav_background_job_spec_from_args(argv: list[str] | None = None) -> WavBackgroundJobSpec:
+def parse_job_spec(argv: list[str] | None = None) -> JobSpec:
     """从命令行参数解析后台 WAV 作业规格。"""
     parser = argparse.ArgumentParser(description="后台 WAV 转码作业")
     parser.add_argument("--task-id", type=str, required=True)
@@ -330,7 +330,7 @@ def build_wav_background_job_spec_from_args(argv: list[str] | None = None) -> Wa
     parser.add_argument("--retries", type=int, required=True)
     parser.add_argument("--format", type=str, required=True)
     args = parser.parse_args(argv)
-    return WavBackgroundJobSpec(
+    return JobSpec(
         job_label=str(args.task_id),
         manifest_path=args.manifest,
         audio_root=args.audio_root,
@@ -346,8 +346,8 @@ def build_wav_background_job_spec_from_args(argv: list[str] | None = None) -> Wa
 
 def main(argv: list[str] | None = None) -> int:
     """执行命令行入口并返回退出码。"""
-    spec = build_wav_background_job_spec_from_args(argv)
-    return run_wav_background_job(spec)
+    spec = parse_job_spec(argv)
+    return run_job(spec)
 
 
 if __name__ == "__main__":
@@ -355,13 +355,13 @@ if __name__ == "__main__":
 
 
 __all__ = [
-    "WavBackgroundJobSpec",
-    "WavBackgroundProcessHandle",
-    "WavManifestRecorder",
-    "build_manifest_recorder",
-    "build_wav_background_job_spec_from_paths",
-    "build_wav_background_job_spec_from_args",
-    "launch_detached_wav",
-    "launch_wav_background_process",
-    "run_wav_background_job",
+    "JobHandle",
+    "JobSpec",
+    "ManifestRecorder",
+    "build_job_spec",
+    "build_recorder",
+    "launch_detached",
+    "launch_job",
+    "parse_job_spec",
+    "run_job",
 ]

@@ -398,7 +398,7 @@ def test_execute_extract_operations_forwards_detached_wav_flags(monkeypatch) -> 
     handle = dispatch_cli.run_extract(args, FakeApp())
 
     assert handle is not None
-    assert captured_kwargs["detach_wav_sidecar"] is True
+    assert captured_kwargs["detach_wav"] is True
     assert str(captured_kwargs["wav_job_label"]).startswith("cli-")
 
 

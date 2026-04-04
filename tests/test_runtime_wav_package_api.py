@@ -12,26 +12,22 @@ def test_runtime_wav_package_exports_stable_public_api() -> None:
     runtime_wav = import_module("lol_audio_unpack.runtime.wav")
 
     assert runtime_wav.__all__ == [
-        "WavBackgroundJobSpec",
-        "WavBackgroundProcessHandle",
-        "WavManifestRecorder",
-        "WavSidecarProgressSnapshot",
-        "WavSidecarSummary",
-        "WavTranscodeCoordinator",
-        "build_manifest_recorder",
-        "build_wav_background_job_spec_from_paths",
-        "build_wav_output_path",
-        "launch_detached_wav",
-        "launch_wav_background_process",
-        "resolve_wav_decode_config",
-        "run_wav_background_job",
+        "AttemptResult",
+        "Job",
+        "JobFailure",
+        "JobHandle",
+        "JobSpec",
+        "ManifestRecorder",
+        "TranscodeCoordinator",
+        "TranscodeProgress",
+        "TranscodeSummary",
+        "build_job_spec",
+        "build_output_path",
+        "build_recorder",
+        "launch_detached",
+        "launch_job",
+        "parse_job_spec",
+        "resolve_decode_config",
+        "run_job",
+        "run_worker",
     ]
-
-
-def test_legacy_wav_modules_remain_runtime_shims() -> None:
-    """验证旧 WAV 入口只是 runtime.wav 的兼容层。"""
-    legacy_sidecar = import_module("lol_audio_unpack.wav_sidecar")
-    runtime_wav = import_module("lol_audio_unpack.runtime.wav")
-
-    assert legacy_sidecar.WavTranscodeCoordinator is runtime_wav.WavTranscodeCoordinator
-    assert legacy_sidecar.WavSidecarProgressSnapshot is runtime_wav.WavSidecarProgressSnapshot
