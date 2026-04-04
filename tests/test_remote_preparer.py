@@ -9,7 +9,7 @@ from loguru import logger
 from riotmanifest import DownloadError
 
 import lol_audio_unpack.facade as m_facade
-import lol_audio_unpack.remote_preparer as m_remote
+import lol_audio_unpack.remote.preparer as m_remote
 from lol_audio_unpack.app_context import (
     AppConfig,
     AppContext,
@@ -19,7 +19,7 @@ from lol_audio_unpack.app_context import (
     SourceMode,
 )
 from lol_audio_unpack.facade import LolAudioUnpackApp, RemoteEntityCallbackPayload, RemoteEntityWorkItem
-from lol_audio_unpack.remote_preparer import RemoteSnapshotPreparer
+from lol_audio_unpack.remote import RemoteSnapshotPreparer
 
 pytestmark = pytest.mark.unit
 EXPECTED_BUNDLE_COUNT = 3
@@ -109,7 +109,7 @@ def test_remote_snapshot_preparer_downloads_description_and_required_bundles(
 
     monkeypatch.setattr(m_remote, "PatcherManifest", FakePatcherManifest)
 
-    result = RemoteSnapshotPreparer(ctx=ctx).prepare_lcu_game_data()
+    result = RemoteSnapshotPreparer(ctx=ctx).prepare_lcu_data()
 
     assert result.manifest_cache_path.exists()
     assert result.description_cache_path.exists()
@@ -158,7 +158,7 @@ def test_facade_update_prepares_remote_snapshot_before_updaters(
         def __init__(self, *, ctx) -> None:  # noqa: ANN001
             assert ctx is not None
 
-        def prepare_lcu_game_data(self) -> None:
+        def prepare_lcu_data(self) -> None:
             call_order.append("prepare_lcu")
 
         def prepare_bin_inputs(  # noqa: PLR0913
@@ -259,7 +259,7 @@ def test_prepare_update_data_warms_remote_data_once_per_run(monkeypatch: pytest.
         def __init__(self, *, ctx) -> None:  # noqa: ANN001
             assert ctx is not None
 
-        def prepare_lcu_game_data(self) -> None:
+        def prepare_lcu_data(self) -> None:
             call_order.append("prepare_lcu")
 
         def prepare_bin_inputs(  # noqa: PLR0913
@@ -410,7 +410,7 @@ def test_remote_snapshot_preparer_logs_bin_input_plan_summary(
 
     monkeypatch.setattr(
         preparer,
-        "_build_bin_extraction_plan",
+        "_build_bin_plan",
         lambda **_kwargs: {
             "Game/DATA/FINAL/Champions/Annie.wad.client": [
                 "data/characters/Annie/skins/skin0.bin",
@@ -463,15 +463,15 @@ def test_remote_snapshot_preparer_logs_entity_wad_scope_before_prepare(
 
     monkeypatch.setattr(
         preparer,
-        "_build_extract_wad_plan",
+        "_build_extract_plan",
         lambda **_kwargs: {"Game/DATA/FINAL/Champions/Annie.wad.client"},
     )
     monkeypatch.setattr(
         preparer,
-        "_build_mapping_wad_plan",
+        "_build_mapping_plan",
         lambda **_kwargs: {"Game/DATA/FINAL/Maps/Shipping/Map11/Map11.wad.client"},
     )
-    monkeypatch.setattr(preparer, "_prepare_game_wads", lambda wad_paths: ("prepared", tuple(sorted(wad_paths))))
+    monkeypatch.setattr(preparer, "_prepare_wads", lambda wad_paths: ("prepared", tuple(sorted(wad_paths))))
 
     logger.enable("lol_audio_unpack")
     sink_id = logger.add(lambda message: log_lines.append(str(message).rstrip()), format="{level}|{message}")
@@ -1071,7 +1071,7 @@ def test_facade_run_remote_entity_workflow_raises_after_entity_retry_threshold(
     ]
 
 
-def test_remote_snapshot_preparer_cleanup_tracked_artifacts_supports_dry_run(
+def test_remote_snapshot_preparer_cleanup_artifacts_supports_dry_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1136,7 +1136,7 @@ def test_remote_snapshot_preparer_cleanup_tracked_artifacts_supports_dry_run(
     monkeypatch.setattr(m_remote, "WADExtractor", FakeWADExtractor)
 
     preparer = RemoteSnapshotPreparer(ctx=ctx)
-    lcu_result = preparer.prepare_lcu_game_data()
+    lcu_result = preparer.prepare_lcu_data()
     reader = SimpleNamespace(
         get_champions=lambda: [
             {
@@ -1175,7 +1175,7 @@ def test_remote_snapshot_preparer_cleanup_tracked_artifacts_supports_dry_run(
     assert bin_result is not None
     assert wad_result is not None
 
-    cleanup_result = preparer.cleanup_tracked_artifacts(dry_run=True)
+    cleanup_result = preparer.cleanup_artifacts(dry_run=True)
 
     assert cleanup_result["cached_lcu_wads"] == EXPECTED_CLEANUP_LCU_WADS
     assert cleanup_result["prepared_lcu_wads"] == EXPECTED_CLEANUP_LCU_WADS

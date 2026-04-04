@@ -23,7 +23,7 @@ from lol_audio_unpack.mapping import (
     describe_hirc_backend,
 )
 from lol_audio_unpack.model import AudioEntityData
-from lol_audio_unpack.remote_preparer import RemoteSnapshotPreparer
+from lol_audio_unpack.remote import RemoteSnapshotPreparer
 from lol_audio_unpack.unpack import unpack_all, unpack_champions, unpack_maps
 from lol_audio_unpack.utils.path_constants import format_entity_folder_name, get_output_dir_name
 
@@ -85,7 +85,7 @@ class LolAudioUnpackApp:
 
         logger.info("检测到 remote_snapshot 模式，开始准备 LCU 最小运行环境...")
         preparer = RemoteSnapshotPreparer(ctx=self.ctx)
-        preparer.prepare_lcu_game_data()
+        preparer.prepare_lcu_data()
         return preparer
 
     def _is_update_data_prepared(self, *, force_update: bool) -> bool:
@@ -419,7 +419,7 @@ class LolAudioUnpackApp:
         preparer = self._build_remote_preparer()
         if preparer is None:
             return
-        cleanup_result = preparer.cleanup_tracked_artifacts()
+        cleanup_result = preparer.cleanup_artifacts()
         if cleanup_result:
             logger.info(f"远端准备产物清理完成: {cleanup_result}")
 
