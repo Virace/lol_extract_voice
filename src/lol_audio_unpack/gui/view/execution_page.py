@@ -233,11 +233,17 @@ class ExecutionPage(SmoothScrollArea):
             self._log_gui_event("info", "[同步] 已取消从实体总览同步选择。")
             return None
 
+        all_champion_ids = {str(row.get("id")) for row in self._entity_data_store.rows_for("champions")}
+        all_map_ids = {str(row.get("id")) for row in self._entity_data_store.rows_for("maps")}
+        select_all = bool(all_champion_ids and all_map_ids) and (
+            set(update.champion_ids) == all_champion_ids and set(update.map_ids) == all_map_ids
+        )
         self.taskBuilderPanel.apply_selected_entities(
             champion_ids=update.champion_ids,
             map_ids=update.map_ids,
             source=update.source,
             summary=update.summary,
+            select_all=select_all,
         )
         self._log_gui_event("info", f"[同步] {update.summary}")
         return update.summary

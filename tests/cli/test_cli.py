@@ -497,6 +497,26 @@ def test_run_wav_executes_dedicated_stage(monkeypatch) -> None:
     }
 
 
+def test_run_wav_resolves_targets_before_transcoding(monkeypatch) -> None:
+    parser = create_parser()
+    args = parser.parse_args(["wav", "--champions", "Annie,Ahri", "--maps", "11"])
+    captured = {}
+
+    monkeypatch.setattr(dispatch_cli, "resolve_champion_ids", lambda *_args, **_kwargs: (1, 103))
+
+    class FakeApp:
+        def transcode_wav(self, opts, **kwargs) -> None:
+            captured["champion_ids"] = opts.champion_ids
+            captured["map_ids"] = opts.map_ids
+
+    dispatch_cli.run_wav(args, FakeApp())
+
+    assert captured == {
+        "champion_ids": (1, 103),
+        "map_ids": (11,),
+    }
+
+
 def test_execute_mapping_operations_defaults_to_native_hirc_without_wwiser(monkeypatch) -> None:
     parser = create_parser()
     args = parser.parse_args(["mapping"])

@@ -245,6 +245,47 @@ def test_run_tree_uses_transcode_tree_for_version_roots(tmp_path: Path, monkeypa
     assert payload["failed_file_count"] == 0
 
 
+def test_run_tree_uses_selected_audio_roots_when_provided(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """定向 WAV stage 应只消费显式选中的实体音频目录。"""
+    ctx = SimpleNamespace(
+        paths=SimpleNamespace(
+            audio_path=tmp_path / "audios",
+            wav_path=tmp_path / "wavs",
+            report_path=tmp_path / "reports",
+        )
+    )
+    version_root = tmp_path / "audios" / "15.8"
+    selected_root = version_root / "champions" / "1-annie"
+    selected_root.mkdir(parents=True, exist_ok=True)
+    (selected_root / "sample.wem").write_bytes(b"wem")
+    ignored_root = version_root / "champions" / "2-olaf"
+    ignored_root.mkdir(parents=True, exist_ok=True)
+    (ignored_root / "sample.wem").write_bytes(b"wem")
+    calls: list[tuple[Path, Path]] = []
+
+    def fake_transcode_tree(input_root_arg: Path, output_root_arg: Path, **kwargs):
+        calls.append((Path(input_root_arg), Path(output_root_arg)))
+        return SimpleNamespace(processed_count=1, failed_count=0, results=())
+
+    monkeypatch.setattr(wav_job, "transcode_tree", fake_transcode_tree)
+
+    payload = wav_job.run_tree(
+        ctx=ctx,
+        version="15.8",
+        wav_output=WavOutputOptions(enabled=True, worker_count=2, timeout_seconds=5, max_retries=3, format="pcm16"),
+        audio_roots=(selected_root,),
+    )
+
+    assert calls == [
+        (
+            selected_root,
+            tmp_path / "wavs" / "15.8" / "champions" / "1-annie",
+        )
+    ]
+    assert payload["processed_file_count"] == 1
+    assert payload["failed_file_count"] == 0
+
+
 def test_run_tree_bridges_progress_to_callback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """独立 WAV stage 应把 transcode_tree 进度桥接回统一进度回调。"""
     ctx = SimpleNamespace(

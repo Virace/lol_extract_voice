@@ -121,3 +121,74 @@ def test_execute_tasks_keeps_extract_flow_without_wav_stage(
     assert result is None
     assert events == ["extract", "write_unknown_categories"]
     assert persisted == [tmp_path / "audios" / "15.8" / "champions" / "1-annie" / "sample.wem"]
+
+
+def test_unpack_all_uses_task_generators_without_ctx_keyword(monkeypatch: pytest.MonkeyPatch) -> None:
+    """unpack_all 不应再向任务生成器传递旧的 ctx 关键字。"""
+    calls: list[tuple[str, object]] = []
+
+    def fake_generate_champion_tasks(reader, champion_ids=None):
+        calls.append(("champion", champion_ids))
+        return [("champion", 1, "英雄ID 1")]
+
+    def fake_generate_map_tasks(reader, map_ids=None):
+        calls.append(("map", map_ids))
+        return [("map", 11, "地图ID 11")]
+
+    monkeypatch.setattr(unpack_batch, "generate_champion_tasks", fake_generate_champion_tasks)
+    monkeypatch.setattr(unpack_batch, "generate_map_tasks", fake_generate_map_tasks)
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        unpack_batch,
+        "execute_tasks",
+        lambda tasks, reader, **kwargs: captured.update(tasks=tasks, kwargs=kwargs),
+    )
+
+    unpack_batch.unpack_all(
+        reader=SimpleNamespace(),
+        ctx=SimpleNamespace(),
+    )
+
+    assert calls == [("champion", None), ("map", None)]
+    assert captured["tasks"] == [("champion", 1, "英雄ID 1"), ("map", 11, "地图ID 11")]
+
+
+def test_unpack_champions_uses_task_generator_without_ctx_keyword(monkeypatch: pytest.MonkeyPatch) -> None:
+    """unpack_champions 不应再向英雄任务生成器传递旧的 ctx 关键字。"""
+    calls: list[object] = []
+
+    def fake_generate_champion_tasks(reader, champion_ids=None):
+        calls.append(champion_ids)
+        return [("champion", 1, "英雄ID 1")]
+
+    monkeypatch.setattr(unpack_batch, "generate_champion_tasks", fake_generate_champion_tasks)
+    monkeypatch.setattr(unpack_batch, "execute_tasks", lambda tasks, reader, **kwargs: None)
+
+    unpack_batch.unpack_champions(
+        reader=SimpleNamespace(),
+        champion_ids=[1],
+        ctx=SimpleNamespace(),
+    )
+
+    assert calls == [[1]]
+
+
+def test_unpack_maps_uses_task_generator_without_ctx_keyword(monkeypatch: pytest.MonkeyPatch) -> None:
+    """unpack_maps 不应再向地图任务生成器传递旧的 ctx 关键字。"""
+    calls: list[object] = []
+
+    def fake_generate_map_tasks(reader, map_ids=None):
+        calls.append(map_ids)
+        return [("map", 11, "地图ID 11")]
+
+    monkeypatch.setattr(unpack_batch, "generate_map_tasks", fake_generate_map_tasks)
+    monkeypatch.setattr(unpack_batch, "execute_tasks", lambda tasks, reader, **kwargs: None)
+
+    unpack_batch.unpack_maps(
+        reader=SimpleNamespace(),
+        map_ids=[11],
+        ctx=SimpleNamespace(),
+    )
+
+    assert calls == [[11]]

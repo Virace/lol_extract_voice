@@ -20,6 +20,7 @@ from lol_audio_unpack.app.types import (
     OperationOptions,
     RemoteSnapshotConfig,
     SourceMode,
+    WavOutputOptions,
 )
 from lol_audio_unpack.runtime.remote import RemotePreparer
 
@@ -709,6 +710,40 @@ def test_facade_mapping_prepares_remote_wads_before_mapping(monkeypatch: pytest.
     app.mapping(OperationOptions())
 
     assert call_order == ["prepare_mapping", "mapping"]
+
+
+def test_facade_transcode_wav_uses_selected_entity_audio_dirs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    ctx = _build_remote_ctx(tmp_path)
+    app = LolAudioUnpackApp(ctx)
+    calls: dict[str, object] = {}
+    champion_dir = ctx.paths.audio_path / "16.5" / "champions" / "103-ahri"
+    map_dir = ctx.paths.audio_path / "16.5" / "maps" / "11-howling-abyss"
+
+    monkeypatch.setattr(m_facade, "DataReader", lambda ctx: SimpleNamespace(ctx=ctx, version="16.5"))
+    app._build_entity_data = lambda reader, **kwargs: SimpleNamespace(  # type: ignore[method-assign]
+        entity_type=kwargs["entity_type"],
+        entity_id=str(kwargs["entity_id"]),
+    )
+    app._resolve_audio_paths = lambda entity_data: {  # type: ignore[method-assign]
+        ("champion", "103"): (champion_dir,),
+        ("map", "11"): (map_dir,),
+    }[(entity_data.entity_type, entity_data.entity_id)]
+    monkeypatch.setattr(
+        m_facade,
+        "run_tree",
+        lambda **kwargs: calls.update(kwargs) or {"status": "success", "processed_file_count": 0, "failed_file_count": 0},
+    )
+
+    app.transcode_wav(
+        OperationOptions(
+            champion_ids=(103,),
+            map_ids=(11,),
+            wav_output=WavOutputOptions(enabled=True),
+        )
+    )
+
+    assert calls["version"] == "16.5"
+    assert calls["audio_roots"] == (champion_dir, map_dir)
 
 
 def test_facade_build_work_items_merges_extract_and_mapping_targets(

@@ -188,9 +188,21 @@ def run_wav(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
     if not _has_wav(args):
         return
 
-    detail = "消费当前 audios 输出树"
+    try:
+        champion_ids, map_ids = _resolve_targets(args, app=app)
+    except ValueError as exc:
+        logger.error(f"音频转码目标失败: {exc}")
+        return
+
+    detail = _target_detail(
+        champion_ids=champion_ids,
+        map_ids=map_ids,
+        all_detail="消费当前 audios 输出树",
+        champion_detail="指定英雄音频目录",
+        map_detail="指定地图音频目录",
+    )
     _log_stage_start("WAV 转码", detail)
-    app.transcode_wav(build_options(args))
+    app.transcode_wav(build_options(args, champion_ids=champion_ids, map_ids=map_ids))
     _log_stage_done("WAV 转码", detail)
 
 

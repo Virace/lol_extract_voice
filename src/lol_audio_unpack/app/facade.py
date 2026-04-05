@@ -615,10 +615,37 @@ class LolAudioUnpackApp:
             dict[str, object]: WAV 转码汇总结果。
         """
         reader = self._create_reader()
+        audio_roots: tuple[Path, ...] | None = None
+        if opts.champion_ids is not None or opts.map_ids is not None:
+            resolved_roots: list[Path] = []
+            seen_roots: set[Path] = set()
+
+            def add_roots(entity_type: str, ids: tuple[int, ...] | None) -> None:
+                if ids is None:
+                    return
+                for entity_id in ids:
+                    entity_data = self._build_entity_data(
+                        reader,
+                        entity_type=entity_type,
+                        entity_id=entity_id,
+                    )
+                    for root in self._resolve_audio_paths(entity_data):
+                        if root not in seen_roots:
+                            seen_roots.add(root)
+                            resolved_roots.append(root)
+
+            add_roots("champion", opts.champion_ids)
+            add_roots("map", opts.map_ids)
+            audio_roots = tuple(resolved_roots)
+            if audio_roots:
+                logger.info("音频转码将按目标实体目录处理，共 {} 个目录。", len(audio_roots))
+            else:
+                logger.warning("音频转码未找到任何目标实体音频目录，将跳过本次执行。")
         return run_tree(
             ctx=self.ctx,
             version=reader.version,
             wav_output=opts.wav_output,
+            audio_roots=audio_roots,
             progress_callback=progress_callback,
             job_label=job_label,
         )

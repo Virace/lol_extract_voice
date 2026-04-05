@@ -114,6 +114,46 @@ def test_task_creation_card_keeps_wav_when_extract_is_disabled(qtbot) -> None:
     assert draft.task_params.wav_enabled is True
 
 
+def test_task_creation_card_normalizes_synced_full_selection_to_empty_targets(qtbot) -> None:
+    """总览页同步的全量选择应在构造任务草稿时归一成空 target。"""
+    panel = _build_panel(qtbot)
+    gui_config = _FakeGuiConfig()
+
+    panel.apply_selected_entities(
+        champion_ids=("1", "103"),
+        map_ids=("11",),
+        source="overview_selection",
+        summary="已同步全部实体。",
+        select_all=True,
+    )
+
+    draft = panel.build_task_draft(gui_config=gui_config)
+
+    assert draft.task_params.champion_ids is None
+    assert draft.task_params.map_ids is None
+
+
+def test_task_creation_card_keeps_explicit_targets_after_editing_synced_full_selection(qtbot) -> None:
+    """全量同步后若用户手动改了 ID，不应继续归一成空 target。"""
+    panel = _build_panel(qtbot)
+    gui_config = _FakeGuiConfig()
+
+    panel.apply_selected_entities(
+        champion_ids=("1", "103"),
+        map_ids=("11",),
+        source="overview_selection",
+        summary="已同步全部实体。",
+        select_all=True,
+    )
+    panel.champion_ids_input.setText("1")
+    panel.sync_state_from_widgets()
+
+    draft = panel.build_task_draft(gui_config=gui_config)
+
+    assert draft.task_params.champion_ids == (1,)
+    assert draft.task_params.map_ids == (11,)
+
+
 def test_task_creation_card_restore_button_resets_custom_inputs_to_defaults(qtbot) -> None:
     """恢复按钮应把自定义输入恢复到默认值，并放在创建任务按钮左侧。"""
     panel = _build_panel(qtbot)

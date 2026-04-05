@@ -60,6 +60,29 @@ def test_execution_page_uses_latest_wav_defaults_from_setting_page(qtbot) -> Non
     assert draft.task_params.wav_format == "float"
 
 
+def test_execution_page_normalizes_synced_full_selection_to_default_scope(qtbot) -> None:
+    """总览页同步的整页全选在执行中心应等价于默认全量。"""
+    page = ExecutionPage()
+    qtbot.addWidget(page)
+    page.set_entity_data("champions", [{"id": "1"}, {"id": "103"}])
+    page.set_entity_data("maps", [{"id": "11"}])
+
+    summary = page.set_selected_entities(
+        {
+            "source": "overview_selection",
+            "champion_ids": (1, 103),
+            "map_ids": (11,),
+            "summary": "已同步全部实体。",
+        }
+    )
+    draft = page.taskBuilderPanel.build_task_draft(gui_config=page.gui_config)
+
+    assert summary == "已同步全部实体。"
+    assert page.taskBuilderPanel.current_target_ids() == (("1", "103"), ("11",))
+    assert draft.task_params.champion_ids is None
+    assert draft.task_params.map_ids is None
+
+
 def test_execution_page_hides_cli_copy_entrypoint(qtbot) -> None:
     """执行中心不应再向普通用户暴露 CLI 复制入口。"""
     _setting_page, execution_page = _build_linked_pages(qtbot)

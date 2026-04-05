@@ -79,11 +79,12 @@ def _write_reports(
     )
 
 
-def run_tree(
+def run_tree(  # noqa: PLR0913
     *,
     ctx: AppContext,
     version: str,
     wav_output: WavOutputOptions,
+    audio_roots: tuple[Path, ...] | None = None,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
     job_label: str | None = None,
 ) -> dict[str, Any]:
@@ -93,6 +94,7 @@ def run_tree(
         ctx: 运行时上下文。
         version: 当前数据版本号。
         wav_output: WAV 输出配置。
+        audio_roots: 可选的音频根目录集合；为空时默认消费整个版本目录。
         progress_callback: 可选的统一进度回调。
         job_label: 可选报告标签。
 
@@ -101,6 +103,7 @@ def run_tree(
     """
     paths = build_transcode_paths(ctx=ctx, version=version, job_label=job_label)
     decode_config = resolve_decode_config(wav_output.format)
+    run_roots = (paths.audio_root,) if audio_roots is None else tuple(Path(root) for root in audio_roots)
 
     logger.info(
         "开始 WAV 转码：audio_root={}，wav_root={}，workers={}，format={}",
@@ -116,40 +119,64 @@ def run_tree(
             progress_callback("wav", progress.completed_count, max(progress.total_count, 1), message)
         logger.info(message)
 
-    summary = transcode_tree(
-        paths.audio_root,
-        paths.wav_root,
-        workers=wav_output.worker_count,
-        chunk_frames=65536,
-        dispatch_chunksize=64,
-        config=decode_config,
-        progress_callback=emit_progress,
-    )
-    failures = [
-        _serialize_failure(result)
-        for result in summary.results
-        if result.error
-    ]
+    if not run_roots:
+        logger.warning("WAV 转码未找到可处理的音频目录，已跳过本次执行。")
+        payload = {
+            "status": "success",
+            "job_label": job_label,
+            "audio_root": str(paths.audio_root),
+            "wav_root": str(paths.wav_root),
+            "worker_count": wav_output.worker_count,
+            "wav_format": wav_output.format,
+            "processed_file_count": 0,
+            "failed_file_count": 0,
+            "audio_roots": [],
+        }
+        _write_reports(paths.report_root, payload=payload, failures=[])
+        return payload
+
+    processed_count = 0
+    failed_count = 0
+    failures: list[dict[str, Any]] = []
+    for input_root in run_roots:
+        output_root = paths.wav_root / input_root.relative_to(paths.audio_root)
+        summary = transcode_tree(
+            input_root,
+            output_root,
+            workers=wav_output.worker_count,
+            chunk_frames=65536,
+            dispatch_chunksize=64,
+            config=decode_config,
+            progress_callback=emit_progress,
+        )
+        processed_count += summary.processed_count
+        failed_count += summary.failed_count
+        failures.extend(
+            _serialize_failure(result)
+            for result in summary.results
+            if result.error
+        )
     payload = {
-        "status": "warning" if summary.failed_count else "success",
+        "status": "warning" if failed_count else "success",
         "job_label": job_label,
         "audio_root": str(paths.audio_root),
         "wav_root": str(paths.wav_root),
         "worker_count": wav_output.worker_count,
         "wav_format": wav_output.format,
-        "processed_file_count": summary.processed_count,
-        "failed_file_count": summary.failed_count,
+        "processed_file_count": processed_count,
+        "failed_file_count": failed_count,
+        "audio_roots": [str(root) for root in run_roots],
     }
     _write_reports(paths.report_root, payload=payload, failures=failures)
 
-    if summary.failed_count:
+    if failed_count:
         logger.warning(
             "WAV 转码完成：成功 {} 个，失败 {} 个",
-            summary.processed_count,
-            summary.failed_count,
+            processed_count,
+            failed_count,
         )
     else:
-        logger.success("WAV 转码完成：成功 {} 个", summary.processed_count)
+        logger.success("WAV 转码完成：成功 {} 个", processed_count)
 
     return payload
 

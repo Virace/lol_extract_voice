@@ -167,8 +167,8 @@ def unpack_all(  # noqa: PLR0913
     persisted_wem_callback: Callable[[Path], None] | None = None,
 ) -> None:
     """解包全部实体音频。"""
-    champion_tasks = generate_champion_tasks(reader, ctx=ctx) if include_champions else []
-    map_tasks = generate_map_tasks(reader, ctx=ctx) if include_maps else []
+    champion_tasks = generate_champion_tasks(reader) if include_champions else []
+    map_tasks = generate_map_tasks(reader) if include_maps else []
     execute_tasks(
         champion_tasks + map_tasks,
         reader,
@@ -189,7 +189,7 @@ def unpack_champions(  # noqa: PLR0913
     persisted_wem_callback: Callable[[Path], None] | None = None,
 ) -> None:
     """解包指定英雄音频。"""
-    tasks = generate_champion_tasks(reader, champion_ids, ctx=ctx)
+    tasks = generate_champion_tasks(reader, champion_ids)
     execute_tasks(
         tasks,
         reader,
@@ -210,7 +210,7 @@ def unpack_maps(  # noqa: PLR0913
     persisted_wem_callback: Callable[[Path], None] | None = None,
 ) -> None:
     """解包指定地图音频。"""
-    tasks = generate_map_tasks(reader, map_ids, ctx=ctx)
+    tasks = generate_map_tasks(reader, map_ids)
     execute_tasks(
         tasks,
         reader,

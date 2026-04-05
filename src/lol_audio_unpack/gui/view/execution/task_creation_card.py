@@ -240,6 +240,7 @@ class TaskCreationCard(GroupHeaderCardWidget):
             "champion_ids": (),
             "map_ids": (),
             "summary": "尚未从实体总览同步选择。",
+            "select_all": False,
         }
 
     def connect_form_signals(self, callback) -> None:
@@ -355,6 +356,9 @@ class TaskCreationCard(GroupHeaderCardWidget):
         state = self._state
         champion_ids = _parse_csv_int_ids(",".join(state.champion_ids), label="英雄 ID")
         map_ids = _parse_csv_int_ids(",".join(state.map_ids), label="地图 ID")
+        if self._synced_selection["select_all"] and self.current_selection_source() == str(self._synced_selection["source"]):
+            champion_ids = None
+            map_ids = None
         exclude_types = ("SFX", "MUSIC") if state.vo_filter_key == "VO" else ()
         wav_workers = int(getattr(gui_config, "wav_workers", 2) if gui_config else 2)
         wav_timeout = int(getattr(gui_config, "wav_timeout", 5) if gui_config else 5)
@@ -420,6 +424,7 @@ class TaskCreationCard(GroupHeaderCardWidget):
         map_ids: tuple[str, ...],
         source: str,
         summary: str,
+        select_all: bool = False,
     ) -> None:
         """将实体总览选择应用到任务表单。"""
         self._synced_selection = {
@@ -427,6 +432,7 @@ class TaskCreationCard(GroupHeaderCardWidget):
             "champion_ids": champion_ids,
             "map_ids": map_ids,
             "summary": summary,
+            "select_all": select_all,
         }
         self.champion_ids_input.setText(",".join(champion_ids))
         self.map_ids_input.setText(",".join(map_ids))
