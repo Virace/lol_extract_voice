@@ -1,4 +1,4 @@
-"""实体总览页面，负责展示实体状态并预留右侧资源预览区。"""
+﻿"""实体总览页面，负责展示实体状态并预留右侧资源预览区。"""
 
 from __future__ import annotations
 
@@ -57,16 +57,14 @@ from lol_audio_unpack.gui.components.preview_tree import (
     build_tree_summary_text,
     collect_tree_stats,
 )
+from lol_audio_unpack.gui.controllers import (
+    OverviewPreviewController,
+    PreviewPlaybackController,
+)
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
 from lol_audio_unpack.gui.controllers.entity_data_store import EntityDataStore
-from lol_audio_unpack.gui.controllers.overview_preview_controller import (
-    AudioPreviewToggleResult,
-    OverviewPreviewController,
-)
-from lol_audio_unpack.gui.controllers.preview_playback_controller import (
-    PreviewPlaybackController,
-    PreviewPlaybackState,
-)
+from lol_audio_unpack.gui.controllers.overview_preview import AudioPreviewToggleResult
+from lol_audio_unpack.gui.controllers.preview_playback import PreviewPlaybackState
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 from lol_audio_unpack.gui.view.overview.audio_preview_panel import OverviewAudioPreviewPanel
 from lol_audio_unpack.gui.view.overview.entity_list_panel import OverviewEntityListPanel

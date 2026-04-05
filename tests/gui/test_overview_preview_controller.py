@@ -1,9 +1,9 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
 
-from lol_audio_unpack.gui.controllers.overview_preview_controller import (
+from lol_audio_unpack.gui.controllers.overview_preview import (
     AudioPreviewToggleResult,
     OverviewPreviewController,
     OverviewPreviewLoadResult,

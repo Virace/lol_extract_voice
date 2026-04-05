@@ -1,11 +1,11 @@
-"""执行中心队列状态机控制器测试。"""
+﻿"""执行中心队列状态机控制器测试。"""
 
 from __future__ import annotations
 
 from types import SimpleNamespace
 
-import lol_audio_unpack.gui.controllers.execution_queue_controller as queue_module
-from lol_audio_unpack.gui.controllers.execution_queue_controller import ExecutionQueueController
+import lol_audio_unpack.gui.controllers.execution_queue as queue_module
+from lol_audio_unpack.gui.controllers.execution_queue import ExecutionQueueController
 from lol_audio_unpack.gui.task_models import (
     TASK_STATUS_COMPLETED,
     TASK_STATUS_RUNNING,

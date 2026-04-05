@@ -1,4 +1,4 @@
-"""主窗口壳层 helper 测试。"""
+﻿"""主窗口壳层 helper 测试。"""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 from qfluentwidgets import NavigationItemPosition
 
 from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
-from lol_audio_unpack.gui.controllers.window_shell_controller import (
+from lol_audio_unpack.gui.controllers.window_shell import (
     apply_task_queue_busy_state,
     bind_shared_data_controller_signals,
     confirm_force_close_running_tasks,
@@ -264,7 +264,7 @@ def test_confirm_force_close_running_tasks_returns_true_for_close(monkeypatch) -
             return int(self.StandardButton.Close)
 
     monkeypatch.setattr(
-        "lol_audio_unpack.gui.controllers.window_shell_controller.QMessageBox",
+        "lol_audio_unpack.gui.controllers.window_shell.QMessageBox",
         _FakeMessageBox,
     )
 
@@ -367,7 +367,7 @@ def test_main_window_connect_pages_forwards_execution_progress_to_global_strip()
 
 def test_execution_log_controller_runtime_sink_uses_async_queue() -> None:
     controller_source = Path(
-        "src/lol_audio_unpack/gui/controllers/execution_log_controller.py"
+        "src/lol_audio_unpack/gui/controllers/execution_log.py"
     ).read_text(encoding="utf-8")
 
     assert "enqueue=True" in controller_source

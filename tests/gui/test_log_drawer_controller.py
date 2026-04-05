@@ -1,10 +1,10 @@
-"""全局日志抽屉控制器测试。"""
+﻿"""全局日志抽屉控制器测试。"""
 
 from __future__ import annotations
 
 from PySide6.QtCore import QRect, QSize
 
-from lol_audio_unpack.gui.controllers.log_drawer_controller import LogDrawerController
+from lol_audio_unpack.gui.controllers.log_drawer import LogDrawerController
 
 
 def test_log_drawer_controller_initializes_drawer_once() -> None:

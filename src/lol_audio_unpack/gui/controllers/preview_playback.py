@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from time import monotonic
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QObject, QTimer, Signal
 from PySide6.QtMultimedia import QAudio, QAudioDevice, QAudioFormat, QAudioSink, QMediaDevices
@@ -12,6 +13,7 @@ from pyvgmstream import DecodeConfig, SampleFormat, open_stream
 
 PREVIEW_AUDIO_READ_CHUNK_FRAMES = 4096
 DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY = "default"
+RETIRED_AUDIO_BUFFER_GRACE_MS = 250
 
 
 def _is_qt_audio_state(state, expected_name: str) -> bool:
@@ -52,6 +54,14 @@ class PreviewPlaybackState:
     progress: float
     is_playing: bool
     is_paused: bool
+
+
+@dataclass(frozen=True, slots=True)
+class _RetiredAudioBuffer:
+    """描述一段等待 Qt backend 完全脱离后再回收的旧缓冲区。"""
+
+    buffer: object
+    cleanup_after: float
 
 
 def build_preview_audio_decode_plan(sample_format: SampleFormat) -> PreviewAudioDecodePlan:
@@ -206,7 +216,7 @@ class PreviewPlaybackController(QObject):
         self._audio_sink = None
         self._audio_buffer: QBuffer | None = None
         self._audio_payload: QByteArray | None = None
-        self._retired_audio_buffers: list[QBuffer] = []
+        self._retired_audio_buffers: list[_RetiredAudioBuffer] = []
         self._payload_size_bytes = 0
         self._playback_start_pending = False
         self._progress_timer = QTimer(self)
@@ -214,7 +224,7 @@ class PreviewPlaybackController(QObject):
         self._progress_timer.timeout.connect(self._emit_state_from_sink)
         self._buffer_cleanup_timer = QTimer(self)
         self._buffer_cleanup_timer.setSingleShot(True)
-        self._buffer_cleanup_timer.setInterval(0)
+        self._buffer_cleanup_timer.setInterval(RETIRED_AUDIO_BUFFER_GRACE_MS)
         self._buffer_cleanup_timer.timeout.connect(self._drain_retired_audio_buffers)
 
     def set_volume_percent(self, value: int) -> None:
@@ -348,13 +358,42 @@ class PreviewPlaybackController(QObject):
         progress = float(self._audio_buffer.pos()) / float(self._payload_size_bytes)
         return max(0.0, min(1.0, progress))
 
+    def _now_monotonic(self) -> float:
+        """返回当前单调时钟时间。"""
+        return monotonic()
+
+    def _schedule_retired_buffer_cleanup(self, delay_ms: int | None = None) -> None:
+        """按给定宽限时间安排旧缓冲区回收。"""
+        if not self._retired_audio_buffers:
+            if self._buffer_cleanup_timer.isActive():
+                self._buffer_cleanup_timer.stop()
+            return
+
+        target_delay_ms = RETIRED_AUDIO_BUFFER_GRACE_MS if delay_ms is None else max(int(delay_ms), 1)
+        self._buffer_cleanup_timer.start(target_delay_ms)
+
     def _drain_retired_audio_buffers(self) -> None:
-        """在事件循环下一拍统一回收旧的音频缓冲区。"""
+        """在 Qt backend 完全脱离后统一回收旧的音频缓冲区。"""
+        if not self._retired_audio_buffers:
+            return
+
+        now = self._now_monotonic()
+        pending_buffers: list[_RetiredAudioBuffer] = []
+        next_delay_ms: int | None = None
         retired_buffers = tuple(self._retired_audio_buffers)
         self._retired_audio_buffers.clear()
-        for buffer in retired_buffers:
-            buffer.close()
-            buffer.deleteLater()
+        for retired_buffer in retired_buffers:
+            remaining_ms = int((retired_buffer.cleanup_after - now) * 1000)
+            if remaining_ms > 0:
+                pending_buffers.append(retired_buffer)
+                next_delay_ms = remaining_ms if next_delay_ms is None else min(next_delay_ms, remaining_ms)
+                continue
+
+            retired_buffer.buffer.close()
+            retired_buffer.buffer.deleteLater()
+
+        self._retired_audio_buffers = pending_buffers
+        self._schedule_retired_buffer_cleanup(next_delay_ms)
 
     def _dispose_session(self, *, emit_state: bool) -> None:
         """释放当前 Qt 音频资源并按需清空界面状态。"""
@@ -377,9 +416,11 @@ class PreviewPlaybackController(QObject):
                 delete_later()
 
         if self._audio_buffer is not None:
-            self._retired_audio_buffers.append(self._audio_buffer)
-            if not self._buffer_cleanup_timer.isActive():
-                self._buffer_cleanup_timer.start()
+            cleanup_after = self._now_monotonic() + (RETIRED_AUDIO_BUFFER_GRACE_MS / 1000.0)
+            self._retired_audio_buffers.append(
+                _RetiredAudioBuffer(buffer=self._audio_buffer, cleanup_after=cleanup_after)
+            )
+            self._schedule_retired_buffer_cleanup()
             self._audio_buffer = None
         self._audio_payload = None
         self._payload_size_bytes = 0

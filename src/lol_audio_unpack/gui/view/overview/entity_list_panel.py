@@ -6,6 +6,7 @@ from PySide6.QtCore import QItemSelectionModel, QModelIndex, QSignalBlocker, Qt
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, PrimaryPushButton, PushButton, SearchLineEdit, SegmentedWidget
 
+from lol_audio_unpack.gui.common.font_compat import apply_line_edit_safe_font
 from lol_audio_unpack.gui.components.overview_entity_list import OVERVIEW_ROW_ROLE, OverviewEntityListView
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
 
@@ -34,6 +35,7 @@ class OverviewEntityListPanel(QWidget):
 
         self.search_input = SearchLineEdit(self)
         self.search_input.setPlaceholderText("搜索英雄、地图、别名或 ID")
+        apply_line_edit_safe_font(self.search_input)
         layout.addWidget(self.search_input)
 
         self.selection_status_label = BodyLabel("已选 0 个英雄，0 张地图。", self)

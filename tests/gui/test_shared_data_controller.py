@@ -1,4 +1,4 @@
-"""共享实体数据控制器测试。"""
+﻿"""共享实体数据控制器测试。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from lol_audio_unpack.gui.controllers.contracts import GuiNotice
-from lol_audio_unpack.gui.controllers.shared_data_controller import (
+from lol_audio_unpack.gui.controllers.shared_data import (
     SharedDataController,
     build_shared_context_loading_message,
     build_shared_entity_reader_signature,
@@ -134,7 +134,7 @@ def test_shared_data_controller_refresh_shared_output_state_uses_incremental_loa
             return [{"id": entity_ids[0], "name": entity_type}]
 
     controller = _build_controller(entity_data_loader_cls=_FakeEntityDataLoader)
-    controller.data_app_context = object()
+    controller.app_context = object()
     updates = []
     notices = []
     reconfigure_payloads = []
@@ -166,7 +166,7 @@ def test_shared_data_controller_refresh_shared_output_state_warns_before_full_re
     reload_calls = []
 
     monkeypatch.setattr(
-        "lol_audio_unpack.gui.controllers.shared_data_controller.logger",
+        "lol_audio_unpack.gui.controllers.shared_data.logger",
         SimpleNamespace(
             warning=warnings.append,
             info=lambda *_args, **_kwargs: None,
@@ -210,7 +210,7 @@ def test_shared_data_controller_on_shared_data_prepare_failed_logs_error(monkeyp
     errors: list[str] = []
 
     monkeypatch.setattr(
-        "lol_audio_unpack.gui.controllers.shared_data_controller.logger",
+        "lol_audio_unpack.gui.controllers.shared_data.logger",
         SimpleNamespace(error=errors.append),
     )
 
@@ -256,10 +256,10 @@ def test_shared_data_controller_load_initial_data_starts_worker_and_emits_loadin
     controller.load_initial_data()
 
     assert controller.is_loading_shared_data is True
-    assert controller.shared_context_build_request_id == 1
+    assert controller.build_request_id == 1
     assert len(started_workers) == 1
     worker = started_workers[0]
-    assert worker is controller.shared_context_build_worker
+    assert worker is controller.build_worker
     assert loading_states[-1].message == "正在读取本地共享数据…"
     assert loading_states[-1].active is True
     assert create_calls == []
@@ -291,10 +291,10 @@ def test_shared_data_controller_load_initial_data_failed_callback_clears_state_a
     controller.load_initial_data()
     started_workers[0].signals.failed.emit("boom")
 
-    assert controller.shared_context_build_worker is None
-    assert controller.shared_context_build_cfg is None
+    assert controller.build_worker is None
+    assert controller.build_cfg is None
     assert controller.is_loading_shared_data is False
-    assert controller.data_app_context is None
+    assert controller.app_context is None
     assert app_context_events == [None]
     assert cleared_events == [True]
     assert loading_states[-1].message == "加载失败: boom"
@@ -321,15 +321,15 @@ def test_shared_data_controller_on_shared_context_build_timeout_resets_state_and
     controller.shared_data_cleared.connect(lambda: cleared_events.append(True))
 
     controller.load_initial_data()
-    assert controller.shared_context_build_request_id == 1
+    assert controller.build_request_id == 1
 
     controller.on_shared_context_build_timeout()
 
-    assert controller.shared_context_build_request_id == expected_request_id_after_timeout
-    assert controller.shared_context_build_worker is None
-    assert controller.shared_context_build_cfg is None
+    assert controller.build_request_id == expected_request_id_after_timeout
+    assert controller.build_worker is None
+    assert controller.build_cfg is None
     assert controller.is_loading_shared_data is False
-    assert controller.data_app_context is None
+    assert controller.app_context is None
     assert app_context_events == [None]
     assert cleared_events == [True]
     assert loading_states[-1].message == "加载失败: 读取共享数据超时，请重试。"
@@ -357,7 +357,7 @@ def test_shared_data_controller_reconfigures_logging_only_when_scan_signature_ch
         reset_data_reader_singleton_fn=lambda: None,
         app_context_block_reason_fn=lambda _cfg: None,
     )
-    controller.shared_entity_reader_signature = (
+    controller.reader_signature = (
         cfg.to_app_context_settings()["SOURCE_MODE"],
         cfg.to_app_context_settings()["GAME_PATH"],
         cfg.to_app_context_settings()["GAME_REGION"],
@@ -366,7 +366,7 @@ def test_shared_data_controller_reconfigures_logging_only_when_scan_signature_ch
         cfg.to_app_context_settings()["REMOTE_LCU_MANIFEST_URL"],
         cfg.to_app_context_settings()["REMOTE_GAME_MANIFEST_URL"],
     )
-    controller.shared_entity_scan_signature = (
+    controller.scan_signature = (
         cfg.to_app_context_settings()["OUTPUT_PATH"],
         cfg.to_app_context_settings()["GROUP_BY_TYPE"],
     )
@@ -385,7 +385,7 @@ def test_shared_data_controller_reconfigures_logging_only_when_scan_signature_ch
 
 def test_shared_data_controller_shutdown_background_work_stops_short_workers() -> None:
     controller = _build_controller()
-    controller.shared_context_build_worker = object()
+    controller.build_worker = object()
     controller.shared_data_prepare_worker = object()
     controller.is_loading_shared_data = True
     controller.is_preparing_shared_data = True

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from lol_audio_unpack.gui.common import format_default_relative_path
-from lol_audio_unpack.gui.controllers.path_picker_controller import apply_path_card_label
+from lol_audio_unpack.gui.controllers.path_picker import apply_path_card_label
 
 
 def test_apply_path_card_label_uses_current_prefix_for_explicit_path() -> None:

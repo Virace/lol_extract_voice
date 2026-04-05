@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from lol_audio_unpack.gui import controllers as controllers_pkg
 from lol_audio_unpack.gui.controllers.contracts import (
     OverviewSelectionSyncRequest,
     RuntimeLoggingConfig,
@@ -40,3 +41,14 @@ def test_execution_page_accepts_overview_selection_sync_request(qtbot) -> None:
 
     assert summary == payload.summary
     assert page.taskBuilderPanel.current_target_ids() == (("1", "103"), ("11",))
+
+
+def test_controllers_package_exports_primary_controller_classes() -> None:
+    assert controllers_pkg.DevConsoleController.__name__ == "DevConsoleController"
+    assert controllers_pkg.SharedDataController.__name__ == "SharedDataController"
+    assert controllers_pkg.PreviewPlaybackController.__name__ == "PreviewPlaybackController"
+
+
+def test_controllers_directory_uses_domain_module_names_without_controller_suffix() -> None:
+    controller_dir = Path("src/lol_audio_unpack/gui/controllers")
+    assert sorted(path.name for path in controller_dir.glob("*_controller.py")) == []

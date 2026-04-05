@@ -56,7 +56,7 @@ def pick_and_apply_directory(  # noqa: PLR0913
     card,
     default: str,
     changed_signal,
-    emit_shared_context_input_changed=None,
+    emit_context_changed=None,
 ) -> None:
     """弹出目录选择并在成功后应用到配置与卡片。"""
     path = pick_directory(host=host, title=title, current=current)
@@ -66,8 +66,8 @@ def pick_and_apply_directory(  # noqa: PLR0913
     save()
     apply_path_card_label(card, path, default)
     changed_signal.emit(path)
-    if emit_shared_context_input_changed is not None:
-        emit_shared_context_input_changed()
+    if emit_context_changed is not None:
+        emit_context_changed()
 
 
 def pick_and_apply_file(  # noqa: PLR0913

@@ -1,11 +1,11 @@
-"""开发控制台命令控制器测试。"""
+﻿"""开发控制台命令控制器测试。"""
 
 from __future__ import annotations
 
 import pytest
 from PySide6.QtCore import QPoint
 
-from lol_audio_unpack.gui.controllers.dev_console_controller import DevConsoleController
+from lol_audio_unpack.gui.controllers.dev_console import DevConsoleController
 
 
 def test_dev_console_controller_help_lists_available_commands() -> None:

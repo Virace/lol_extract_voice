@@ -1,10 +1,10 @@
-"""远端来源面板的载荷回归测试。"""
+﻿"""远端来源面板的载荷回归测试。"""
 
 from __future__ import annotations
 
 from PySide6.QtWidgets import QWidget
 
-from lol_audio_unpack.gui.controllers.remote_source_controller import RemoteSourceDraft
+from lol_audio_unpack.gui.controllers.remote_source import RemoteSourceDraft
 from lol_audio_unpack.gui.view.settings.remote_source_panel import RemoteSourcePanel
 
 

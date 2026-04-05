@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from time import perf_counter
 from weakref import ref
@@ -40,18 +40,16 @@ from lol_audio_unpack.gui.common.style import (
     apply_page_content_margins,
     configure_transparent_scroll_page,
 )
+from lol_audio_unpack.gui.controllers import RemoteSourceController
 from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
-from lol_audio_unpack.gui.controllers.path_picker_controller import (
+from lol_audio_unpack.gui.controllers.path_picker import (
     apply_path_card_label,
     pick_and_apply_directory,
     pick_and_apply_file,
     pick_directory,
     pick_file,
 )
-from lol_audio_unpack.gui.controllers.remote_source_controller import (
-    RemoteSourceController,
-    RemoteSourceDraft,
-)
+from lol_audio_unpack.gui.controllers.remote_source import RemoteSourceDraft
 from lol_audio_unpack.gui.view.settings.appearance_panel import AppearancePanel
 from lol_audio_unpack.gui.view.settings.cards import (
     ComboRowSettingCard,
@@ -411,7 +409,7 @@ class SettingPage(SmoothScrollArea):
                 card=self.gamePathCard,
                 default="",
                 changed_signal=self.game_path_changed,
-                emit_shared_context_input_changed=self.shared_context_input_changed.emit,
+                emit_context_changed=self.shared_context_input_changed.emit,
             )
         )
         self.outputPathCard.clicked.connect(
@@ -424,7 +422,7 @@ class SettingPage(SmoothScrollArea):
                 card=self.outputPathCard,
                 default=f"./{get_default_output_relative_path()}",
                 changed_signal=self.output_path_changed,
-                emit_shared_context_input_changed=self.shared_context_input_changed.emit,
+                emit_context_changed=self.shared_context_input_changed.emit,
             )
         )
         self.wwiserCard.clicked.connect(

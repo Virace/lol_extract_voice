@@ -1,6 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from lol_audio_unpack.gui.controllers.execution_log_controller import ExecutionLogController
+from lol_audio_unpack.gui.controllers.execution_log import ExecutionLogController
 
 
 def test_execution_log_controller_flushes_pending_lines_into_current_text() -> None:

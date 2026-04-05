@@ -1,4 +1,4 @@
-"""远端来源配置面板。"""
+﻿"""远端来源配置面板。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from qfluentwidgets import (
 )
 from qfluentwidgets import PushSettingCard, SettingCardGroup
 
-from lol_audio_unpack.gui.controllers.remote_source_controller import RemoteSourceDraft
+from lol_audio_unpack.gui.controllers.remote_source import RemoteSourceDraft
 from lol_audio_unpack.gui.view.settings.cards import (
     ComboRowSettingCard,
     FixedSnapshotCard,

@@ -1,4 +1,4 @@
-"""Qt 试听播放控制器测试。"""
+﻿"""Qt 试听播放控制器测试。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 from PySide6.QtMultimedia import QAudio, QAudioFormat
 from pyvgmstream import DecodeConfig, SampleFormat
 
-from lol_audio_unpack.gui.controllers.preview_playback_controller import (
+from lol_audio_unpack.gui.controllers.preview_playback import (
     PreparedPreviewAudio,
     PreviewAudioDecodePlan,
     PreviewPlaybackController,
@@ -229,7 +229,8 @@ def test_preview_playback_controller_marks_audio_active_during_backend_start_gap
     )
 
 
-def test_preview_playback_controller_defers_audio_buffer_close_until_cleanup() -> None:
+def test_preview_playback_controller_defers_audio_buffer_close_until_cleanup(monkeypatch) -> None:
+    current_time = 100.0
     controller = PreviewPlaybackController(
         decode_audio_fn=lambda path: PreparedPreviewAudio(
             audio_path=Path(path),
@@ -244,12 +245,48 @@ def test_preview_playback_controller_defers_audio_buffer_close_until_cleanup() -
     fake_buffer = _FakeAudioBuffer()
     controller._audio_buffer = fake_buffer
     controller._audio_sink = _FakeAudioSink(_FakeAudioDevice(b"default-device"), _build_qt_audio_format())
+    monkeypatch.setattr(controller, "_now_monotonic", lambda: current_time, raising=False)
 
     controller._dispose_session(emit_state=False)
 
     assert fake_buffer.closed is False
     assert fake_buffer.deleted is False
 
+    current_time += 1.0
+    controller._drain_retired_audio_buffers()
+
+    assert fake_buffer.closed is True
+    assert fake_buffer.deleted is True
+
+
+def test_preview_playback_controller_keeps_retired_buffer_open_during_cleanup_grace_window(
+    monkeypatch,
+) -> None:
+    current_time = 100.0
+    controller = PreviewPlaybackController(
+        decode_audio_fn=lambda path: PreparedPreviewAudio(
+            audio_path=Path(path),
+            pcm_bytes=b"\x01\x02",
+            audio_format=_build_qt_audio_format(),
+            duration_seconds=1.0,
+        ),
+        audio_sink_factory=_build_fake_audio_sink,
+        audio_outputs_provider=lambda: [],
+        default_audio_output_provider=lambda: _FakeAudioDevice(b"default-device"),
+    )
+    fake_buffer = _FakeAudioBuffer()
+    controller._audio_buffer = fake_buffer
+    controller._audio_sink = _FakeAudioSink(_FakeAudioDevice(b"default-device"), _build_qt_audio_format())
+    monkeypatch.setattr(controller, "_now_monotonic", lambda: current_time, raising=False)
+
+    controller._dispose_session(emit_state=False)
+    controller._drain_retired_audio_buffers()
+
+    assert fake_buffer.closed is False
+    assert fake_buffer.deleted is False
+    assert controller._buffer_cleanup_timer.isActive() is True
+
+    current_time += 1.0
     controller._drain_retired_audio_buffers()
 
     assert fake_buffer.closed is True

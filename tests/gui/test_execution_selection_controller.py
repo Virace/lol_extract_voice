@@ -1,6 +1,6 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
-from lol_audio_unpack.gui.controllers.execution_selection_controller import (
+from lol_audio_unpack.gui.controllers.execution_selection import (
     ExecutionSelectionController,
     ExecutionSelectionUpdate,
 )

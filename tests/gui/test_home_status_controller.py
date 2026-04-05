@@ -1,10 +1,10 @@
-"""首页状态控制器测试。"""
+﻿"""首页状态控制器测试。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from lol_audio_unpack.gui.controllers.home_status_controller import (
+from lol_audio_unpack.gui.controllers.home_status import (
     HomeCheckResult,
     HomeStatusController,
     HomeStatusDisplayState,
