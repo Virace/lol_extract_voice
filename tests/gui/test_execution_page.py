@@ -140,7 +140,7 @@ def test_execution_page_mock_queue_updates_global_progress_state(qtbot) -> None:
     assert state.visible is True
     assert state.title_text != ""
     assert state.detail_text != ""
-    assert state.rate_text != ""
+    assert state.rate_text == ""
     assert state.status_text != ""
 
 

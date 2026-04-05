@@ -22,6 +22,8 @@ from lol_audio_unpack.gui.view.execution.progress_state import (
 RUNNING_PROGRESS_VALUE = 2
 RUNNING_PROGRESS_TOTAL = 5
 COMPLETED_PROGRESS_PERCENT = 100
+TARGET_DIRECTORY_PROGRESS_CURRENT = 2
+TARGET_DIRECTORY_PROGRESS_TOTAL = 6
 
 
 def _empty_counts() -> dict[str, int]:
@@ -137,10 +139,40 @@ def test_build_global_progress_strip_state_for_running_stage_progress() -> None:
     assert state.visible is True
     assert state.title_text == "音频解包"
     assert state.detail_text == "英雄"
-    assert state.rate_text == "2/5"
-    assert state.status_text == "处理中"
+    assert state.rate_text == ""
+    assert state.status_text == "处理中 (2/5)"
     assert state.progress_current == RUNNING_PROGRESS_VALUE
     assert state.progress_total == RUNNING_PROGRESS_TOTAL
+
+
+def test_build_global_progress_strip_state_collapses_target_directory_message() -> None:
+    counts = _empty_counts()
+    counts[TASK_STATUS_RUNNING] = 1
+    running_task = _queued_task(
+        status=TASK_STATUS_RUNNING,
+        progress_detail=ExecutionTaskProgress(
+            stage_key="wav",
+            stage_label="音频转码",
+            entity_scope_label="音频转码",
+            current=TARGET_DIRECTORY_PROGRESS_CURRENT,
+            total=TARGET_DIRECTORY_PROGRESS_TOTAL,
+            message="正在处理第 3/6 个目标目录",
+        ),
+    )
+
+    state = build_global_progress_strip_state(
+        draft_count=1,
+        counts=counts,
+        running_task=running_task,
+    )
+
+    assert state.visible is True
+    assert state.title_text == "音频转码"
+    assert state.detail_text == "音频转码"
+    assert state.rate_text == ""
+    assert state.status_text == "正在处理: 目标目录 (3/6)"
+    assert state.progress_current == TARGET_DIRECTORY_PROGRESS_CURRENT
+    assert state.progress_total == TARGET_DIRECTORY_PROGRESS_TOTAL
 
 
 def test_build_global_progress_strip_state_waiting_task_keeps_simple_preparing_text() -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from lol_audio_unpack.gui.components.global_progress_strip import GlobalProgressStripState
@@ -25,6 +26,32 @@ class ProgressDisplayState:
     progress_value: int
     progress_total: int
     queue_summary_text: str
+
+
+TARGET_DIRECTORY_PROGRESS_PATTERN = re.compile(r"^正在处理第 (\d+)/(\d+) 个目标目录$")
+
+
+def _build_global_strip_status_text(running_progress: ExecutionTaskProgress | None, fallback_note: str | None) -> str:
+    """构造底部全局进度条右侧的单行状态文案。"""
+    if running_progress is None:
+        return fallback_note or ""
+
+    message = running_progress.message.strip()
+    status_text = ""
+    target_directory_match = TARGET_DIRECTORY_PROGRESS_PATTERN.fullmatch(message)
+
+    if not message:
+        if running_progress.total > 0:
+            status_text = f"处理中 ({running_progress.current}/{running_progress.total})"
+    elif target_directory_match is not None:
+        current_index, total_count = target_directory_match.groups()
+        status_text = f"正在处理: 目标目录 ({current_index}/{total_count})"
+    elif running_progress.total <= 0 or re.search(r"\d+/\d+", message):
+        status_text = message
+    else:
+        status_text = f"{message} ({running_progress.current}/{running_progress.total})"
+
+    return status_text
 
 
 def build_global_progress_strip_state(  # noqa: PLR0913
@@ -72,16 +99,8 @@ def build_global_progress_strip_state(  # noqa: PLR0913
         detail_text=detail_text,
         progress_current=max(progress_current or (running_progress.current if running_progress is not None else 0), 0),
         progress_total=max(progress_total or (running_progress.total if running_progress is not None else 1), 1),
-        rate_text=(
-            f"{running_progress.current}/{running_progress.total}"
-            if running_progress is not None and running_progress.total > 0
-            else (
-                f"{progress_current}/{progress_total}"
-                if progress_current is not None and progress_total is not None and progress_total > 0
-                else ""
-            )
-        ),
-        status_text=running_progress.message if running_progress is not None else (note_text or ""),
+        rate_text="",
+        status_text=_build_global_strip_status_text(running_progress, note_text),
     )
 
 

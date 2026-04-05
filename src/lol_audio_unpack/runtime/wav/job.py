@@ -45,9 +45,19 @@ def build_transcode_paths(*, ctx: AppContext, version: str, job_label: str | Non
     )
 
 
-def _format_progress(progress: BatchTranscodeProgress) -> str:
-    """将 `pyvgmstream` 的批处理进度格式化为日志文案。"""
-    return f"WAV 转码进行中：文件 {progress.completed_count}/{max(progress.total_count, 1)} · 失败 {progress.failed_count}"
+def _format_internal_progress(progress: BatchTranscodeProgress) -> str:
+    """将 `pyvgmstream` 的文件级内部进度格式化为调试文案。"""
+    return f"WAV 转码内部进度：文件 {progress.completed_count}/{max(progress.total_count, 1)} · 失败 {progress.failed_count}"
+
+
+def _format_root_start_message(root_index: int, root_total: int) -> str:
+    """格式化目标目录开始处理时的用户向文案。"""
+    return f"正在处理第 {root_index}/{max(root_total, 1)} 个目标目录"
+
+
+def _format_root_finish_message(root_index: int, root_total: int) -> str:
+    """格式化目标目录完成时的用户向文案。"""
+    return f"WAV 转码目录完成：{root_index}/{max(root_total, 1)}"
 
 
 def _serialize_failure(result: BatchTranscodeItemResult) -> dict[str, Any]:
@@ -113,12 +123,6 @@ def run_tree(  # noqa: PLR0913
         wav_output.format,
     )
 
-    def emit_progress(progress: BatchTranscodeProgress) -> None:
-        message = _format_progress(progress)
-        if progress_callback is not None:
-            progress_callback("wav", progress.completed_count, max(progress.total_count, 1), message)
-        logger.info(message)
-
     if not run_roots:
         logger.warning("WAV 转码未找到可处理的音频目录，已跳过本次执行。")
         payload = {
@@ -138,8 +142,16 @@ def run_tree(  # noqa: PLR0913
     processed_count = 0
     failed_count = 0
     failures: list[dict[str, Any]] = []
-    for input_root in run_roots:
+    root_total = max(len(run_roots), 1)
+    for root_index, input_root in enumerate(run_roots, start=1):
         output_root = paths.wav_root / input_root.relative_to(paths.audio_root)
+
+        def emit_progress(progress: BatchTranscodeProgress) -> None:
+            logger.debug(_format_internal_progress(progress))
+
+        if progress_callback is not None:
+            progress_callback("wav", root_index - 1, root_total, _format_root_start_message(root_index, root_total))
+
         summary = transcode_tree(
             input_root,
             output_root,
@@ -156,6 +168,23 @@ def run_tree(  # noqa: PLR0913
             for result in summary.results
             if result.error
         )
+        root_finish_message = _format_root_finish_message(root_index, root_total)
+        if progress_callback is not None:
+            progress_callback("wav", root_index, root_total, root_finish_message)
+
+        if summary.failed_count > 0:
+            logger.warning(
+                "{} · 本目录成功 {} 个，失败 {} 个",
+                root_finish_message,
+                summary.processed_count,
+                summary.failed_count,
+            )
+        else:
+            logger.info(
+                "{} · 本目录成功 {} 个",
+                root_finish_message,
+                summary.processed_count,
+            )
     payload = {
         "status": "warning" if failed_count else "success",
         "job_label": job_label,

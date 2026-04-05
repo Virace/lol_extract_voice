@@ -28,6 +28,11 @@ pytestmark = pytest.mark.unit
 BREAKER_FAILURE_THRESHOLD = 8
 
 
+def _format_log(message: str, *args: Any) -> str:
+    """展开测试中使用的 loguru 占位符消息。"""
+    return message.format(*args)
+
+
 def slow_worker_entry(_job: Any, queue: Queue[Any]) -> None:
     """模拟超时的 worker。"""
     time.sleep(2)
@@ -286,8 +291,8 @@ def test_run_tree_uses_selected_audio_roots_when_provided(tmp_path: Path, monkey
     assert payload["failed_file_count"] == 0
 
 
-def test_run_tree_bridges_progress_to_callback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """独立 WAV stage 应把 transcode_tree 进度桥接回统一进度回调。"""
+def test_run_tree_bridges_root_level_progress_to_callback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """独立 WAV stage 应只向统一回调暴露目标目录级进度。"""
     ctx = SimpleNamespace(
         paths=SimpleNamespace(
             audio_path=tmp_path / "audios",
@@ -295,9 +300,13 @@ def test_run_tree_bridges_progress_to_callback(tmp_path: Path, monkeypatch: pyte
             report_path=tmp_path / "reports",
         )
     )
-    input_root = tmp_path / "audios" / "15.8"
-    input_root.mkdir(parents=True, exist_ok=True)
-    (input_root / "sample.wem").write_bytes(b"wem")
+    version_root = tmp_path / "audios" / "15.8"
+    first_root = version_root / "champions" / "1-annie"
+    second_root = version_root / "maps" / "0-common"
+    first_root.mkdir(parents=True, exist_ok=True)
+    second_root.mkdir(parents=True, exist_ok=True)
+    (first_root / "sample-1.wem").write_bytes(b"wem")
+    (second_root / "sample-2.wem").write_bytes(b"wem")
     progress_events: list[tuple[str, int, int, str]] = []
 
     def fake_transcode_tree(_input_root: Path, _output_root: Path, **kwargs):
@@ -310,6 +319,7 @@ def test_run_tree_bridges_progress_to_callback(tmp_path: Path, monkeypatch: pyte
         ctx=ctx,
         version="15.8",
         wav_output=WavOutputOptions(enabled=True, worker_count=2, timeout_seconds=5, max_retries=3, format="pcm16"),
+        audio_roots=(first_root, second_root),
         progress_callback=lambda entity_type, current, total, message: progress_events.append(
             (entity_type, current, total, message)
         ),
@@ -318,8 +328,71 @@ def test_run_tree_bridges_progress_to_callback(tmp_path: Path, monkeypatch: pyte
     assert progress_events == [
         (
             "wav",
+            0,
             2,
-            3,
-            "WAV 转码进行中：文件 2/3 · 失败 1",
+            "正在处理第 1/2 个目标目录",
+        ),
+        (
+            "wav",
+            1,
+            2,
+            "WAV 转码目录完成：1/2",
+        ),
+        (
+            "wav",
+            1,
+            2,
+            "正在处理第 2/2 个目标目录",
+        ),
+        (
+            "wav",
+            2,
+            2,
+            "WAV 转码目录完成：2/2",
         )
     ]
+
+
+def test_run_tree_logs_internal_file_progress_at_debug_level(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """文件级 WAV 内部快照只应进入 DEBUG 日志。"""
+    ctx = SimpleNamespace(
+        paths=SimpleNamespace(
+            audio_path=tmp_path / "audios",
+            wav_path=tmp_path / "wavs",
+            report_path=tmp_path / "reports",
+        )
+    )
+    input_root = tmp_path / "audios" / "15.8"
+    input_root.mkdir(parents=True, exist_ok=True)
+    (input_root / "sample.wem").write_bytes(b"wem")
+    info_messages: list[str] = []
+    debug_messages: list[str] = []
+    success_messages: list[str] = []
+
+    def fake_transcode_tree(_input_root: Path, _output_root: Path, **kwargs):
+        kwargs["progress_callback"](SimpleNamespace(completed_count=2, total_count=3, failed_count=1))
+        return SimpleNamespace(processed_count=2, failed_count=1, results=())
+
+    monkeypatch.setattr(wav_job, "transcode_tree", fake_transcode_tree)
+    monkeypatch.setattr(
+        wav_job,
+        "logger",
+        SimpleNamespace(
+            info=lambda message, *args: info_messages.append(_format_log(message, *args)),
+            debug=lambda message, *args: debug_messages.append(_format_log(message, *args)),
+            warning=lambda message, *args: info_messages.append(_format_log(message, *args)),
+            success=lambda message, *args: success_messages.append(_format_log(message, *args)),
+        ),
+    )
+
+    wav_job.run_tree(
+        ctx=ctx,
+        version="15.8",
+        wav_output=WavOutputOptions(enabled=True, worker_count=2, timeout_seconds=5, max_retries=3, format="pcm16"),
+    )
+
+    assert debug_messages == ["WAV 转码内部进度：文件 2/3 · 失败 1"]
+    assert all("内部进度" not in message for message in info_messages)
+    assert any("WAV 转码目录完成：1/1" in message for message in info_messages)
+    assert any("WAV 转码完成：成功 2 个，失败 1 个" in message for message in info_messages)
+    assert success_messages == []
