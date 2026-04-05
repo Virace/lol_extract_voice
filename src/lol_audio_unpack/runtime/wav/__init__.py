@@ -11,6 +11,7 @@ from ._runtime import (
 )
 from .job import (
     TranscodePaths,
+    TranscodeTarget,
     build_transcode_paths,
     run_tree,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "JobFailure",
     "TranscodeCoordinator",
     "TranscodePaths",
+    "TranscodeTarget",
     "TranscodeProgress",
     "TranscodeSummary",
     "build_output_path",

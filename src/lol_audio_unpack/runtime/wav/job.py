@@ -24,6 +24,14 @@ class TranscodePaths:
     report_root: Path
 
 
+@dataclass(slots=True, frozen=True)
+class TranscodeTarget:
+    """描述单个 WAV 转码目标目录及其展示标签。"""
+
+    root_path: Path
+    display_label: str
+
+
 def build_transcode_paths(*, ctx: AppContext, version: str, job_label: str | None = None) -> TranscodePaths:
     """根据版本和可选标签构造 WAV 路径组合。
 
@@ -60,6 +68,13 @@ def _format_root_finish_message(root_index: int, root_total: int) -> str:
     return f"WAV 转码目录完成：{root_index}/{max(root_total, 1)}"
 
 
+def _resolve_target_label(*, input_root: Path, audio_root: Path) -> str:
+    """为未显式命名的转码目标生成一个兜底标签。"""
+    if input_root == audio_root:
+        return "当前版本音频"
+    return input_root.name
+
+
 def _serialize_failure(result: BatchTranscodeItemResult) -> dict[str, Any]:
     """序列化单条失败结果。"""
     return {
@@ -94,6 +109,7 @@ def run_tree(  # noqa: PLR0913
     ctx: AppContext,
     version: str,
     wav_output: WavOutputOptions,
+    audio_targets: tuple[TranscodeTarget, ...] | None = None,
     audio_roots: tuple[Path, ...] | None = None,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
     job_label: str | None = None,
@@ -104,6 +120,7 @@ def run_tree(  # noqa: PLR0913
         ctx: 运行时上下文。
         version: 当前数据版本号。
         wav_output: WAV 输出配置。
+        audio_targets: 可选的命名音频根目录集合；为空时才回退到 ``audio_roots``。
         audio_roots: 可选的音频根目录集合；为空时默认消费整个版本目录。
         progress_callback: 可选的统一进度回调。
         job_label: 可选报告标签。
@@ -113,7 +130,22 @@ def run_tree(  # noqa: PLR0913
     """
     paths = build_transcode_paths(ctx=ctx, version=version, job_label=job_label)
     decode_config = resolve_decode_config(wav_output.format)
-    run_roots = (paths.audio_root,) if audio_roots is None else tuple(Path(root) for root in audio_roots)
+
+    if audio_targets is not None:
+        run_targets = tuple(
+            TranscodeTarget(root_path=Path(target.root_path), display_label=target.display_label)
+            for target in audio_targets
+        )
+    elif audio_roots is None:
+        run_targets = (TranscodeTarget(root_path=paths.audio_root, display_label="当前版本音频"),)
+    else:
+        run_targets = tuple(
+            TranscodeTarget(
+                root_path=Path(root),
+                display_label=_resolve_target_label(input_root=Path(root), audio_root=paths.audio_root),
+            )
+            for root in audio_roots
+        )
 
     logger.info(
         "开始 WAV 转码：audio_root={}，wav_root={}，workers={}，format={}",
@@ -123,7 +155,7 @@ def run_tree(  # noqa: PLR0913
         wav_output.format,
     )
 
-    if not run_roots:
+    if not run_targets:
         logger.warning("WAV 转码未找到可处理的音频目录，已跳过本次执行。")
         payload = {
             "status": "success",
@@ -142,15 +174,17 @@ def run_tree(  # noqa: PLR0913
     processed_count = 0
     failed_count = 0
     failures: list[dict[str, Any]] = []
-    root_total = max(len(run_roots), 1)
-    for root_index, input_root in enumerate(run_roots, start=1):
+    root_total = max(len(run_targets), 1)
+    for root_index, target in enumerate(run_targets, start=1):
+        input_root = target.root_path
         output_root = paths.wav_root / input_root.relative_to(paths.audio_root)
+        target_label = target.display_label
 
         def emit_progress(progress: BatchTranscodeProgress) -> None:
             logger.debug(_format_internal_progress(progress))
 
         if progress_callback is not None:
-            progress_callback("wav", root_index - 1, root_total, _format_root_start_message(root_index, root_total))
+            progress_callback("wav", root_index - 1, root_total, f"正在处理: {target_label}")
 
         summary = transcode_tree(
             input_root,
@@ -168,7 +202,7 @@ def run_tree(  # noqa: PLR0913
             for result in summary.results
             if result.error
         )
-        root_finish_message = _format_root_finish_message(root_index, root_total)
+        root_finish_message = f"WAV 转码目录完成：{target_label}"
         if progress_callback is not None:
             progress_callback("wav", root_index, root_total, root_finish_message)
 
@@ -194,7 +228,7 @@ def run_tree(  # noqa: PLR0913
         "wav_format": wav_output.format,
         "processed_file_count": processed_count,
         "failed_file_count": failed_count,
-        "audio_roots": [str(root) for root in run_roots],
+        "audio_roots": [str(target.root_path) for target in run_targets],
     }
     _write_reports(paths.report_root, payload=payload, failures=failures)
 
@@ -211,6 +245,7 @@ def run_tree(  # noqa: PLR0913
 
 
 __all__ = [
+    "TranscodeTarget",
     "TranscodePaths",
     "build_transcode_paths",
     "run_tree",

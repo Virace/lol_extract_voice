@@ -123,6 +123,43 @@ def test_execute_tasks_keeps_extract_flow_without_wav_stage(
     assert persisted == [tmp_path / "audios" / "15.8" / "champions" / "1-annie" / "sample.wem"]
 
 
+def test_execute_tasks_emits_running_entity_progress_before_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """extract 批处理应先发出当前实体的运行中进度。"""
+    progress_events: list[tuple[str, int, int, str]] = []
+
+    monkeypatch.setattr(
+        unpack_batch,
+        "unpack_champion",
+        lambda *_args, **_kwargs: None,
+    )
+
+    reader = SimpleNamespace(
+        version="15.8",
+        write_unknown_categories=lambda: None,
+    )
+    ctx = SimpleNamespace(
+        config=SimpleNamespace(dev_mode=False),
+        runtime_cache={},
+    )
+
+    unpack_batch.execute_tasks(
+        [("champion", 1, "测试英雄")],
+        reader,
+        max_workers=1,
+        ctx=ctx,
+        progress_callback=lambda entity_type, current, total, message: progress_events.append(
+            (entity_type, current, total, message)
+        ),
+    )
+
+    assert progress_events == [
+        ("champion", 0, 1, "正在处理: 测试英雄"),
+        ("champion", 1, 1, "测试英雄 解包完成"),
+    ]
+
+
 def test_unpack_all_uses_task_generators_without_ctx_keyword(monkeypatch: pytest.MonkeyPatch) -> None:
     """unpack_all 不应再向任务生成器传递旧的 ctx 关键字。"""
     calls: list[tuple[str, object]] = []

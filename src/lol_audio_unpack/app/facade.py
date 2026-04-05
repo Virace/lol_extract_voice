@@ -22,7 +22,7 @@ from lol_audio_unpack.mapping import (
 )
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.runtime.remote import RemotePreparer
-from lol_audio_unpack.runtime.wav import run_tree
+from lol_audio_unpack.runtime.wav import TranscodeTarget, run_tree
 from lol_audio_unpack.unpack import unpack_all, unpack_champions, unpack_maps
 
 from .artifacts import resolve_audio_paths, resolve_mapping_path
@@ -266,6 +266,13 @@ class LolAudioUnpackApp:
             version=self._create_reader().version,
             integrate_data=integrate_data,
         )
+
+    @staticmethod
+    def _build_entity_display_name(entity_data: AudioEntityData) -> str:
+        """构造与实体列表一致的展示名称。"""
+        if entity_data.entity_title:
+            return f"{entity_data.entity_name}·{entity_data.entity_title}"
+        return entity_data.entity_name
 
     @staticmethod
     def _is_retryable_download_error(exc: BaseException) -> bool:
@@ -615,9 +622,9 @@ class LolAudioUnpackApp:
             dict[str, object]: WAV 转码汇总结果。
         """
         reader = self._create_reader()
-        audio_roots: tuple[Path, ...] | None = None
+        audio_targets: tuple[TranscodeTarget, ...] | None = None
         if opts.champion_ids is not None or opts.map_ids is not None:
-            resolved_roots: list[Path] = []
+            resolved_targets: list[TranscodeTarget] = []
             seen_roots: set[Path] = set()
 
             def add_roots(entity_type: str, ids: tuple[int, ...] | None) -> None:
@@ -629,23 +636,26 @@ class LolAudioUnpackApp:
                         entity_type=entity_type,
                         entity_id=entity_id,
                     )
+                    display_label = self._build_entity_display_name(entity_data)
                     for root in self._resolve_audio_paths(entity_data):
                         if root not in seen_roots:
                             seen_roots.add(root)
-                            resolved_roots.append(root)
+                            resolved_targets.append(
+                                TranscodeTarget(root_path=root, display_label=display_label)
+                            )
 
             add_roots("champion", opts.champion_ids)
             add_roots("map", opts.map_ids)
-            audio_roots = tuple(resolved_roots)
-            if audio_roots:
-                logger.info("音频转码将按目标实体目录处理，共 {} 个目录。", len(audio_roots))
+            audio_targets = tuple(resolved_targets)
+            if audio_targets:
+                logger.info("音频转码将按目标实体目录处理，共 {} 个目录。", len(audio_targets))
             else:
                 logger.warning("音频转码未找到任何目标实体音频目录，将跳过本次执行。")
         return run_tree(
             ctx=self.ctx,
             version=reader.version,
             wav_output=opts.wav_output,
-            audio_roots=audio_roots,
+            audio_targets=audio_targets,
             progress_callback=progress_callback,
             job_label=job_label,
         )

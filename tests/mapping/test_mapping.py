@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from loguru import logger
 
+import lol_audio_unpack.mapping.batch as mapping_batch
 import lol_audio_unpack.mapping.entity as mapping_entity
 import lol_audio_unpack.mapping.session as mapping_session
 from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
@@ -210,3 +211,40 @@ def test_mapping_module_exposes_build_entity() -> None:
     """映射包应暴露 canonical 的实体入口。"""
 
     assert callable(build_entity)
+
+
+def test_execute_tasks_emits_running_entity_progress_before_completion(monkeypatch) -> None:
+    """mapping 批处理应先发出当前实体的运行中进度。"""
+    progress_events: list[tuple[str, int, int, str]] = []
+
+    monkeypatch.setattr(
+        mapping_batch,
+        "_build_entity",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        mapping_session,
+        "_create_wwiser_manager",
+        lambda _ctx: object(),
+    )
+    monkeypatch.setattr(
+        mapping_session,
+        "RuntimeCache",
+        lambda cache_lock=None: SimpleNamespace(cache_lock=cache_lock),
+    )
+
+    mapping_batch.execute_tasks(
+        [("champion", 1, "测试英雄")],
+        _FakeReader(),
+        max_workers=1,
+        integrate_data=False,
+        ctx=_build_fake_ctx(),
+        progress_callback=lambda entity_type, current, total, message: progress_events.append(
+            (entity_type, current, total, message)
+        ),
+    )
+
+    assert progress_events == [
+        ("champion", 0, 1, "正在处理: 测试英雄"),
+        ("champion", 1, 1, "测试英雄 映射完成"),
+    ]

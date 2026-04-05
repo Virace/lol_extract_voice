@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from lol_audio_unpack.gui.components.global_progress_strip import GlobalProgressStripState
 from lol_audio_unpack.gui.task_models import (
     TASK_STATUS_CANCELLED,
@@ -67,13 +69,14 @@ def test_build_progress_display_state_for_running_stage_progress() -> None:
     counts[TASK_STATUS_RUNNING] = 1
     running_task = _queued_task(
         status=TASK_STATUS_RUNNING,
+        started_at=datetime(2026, 4, 5, 18, 0, 0),
         progress_detail=ExecutionTaskProgress(
             stage_key="extract",
             stage_label="音频解包",
             entity_scope_label="英雄",
             current=2,
             total=5,
-            message="处理中",
+            message="阿狸 解包完成",
         ),
     )
 
@@ -84,7 +87,7 @@ def test_build_progress_display_state_for_running_stage_progress() -> None:
     )
 
     assert state.status_text == "当前阶段：音频解包 · 英雄"
-    assert state.note_text == "音频解包 · 2/5"
+    assert state.note_text == "当前实体：阿狸 (2/5)"
     assert state.progress_value == RUNNING_PROGRESS_VALUE
     assert state.progress_total == RUNNING_PROGRESS_TOTAL
 
@@ -120,13 +123,14 @@ def test_build_global_progress_strip_state_for_running_stage_progress() -> None:
     counts[TASK_STATUS_RUNNING] = 1
     running_task = _queued_task(
         status=TASK_STATUS_RUNNING,
+        started_at=datetime(2026, 4, 5, 18, 0, 0),
         progress_detail=ExecutionTaskProgress(
             stage_key="extract",
             stage_label="音频解包",
             entity_scope_label="英雄",
             current=2,
             total=5,
-            message="处理中",
+            message="阿狸 解包完成",
         ),
     )
 
@@ -134,29 +138,31 @@ def test_build_global_progress_strip_state_for_running_stage_progress() -> None:
         draft_count=1,
         counts=counts,
         running_task=running_task,
+        now=datetime(2026, 4, 5, 18, 0, 8),
     )
 
     assert state.visible is True
-    assert state.title_text == "音频解包"
-    assert state.detail_text == "英雄"
-    assert state.rate_text == ""
-    assert state.status_text == "处理中 (2/5)"
+    assert state.title_text == "音频解包 · 英雄"
+    assert state.detail_text == "当前实体: 阿狸 (2/5)"
+    assert state.rate_text == "均时 4.0s/实体"
+    assert state.status_text == "运行中 · 2/5"
     assert state.progress_current == RUNNING_PROGRESS_VALUE
     assert state.progress_total == RUNNING_PROGRESS_TOTAL
 
 
-def test_build_global_progress_strip_state_collapses_target_directory_message() -> None:
+def test_build_global_progress_strip_state_shows_wav_entity_and_running_index() -> None:
     counts = _empty_counts()
     counts[TASK_STATUS_RUNNING] = 1
     running_task = _queued_task(
         status=TASK_STATUS_RUNNING,
+        started_at=datetime(2026, 4, 5, 18, 0, 0),
         progress_detail=ExecutionTaskProgress(
             stage_key="wav",
             stage_label="音频转码",
-            entity_scope_label="音频转码",
+            entity_scope_label="英雄",
             current=TARGET_DIRECTORY_PROGRESS_CURRENT,
             total=TARGET_DIRECTORY_PROGRESS_TOTAL,
-            message="正在处理第 3/6 个目标目录",
+            message="正在处理: 阿狸",
         ),
     )
 
@@ -164,13 +170,14 @@ def test_build_global_progress_strip_state_collapses_target_directory_message() 
         draft_count=1,
         counts=counts,
         running_task=running_task,
+        now=datetime(2026, 4, 5, 18, 0, 8),
     )
 
     assert state.visible is True
-    assert state.title_text == "音频转码"
-    assert state.detail_text == "音频转码"
-    assert state.rate_text == ""
-    assert state.status_text == "正在处理: 目标目录 (3/6)"
+    assert state.title_text == "音频转码 · 英雄"
+    assert state.detail_text == "当前实体: 阿狸 (3/6)"
+    assert state.rate_text == "均时 4.0s/实体"
+    assert state.status_text == "运行中 · 3/6"
     assert state.progress_current == TARGET_DIRECTORY_PROGRESS_CURRENT
     assert state.progress_total == TARGET_DIRECTORY_PROGRESS_TOTAL
 

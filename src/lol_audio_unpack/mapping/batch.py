@@ -126,6 +126,25 @@ def _emit_progress(  # noqa: PLR0913
     )
 
 
+def _emit_running_progress(  # noqa: PLR0913
+    progress_callback: Callable[[str, int, int, str], None] | None,
+    entity_type: str,
+    finished_by_type: dict[str, int],
+    totals_by_type: dict[str, int],
+    total_tasks: int,
+    description: str,
+) -> None:
+    """按类型回传当前正在处理的实体信息。"""
+    if progress_callback is None:
+        return
+    progress_callback(
+        entity_type,
+        finished_by_type.get(entity_type, 0),
+        max(totals_by_type.get(entity_type, total_tasks), 1),
+        f"正在处理: {description}",
+    )
+
+
 def execute_tasks(  # noqa: PLR0913
     tasks: list[EntityTask],
     reader: DataReader,
@@ -166,20 +185,46 @@ def execute_tasks(  # noqa: PLR0913
     # 否则多实体并发时会重复创建 wwiser 进程态和 WAD/HIRC 缓存。
     wwiser_manager = mapping_session._create_wwiser_manager(ctx)
     runtime_cache = mapping_session.RuntimeCache(cache_lock=threading.Lock() if max_workers > 1 else None)
+    progress_lock = threading.Lock() if max_workers > 1 else None
 
     if max_workers > 1:
+        def build_entity_with_progress(
+            entity_type: str,
+            entity_id: int,
+            description: str,
+        ) -> None:
+            if progress_lock is None:
+                _emit_running_progress(
+                    progress_callback,
+                    entity_type,
+                    finished_by_type,
+                    totals_by_type,
+                    total_tasks,
+                    description,
+                )
+            else:
+                with progress_lock:
+                    _emit_running_progress(
+                        progress_callback,
+                        entity_type,
+                        finished_by_type,
+                        totals_by_type,
+                        total_tasks,
+                        description,
+                    )
+            _build_entity(
+                entity_type,
+                entity_id,
+                reader,
+                wwiser_manager,
+                integrate_data,
+                runtime_cache,
+                ctx=ctx,
+            )
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_task = {
-                executor.submit(
-                    _build_entity,
-                    entity_type,
-                    entity_id,
-                    reader,
-                    wwiser_manager,
-                    integrate_data,
-                    runtime_cache,
-                    ctx=ctx,
-                ): (entity_type, description)
+                executor.submit(build_entity_with_progress, entity_type, entity_id, description): (entity_type, description)
                 for entity_type, entity_id, description in tasks
             }
             completed_count = 0
@@ -208,6 +253,14 @@ def execute_tasks(  # noqa: PLR0913
         completed_count = 0
         for entity_type, entity_id, description in tasks:
             try:
+                _emit_running_progress(
+                    progress_callback,
+                    entity_type,
+                    finished_by_type,
+                    totals_by_type,
+                    total_tasks,
+                    description,
+                )
                 _build_entity(
                     entity_type,
                     entity_id,

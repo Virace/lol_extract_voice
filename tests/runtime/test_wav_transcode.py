@@ -330,25 +330,25 @@ def test_run_tree_bridges_root_level_progress_to_callback(tmp_path: Path, monkey
             "wav",
             0,
             2,
-            "正在处理第 1/2 个目标目录",
+            "正在处理: 1-annie",
         ),
         (
             "wav",
             1,
             2,
-            "WAV 转码目录完成：1/2",
+            "WAV 转码目录完成：1-annie",
         ),
         (
             "wav",
             1,
             2,
-            "正在处理第 2/2 个目标目录",
+            "正在处理: 0-common",
         ),
         (
             "wav",
             2,
             2,
-            "WAV 转码目录完成：2/2",
+            "WAV 转码目录完成：0-common",
         )
     ]
 
@@ -393,6 +393,6 @@ def test_run_tree_logs_internal_file_progress_at_debug_level(tmp_path: Path, mon
 
     assert debug_messages == ["WAV 转码内部进度：文件 2/3 · 失败 1"]
     assert all("内部进度" not in message for message in info_messages)
-    assert any("WAV 转码目录完成：1/1" in message for message in info_messages)
+    assert any("WAV 转码目录完成：当前版本音频" in message for message in info_messages)
     assert any("WAV 转码完成：成功 2 个，失败 1 个" in message for message in info_messages)
     assert success_messages == []

@@ -61,6 +61,7 @@ def execute_tasks(  # noqa: PLR0913
         "champion": 0,
         "map": 0,
     }
+    progress_lock = threading.Lock() if max_workers > 1 else None
 
     logger.info(
         f"开始解包 {total_tasks} 个实体 ({' 和 '.join(summary_parts)})，"
@@ -89,10 +90,33 @@ def execute_tasks(  # noqa: PLR0913
         else:
             raise ValueError(f"未知的实体类型: {entity_type}")
 
+    def emit_running_progress(entity_type: str, description: str) -> None:
+        if progress_callback is None:
+            return
+
+        def _emit() -> None:
+            progress_callback(
+                entity_type,
+                finished_by_type.get(entity_type, 0),
+                max(totals_by_type.get(entity_type, total_tasks), 1),
+                f"正在处理: {description}",
+            )
+
+        if progress_lock is None:
+            _emit()
+            return
+
+        with progress_lock:
+            _emit()
+
+    def unpack_one_with_progress(entity_type: str, entity_id: int, description: str) -> None:
+        emit_running_progress(entity_type, description)
+        unpack_one(entity_type, entity_id)
+
     if max_workers > 1:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_task = {
-                executor.submit(unpack_one, entity_type, entity_id): (entity_type, description)
+                executor.submit(unpack_one_with_progress, entity_type, entity_id, description): (entity_type, description)
                 for entity_type, entity_id, description in tasks
             }
             finished_count = 0
@@ -121,6 +145,7 @@ def execute_tasks(  # noqa: PLR0913
         finished_count = 0
         for entity_type, entity_id, description in tasks:
             try:
+                emit_running_progress(entity_type, description)
                 unpack_one(entity_type, entity_id)
                 progress_message = f"{description} 解包完成"
                 logger.info(f"进度: {finished_count + 1}/{total_tasks} - {progress_message}。")
