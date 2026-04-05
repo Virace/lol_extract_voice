@@ -37,7 +37,7 @@ def test_build_explicit_cli_argv_omits_defaults_but_keeps_required_and_changed_v
     """完整显式命令应保留必需项，同时省略默认值。"""
     runtime_paths = _build_runtime_paths(tmp_path)
     request = CliInvocationRequest(
-        actions=("extract",),
+        actions=("extract", "wav"),
         settings=(
             (SettingKey.SOURCE_MODE, "local_path"),
             (SettingKey.GAME_PATH, "game-root"),
@@ -56,13 +56,12 @@ def test_build_explicit_cli_argv_omits_defaults_but_keeps_required_and_changed_v
 
     argv = build_argv(request, runtime_paths=runtime_paths)
 
-    assert argv[:4] == ["uv", "run", "unpack", "extract"]
+    assert argv[:5] == ["uv", "run", "unpack", "extract", "wav"]
     assert "--game-path" in argv
     assert argv[argv.index("--game-path") + 1] == "game-root"
     assert "--with-bp-vo" in argv
     assert "--exclude-type" in argv
     assert argv[argv.index("--exclude-type") + 1] == ""
-    assert "--wav" in argv
     assert "--output-path" not in argv
     assert "--source-mode" not in argv
     assert "--game-region" not in argv
@@ -134,7 +133,7 @@ def test_build_explicit_cli_argv_includes_non_default_wav_tuning(tmp_path: Path)
     """启用 WAV 且参数偏离默认值时，应展开对应显式参数。"""
     runtime_paths = _build_runtime_paths(tmp_path)
     request = CliInvocationRequest(
-        actions=("extract",),
+        actions=("extract", "wav"),
         settings=((SettingKey.GAME_PATH, "game-root"),),
         wav_enabled=True,
         wav_workers=8,
@@ -145,7 +144,7 @@ def test_build_explicit_cli_argv_includes_non_default_wav_tuning(tmp_path: Path)
 
     argv = build_argv(request, runtime_paths=runtime_paths)
 
-    assert "--wav" in argv
+    assert argv[:5] == ["uv", "run", "unpack", "extract", "wav"]
     assert argv[argv.index("--wav-workers") + 1] == "8"
     assert argv[argv.index("--wav-timeout") + 1] == "12"
     assert argv[argv.index("--wav-retries") + 1] == "5"

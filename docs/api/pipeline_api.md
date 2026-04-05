@@ -72,8 +72,10 @@ def generate_output_path(
 1. 根据 `AudioEntityData` 收集 VO 与非 VO bank 路径
 2. 分别从语言 WAD / 根 WAD 提取原始 bank 数据
 3. 解析 `BNK` / `WPK` 并输出 `.wem`
-4. 可选把输出 `.wem` 通过 `wav_submitter` 投递给 WAV sidecar
-5. 记录统计信息与报告
+4. 记录统计信息与报告
+
+若当前工作流启用了 WAV，则由独立 `WAV 转码` stage 直接消费当前版本的 `audios/<version>` 输出树，
+再统一调用 `transcode_tree(...)` 生成镜像 WAV。
 
 英雄解包在 `ctx.config.with_bp_vo` 启用时会额外处理大厅 BP 语音。
 
@@ -158,12 +160,13 @@ WAD 选择规则：
 
 ## 3. 编排层入口
 
-`lol_audio_unpack.app.LolAudioUnpackApp` 负责把 update / extract / mapping 串成完整工作流。
+`lol_audio_unpack.app.LolAudioUnpackApp` 负责把 update / extract / wav / mapping 串成完整工作流。
 
 常用方法：
 
 - `update(opts, *, target="all")`
 - `extract(opts, *, include_champions=True, include_maps=True, prepare_remote=True, ...)`
+- `transcode_wav(opts, *, progress_callback=None, job_label=None)`
 - `mapping(opts, *, include_champions=True, include_maps=True, prepare_remote=True, ...)`
 - `build_work_items(...)`
 - `run_workflow(...)`

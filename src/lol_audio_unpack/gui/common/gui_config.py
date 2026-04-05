@@ -12,6 +12,7 @@ from lol_audio_unpack.config import (
     SettingKey,
     load_command_config,
     load_settings,
+    remove_command_config_keys,
     resolve_default_path,
     write_command_config,
     write_settings,
@@ -58,7 +59,7 @@ class GuiConfig:
         self._group_by_type: bool = False
         self._wwiser_path: str = ""
         self._vgmstream_path: str = ""
-        self._extract_wav_enabled: bool = False
+        self._wav_enabled: bool = False
         self._wav_workers: int = 2
         self._wav_timeout: int = 5
         self._wav_retries: int = 3
@@ -78,11 +79,6 @@ class GuiConfig:
     def load(self) -> None:
         """从标准 INI 和 QSettings 加载配置。"""
         shared_settings = load_settings(self._config_file, require_exists=False)
-        extract_settings = load_command_config(
-            self._config_file,
-            command=ConfigSection.EXTRACT,
-            require_exists=False,
-        )
         wav_settings = load_command_config(
             self._config_file,
             command=ConfigSection.WAV,
@@ -105,7 +101,7 @@ class GuiConfig:
         self._game_region = _shared_value(SettingKey.GAME_REGION, "zh_CN")
         self._group_by_type = self._to_bool(_shared_value(SettingKey.GROUP_BY_TYPE, "false"))
         self._wwiser_path = _shared_value(SettingKey.WWISER_PATH, "")
-        self._extract_wav_enabled = bool(extract_settings.get("wav", False))
+        self._wav_enabled = bool(wav_settings.get("wav", False))
         self._wav_workers = int(wav_settings.get("wav_workers", 2))
         self._wav_timeout = int(wav_settings.get("wav_timeout", 5))
         self._wav_retries = int(wav_settings.get("wav_retries", 3))
@@ -191,10 +187,17 @@ class GuiConfig:
             self._config_file,
             command=ConfigSection.WAV,
             values={
+                "wav": self._wav_enabled,
                 "wav_workers": self._wav_workers,
                 "wav_timeout": self._wav_timeout,
                 "wav_retries": self._wav_retries,
+                "wav_format": self._wav_format,
             },
+        )
+        remove_command_config_keys(
+            self._config_file,
+            command=ConfigSection.EXTRACT,
+            ini_keys=("wav",),
         )
 
         # 保存 GUI 专有配置到 QSettings
@@ -420,17 +423,17 @@ class GuiConfig:
         self._vgmstream_path = v
 
     @property
-    def extract_wav_enabled(self) -> bool:
-        """返回执行中心默认是否启用 WAV 派生输出。"""
-        return self._extract_wav_enabled
+    def wav_enabled(self) -> bool:
+        """返回执行中心默认是否启用音频转码。"""
+        return self._wav_enabled
 
-    @extract_wav_enabled.setter
-    def extract_wav_enabled(self, value: bool) -> None:
-        self._extract_wav_enabled = bool(value)
+    @wav_enabled.setter
+    def wav_enabled(self, value: bool) -> None:
+        self._wav_enabled = bool(value)
 
     @property
     def wav_workers(self) -> int:
-        """返回默认 WAV 转码并发数。"""
+        """返回默认音频转码并发数。"""
         return self._wav_workers
 
     @wav_workers.setter
@@ -439,7 +442,7 @@ class GuiConfig:
 
     @property
     def wav_timeout(self) -> int:
-        """返回默认单个 WAV 转码任务超时时间。"""
+        """返回默认单个音频转码任务超时时间。"""
         return self._wav_timeout
 
     @wav_timeout.setter
@@ -448,7 +451,7 @@ class GuiConfig:
 
     @property
     def wav_retries(self) -> int:
-        """返回默认 WAV 转码最大重试次数。"""
+        """返回默认音频转码最大重试次数。"""
         return self._wav_retries
 
     @wav_retries.setter

@@ -63,7 +63,7 @@ def create_app_context(
 - `OperationOptions`
   - 单次操作参数，包含 `max_workers`、`force_update`、`process_events`、`integrate_data`、`champion_ids`、`map_ids`
 - `WavOutputOptions`
-  - WAV sidecar 配置，包含 `enabled`、`worker_count`、`timeout_seconds`、`max_retries`、`format`
+  - 独立 WAV 转码 stage 配置，包含 `enabled`、`worker_count`、`timeout_seconds`、`max_retries`、`format`
 - `RemoteSnapshotConfig`
   - 固定快照配置，包含 `version`、`lcu_manifest_url`、`game_manifest_url`
 - `SourceMode`
@@ -71,13 +71,14 @@ def create_app_context(
 
 ### 2.3 `LolAudioUnpackApp`
 
-`LolAudioUnpackApp` 是应用编排入口，负责 update / extract / mapping 与 remote 单位驱动。
+`LolAudioUnpackApp` 是应用编排入口，负责 update / extract / wav / mapping 与 remote 单位驱动。
 
 当前公开方法可按职责分为三组：
 
 - 常规主链
   - `update(opts, *, target="all")`
   - `extract(opts, *, include_champions=True, include_maps=True, prepare_remote=True, ...)`
+  - `transcode_wav(opts, *, progress_callback=None, job_label=None)`
   - `mapping(opts, *, include_champions=True, include_maps=True, prepare_remote=True, ...)`
 - remote 辅助
   - `prepare_update_data(*, force_update=False)`
@@ -153,22 +154,16 @@ def create_app_context(
 
 ### 3.6 `lol_audio_unpack.runtime.wav`
 
-提供 WAV sidecar 作业与转码能力：
+提供独立 WAV 转码 stage 的路径装配与批处理能力：
 
-- `JobSpec`
-- `JobHandle`
-- `ManifestRecorder`
 - `TranscodeCoordinator`
+- `TranscodePaths`
 - `TranscodeProgress`
 - `TranscodeSummary`
-- `build_job_spec`
-- `build_recorder`
-- `launch_detached`
-- `launch_job`
-- `parse_job_spec`
-- `run_job`
 - `build_output_path`
+- `build_transcode_paths`
 - `resolve_decode_config`
+- `run_tree`
 - `run_worker`
 
 ### 3.7 `lol_audio_unpack.manager`

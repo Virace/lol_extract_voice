@@ -61,8 +61,8 @@ champions = 1,103,555
 [runtime]
 max_workers = 4
 
-[extract]
-wav = false
+[wav]
+enable = false
 ```
 
 调用方式：

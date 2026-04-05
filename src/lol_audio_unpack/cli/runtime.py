@@ -16,6 +16,7 @@ from .. import setup_app
 from ..app.facade import LolAudioUnpackApp
 from ..app.types import AppContext, AppContextValidationError, OperationOptions, SourceMode, WavOutputOptions
 from ..config import (
+    COMMAND_CONFIG_FIELDS,
     CONTEXT_OPTION_ATTRS,
     ConfigSection,
     load_command_config,
@@ -35,6 +36,23 @@ from .invocation import (
     validate_request,
 )
 
+_WAV_ENABLE_ATTR = "wav"
+_WAV_TUNING_ATTRS: tuple[str, ...] = tuple(
+    field.attr for field in COMMAND_CONFIG_FIELDS[ConfigSection.WAV] if field.attr != _WAV_ENABLE_ATTR
+)
+_ACTION_SECTION_SEQUENCE: tuple[str, ...] = (
+    ConfigSection.UPDATE,
+    ConfigSection.EXTRACT,
+    ConfigSection.WAV,
+    ConfigSection.MAPPING,
+)
+_ACTION_ENABLE_ATTRS: dict[str, str] = {
+    ConfigSection.UPDATE: "_update_enabled",
+    ConfigSection.EXTRACT: "_extract_enabled",
+    ConfigSection.WAV: _WAV_ENABLE_ATTR,
+    ConfigSection.MAPPING: "_mapping_enabled",
+}
+
 
 def _validate_config_argv(argv: list[str]) -> None:
     """校验 `-c` 模式下的原始参数边界。
@@ -49,15 +67,10 @@ def _validate_config_argv(argv: list[str]) -> None:
     ):
         return
 
-    allowed_actions = {"update", "extract", "mapping"}
     config_flag_tokens = {"-c", "--config-file"}
     index = 0
     while index < len(argv):
         token = argv[index]
-
-        if token in allowed_actions:
-            index += 1
-            continue
 
         if token in config_flag_tokens:
             index += 1
@@ -69,8 +82,39 @@ def _validate_config_argv(argv: list[str]) -> None:
             index += 1
             continue
 
-        logger.error("错误：-c/--config-file 模式下除动作列表和配置文件路径外，不允许再手工传递其他参数。")
+        logger.error("错误：-c/--config-file 模式下只能提供配置文件路径，动作与其他参数都必须写在配置文件里。")
         sys.exit(1)
+
+
+def _resolve_config_actions(section_options: dict[str, dict[str, object]]) -> list[str]:
+    """根据配置文件中的动作段落解析启用动作列表。"""
+    actions: list[str] = []
+    for section_name in _ACTION_SECTION_SEQUENCE:
+        values = section_options.get(section_name, {})
+        enable_attr = _ACTION_ENABLE_ATTRS[section_name]
+        enabled = values.get(enable_attr)
+        has_non_enable_options = any(attr_name != enable_attr for attr_name in values)
+        if enabled is False:
+            continue
+        if enabled is True or has_non_enable_options:
+            actions.append(section_name)
+    return actions
+
+
+def _warn_disabled_wav_tuning(section_options: dict[str, dict[str, object]]) -> None:
+    """在显式关闭 WAV 且仍保留调参项时输出统一告警。"""
+    wav_options = section_options.get(ConfigSection.WAV, {})
+    if wav_options.get(_WAV_ENABLE_ATTR) is not False:
+        return
+
+    disabled_tuning_attrs = tuple(attr_name for attr_name in _WAV_TUNING_ATTRS if attr_name in wav_options)
+    if not disabled_tuning_attrs:
+        return
+
+    logger.warning(
+        "[wav] enable=false，已忽略同组细节参数: {}",
+        ", ".join(disabled_tuning_attrs),
+    )
 
 
 def _apply_config_profile(args: argparse.Namespace) -> None:
@@ -90,16 +134,31 @@ def _apply_config_profile(args: argparse.Namespace) -> None:
         logger.error("请先创建标准 INI 配置文件，或移除 -c 改为纯 CLI 显式参数模式。")
         sys.exit(1)
 
+    section_options = {
+        ConfigSection.TARGETS: load_command_config(config_file, command=ConfigSection.TARGETS, require_exists=True),
+        ConfigSection.RUNTIME: load_command_config(config_file, command=ConfigSection.RUNTIME, require_exists=True),
+        ConfigSection.UPDATE: load_command_config(config_file, command=ConfigSection.UPDATE, require_exists=True),
+        ConfigSection.EXTRACT: load_command_config(config_file, command=ConfigSection.EXTRACT, require_exists=True),
+        ConfigSection.WAV: load_command_config(config_file, command=ConfigSection.WAV, require_exists=True),
+        ConfigSection.MAPPING: load_command_config(config_file, command=ConfigSection.MAPPING, require_exists=True),
+    }
+    args.actions = _resolve_config_actions(section_options)
+    args.wav = ConfigSection.WAV in args.actions
     args._loaded_settings = loaded_settings
-    section_sequence = [ConfigSection.TARGETS, ConfigSection.RUNTIME]
-    for action in args.actions:
-        section_sequence.append(action)
-    if ConfigSection.EXTRACT in args.actions:
-        section_sequence.append(ConfigSection.WAV)
+    _warn_disabled_wav_tuning(section_options)
 
     merged_options: dict[str, object] = {}
-    for section_name in section_sequence:
-        merged_options.update(load_command_config(config_file, command=section_name, require_exists=True))
+    merged_options.update(section_options[ConfigSection.TARGETS])
+    merged_options.update(section_options[ConfigSection.RUNTIME])
+    for action in args.actions:
+        merged_options.update(
+            {
+                attr_name: value
+                for attr_name, value in section_options[action].items()
+                if not attr_name.startswith("_")
+            }
+        )
+
     for attr_name, value in merged_options.items():
         setattr(args, attr_name, value)
 
@@ -111,12 +170,17 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         args: `argparse` 解析后的命名空间对象。
         parser: 顶层参数解析器。
     """
-    if not args.actions:
-        logger.error("错误：必须提供至少一个动作：update / extract / mapping。")
+    if not args.actions and args.config_file is None:
+        logger.error("错误：必须提供至少一个动作：update / extract / wav / mapping。")
         parser.print_help()
         sys.exit(1)
 
-    invalid_actions = [action for action in args.actions if action not in {"update", "extract", "mapping"}]
+    if not args.actions and args.config_file is not None:
+        logger.error("错误：当前配置文件未启用任何动作：update / extract / wav / mapping。")
+        parser.print_help()
+        sys.exit(1)
+
+    invalid_actions = [action for action in args.actions if action not in {"update", "extract", "wav", "mapping"}]
     if invalid_actions:
         logger.error(f"错误：存在不支持的动作: {invalid_actions}")
         parser.print_help()
@@ -172,7 +236,7 @@ def build_invocation_request(args: argparse.Namespace) -> CliInvocationRequest:
         force=args.force,
         skip_events=args.skip_events,
         integrate_data=args.integrate_data,
-        wav_enabled=bool(getattr(args, "wav", False)),
+        wav_enabled="wav" in args.actions,
         wav_workers=DEFAULT_WAV_WORKERS if getattr(args, "wav_workers", None) is None else args.wav_workers,
         wav_timeout=DEFAULT_WAV_TIMEOUT if getattr(args, "wav_timeout", None) is None else args.wav_timeout,
         wav_retries=DEFAULT_WAV_RETRIES if getattr(args, "wav_retries", None) is None else args.wav_retries,
@@ -344,7 +408,7 @@ def build_options(
         champion_ids=champion_ids,
         map_ids=map_ids,
         wav_output=WavOutputOptions(
-            enabled=getattr(args, "wav", False),
+            enabled="wav" in getattr(args, "actions", []),
             worker_count=DEFAULT_WAV_WORKERS if getattr(args, "wav_workers", None) is None else args.wav_workers,
             timeout_seconds=DEFAULT_WAV_TIMEOUT if getattr(args, "wav_timeout", None) is None else args.wav_timeout,
             max_retries=DEFAULT_WAV_RETRIES if getattr(args, "wav_retries", None) is None else args.wav_retries,

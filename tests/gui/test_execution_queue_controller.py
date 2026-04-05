@@ -144,67 +144,33 @@ def test_execution_queue_controller_shutdown_clears_active_state() -> None:
     assert controller.active_task_id is None
 
 
-def test_execution_queue_controller_tracks_background_wav_process_after_task_finished(monkeypatch) -> None:
+def test_execution_queue_controller_finishing_task_does_not_keep_background_wav_state(monkeypatch) -> None:
     controller = _build_controller()
     feedbacks = []
     controller.feedback_requested.connect(feedbacks.append)
     monkeypatch.setattr(controller, "start_task_worker", lambda _task: None)
 
-    class FakeProcess:
-        def __init__(self) -> None:
-            self.returncode = None
-
-        def poll(self) -> int | None:
-            return self.returncode
-
-        def terminate(self) -> None:
-            self.returncode = 1
-
     queued_task = controller.enqueue_task(
         draft=ExecutionTaskDraft(source="manual_input", source_summary="手动输入"),
         summary="测试任务",
     )
-    process = FakeProcess()
 
     controller.on_task_finished(
         queued_task.task_id,
         ExecutionTaskResult(
-            completed_steps=("音频解包", "事件映射"),
-            summary="执行完成；WAV 转码仍在后台继续",
+            completed_steps=("音频解包", "音频转码", "事件映射"),
+            summary="执行完成",
             duration_seconds=1.2,
-            wav_background_process=process,
-            wav_background_notice="任务 #1 的事件映射已完成，WAV 转码仍在后台继续。",
         ),
     )
 
-    assert controller.has_active_background_work() is True
-    assert feedbacks[-1].title == "WAV 转码后台继续"
-    assert feedbacks[-1].content == "任务 #1 的事件映射已完成，WAV 转码仍在后台继续。"
-
-    process.returncode = 0
-
     assert controller.has_active_background_work() is False
+    assert all(feedback.title != "WAV 转码后台继续" for feedback in feedbacks)
 
 
-def test_execution_queue_controller_shutdown_terminates_background_wav_processes() -> None:
+def test_execution_queue_controller_shutdown_without_background_wav_processes_stays_clean() -> None:
     controller = _build_controller()
-
-    class FakeProcess:
-        def __init__(self) -> None:
-            self.returncode = None
-            self.terminated = False
-
-        def poll(self) -> int | None:
-            return self.returncode
-
-        def terminate(self) -> None:
-            self.terminated = True
-            self.returncode = 1
-
-    process = FakeProcess()
-    controller._background_wav_processes = {1: process}
 
     controller.shutdown()
 
-    assert process.terminated is True
     assert controller.has_active_background_work() is False

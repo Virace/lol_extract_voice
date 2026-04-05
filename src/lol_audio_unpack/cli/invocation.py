@@ -23,7 +23,7 @@ DEFAULT_WAV_FORMAT = _DEFAULT_WAV_OPTIONS.format
 DEFAULT_GAME_REGION = str(DEFAULT_SHARED_SETTINGS[SettingKey.GAME_REGION])
 DEFAULT_SOURCE_MODE = str(DEFAULT_SHARED_SETTINGS[SettingKey.SOURCE_MODE])
 DEFAULT_EXCLUDE_TYPE = str(DEFAULT_SHARED_SETTINGS[SettingKey.EXCLUDE_TYPE])
-VALID_ACTIONS = ("update", "extract", "mapping")
+VALID_ACTIONS = ("update", "extract", "wav", "mapping")
 
 
 class CliInvocationValidationError(ValueError):
@@ -114,25 +114,23 @@ def validate_request(
     _ = runtime_paths
     actions = _normalize_actions(request.actions)
     if not actions:
-        raise CliInvocationValidationError("至少需要提供一个动作：update / extract / mapping。")
+        raise CliInvocationValidationError("至少需要提供一个动作：update / extract / wav / mapping。")
 
     invalid_actions = [action for action in actions if action not in VALID_ACTIONS]
     if invalid_actions:
         raise CliInvocationValidationError(f"存在不支持的动作: {', '.join(invalid_actions)}")
 
-    if request.wav_enabled and "extract" not in actions:
-        raise CliInvocationValidationError("--wav 只能与 extract 动作一起使用。")
-
+    wav_requested = "wav" in actions
     wav_tuning_explicit = (
         request.wav_workers != DEFAULT_WAV_WORKERS
         or request.wav_timeout != DEFAULT_WAV_TIMEOUT
         or request.wav_retries != DEFAULT_WAV_RETRIES
         or request.wav_format != DEFAULT_WAV_FORMAT
     )
-    if wav_tuning_explicit and not request.wav_enabled:
-        raise CliInvocationValidationError(
-            "--wav-workers / --wav-timeout / --wav-retries / --wav-format 只能与 --wav 一起使用。"
-        )
+    if request.wav_enabled and not wav_requested:
+        raise CliInvocationValidationError("wav_enabled=true 时，actions 中必须包含 wav。")
+    if wav_tuning_explicit and not wav_requested:
+        raise CliInvocationValidationError("--wav-workers / --wav-timeout / --wav-retries / --wav-format 只能与 wav 动作一起使用。")
 
     if request.integrate_data is not None and "mapping" not in actions:
         raise CliInvocationValidationError("--integrate-data 只能与 mapping 动作一起使用。")
@@ -168,6 +166,7 @@ def build_argv(
 
     settings = _normalized_settings(request)
     actions = _normalize_actions(request.actions)
+    wav_requested = "wav" in actions
     argv = ["uv", "run", "unpack", *actions]
 
     source_mode = str(settings.get(SettingKey.SOURCE_MODE, DEFAULT_SOURCE_MODE) or DEFAULT_SOURCE_MODE).strip().lower()
@@ -235,8 +234,7 @@ def build_argv(
     if "mapping" in actions and request.integrate_data is False:
         argv.append("--no-integrate-data")
 
-    if request.wav_enabled:
-        argv.append("--wav")
+    if wav_requested:
         if request.wav_workers != DEFAULT_WAV_WORKERS:
             argv.extend(["--wav-workers", str(request.wav_workers)])
         if request.wav_timeout != DEFAULT_WAV_TIMEOUT:

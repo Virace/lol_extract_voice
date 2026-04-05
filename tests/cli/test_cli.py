@@ -45,23 +45,23 @@ def test_validate_args_requires_action_subcommand() -> None:
 
 def test_validate_args_deduplicates_action_order() -> None:
     parser = create_parser()
-    args = parser.parse_args(["extract", "update", "extract"])
+    args = parser.parse_args(["extract", "wav", "update", "extract"])
 
     runtime_cli.validate_args(args, parser)
 
-    assert args.actions == ["extract", "update"]
+    assert args.actions == ["extract", "wav", "update"]
 
 
 def test_validate_config_mode_rejects_any_extra_manual_args() -> None:
     with pytest.raises(SystemExit) as exc:
-        runtime_cli._validate_config_argv(["update", "-c", "--game-path", "game-root"])
+        runtime_cli._validate_config_argv(["-c", "--game-path", "game-root"])
 
     assert exc.value.code == 1
 
 
-def test_validate_config_mode_rejects_manual_args_before_config_flag() -> None:
+def test_validate_config_mode_rejects_actions_in_config_mode() -> None:
     with pytest.raises(SystemExit) as exc:
-        runtime_cli._validate_config_argv(["update", "--force", "-c", "config.ini"])
+        runtime_cli._validate_config_argv(["update", "-c", "config.ini"])
 
     assert exc.value.code == 1
 
@@ -73,11 +73,11 @@ def test_validate_config_mode_rejects_dev_flag_in_config_mode() -> None:
     assert exc.value.code == 1
 
 
-def test_validate_config_mode_allows_only_actions_and_config_path() -> None:
-    runtime_cli._validate_config_argv(["update", "extract", "--config-file", "config.ini"])
+def test_validate_config_mode_allows_only_config_path() -> None:
+    runtime_cli._validate_config_argv(["--config-file", "config.ini"])
 
 
-def test_validate_args_wav_tuning_requires_wav_flag() -> None:
+def test_validate_args_rejects_wav_tuning_without_wav_action() -> None:
     parser = create_parser()
     args = parser.parse_args(["extract", "--wav-workers", "4"])
 
@@ -207,7 +207,7 @@ def test_initialize_app_passes_settings_to_setup_app(monkeypatch, tmp_path: Path
 def test_apply_config_profile_loads_command_section(monkeypatch, tmp_path: Path) -> None:
     parser = create_parser()
     config_file = tmp_path / "lol-audio-unpack.ini"
-    args = parser.parse_args(["update", "extract", "-c", str(config_file)])
+    args = parser.parse_args(["-c", str(config_file)])
 
     monkeypatch.setattr(
         runtime_cli,
@@ -219,13 +219,15 @@ def test_apply_config_profile_loads_command_section(monkeypatch, tmp_path: Path)
         "load_command_config",
         lambda path, command, require_exists=True: {
             "targets": {"champions": "Annie,Ahri"},
-            "update": {"skip_events": True},
-            "extract": {"wav": True},
+            "update": {"_update_enabled": True, "skip_events": True},
+            "extract": {"_extract_enabled": True},
+            "wav": {"wav": True},
         }.get(command, {}),
     )
 
     runtime_cli._apply_config_profile(args)
 
+    assert args.actions == ["update", "extract", "wav"]
     assert args.champions == "Annie,Ahri"
     assert args.skip_events is True
     assert args.wav is True
@@ -235,7 +237,7 @@ def test_apply_config_profile_loads_command_section(monkeypatch, tmp_path: Path)
 def test_apply_config_profile_loads_runtime_and_wav_sections(monkeypatch, tmp_path: Path) -> None:
     parser = create_parser()
     config_file = tmp_path / "lol-audio-unpack.ini"
-    args = parser.parse_args(["extract", "-c", str(config_file)])
+    args = parser.parse_args(["-c", str(config_file)])
 
     monkeypatch.setattr(
         runtime_cli,
@@ -247,8 +249,9 @@ def test_apply_config_profile_loads_runtime_and_wav_sections(monkeypatch, tmp_pa
         "load_command_config",
         lambda path, command, require_exists=True: {
             "runtime": {"max_workers": EXPECTED_CONFIG_MAX_WORKERS},
-            "extract": {"wav": True},
+            "extract": {"_extract_enabled": True},
             "wav": {
+                "wav": True,
                 "wav_workers": EXPECTED_WAV_WORKERS,
                 "wav_timeout": EXPECTED_WAV_TIMEOUT,
                 "wav_retries": EXPECTED_WAV_RETRIES,
@@ -259,12 +262,77 @@ def test_apply_config_profile_loads_runtime_and_wav_sections(monkeypatch, tmp_pa
 
     runtime_cli._apply_config_profile(args)
 
+    assert args.actions == ["extract", "wav"]
     assert args.max_workers == EXPECTED_CONFIG_MAX_WORKERS
     assert args.wav is True
     assert args.wav_workers == EXPECTED_WAV_WORKERS
     assert args.wav_timeout == EXPECTED_WAV_TIMEOUT
     assert args.wav_retries == EXPECTED_WAV_RETRIES
     assert args.wav_format == "auto"
+
+
+def test_config_mode_allows_disabled_wav_section_with_tuning_values(monkeypatch, tmp_path: Path) -> None:
+    """配置文件中显式关闭 WAV 时，不应因为保留调参项而阻止 extract 执行。"""
+    parser = create_parser()
+    config_file = tmp_path / "lol-audio-unpack.ini"
+    args = parser.parse_args(["-c", str(config_file)])
+    warnings: list[str] = []
+
+    monkeypatch.setattr(
+        runtime_cli,
+        "load_settings",
+        lambda path, require_exists=True: {"GAME_PATH": str(tmp_path / "game")},
+    )
+    monkeypatch.setattr(
+        runtime_cli,
+        "load_command_config",
+        lambda path, command, require_exists=True: {
+            "extract": {"_extract_enabled": True},
+            "wav": {
+                "wav": False,
+                "wav_workers": EXPECTED_WAV_WORKERS,
+                "wav_timeout": EXPECTED_WAV_TIMEOUT,
+                "wav_retries": EXPECTED_WAV_RETRIES,
+                "wav_format": "auto",
+            },
+        }.get(command, {}),
+    )
+    monkeypatch.setattr(runtime_cli.logger, "warning", lambda message, *args: warnings.append(message.format(*args)))
+
+    runtime_cli._apply_config_profile(args)
+    runtime_cli.validate_args(args, parser)
+
+    assert args.actions == ["extract"]
+    assert args.wav is False
+    assert args.wav_workers is None
+    assert args.wav_timeout is None
+    assert args.wav_retries is None
+    assert args.wav_format is None
+    assert warnings == ["[wav] enable=false，已忽略同组细节参数: wav_workers, wav_timeout, wav_retries, wav_format"]
+
+
+def test_validate_args_config_mode_requires_enabled_action(monkeypatch, tmp_path: Path) -> None:
+    parser = create_parser()
+    config_file = tmp_path / "lol-audio-unpack.ini"
+    args = parser.parse_args(["-c", str(config_file)])
+
+    monkeypatch.setattr(
+        runtime_cli,
+        "load_settings",
+        lambda path, require_exists=True: {"GAME_PATH": str(tmp_path / "game")},
+    )
+    monkeypatch.setattr(
+        runtime_cli,
+        "load_command_config",
+        lambda path, command, require_exists=True: {},
+    )
+
+    runtime_cli._apply_config_profile(args)
+
+    with pytest.raises(SystemExit) as exc:
+        runtime_cli.validate_args(args, parser)
+
+    assert exc.value.code == 1
 
 
 def test_initialize_app_in_config_mode_uses_loaded_settings(monkeypatch, tmp_path: Path) -> None:
@@ -301,8 +369,7 @@ def test_build_operation_options_includes_wav_settings() -> None:
     parser = create_parser()
     args = parser.parse_args(
         [
-            "extract",
-            "--wav",
+            "wav",
             "--wav-workers",
             str(EXPECTED_WAV_WORKERS),
             "--wav-timeout",
@@ -382,24 +449,52 @@ def test_execute_extract_operations_uses_standard_stage_logs(monkeypatch) -> Non
     ]
 
 
-def test_execute_extract_operations_forwards_detached_wav_flags(monkeypatch) -> None:
+def test_execute_extract_operations_no_longer_forwards_wav_sidecar_flags(monkeypatch) -> None:
     parser = create_parser()
-    args = parser.parse_args(["extract", "--wav"])
+    args = parser.parse_args(["extract", "wav"])
     captured_kwargs = {}
 
     monkeypatch.setattr(dispatch_cli, "_log_stage_start", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(dispatch_cli, "_log_stage_done", lambda *_args, **_kwargs: None)
 
     class FakeApp:
-        def extract(self, _opts, **kwargs):
+        def extract(self, opts, **kwargs):
+            assert opts.wav_output.enabled is True
             captured_kwargs.update(kwargs)
-            return SimpleNamespace(poll=lambda: None, read_progress_snapshot=lambda: None, job_label="cli-test")
 
     handle = dispatch_cli.run_extract(args, FakeApp())
 
-    assert handle is not None
-    assert captured_kwargs["detach_wav"] is True
-    assert str(captured_kwargs["wav_job_label"]).startswith("cli-")
+    assert handle is None
+    assert "detach_wav" not in captured_kwargs
+    assert "wav_job_label" not in captured_kwargs
+
+
+def test_run_wav_executes_dedicated_stage(monkeypatch) -> None:
+    parser = create_parser()
+    args = parser.parse_args(["wav", "--wav-workers", "4"])
+    captured = {}
+    stage_calls = []
+
+    monkeypatch.setattr(dispatch_cli, "_log_stage_start", lambda stage, detail=None: stage_calls.append(("start", stage, detail)))
+    monkeypatch.setattr(dispatch_cli, "_log_stage_done", lambda stage, detail=None: stage_calls.append(("done", stage, detail)))
+
+    class FakeApp:
+        def transcode_wav(self, opts, **kwargs) -> None:
+            captured["enabled"] = opts.wav_output.enabled
+            captured["workers"] = opts.wav_output.worker_count
+            captured["kwargs"] = kwargs
+
+    dispatch_cli.run_wav(args, FakeApp())
+
+    assert stage_calls == [
+        ("start", "WAV 转码", "消费当前 audios 输出树"),
+        ("done", "WAV 转码", "消费当前 audios 输出树"),
+    ]
+    assert captured == {
+        "enabled": True,
+        "workers": EXPECTED_WAV_WORKERS,
+        "kwargs": {},
+    }
 
 
 def test_execute_mapping_operations_defaults_to_native_hirc_without_wwiser(monkeypatch) -> None:

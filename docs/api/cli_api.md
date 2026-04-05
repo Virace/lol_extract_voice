@@ -48,7 +48,7 @@ uv run unpack update extract \
 - 带 `-c` 或 `--config-file`
 - `-c` 不带路径：读取默认配置文件 `lol-audio-unpack.ini`
 - `-c <PATH>`：读取指定 INI 配置文件
-- 启用 `-c` 后，除动作列表和配置文件路径外，不允许再手工追加任何其他参数
+- 启用 `-c` 后，只允许提供配置文件路径；动作与参数都从配置文件读取
 - 这条规则对全部 CLI 参数都生效，包括 `--dev`、`--force`、`--max-workers`
 - 如果要切换到其他 profile（例如 `lol-audio-unpack.dev.ini`），请直接写显式 `-c <PATH>`
 
@@ -64,7 +64,7 @@ uv run unpack update extract \
 - `[runtime]`：多个动作共享的通用执行参数
 - `[update]`：`update` 动作参数
 - `[extract]`：`extract` 动作参数
-- `[wav]`：WAV sidecar 细节参数
+- `[wav]`：独立 WAV 转码 stage 开关与细节参数
 - `[mapping]`：`mapping` 动作参数
 
 其中：
@@ -80,8 +80,8 @@ uv run unpack update extract \
 示例：
 
 ```bash
-uv run unpack extract -c
-uv run unpack update extract mapping -c ./config/custom.ini
+uv run unpack -c
+uv run unpack -c ./config/custom.ini
 ```
 
 ## 3. 共享配置参数
@@ -123,16 +123,17 @@ uv run unpack update extract mapping -c ./config/custom.ini
 可以顺序提供多个动作：
 
 ```bash
-uv run unpack update extract --champions Annie,Ahri --game-path "./game" --output-path "./output"
+uv run unpack update extract wav mapping --champions Annie,Ahri --game-path "./game" --output-path "./output"
 ```
 
 实际执行顺序固定为：
 
 1. `update`
 2. `extract`
-3. `mapping`
+3. `wav`
+4. `mapping`
 
-因此只要同次命令里包含 `update`，运行时一定会先执行 `update`。
+因此只要同次命令里包含 `update` 或 `wav`，运行时也会按上述顺序统一编排。
 
 ### 4.2 共享实体选择
 
@@ -169,13 +170,28 @@ max_workers = 4
 
 ```ini
 [update]
+enable = true
 force = false
 skip_events = false
 ```
 
 ### 4.5 `extract`
 
-- `--wav`
+`extract` 动作当前没有独立的专属 CLI 参数，主要复用共享目标与运行时参数。
+
+在 `-c` 模式下：
+
+- `[extract]` 使用 `enable = true|false` 决定是否执行解包阶段
+
+示例：
+
+```ini
+[extract]
+enable = true
+```
+
+### 4.6 `wav`
+
 - `--wav-workers N`
 - `--wav-timeout SECONDS`
 - `--wav-retries N`
@@ -183,23 +199,25 @@ skip_events = false
 
 在 `-c` 模式下：
 
-- `[extract]` 负责 `wav` 开关
-- `[wav]` 负责 `wav_workers`、`wav_timeout`、`wav_retries`、`wav_format`
+- `[wav]` 负责 `enable`、`wav_workers`、`wav_timeout`、`wav_retries`、`wav_format`
 
 示例：
 
 ```ini
-[extract]
-wav = true
-
 [wav]
+enable = true
 wav_workers = 2
 wav_timeout = 5
 wav_retries = 3
 wav_format = pcm16
 ```
 
-### 4.6 `mapping`
+说明：
+
+- 当动作列表包含 `wav` 时，CLI 会执行一个独立的 `WAV 转码` stage。
+- `WAV 转码` stage 会直接消费当前版本默认 `audios/<version>` 输出树，并调用 `transcode_tree(...)` 批量生成镜像 WAV。
+
+### 4.7 `mapping`
 
 - `--integrate-data` / `--no-integrate-data`
 
@@ -207,13 +225,15 @@ wav_format = pcm16
 
 ```ini
 [mapping]
+enable = true
 integrate_data = true
 ```
 
 ## 5. 执行与校验规则
 
-- 必须提供至少一个动作：`update` / `extract` / `mapping`
-- `--wav*` 仅允许和 `extract` 一起使用
+- 纯 CLI 模式下，必须提供至少一个动作：`update` / `extract` / `wav` / `mapping`
+- `-c` 模式下，必须在配置文件里启用至少一个动作
+- `--wav*` 仅允许和 `wav` 动作一起使用
 - `--integrate-data` 仅允许和 `mapping` 一起使用
 - `local_path` 模式会校验 `game_path` 是否存在
 - `remote_snapshot` 模式下：
@@ -235,7 +255,7 @@ uv run unpack update extract \
 配置文件模式：
 
 ```bash
-uv run unpack extract -c ./config/lol-audio-unpack.remote.ini
+uv run unpack -c ./config/lol-audio-unpack.remote.ini
 ```
 
 ## 7. 退出语义

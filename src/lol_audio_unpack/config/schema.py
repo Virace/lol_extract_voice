@@ -123,19 +123,22 @@ COMMAND_CONFIG_FIELDS: dict[str, tuple[CommandConfigField, ...]] = {
         CommandConfigField("max_workers", "max_workers", "int"),
     ),
     ConfigSection.UPDATE: (
+        CommandConfigField("_update_enabled", "enable", "bool"),
         CommandConfigField("force", "force", "bool"),
         CommandConfigField("skip_events", "skip_events", "bool"),
     ),
     ConfigSection.EXTRACT: (
-        CommandConfigField("wav", "wav", "bool"),
+        CommandConfigField("_extract_enabled", "enable", "bool"),
     ),
     ConfigSection.WAV: (
+        CommandConfigField("wav", "enable", "bool"),
         CommandConfigField("wav_workers", "wav_workers", "int"),
         CommandConfigField("wav_timeout", "wav_timeout", "int"),
         CommandConfigField("wav_retries", "wav_retries", "int"),
         CommandConfigField("wav_format", "wav_format", "text"),
     ),
     ConfigSection.MAPPING: (
+        CommandConfigField("_mapping_enabled", "enable", "bool"),
         CommandConfigField("integrate_data", "integrate_data", "bool"),
     ),
 }

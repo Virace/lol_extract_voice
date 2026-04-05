@@ -42,7 +42,7 @@
 - 配置层：`src/lol_audio_unpack/config/`，集中维护共享设置 schema 与标准 INI 读写。
 - CLI 入口：`src/lol_audio_unpack/cli/`，`unpack` / `mapping` console script 共用同一套动作式解析与调度实现。
 - 核心流水线：`src/lol_audio_unpack/unpack/` 负责音频解包，`src/lol_audio_unpack/mapping/` 负责事件映射。
-- 运行时支持：`src/lol_audio_unpack/runtime/remote/` 负责 remote 准备，`src/lol_audio_unpack/runtime/wav/` 负责 WAV sidecar 转码。
+- 运行时支持：`src/lol_audio_unpack/runtime/remote/` 负责 remote 准备，`src/lol_audio_unpack/runtime/wav/` 负责独立 WAV 转码 stage。
 - 共享模型与数据层：`src/lol_audio_unpack/model/`、`src/lol_audio_unpack/manager/`。
 - GUI：`src/lol_audio_unpack/gui/`，当前围绕执行中心、总览与设置页展开。
 
@@ -84,10 +84,10 @@ cd lol_audio_unpack
 uv sync
 ```
 
-当前 CLI 已改为动作式子命令：
+当前 CLI 已改为动作式命令链：
 
 ```bash
-uv run unpack <update|extract|mapping> [OPTIONS]
+uv run unpack <ACTION...> [OPTIONS]
 ```
 
 推荐两种使用方式。
@@ -100,7 +100,7 @@ uv run unpack update extract \
   --game-path "D:/Games/Tencent/WeGameApps/英雄联盟" \
   --output-path "./output"
 
-uv run unpack update extract mapping \
+uv run unpack update extract wav mapping \
   --champions Annie \
   --wwiser-path "./tools/wwiser.pyz" \
   --game-path "D:/Games/Tencent/WeGameApps/英雄联盟" \
@@ -123,15 +123,13 @@ cp config/lol-audio-unpack.example.ini ./lol-audio-unpack.ini
 2. 使用 `-c` 启用配置文件模式：
 
 ```bash
-uv run unpack update -c
-uv run unpack extract -c
-uv run unpack mapping -c
+uv run unpack -c
 ```
 
 若要指定其他配置文件路径：
 
 ```bash
-uv run unpack extract -c ./config/custom.ini
+uv run unpack -c ./config/custom.ini
 ```
 
 CLI 参数总表：
@@ -163,7 +161,7 @@ CLI 参数总表：
 - `extract` 子命令
   - `--champions [IDs|ALIASES]`
   - `--maps [IDs]`
-  - `--wav`
+- `wav` 子命令
   - `--wav-workers N`
   - `--wav-timeout SECONDS`
   - `--wav-retries N`
@@ -176,8 +174,8 @@ CLI 参数总表：
 注意：
 
 - 不写 `-c` 时，本次命令只使用内建默认值和 CLI 显式参数。
-- 写了 `-c` 后，当前命令会进入完整配置文件模式，除动作子命令和配置文件路径外，不允许再手工追加其他参数。
-- `champions` / `maps` 需要写在 `[targets]` 中；`max_workers` 写在 `[runtime]` 中；`wav` 开关写在 `[extract]` 中，`wav_*` 细节参数写在 `[wav]` 中；其余动作参数写在对应 section 中。
+- 写了 `-c` 后，当前命令会进入完整配置文件模式，只允许提供配置文件路径；动作与参数都从配置文件读取。
+- `champions` / `maps` 需要写在 `[targets]` 中；`max_workers` 写在 `[runtime]` 中；动作启用状态分别写在 `[update]` / `[extract]` / `[wav]` / `[mapping]` 的 `enable` 中；其余动作参数写在对应 section 中。
 - 旧 `.lol.env` / `LOL_*` 方式已经不再是当前主线用法。
 
 更详细的 CLI / 配置 / Remote 使用说明见：

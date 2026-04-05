@@ -185,7 +185,6 @@ def _add_extract(
         metavar="IDs",
         help=text("help.extract.maps"),
     )
-    parser.add_argument("--wav", action="store_true", help=text("help.wav"))
     parser.add_argument("--wav-workers", type=int, default=None, metavar="N", help=text("help.wav_workers"))
     parser.add_argument(
         "--wav-timeout",
@@ -286,7 +285,6 @@ def create_parser(mode: EntryMode = "unpack") -> argparse.ArgumentParser:
         default=None,
         help=text("help.mapping.integrate_data_global"),
     )
-    parser.add_argument("--wav", action="store_true", help=text("help.wav"))
     parser.add_argument("--wav-workers", type=int, default=None, metavar="N", help=text("help.wav_workers"))
     parser.add_argument(
         "--wav-timeout",

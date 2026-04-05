@@ -22,6 +22,7 @@ from lol_audio_unpack.mapping import (
 )
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.runtime.remote import RemotePreparer
+from lol_audio_unpack.runtime.wav import run_tree
 from lol_audio_unpack.unpack import unpack_all, unpack_champions, unpack_maps
 
 from .artifacts import resolve_audio_paths, resolve_mapping_path
@@ -504,7 +505,7 @@ class LolAudioUnpackApp:
                     extract_output_paths: tuple[Path, ...] = ()
                     mapping_output_path: Path | None = None
                     if work_item.need_extract and extract_options is not None:
-                        remote_wav_handle = self.extract(
+                        self.extract(
                             self._build_entity_options(
                                 extract_options,
                                 entity_type=work_item.entity_type,
@@ -513,15 +514,7 @@ class LolAudioUnpackApp:
                             include_champions=is_champion,
                             include_maps=not is_champion,
                             prepare_remote=False,
-                            detach_wav=bool(extract_options.wav_output.enabled),
-                            wav_job_label=f"remote-{work_item.entity_type}-{work_item.entity_id}",
                         )
-                        if remote_wav_handle is not None and remote_wav_handle.poll() is None:
-                            logger.info(
-                                "remote 实体 {} {} 的 WAV 转码已转入后台进程。",
-                                work_item.entity_type,
-                                work_item.entity_id,
-                            )
                         extract_output_paths = self._resolve_audio_paths(entity_data)
                     if work_item.need_mapping and mapping_options is not None:
                         self.mapping(
@@ -604,6 +597,32 @@ class LolAudioUnpackApp:
             f"更新流程完成：target={target}，英雄 {len(opts.champion_ids or ())} 个，地图 {len(opts.map_ids or ())} 个"
         )
 
+    def transcode_wav(
+        self,
+        opts: OperationOptions,
+        *,
+        progress_callback: Callable[[str, int, int, str], None] | None = None,
+        job_label: str | None = None,
+    ) -> dict[str, object]:
+        """执行独立的 WAV 转码 stage。
+
+        Args:
+            opts: 当前工作流的操作选项。
+            progress_callback: 可选的统一进度回调。
+            job_label: 可选报告标签。
+
+        Returns:
+            dict[str, object]: WAV 转码汇总结果。
+        """
+        reader = self._create_reader()
+        return run_tree(
+            ctx=self.ctx,
+            version=reader.version,
+            wav_output=opts.wav_output,
+            progress_callback=progress_callback,
+            job_label=job_label,
+        )
+
     def extract(  # noqa: PLR0913
         self,
         opts: OperationOptions,
@@ -612,10 +631,8 @@ class LolAudioUnpackApp:
         include_maps: bool = True,
         prepare_remote: bool = True,
         progress_callback: Callable[[str, int, int, str], None] | None = None,
-        detach_wav: bool = False,
-        wav_job_label: str | None = None,
         persisted_wem_callback: Callable[[Path], None] | None = None,
-    ) -> object | None:
+    ) -> None:
         """执行解包流程。
 
         Args:
@@ -648,34 +665,26 @@ class LolAudioUnpackApp:
                 max_workers=opts.max_workers,
                 ctx=self.ctx,
                 progress_callback=progress_callback,
-                wav_output=opts.wav_output,
-                detach_wav=detach_wav,
-                wav_job_label=wav_job_label,
                 persisted_wem_callback=persisted_wem_callback,
             )
         if opts.map_ids is not None:
-            return unpack_maps(
+            unpack_maps(
                 reader=reader,
                 map_ids=list(opts.map_ids),
                 max_workers=opts.max_workers,
                 ctx=self.ctx,
                 progress_callback=progress_callback,
-                wav_output=opts.wav_output,
-                detach_wav=detach_wav,
-                wav_job_label=wav_job_label,
                 persisted_wem_callback=persisted_wem_callback,
             )
+            return
 
-        return unpack_all(
+        unpack_all(
             reader=reader,
             max_workers=opts.max_workers,
             include_champions=include_champions,
             include_maps=include_maps,
             ctx=self.ctx,
             progress_callback=progress_callback,
-            wav_output=opts.wav_output,
-            detach_wav=detach_wav,
-            wav_job_label=wav_job_label,
             persisted_wem_callback=persisted_wem_callback,
         )
 

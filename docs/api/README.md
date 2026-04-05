@@ -51,7 +51,7 @@
 3. `cli.runtime._apply_config_profile(...)` 注入 `-c` 配置文件内容
 4. `cli.runtime.validate_args(...)` 校验动作组合与参数边界
 5. `cli.runtime.initialize_app(...)` 构建 `AppContext`
-6. `LolAudioUnpackApp` 执行 `update / extract / mapping`
+6. `LolAudioUnpackApp` 执行 `update / extract / wav / mapping`
 7. remote 模式下，若存在 `extract` 或 `mapping`，改走 `LolAudioUnpackApp.run_workflow(...)`
 
 ### 2.2 Python 主链
@@ -69,7 +69,7 @@
 - `manifest/<version>/events/**`：事件数据
 - `manifest/<version>/bin_input/**`：remote 模式为 `BinUpdater` 准备的稀疏 BIN 输入
 - `audios/<version>/...`：解包出的 `.wem`
-- `wavs/<version>/...`：WAV sidecar 输出
+- `wavs/<version>/...`：独立 `WAV 转码` stage 输出
 - `hashes/<version>/...`：映射结果或整合结果
 - `reports/<version>/...`：解包、转码与汇总报告
 - `cache/remote/**`：remote 模式下载缓存

@@ -169,6 +169,34 @@ def write_command_config(
         parser.write(handle)
 
 
+def remove_command_config_keys(
+    config_file: StrPath,
+    *,
+    command: str,
+    ini_keys: tuple[str, ...],
+) -> None:
+    """从指定命令分组中移除给定配置项。"""
+    config_path, parser = _ensure_parser(config_file)
+    if not parser.has_section(command):
+        return
+
+    section = parser[command]
+    changed = False
+    for ini_key in ini_keys:
+        if ini_key in section:
+            section.pop(ini_key, None)
+            changed = True
+
+    if not list(section.items()):
+        parser.remove_section(command)
+
+    if not changed:
+        return
+
+    with config_path.open("w", encoding="utf-8") as handle:
+        parser.write(handle)
+
+
 def _parse_command_value(
     section: configparser.SectionProxy,
     *,
@@ -213,6 +241,7 @@ __all__ = [
     "DEFAULT_DEV_CONFIG_FILENAME",
     "load_command_config",
     "load_settings",
+    "remove_command_config_keys",
     "resolve_default_path",
     "write_command_config",
     "write_settings",

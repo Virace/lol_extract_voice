@@ -22,6 +22,7 @@ def _build_task(
     *,
     source_mode: str,
     run_update: bool = False,
+    run_extract: bool = True,
     run_mapping: bool = True,
     wav_enabled: bool = False,
 ) -> QueuedExecutionTask:
@@ -41,6 +42,7 @@ def _build_task(
             ),
             task_params=ExecutionTaskParamsSnapshot(
                 run_update=run_update,
+                run_extract=run_extract,
                 run_mapping=run_mapping,
                 wav_enabled=wav_enabled,
             ),
@@ -197,7 +199,7 @@ def test_run_execution_task_logs_preflight_forced_update_step(monkeypatch) -> No
     assert successes == [f"[执行中心] 任务 #1 {result.summary}"]
 
 
-def test_run_execution_task_detaches_wav_process_from_mapping(monkeypatch, tmp_path: Path) -> None:
+def test_run_execution_task_runs_wav_stage_between_extract_and_mapping(monkeypatch, tmp_path: Path) -> None:
     task = _build_task(source_mode="remote_snapshot", wav_enabled=True)
     events: list[object] = []
 
@@ -213,15 +215,6 @@ def test_run_execution_task_detaches_wav_process_from_mapping(monkeypatch, tmp_p
         runtime_cache={},
         config=SimpleNamespace(),
     )
-
-    class FakeProcess:
-        def __init__(self) -> None:
-            self.returncode = None
-
-        def poll(self) -> int | None:
-            return self.returncode
-
-    fake_process = FakeProcess()
 
     monkeypatch.setattr(
         task_runner,
@@ -247,9 +240,13 @@ def test_run_execution_task_detaches_wav_process_from_mapping(monkeypatch, tmp_p
 
         def extract(self, options, **kwargs) -> None:
             assert options.wav_output.enabled is True
-            assert kwargs["detach_wav"] is True
-            events.append(("extract", kwargs["detach_wav"]))
-            return fake_process
+            assert "detach_wav" not in kwargs
+            assert "wav_job_label" not in kwargs
+            events.append("extract")
+
+        def transcode_wav(self, options, **_kwargs) -> None:
+            assert options.wav_output.enabled is True
+            events.append("wav")
 
         def mapping(self, _options, **_kwargs) -> None:
             events.append("mapping")
@@ -259,7 +256,63 @@ def test_run_execution_task_detaches_wav_process_from_mapping(monkeypatch, tmp_p
 
     result = task_runner.run_execution_task(task, signals)
 
-    assert events == [("extract", True), "mapping"]
-    assert result.wav_background_process is fake_process
-    assert result.wav_background_notice == "任务 #1 的事件映射已完成，WAV 转码仍在后台继续。"
-    assert "WAV 转码仍在后台继续" in result.summary
+    assert events == ["extract", "wav", "mapping"]
+    assert "WAV 转码仍在后台继续" not in result.summary
+
+
+def test_run_execution_task_allows_wav_stage_without_extract(monkeypatch, tmp_path: Path) -> None:
+    task = _build_task(source_mode="remote_snapshot", run_extract=False, run_mapping=False, wav_enabled=True)
+    events: list[str] = []
+
+    def _fail_exception(message: str) -> None:
+        pytest.fail(message)
+
+    runtime_context = SimpleNamespace(
+        paths=SimpleNamespace(
+            audio_path=tmp_path / "audios",
+            wav_path=tmp_path / "wavs",
+            report_path=tmp_path / "reports",
+        ),
+        runtime_cache={},
+        config=SimpleNamespace(),
+    )
+
+    monkeypatch.setattr(
+        task_runner,
+        "normalize_app_context_settings",
+        lambda settings: {**settings, "SOURCE_MODE": "local_path"},
+        raising=False,
+    )
+    monkeypatch.setattr(
+        task_runner,
+        "logger",
+        SimpleNamespace(
+            info=lambda _message: None,
+            debug=lambda _message: None,
+            success=lambda _message: None,
+            exception=_fail_exception,
+        ),
+    )
+    monkeypatch.setattr(task_runner, "create_app_context", lambda *, settings: runtime_context)
+
+    class FakeApp:
+        def __init__(self, app_context) -> None:
+            self.ctx = app_context
+
+        def extract(self, _options, **_kwargs) -> None:
+            pytest.fail("未勾选音频解包时不应执行 extract")
+
+        def transcode_wav(self, options, **_kwargs) -> None:
+            assert options.wav_output.enabled is True
+            events.append("wav")
+
+        def mapping(self, _options, **_kwargs) -> None:
+            pytest.fail("未勾选事件映射时不应执行 mapping")
+
+    monkeypatch.setattr(task_runner, "LolAudioUnpackApp", FakeApp)
+    signals = SimpleNamespace(progress=SimpleNamespace(emit=lambda _payload: None))
+
+    result = task_runner.run_execution_task(task, signals)
+
+    assert events == ["wav"]
+    assert result.completed_steps == ("音频转码",)

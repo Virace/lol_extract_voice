@@ -83,7 +83,6 @@ class ExecutionQueueController(QObject):
         self._draft_count = 0
         self._active_task_id: int | None = None
         self._active_worker: TaskWorker | None = None
-        self._background_wav_processes: dict[int, object] = {}
         self._stage_completion_notifications: set[tuple[int, str]] = set()
 
     @property
@@ -97,22 +96,7 @@ class ExecutionQueueController(QObject):
 
     def has_active_background_work(self) -> bool:
         """返回执行中心是否仍持有运行中的后台任务。"""
-        self._prune_finished_background_wav_processes()
-        return bool(
-            self._active_task_id is not None
-            or self._active_worker is not None
-            or self._background_wav_processes
-        )
-
-    def _prune_finished_background_wav_processes(self) -> None:
-        """剔除已经结束的后台 WAV 句柄。"""
-        finished_task_ids = [
-            task_id
-            for task_id, process in self._background_wav_processes.items()
-            if hasattr(process, "poll") and process.poll() is not None
-        ]
-        for task_id in finished_task_ids:
-            self._background_wav_processes.pop(task_id, None)
+        return bool(self._active_task_id is not None or self._active_worker is not None)
 
     def has_incomplete_tasks(self) -> bool:
         """返回当前队列中是否仍有未完成任务。"""
@@ -262,12 +246,13 @@ class ExecutionQueueController(QObject):
         if notification_key in self._stage_completion_notifications:
             return
         self._stage_completion_notifications.add(notification_key)
-        if task.draft.task_params.wav_enabled:
-            stage_label = "音频解包与 WAV 转码阶段"
-        else:
-            stage_label = "音频解包阶段"
+        stage_label = "音频解包阶段"
         content = f"任务 #{task.task_id} 已结束{stage_label}。"
-        if task.draft.task_params.run_mapping:
+        if task.draft.task_params.wav_enabled and task.draft.task_params.run_mapping:
+            content = f"{content} 正在继续音频转码，完成后将继续事件映射。"
+        elif task.draft.task_params.wav_enabled:
+            content = f"{content} 正在继续音频转码。"
+        elif task.draft.task_params.run_mapping:
             content = f"{content} 正在继续事件映射。"
         self.feedback_requested.emit(
             GuiNotice(title=f"{stage_label}已结束", content=content, level="info")
@@ -305,19 +290,8 @@ class ExecutionQueueController(QObject):
             error_message="",
         )
         self._after_task_stopped(task_id)
-        if task_result.wav_background_process is not None:
-            self._background_wav_processes[task_id] = task_result.wav_background_process
-        self._prune_finished_background_wav_processes()
         logger.success(f"[队列] 任务 #{task_id} 执行完成：{task_result.summary}")
         self._advance_or_finish(updated_task, task_result)
-        if task_result.wav_background_notice:
-            self.feedback_requested.emit(
-                GuiNotice(
-                    title="WAV 转码后台继续",
-                    content=task_result.wav_background_notice,
-                    level="info",
-                )
-            )
 
     def on_task_failed(self, task_id: int, error: str) -> None:
         """处理后台任务失败后的状态收敛。"""
@@ -477,10 +451,6 @@ class ExecutionQueueController(QObject):
 
     def shutdown(self) -> None:
         """清理执行中心后台任务引用。"""
-        for process in self._background_wav_processes.values():
-            if hasattr(process, "terminate") and hasattr(process, "poll") and process.poll() is None:
-                process.terminate()
-        self._background_wav_processes.clear()
         self._active_task_id = None
         self._active_worker = None
         self._stage_completion_notifications.clear()

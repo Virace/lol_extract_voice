@@ -10,15 +10,9 @@ from ._runtime import (
     run_worker,
 )
 from .job import (
-    JobHandle,
-    JobSpec,
-    ManifestRecorder,
-    build_job_spec,
-    build_recorder,
-    launch_detached,
-    launch_job,
-    parse_job_spec,
-    run_job,
+    TranscodePaths,
+    build_transcode_paths,
+    run_tree,
 )
 from .transcode import TranscodeCoordinator, TranscodeProgress
 
@@ -26,19 +20,13 @@ __all__ = [
     "AttemptResult",
     "Job",
     "JobFailure",
-    "JobHandle",
-    "JobSpec",
-    "ManifestRecorder",
     "TranscodeCoordinator",
+    "TranscodePaths",
     "TranscodeProgress",
     "TranscodeSummary",
-    "build_job_spec",
     "build_output_path",
-    "build_recorder",
-    "launch_detached",
-    "launch_job",
-    "parse_job_spec",
+    "build_transcode_paths",
     "resolve_decode_config",
-    "run_job",
+    "run_tree",
     "run_worker",
 ]

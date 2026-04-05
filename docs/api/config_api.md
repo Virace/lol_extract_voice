@@ -106,19 +106,19 @@ def write_command_config(
 - `[runtime]`：多个动作共享的通用执行参数
 - `[update]`：`update` 动作参数
 - `[extract]`：`extract` 动作参数
-- `[wav]`：WAV sidecar 细节参数
+- `[wav]`：独立 WAV 转码 stage 开关与细节参数
 - `[mapping]`：`mapping` 动作参数
 
 当前支持的命令字段：
 
 - `[targets]`：`champions`、`maps`
 - `[runtime]`：`max_workers`
-- `[update]`：`force`、`skip_events`
-- `[extract]`：`wav`
-- `[wav]`：`wav_workers`、`wav_timeout`、`wav_retries`、`wav_format`
-- `[mapping]`：`integrate_data`
+- `[update]`：`enable`、`force`、`skip_events`
+- `[extract]`：`enable`
+- `[wav]`：`enable`、`wav_workers`、`wav_timeout`、`wav_retries`、`wav_format`
+- `[mapping]`：`enable`、`integrate_data`
 
-GUI 只读取 `[app]`。其余 section 仅供 CLI 配置文件模式使用。
+GUI 只读取 `[app]`。其余 section 仅供 CLI 配置文件模式使用；启用 `-c` 时，动作列表也由这些 section 的 `enable` 决定。
 
 ## 5. 共享设置字段
 

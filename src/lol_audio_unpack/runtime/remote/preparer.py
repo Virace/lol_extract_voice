@@ -1,7 +1,7 @@
 """远端快照最小准备器。
 
 说明：
-    当前 remote 模式已完成 3 个目标英雄的 `update / extract / mapping`
+    当前 remote 模式已完成 3 个目标英雄的 `update / extract / wav / mapping`
     真实远端链路验证；后续仍需继续补充地图、更多音频类型与清理策略场景。
 """
 

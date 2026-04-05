@@ -47,7 +47,7 @@ def test_execution_page_uses_latest_wav_defaults_from_setting_page(qtbot) -> Non
     setting_page.wavTimeoutCard.comboBox.setCurrentText(str(EXPECTED_WAV_TIMEOUT))
     setting_page.wavRetriesCard.comboBox.setCurrentText(str(EXPECTED_WAV_RETRIES))
 
-    execution_page.advancedPanel.wav_output_cb.setChecked(True)
+    execution_page.advancedPanel.wav_task_cb.setChecked(True)
     execution_page.advancedPanel.wav_format_combo.setCurrentText("float")
     execution_page.taskBuilderPanel.sync_state_from_widgets()
 

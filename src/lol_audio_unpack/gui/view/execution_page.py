@@ -113,6 +113,7 @@ class ExecutionPage(SmoothScrollArea):
         self.force_update_cb = self.taskBuilderPanel.force_update_cb
         self.integrate_data_cb = self.taskBuilderPanel.integrate_data_cb
         self.extract_task_cb = self.taskBuilderPanel.extract_task_cb
+        self.wav_task_cb = self.taskBuilderPanel.wav_task_cb
         self.mapping_task_cb = self.taskBuilderPanel.mapping_task_cb
         self.create_task_btn = self.taskBuilderPanel.create_task_btn
         self.expandLayout.addWidget(self.taskBuilderPanel)

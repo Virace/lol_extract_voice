@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from multiprocessing.queues import Queue
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -18,6 +20,7 @@ from lol_audio_unpack.runtime.wav import (
     build_output_path,
     resolve_decode_config,
 )
+from lol_audio_unpack.runtime.wav import job as wav_job
 from lol_audio_unpack.runtime.wav._runtime import Job, run_worker
 
 pytestmark = pytest.mark.unit
@@ -203,3 +206,79 @@ def test_progress_callback_receives_transcode_lifecycle_snapshots(tmp_path: Path
     assert snapshots[-1].phase == "done"
     assert snapshots[-1].completed_wav_job_count == summary.completed_wav_job_count
     assert snapshots[-1].running_wav_job_count == 0
+
+
+def test_run_tree_uses_transcode_tree_for_version_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """独立 WAV stage 应直接消费当前版本的 audios 根目录。"""
+    ctx = SimpleNamespace(
+        paths=SimpleNamespace(
+            audio_path=tmp_path / "audios",
+            wav_path=tmp_path / "wavs",
+            report_path=tmp_path / "reports",
+        )
+    )
+    input_root = tmp_path / "audios" / "15.8"
+    input_root.mkdir(parents=True, exist_ok=True)
+    (input_root / "sample.wem").write_bytes(b"wem")
+    calls: list[tuple[Path, Path]] = []
+
+    def fake_transcode_tree(input_root_arg: Path, output_root_arg: Path, **kwargs):
+        calls.append((Path(input_root_arg), Path(output_root_arg)))
+        return SimpleNamespace(processed_count=1, failed_count=0, results=())
+
+    monkeypatch.setattr(wav_job, "transcode_tree", fake_transcode_tree)
+
+    payload = wav_job.run_tree(
+        ctx=ctx,
+        version="15.8",
+        wav_output=WavOutputOptions(enabled=True, worker_count=2, timeout_seconds=5, max_retries=3, format="pcm16"),
+        job_label="cli-test",
+    )
+
+    assert calls == [
+        (
+            tmp_path / "audios" / "15.8",
+            tmp_path / "wavs" / "15.8",
+        )
+    ]
+    assert payload["processed_file_count"] == 1
+    assert payload["failed_file_count"] == 0
+
+
+def test_run_tree_bridges_progress_to_callback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """独立 WAV stage 应把 transcode_tree 进度桥接回统一进度回调。"""
+    ctx = SimpleNamespace(
+        paths=SimpleNamespace(
+            audio_path=tmp_path / "audios",
+            wav_path=tmp_path / "wavs",
+            report_path=tmp_path / "reports",
+        )
+    )
+    input_root = tmp_path / "audios" / "15.8"
+    input_root.mkdir(parents=True, exist_ok=True)
+    (input_root / "sample.wem").write_bytes(b"wem")
+    progress_events: list[tuple[str, int, int, str]] = []
+
+    def fake_transcode_tree(_input_root: Path, _output_root: Path, **kwargs):
+        kwargs["progress_callback"](SimpleNamespace(completed_count=2, total_count=3, failed_count=1))
+        return SimpleNamespace(processed_count=2, failed_count=1, results=())
+
+    monkeypatch.setattr(wav_job, "transcode_tree", fake_transcode_tree)
+
+    wav_job.run_tree(
+        ctx=ctx,
+        version="15.8",
+        wav_output=WavOutputOptions(enabled=True, worker_count=2, timeout_seconds=5, max_retries=3, format="pcm16"),
+        progress_callback=lambda entity_type, current, total, message: progress_events.append(
+            (entity_type, current, total, message)
+        ),
+    )
+
+    assert progress_events == [
+        (
+            "wav",
+            2,
+            3,
+            "WAV 转码进行中：文件 2/3 · 失败 1",
+        )
+    ]

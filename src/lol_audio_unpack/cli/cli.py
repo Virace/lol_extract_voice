@@ -14,12 +14,13 @@ from .dispatch import (
     _has_extract,
     _has_mapping,
     _has_update,
+    _has_wav,
     _log_top_error,
-    _report_wav_progress,
     run_extract,
     run_mapping,
     run_remote_workflow,
     run_update,
+    run_wav,
 )
 from .parser import EntryMode, create_parser
 from .runtime import _apply_config_profile, _validate_config_argv, initialize_app, validate_args
@@ -57,26 +58,23 @@ def main() -> None:
         ):
             with run_summary.stage_context("remote_workflow", label="远端实体工作流"):
                 run_remote_workflow(args, app)
+            if _has_wav(args):
+                with run_summary.stage_context("wav", label="WAV 转码"):
+                    run_wav(args, app)
             return
 
         if _has_update(args):
             with run_summary.stage_context("update", label="数据更新"):
                 run_update(args, app)
-        wav_handle = None
         if _has_extract(args):
             with run_summary.stage_context("extract", label="音频解包"):
-                wav_handle = run_extract(args, app)
+                run_extract(args, app)
+        if _has_wav(args):
+            with run_summary.stage_context("wav", label="WAV 转码"):
+                run_wav(args, app)
         if _has_mapping(args):
             with run_summary.stage_context("mapping", label="事件映射"):
-                run_mapping(args, app, wav_handle=wav_handle)
-        if wav_handle is not None:
-            _report_wav_progress(
-                wav_handle,
-                last_signature=None,
-                force=True,
-            )
-            if wav_handle.poll() is None:
-                logger.info("WAV 后台作业仍在继续，CLI 主流程将先结束。")
+                run_mapping(args, app)
         app.cleanup_remote_artifacts()
 
     except KeyboardInterrupt:

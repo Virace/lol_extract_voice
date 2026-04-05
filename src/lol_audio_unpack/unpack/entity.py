@@ -34,22 +34,18 @@ def _persist_wem(
     destination_path: Path,
     *,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-    wav_submitter: Callable[[Path], None] | None = None,
 ) -> None:
-    """保存 ``.wem`` 文件，并在成功后通知 WAV sidecar。
+    """保存 ``.wem`` 文件，并在成功后通知通用回调。
 
     Args:
         file: 具备 ``save_file`` 方法的提取结果对象。
         destination_path: 落盘目标路径。
         persisted_wem_callback: 文件成功落盘后的附加回调。
-        wav_submitter: 可选的 WAV sidecar 提交回调。
     """
     destination_path.parent.mkdir(parents=True, exist_ok=True)
     file.save_file(destination_path)
     if persisted_wem_callback is not None:
         persisted_wem_callback(destination_path)
-    if wav_submitter is not None:
-        wav_submitter(destination_path)
 
 
 def _get_wad_instance(
@@ -82,7 +78,6 @@ def unpack_entity(  # noqa: PLR0913
     *,
     ctx: AppContext,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-    wav_submitter: Callable[[Path], None] | None = None,
 ) -> None:
     """解包单个实体音频。
 
@@ -93,7 +88,6 @@ def unpack_entity(  # noqa: PLR0913
         cache_lock: 多线程场景下的缓存锁。
         ctx: 运行时上下文。
         persisted_wem_callback: WEM 落盘后的附加回调。
-        wav_submitter: WAV sidecar 提交回调。
 
     Raises:
         ValueError: 实体数据无效时抛出。
@@ -288,7 +282,6 @@ def unpack_entity(  # noqa: PLR0913
                                     file,
                                     output_path / f"{file.id}.wem",
                                     persisted_wem_callback=persisted_wem_callback,
-                                    wav_submitter=wav_submitter,
                                 )
                                 stats.record_file_result(sub_id, sub_name, audio_type, FileProcessResult.SUCCESS)
                         except Exception as e:
@@ -308,7 +301,6 @@ def unpack_entity(  # noqa: PLR0913
                                     file,
                                     output_path / f"{file.filename}",
                                     persisted_wem_callback=persisted_wem_callback,
-                                    wav_submitter=wav_submitter,
                                 )
                                 stats.record_file_result(sub_id, sub_name, audio_type, FileProcessResult.SUCCESS)
                         except Exception as e:
@@ -392,6 +384,64 @@ def _generate_relative_path(entity_data: AudioEntityData, sub_id: str) -> Path:
     return Path(entity_dir) / entity_folder
 
 
+def _build_entity_audio_roots(
+    entity_data: AudioEntityData,
+    version: str,
+    *,
+    ctx: AppContext,
+) -> tuple[Path, ...]:
+    """根据输出布局解析实体级音频根目录集合。
+
+    Args:
+        entity_data: 已解析的实体数据。
+        version: 当前数据版本号。
+        ctx: 运行时上下文。
+
+    Returns:
+        tuple[Path, ...]: 当前实体对应的一个或多个音频输入根目录。
+    """
+    audio_root = ctx.audio_path / version
+    entity_dir = get_output_dir_name(entity_data.entity_type)
+    entity_folder = format_entity_folder_name(
+        entity_data.entity_id,
+        entity_data.entity_alias,
+        entity_data.entity_name,
+        entity_data.entity_title,
+    )
+
+    if ctx.group_by_type:
+        return tuple(audio_root / audio_type / entity_dir / entity_folder for audio_type in ctx.include_types)
+
+    return (audio_root / entity_dir / entity_folder,)
+
+
+def resolve_entity_audio_roots(
+    entity_type: str,
+    entity_id: int,
+    reader: DataReader,
+    *,
+    ctx: AppContext,
+) -> tuple[Path, ...]:
+    """解析实体级 WAV 转码输入根目录。
+
+    Args:
+        entity_type: 实体类型，例如 ``champion`` 或 ``map``。
+        entity_id: 实体 ID。
+        reader: 数据读取器。
+        ctx: 运行时上下文。
+
+    Returns:
+        tuple[Path, ...]: 当前实体对应的音频输入根目录集合。
+    """
+    entity_data = AudioEntityData.from_entity(
+        entity_type,
+        entity_id,
+        reader,
+        ctx=ctx,
+    )
+    return _build_entity_audio_roots(entity_data, reader.version, ctx=ctx)
+
+
 def generate_output_path(
     entity_data: AudioEntityData,
     sub_id: str,
@@ -431,7 +481,6 @@ def unpack_champion(  # noqa: PLR0913
     *,
     ctx: AppContext,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-    wav_submitter: Callable[[Path], None] | None = None,
 ) -> None:
     """按英雄 ID 解包音频。
 
@@ -442,7 +491,6 @@ def unpack_champion(  # noqa: PLR0913
         cache_lock: 多线程场景下的缓存锁。
         ctx: 运行时上下文。
         persisted_wem_callback: WEM 落盘后的附加回调。
-        wav_submitter: WAV sidecar 提交回调。
     """
     try:
         entity_data = AudioEntityData.from_entity(
@@ -458,7 +506,6 @@ def unpack_champion(  # noqa: PLR0913
             cache_lock=cache_lock,
             ctx=ctx,
             persisted_wem_callback=persisted_wem_callback,
-            wav_submitter=wav_submitter,
         )
         attach_bp_vo(entity_data, reader, ctx=ctx)
     except ValueError as e:
@@ -474,7 +521,6 @@ def unpack_map(  # noqa: PLR0913
     *,
     ctx: AppContext,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-    wav_submitter: Callable[[Path], None] | None = None,
 ) -> None:
     """按地图 ID 解包音频。
 
@@ -485,7 +531,6 @@ def unpack_map(  # noqa: PLR0913
         cache_lock: 多线程场景下的缓存锁。
         ctx: 运行时上下文。
         persisted_wem_callback: WEM 落盘后的附加回调。
-        wav_submitter: WAV sidecar 提交回调。
     """
     try:
         entity_data = AudioEntityData.from_entity(
@@ -501,7 +546,6 @@ def unpack_map(  # noqa: PLR0913
             cache_lock=cache_lock,
             ctx=ctx,
             persisted_wem_callback=persisted_wem_callback,
-            wav_submitter=wav_submitter,
         )
     except ValueError as e:
         logger.error(str(e))

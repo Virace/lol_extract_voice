@@ -231,7 +231,7 @@ def test_load_settings_requires_existing_file(tmp_path: Path) -> None:
         load_settings(config_file)
 
 
-def test_load_command_config_reads_targets_and_extract_sections(tmp_path: Path) -> None:
+def test_load_command_config_reads_targets_and_wav_sections(tmp_path: Path) -> None:
     config_file = tmp_path / "lol-audio-unpack.ini"
     config_file.write_text(
         (
@@ -241,19 +241,19 @@ def test_load_command_config_reads_targets_and_extract_sections(tmp_path: Path) 
             "[targets]\n"
             "champions = Annie,Ahri\n"
             "\n"
-            "[extract]\n"
-            "wav = true\n"
+            "[wav]\n"
+            "enable = true\n"
         ),
         encoding="utf-8",
     )
 
     target_config = load_command_config(config_file, command="targets")
-    extract_config = load_command_config(config_file, command="extract")
+    wav_config = load_command_config(config_file, command="wav")
 
     assert target_config == {
         "champions": "Annie,Ahri",
     }
-    assert extract_config == {
+    assert wav_config == {
         "wav": True,
     }
 
@@ -269,6 +269,7 @@ def test_load_command_config_reads_runtime_and_wav_sections(tmp_path: Path) -> N
             "max_workers = 8\n"
             "\n"
             "[wav]\n"
+            "enable = true\n"
             "wav_workers = 3\n"
             "wav_timeout = 9\n"
             "wav_retries = 4\n"
@@ -284,6 +285,7 @@ def test_load_command_config_reads_runtime_and_wav_sections(tmp_path: Path) -> N
         "max_workers": 8,
     }
     assert wav_config == {
+        "wav": True,
         "wav_workers": 3,
         "wav_timeout": 9,
         "wav_retries": 4,

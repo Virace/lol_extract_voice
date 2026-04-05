@@ -44,11 +44,11 @@ class ExecutionTaskParamsSnapshot:
         with_bp_vo: 是否包含 BP 语音。
         exclude_types: 需要排除的音频类型。
         integrate_data: 是否在映射阶段生成整合数据文件。
-        wav_enabled: 是否在解包后额外派生 WAV 输出。
-        wav_workers: WAV 转码使用的默认并发数。
-        wav_timeout: 单个 WAV 转码任务超时时间。
-        wav_retries: WAV 转码失败后的最大重试次数。
-        wav_format: WAV 输出格式。
+        wav_enabled: 是否执行音频转码。
+        wav_workers: 音频转码使用的默认并发数。
+        wav_timeout: 单个音频转码任务超时时间。
+        wav_retries: 音频转码失败后的最大重试次数。
+        wav_format: 音频转码输出格式。
     """
 
     champion_ids: tuple[int, ...] | None = None
@@ -77,6 +77,8 @@ class ExecutionTaskParamsSnapshot:
             steps.append("前置强制更新")
         if self.run_extract:
             steps.append("音频解包")
+        if self.wav_enabled:
+            steps.append("音频转码")
         if self.run_mapping:
             steps.append("事件映射")
         return tuple(steps)
@@ -196,15 +198,11 @@ class ExecutionTaskResult:
         completed_steps: 已成功完成的步骤名称。
         summary: 展示给用户的完成摘要。
         duration_seconds: 本次任务耗时。
-        wav_background_process: 解耦后的后台 WAV 进程句柄。
-        wav_background_notice: 需要在主流程结束后额外提示给用户的 WAV 文案。
     """
 
     completed_steps: tuple[str, ...]
     summary: str
     duration_seconds: float
-    wav_background_process: object | None = None
-    wav_background_notice: str = ""
 
 
 @dataclass(slots=True, frozen=True)

@@ -626,7 +626,7 @@ class SettingPage(SmoothScrollArea):
         self.log_levels_changed.emit(RuntimeLoggingConfig.from_gui_config(self._cfg))
 
     def _save_wav_defaults(self) -> None:
-        """保存 WAV 转码默认参数，不触发共享实体刷新。"""
+        """保存音频转码默认参数，不触发共享实体刷新。"""
         self._cfg.wav_workers = int(self.wavWorkersCard.value())
         self._cfg.wav_timeout = int(self.wavTimeoutCard.value())
         self._cfg.wav_retries = int(self.wavRetriesCard.value())

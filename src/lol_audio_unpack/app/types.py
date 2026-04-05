@@ -48,7 +48,7 @@ class AppConfig:
 
 @dataclass(frozen=True)
 class WavOutputOptions:
-    """WAV sidecar 派生输出配置。"""
+    """独立 WAV 转码 stage 的输出配置。"""
 
     enabled: bool = False
     worker_count: int = 2

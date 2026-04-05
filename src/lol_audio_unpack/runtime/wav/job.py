@@ -1,49 +1,18 @@
-"""后台 WAV 转码作业、清单记录器与轮询句柄。"""
+"""WAV 转码 stage 的路径装配与批处理入口。"""
 
 from __future__ import annotations
 
-import argparse
 import json
-import subprocess
-import sys
-import threading
-from dataclasses import asdict, dataclass
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
+from pyvgmstream.transcode import BatchTranscodeItemResult, BatchTranscodeProgress, transcode_tree
 
 from ...app.types import AppContext, WavOutputOptions
-from .transcode import TranscodeCoordinator, TranscodeProgress
-
-
-@dataclass(slots=True, frozen=True)
-class JobSpec:
-    """描述单个后台 WAV 转码作业。
-
-    Args:
-        job_label: 关联的后台作业标识。
-        manifest_path: 提取阶段写出的 WEM 清单文件。
-        audio_root: 当前版本的音频输出根目录。
-        wav_root: 当前版本的 WAV 输出根目录。
-        report_root: 当前作业的报告目录。
-        progress_path: 当前作业的进度快照文件。
-        worker_count: WAV 转码并发数。
-        timeout_seconds: 单个 WAV 转码超时时间。
-        max_retries: WAV 转码最大重试次数。
-        wav_format: WAV 输出格式。
-    """
-
-    job_label: str
-    manifest_path: Path
-    audio_root: Path
-    wav_root: Path
-    report_root: Path
-    progress_path: Path
-    worker_count: int
-    timeout_seconds: int
-    max_retries: int
-    wav_format: str
+from ._runtime import resolve_decode_config
 
 
 @dataclass(slots=True, frozen=True)
@@ -55,73 +24,17 @@ class TranscodePaths:
     report_root: Path
 
 
-@dataclass(slots=True)
-class JobHandle:
-    """封装后台 WAV 转码进程与可轮询元数据。"""
-
-    job_label: str
-    process: subprocess.Popen[bytes]
-    progress_path: Path
-    report_root: Path
-
-    def poll(self) -> int | None:
-        """返回当前后台进程的退出码。"""
-        return self.process.poll()
-
-    def terminate(self) -> None:
-        """通知后台 WAV 进程终止。"""
-        self.process.terminate()
-
-    def read_progress_snapshot(self) -> dict[str, Any] | None:
-        """读取最近一次进度快照。"""
-        if not self.progress_path.exists():
-            return None
-        try:
-            return json.loads(self.progress_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            return None
-
-
-class ManifestRecorder:
-    """以线程安全方式记录本轮解包产出的 WEM 清单。"""
-
-    def __init__(self, manifest_path: Path) -> None:
-        """初始化清单写入器。
-
-        Args:
-            manifest_path: 清单文件路径。
-        """
-        self.manifest_path = manifest_path
-        self._lock = threading.Lock()
-        self.recorded_count = 0
-
-    def record(self, wem_path: Path) -> None:
-        """追加记录一条已落盘的 WEM 路径。"""
-        normalized_path = Path(wem_path)
-        self.manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._lock:
-            with self.manifest_path.open("a", encoding="utf-8") as handle:
-                handle.write(f"{normalized_path}\n")
-            self.recorded_count += 1
-
-    def has_records(self) -> bool:
-        """返回当前是否已记录过任意 WEM 路径。"""
-        return self.recorded_count > 0
-
-
 def build_transcode_paths(*, ctx: AppContext, version: str, job_label: str | None = None) -> TranscodePaths:
-    """根据版本和可选后台标签构造 WAV 路径组合。
+    """根据版本和可选标签构造 WAV 路径组合。
 
     Args:
         ctx: 运行时上下文。
         version: 当前数据版本号。
-        job_label: 可选后台作业标签；提供时报告目录会追加该标签。
+        job_label: 可选报告标签；提供时报告目录会追加该标签。
 
     Returns:
         TranscodePaths: 当前版本对应的音频、WAV 和报告目录。
     """
-    # 前台转码和 detached 转码的根目录规则必须完全一致；
-    # 唯一允许变化的是后台作业会把报告目录再细分到 job_label。
     report_root = Path(ctx.paths.report_path) / version / "transcode_wav"
     if job_label is not None:
         report_root = report_root / job_label
@@ -132,272 +45,117 @@ def build_transcode_paths(*, ctx: AppContext, version: str, job_label: str | Non
     )
 
 
-def build_recorder(*, ctx: AppContext, job_label: str) -> ManifestRecorder:
-    """为 detached WAV 转码作业构造清单记录器。"""
-    manifest_path = Path(ctx.paths.report_path) / "_wav_manifests" / f"{job_label}.txt"
-    if manifest_path.exists():
-        manifest_path.unlink(missing_ok=True)
-    return ManifestRecorder(manifest_path)
+def _format_progress(progress: BatchTranscodeProgress) -> str:
+    """将 `pyvgmstream` 的批处理进度格式化为日志文案。"""
+    return f"WAV 转码进行中：文件 {progress.completed_count}/{max(progress.total_count, 1)} · 失败 {progress.failed_count}"
 
 
-def build_job_spec(  # noqa: PLR0913
-    *,
-    job_label: str,
-    manifest_path: Path,
-    audio_root: Path,
-    wav_root: Path,
+def _serialize_failure(result: BatchTranscodeItemResult) -> dict[str, Any]:
+    """序列化单条失败结果。"""
+    return {
+        "source_path": str(result.source_path),
+        "output_path": str(result.output_path),
+        "frame_count": result.frame_count,
+        "byte_count": result.byte_count,
+        "error": result.error or "unknown error",
+    }
+
+
+def _write_reports(
     report_root: Path,
-    worker_count: int,
-    timeout_seconds: int,
-    max_retries: int,
-    wav_format: str,
-) -> JobSpec:
-    """根据路径与运行参数构造后台 WAV 作业规格。"""
-    return JobSpec(
-        job_label=job_label,
-        manifest_path=manifest_path,
-        audio_root=audio_root,
-        wav_root=wav_root,
-        report_root=report_root,
-        progress_path=report_root / "progress.json",
-        worker_count=worker_count,
-        timeout_seconds=timeout_seconds,
-        max_retries=max_retries,
-        wav_format=wav_format,
+    *,
+    payload: dict[str, Any],
+    failures: list[dict[str, Any]],
+) -> None:
+    """写出转码汇总与失败报告。"""
+    report_root.mkdir(parents=True, exist_ok=True)
+    (report_root / "summary.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (report_root / "failures.jsonl").write_text(
+        "\n".join(json.dumps(item, ensure_ascii=False) for item in failures) + ("\n" if failures else ""),
+        encoding="utf-8",
     )
 
 
-def launch_job(spec: JobSpec) -> JobHandle:
-    """启动独立的后台 WAV 转码进程。"""
-    command = [
-        sys.executable,
-        "-m",
-        "lol_audio_unpack.runtime.wav.job",
-        "--task-id",
-        spec.job_label,
-        "--manifest",
-        str(spec.manifest_path),
-        "--audio-root",
-        str(spec.audio_root),
-        "--wav-root",
-        str(spec.wav_root),
-        "--report-root",
-        str(spec.report_root),
-        "--progress-path",
-        str(spec.progress_path),
-        "--workers",
-        str(spec.worker_count),
-        "--timeout",
-        str(spec.timeout_seconds),
-        "--retries",
-        str(spec.max_retries),
-        "--format",
-        spec.wav_format,
-    ]
-    spec.report_root.mkdir(parents=True, exist_ok=True)
-    process = subprocess.Popen(
-        command,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    return JobHandle(
-        job_label=spec.job_label,
-        process=process,
-        progress_path=spec.progress_path,
-        report_root=spec.report_root,
-    )
-
-
-def launch_detached(
+def run_tree(
     *,
     ctx: AppContext,
+    version: str,
     wav_output: WavOutputOptions,
-    manifest_recorder: ManifestRecorder,
-    job_label: str,
-) -> JobHandle | None:
-    """根据已记录的 WEM 清单启动后台 WAV 进程。"""
-    if not manifest_recorder.has_records() or not manifest_recorder.manifest_path.exists():
-        return None
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
+    job_label: str | None = None,
+) -> dict[str, Any]:
+    """对当前版本的默认 audios 树执行一次完整 WAV 转码。
 
-    manifest_lines = [
-        line.strip()
-        for line in manifest_recorder.manifest_path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    if not manifest_lines:
-        return None
+    Args:
+        ctx: 运行时上下文。
+        version: 当前数据版本号。
+        wav_output: WAV 输出配置。
+        progress_callback: 可选的统一进度回调。
+        job_label: 可选报告标签。
 
-    first_wem_path = Path(manifest_lines[0])
-    audio_root = Path(ctx.paths.audio_path)
-    relative_parts = first_wem_path.relative_to(audio_root).parts
-    if not relative_parts:
-        return None
-
-    # manifest 记录的是已落盘的绝对 WEM 路径，因此 detached 进程启动前
-    # 需要先从第一条记录还原当前版本号，再反推本轮的 audio/wav/report 根目录。
-    version = relative_parts[0]
-    # 具体目录拼接统一委托给 build_transcode_paths，避免 unpack 主流程和后台流程各自拼一次。
+    Returns:
+        dict[str, Any]: 供上层汇总与日志消费的转码结果摘要。
+    """
     paths = build_transcode_paths(ctx=ctx, version=version, job_label=job_label)
-    spec = build_job_spec(
-        job_label=job_label,
-        manifest_path=manifest_recorder.manifest_path,
-        audio_root=paths.audio_root,
-        wav_root=paths.wav_root,
-        report_root=paths.report_root,
-        worker_count=wav_output.worker_count,
-        timeout_seconds=wav_output.timeout_seconds,
-        max_retries=wav_output.max_retries,
-        wav_format=wav_output.format,
-    )
-    return launch_job(spec)
+    decode_config = resolve_decode_config(wav_output.format)
 
-
-def _write_progress(progress_path: Path, snapshot: TranscodeProgress) -> None:
-    """将当前转码快照写入 JSON 进度文件。"""
-    progress_path.parent.mkdir(parents=True, exist_ok=True)
-    progress_path.write_text(
-        json.dumps(
-            {
-                "status": "running",
-                **asdict(snapshot),
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
+    logger.info(
+        "开始 WAV 转码：audio_root={}，wav_root={}，workers={}，format={}",
+        paths.audio_root,
+        paths.wav_root,
+        wav_output.worker_count,
+        wav_output.format,
     )
 
+    def emit_progress(progress: BatchTranscodeProgress) -> None:
+        message = _format_progress(progress)
+        if progress_callback is not None:
+            progress_callback("wav", progress.completed_count, max(progress.total_count, 1), message)
+        logger.info(message)
 
-def _write_status(progress_path: Path, *, status: str, job_label: str, detail: str = "") -> None:
-    """写入后台 WAV 作业的终态快照。"""
-    progress_path.parent.mkdir(parents=True, exist_ok=True)
-    progress_path.write_text(
-        json.dumps(
-            {
-                "status": status,
-                "job_label": job_label,
-                "detail": detail,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
+    summary = transcode_tree(
+        paths.audio_root,
+        paths.wav_root,
+        workers=wav_output.worker_count,
+        chunk_frames=65536,
+        dispatch_chunksize=64,
+        config=decode_config,
+        progress_callback=emit_progress,
     )
+    failures = [
+        _serialize_failure(result)
+        for result in summary.results
+        if result.error
+    ]
+    payload = {
+        "status": "warning" if summary.failed_count else "success",
+        "job_label": job_label,
+        "audio_root": str(paths.audio_root),
+        "wav_root": str(paths.wav_root),
+        "worker_count": wav_output.worker_count,
+        "wav_format": wav_output.format,
+        "processed_file_count": summary.processed_count,
+        "failed_file_count": summary.failed_count,
+    }
+    _write_reports(paths.report_root, payload=payload, failures=failures)
 
-
-def run_job(spec: JobSpec) -> int:
-    """执行后台 WAV 转码作业并返回退出码。"""
-    manifest_lines = []
-    if spec.manifest_path.exists():
-        manifest_lines = [
-            line.strip()
-            for line in spec.manifest_path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
-    if not manifest_lines:
-        _write_status(spec.progress_path, status="skipped", job_label=spec.job_label, detail="no_wem_paths")
-        return 0
-
-    coordinator = TranscodeCoordinator(
-        options=WavOutputOptions(
-            enabled=True,
-            worker_count=spec.worker_count,
-            timeout_seconds=spec.timeout_seconds,
-            max_retries=spec.max_retries,
-            format=spec.wav_format,
-        ),
-        audio_root=spec.audio_root,
-        wav_root=spec.wav_root,
-        report_root=spec.report_root,
-        progress_callback=lambda snapshot: _write_progress(spec.progress_path, snapshot),
-    )
-
-    try:
-        logger.info(
-            "[WAV 后台] 作业 {} 启动转码：{} 个文件，workers={}，timeout={}s，retries={}，format={}",
-            spec.job_label,
-            len(manifest_lines),
-            spec.worker_count,
-            spec.timeout_seconds,
-            spec.max_retries,
-            spec.wav_format,
+    if summary.failed_count:
+        logger.warning(
+            "WAV 转码完成：成功 {} 个，失败 {} 个",
+            summary.processed_count,
+            summary.failed_count,
         )
-        for raw_path in manifest_lines:
-            coordinator.submit(Path(raw_path))
-        coordinator.finish_extract()
-        summary = coordinator.finish()
-        _write_status(
-            spec.progress_path,
-            status="completed",
-            job_label=spec.job_label,
-            detail=(
-                f"completed={summary.completed_wav_job_count},"
-                f"failed={summary.failed_wav_job_count},"
-                f"skipped={summary.skipped_wav_job_count}"
-            ),
-        )
-        return 0
-    except Exception as exc:  # noqa: BLE001
-        logger.exception(f"[WAV 后台] 作业 {spec.job_label} 转码失败: {exc}")
-        _write_status(
-            spec.progress_path,
-            status="failed",
-            job_label=spec.job_label,
-            detail=f"{type(exc).__name__}: {exc}",
-        )
-        return 1
-    finally:
-        if spec.manifest_path.exists():
-            spec.manifest_path.unlink(missing_ok=True)
+    else:
+        logger.success("WAV 转码完成：成功 {} 个", summary.processed_count)
 
-
-def parse_job_spec(argv: list[str] | None = None) -> JobSpec:
-    """从命令行参数解析后台 WAV 作业规格。"""
-    parser = argparse.ArgumentParser(description="后台 WAV 转码作业")
-    parser.add_argument("--task-id", type=str, required=True)
-    parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--audio-root", type=Path, required=True)
-    parser.add_argument("--wav-root", type=Path, required=True)
-    parser.add_argument("--report-root", type=Path, required=True)
-    parser.add_argument("--progress-path", type=Path, required=True)
-    parser.add_argument("--workers", type=int, required=True)
-    parser.add_argument("--timeout", type=int, required=True)
-    parser.add_argument("--retries", type=int, required=True)
-    parser.add_argument("--format", type=str, required=True)
-    args = parser.parse_args(argv)
-    return JobSpec(
-        job_label=str(args.task_id),
-        manifest_path=args.manifest,
-        audio_root=args.audio_root,
-        wav_root=args.wav_root,
-        report_root=args.report_root,
-        progress_path=args.progress_path,
-        worker_count=args.workers,
-        timeout_seconds=args.timeout,
-        max_retries=args.retries,
-        wav_format=args.format,
-    )
-
-
-def main(argv: list[str] | None = None) -> int:
-    """执行命令行入口并返回退出码。"""
-    spec = parse_job_spec(argv)
-    return run_job(spec)
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    return payload
 
 
 __all__ = [
-    "JobHandle",
-    "JobSpec",
-    "ManifestRecorder",
-    "build_job_spec",
-    "build_recorder",
-    "launch_detached",
-    "launch_job",
-    "parse_job_spec",
-    "run_job",
+    "TranscodePaths",
+    "build_transcode_paths",
+    "run_tree",
 ]
