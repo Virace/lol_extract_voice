@@ -5,8 +5,13 @@ import pytest
 
 from lol_audio_unpack import mapping as m_mapping
 from lol_audio_unpack import unpack as m_unpack
-from lol_audio_unpack.app_context import AppConfig, AppContext, AppPaths
+from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
+from lol_audio_unpack.mapping import batch as mapping_batch
+from lol_audio_unpack.mapping import session as mapping_session
 from lol_audio_unpack.model import AudioEntityData
+from lol_audio_unpack.unpack import batch as unpack_batch
+from lol_audio_unpack.unpack import bp_vo as unpack_bp_vo
+from lol_audio_unpack.utils.path_constants import format_entity_folder_name, format_sub_entity_folder_name
 
 pytestmark = pytest.mark.unit
 
@@ -31,6 +36,7 @@ def _build_ctx(
     )
     app_paths = AppPaths(
         audio_path=output_path / "audios",
+        wav_path=output_path / "wavs",
         temp_path=output_path / "temps",
         log_path=output_path / "logs",
         cache_path=output_path / "cache",
@@ -47,9 +53,11 @@ def _build_ctx(
 
 def test_audio_entity_from_champion_uses_ctx_region_and_game_path(tmp_path: Path) -> None:
     ctx = _build_ctx(tmp_path, game_region="en_US")
-    wad_file = ctx.config.game_path / "Game" / "en.wad.client"
+    wad_file = ctx.game_path / "Game" / "en.wad.client"
+    root_wad_file = ctx.game_path / "Game" / "root.wad.client"
     wad_file.parent.mkdir(parents=True, exist_ok=True)
     wad_file.write_bytes(b"wad")
+    root_wad_file.write_bytes(b"root-wad")
 
     reader = SimpleNamespace(
         get_champion=lambda _id: {
@@ -66,9 +74,11 @@ def test_audio_entity_from_champion_uses_ctx_region_and_game_path(tmp_path: Path
 
     entity_data = AudioEntityData.from_champion(1, reader, ctx=ctx)
 
+    assert ctx.game_region == "en_US"
     assert entity_data.entity_name == "Annie"
     assert entity_data.wad_language == "Game/en.wad.client"
     assert entity_data.get_wad_path("VO", ctx=ctx) == wad_file
+    assert entity_data.get_wad_path("SFX", ctx=ctx) == root_wad_file
 
 
 def test_generate_output_path_supports_ctx_grouping(tmp_path: Path) -> None:
@@ -88,7 +98,11 @@ def test_generate_output_path_supports_ctx_grouping(tmp_path: Path) -> None:
 
     path_by_type = m_unpack.generate_output_path(entity_data, "1000", "VO", ctx=by_type_ctx)
     path_by_entity = m_unpack.generate_output_path(entity_data, "1000", "VO", ctx=by_entity_ctx)
-    relative_path = m_unpack._generate_relative_path(entity_data, "1000")
+    relative_path = (
+        Path("champions")
+        / format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
+        / format_sub_entity_folder_name("1000", "基础皮肤")
+    )
 
     assert path_by_type == by_type_ctx.paths.audio_path / "VO" / relative_path
     assert path_by_entity == by_entity_ctx.paths.audio_path / relative_path / "VO"
@@ -107,7 +121,7 @@ def test_attach_bp_vo_to_champion_uses_ctx_without_global_config(
     (manifest_root / version / "lobby_vo" / "zh_CN" / "champion-ban-vo" / "1.ogg").write_bytes(b"ban")
     (manifest_root / version / "lobby_vo" / "zh_CN" / "champion-choose-vo" / "1.ogg").write_bytes(b"choose")
 
-    monkeypatch.setattr(m_unpack.os, "link", lambda _src, _dst: (_ for _ in ()).throw(OSError("no link")))
+    monkeypatch.setattr(unpack_bp_vo.os, "link", lambda _src, _dst: (_ for _ in ()).throw(OSError("no link")))
 
     entity_data = AudioEntityData(
         entity_id="1",
@@ -121,15 +135,15 @@ def test_attach_bp_vo_to_champion_uses_ctx_without_global_config(
     )
     reader = SimpleNamespace(version=version)
 
-    m_unpack._attach_bp_vo_to_champion(entity_data, reader, ctx=ctx)
+    unpack_bp_vo.attach_bp_vo(entity_data, reader, ctx=ctx)
 
-    entity_folder = m_unpack.format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
+    entity_folder = format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
     target_dir = ctx.paths.audio_path / version / "champions" / entity_folder / "BP_VO"
     assert (target_dir / "ban.ogg").read_bytes() == b"ban"
     assert (target_dir / "choose.ogg").read_bytes() == b"choose"
 
 
-def test_execute_mapping_tasks_defaults_to_native_hirc(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_execute_tasks_defaults_to_native_hirc(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     ctx = _build_ctx(tmp_path)
     captured: dict[str, object] = {}
 
@@ -141,17 +155,17 @@ def test_execute_mapping_tasks_defaults_to_native_hirc(monkeypatch: pytest.Monke
         captured["ctx"] = kwargs.get("ctx")
         return {}
 
-    monkeypatch.setattr(m_mapping, "WwiserManager", fail_wwiser_manager)
-    monkeypatch.setattr(m_mapping, "build_champion_mapping", fake_build_champion_mapping)
+    monkeypatch.setattr(mapping_session, "WwiserManager", fail_wwiser_manager)
+    monkeypatch.setattr(mapping_batch, "build_champion", fake_build_champion_mapping)
 
     reader = SimpleNamespace()
-    m_mapping.execute_mapping_tasks([("champion", 1, "英雄ID 1")], reader, max_workers=1, ctx=ctx)
+    m_mapping.execute_tasks([("champion", 1, "英雄ID 1")], reader, max_workers=1, ctx=ctx)
 
     assert captured["wwiser_manager"] is None
     assert captured["ctx"] == ctx
 
 
-def test_execute_mapping_tasks_passes_wwiser_manager_and_ctx_to_runtime(
+def test_execute_tasks_passes_wwiser_manager_and_ctx_to_runtime(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     wwiser_file = tmp_path / "wwiser.pyz"
@@ -170,18 +184,18 @@ def test_execute_mapping_tasks_passes_wwiser_manager_and_ctx_to_runtime(
         captured["ctx"] = kwargs.get("ctx")
         return {}
 
-    monkeypatch.setattr(m_mapping, "WwiserManager", fake_wwiser_manager)
-    monkeypatch.setattr(m_mapping, "build_champion_mapping", fake_build_champion_mapping)
+    monkeypatch.setattr(mapping_session, "WwiserManager", fake_wwiser_manager)
+    monkeypatch.setattr(mapping_batch, "build_champion", fake_build_champion_mapping)
 
     reader = SimpleNamespace()
-    m_mapping.execute_mapping_tasks([("champion", 1, "英雄ID 1")], reader, max_workers=1, ctx=ctx)
+    m_mapping.execute_tasks([("champion", 1, "英雄ID 1")], reader, max_workers=1, ctx=ctx)
 
     assert captured["wwiser_path"] == wwiser_file
     assert captured["wwiser_manager"] is wwiser_manager
     assert captured["ctx"] == ctx
 
 
-def test_execute_unpack_tasks_uses_warning_summary_for_partial_failures(
+def test_mapping_execute_tasks_uses_warning_summary_for_partial_failures(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     ctx = _build_ctx(tmp_path)
@@ -213,13 +227,13 @@ def test_execute_unpack_tasks_uses_warning_summary_for_partial_failures(
     def _fail_unpack_map(*_args, **_kwargs) -> None:
         raise RuntimeError("map boom")
 
-    reader = SimpleNamespace(write_unknown_categories_to_file=lambda: None)
+    reader = SimpleNamespace(write_unknown_categories=lambda: None)
 
-    monkeypatch.setattr(m_unpack, "logger", fake_logger)
-    monkeypatch.setattr(m_unpack, "unpack_champion", _fake_unpack_champion)
-    monkeypatch.setattr(m_unpack, "unpack_map_audio", _fail_unpack_map)
+    monkeypatch.setattr(unpack_batch, "logger", fake_logger)
+    monkeypatch.setattr(unpack_batch, "unpack_champion", _fake_unpack_champion)
+    monkeypatch.setattr(unpack_batch, "unpack_map", _fail_unpack_map)
 
-    m_unpack.execute_unpack_tasks(
+    unpack_batch.execute_tasks(
         [("champion", 1, "英雄ID 1"), ("map", 11, "地图ID 11")],
         reader,
         max_workers=1,
@@ -233,7 +247,7 @@ def test_execute_unpack_tasks_uses_warning_summary_for_partial_failures(
     assert errors == []
 
 
-def test_execute_mapping_tasks_uses_warning_summary_for_partial_failures(
+def test_execute_tasks_uses_warning_summary_for_partial_failures(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     ctx = _build_ctx(tmp_path)
@@ -265,12 +279,12 @@ def test_execute_mapping_tasks_uses_warning_summary_for_partial_failures(
     def _fail_build_map_mapping(*_args, **_kwargs) -> dict[str, object]:
         raise RuntimeError("map boom")
 
-    monkeypatch.setattr(m_mapping, "logger", fake_logger)
-    monkeypatch.setattr(m_mapping, "_create_wwiser_manager", lambda _ctx: None)
-    monkeypatch.setattr(m_mapping, "build_champion_mapping", _fake_build_champion_mapping)
-    monkeypatch.setattr(m_mapping, "build_map_mapping", _fail_build_map_mapping)
+    monkeypatch.setattr(mapping_batch, "logger", fake_logger)
+    monkeypatch.setattr(mapping_session, "_create_wwiser_manager", lambda _ctx: None)
+    monkeypatch.setattr(mapping_batch, "build_champion", _fake_build_champion_mapping)
+    monkeypatch.setattr(mapping_batch, "build_map", _fail_build_map_mapping)
 
-    m_mapping.execute_mapping_tasks(
+    m_mapping.execute_tasks(
         [("champion", 1, "英雄ID 1"), ("map", 11, "地图ID 11")],
         SimpleNamespace(),
         max_workers=1,
@@ -297,10 +311,10 @@ def test_get_cached_hirc_uses_native_hirc_by_default(monkeypatch: pytest.MonkeyP
     def fail_wwiser_from_bnk(*_args, **_kwargs) -> object:
         pytest.fail("默认路径不应调用 WwiserHIRC")
 
-    monkeypatch.setattr(m_mapping, "NativeHIRC", SimpleNamespace(from_bnk=fake_native_from_bnk))
-    monkeypatch.setattr(m_mapping, "WwiserHIRC", SimpleNamespace(from_bnk=fail_wwiser_from_bnk))
+    monkeypatch.setattr(mapping_session, "NativeHIRC", SimpleNamespace(from_bnk=fake_native_from_bnk))
+    monkeypatch.setattr(mapping_session, "WwiserHIRC", SimpleNamespace(from_bnk=fail_wwiser_from_bnk))
 
-    result = m_mapping._get_cached_hirc(
+    result = mapping_session._get_cached_hirc(
         bnk_path=bnk_path,
         hirc_cache_dir=hirc_cache_dir,
         wwiser_manager=None,
@@ -325,10 +339,10 @@ def test_get_cached_hirc_uses_wwiser_when_manager_is_provided(monkeypatch: pytes
         captured["wwiser_args"] = (path, cache_dir, wwiser_manager)
         return wwiser_hirc
 
-    monkeypatch.setattr(m_mapping, "NativeHIRC", SimpleNamespace(from_bnk=fail_native_from_bnk))
-    monkeypatch.setattr(m_mapping, "WwiserHIRC", SimpleNamespace(from_bnk=fake_wwiser_from_bnk))
+    monkeypatch.setattr(mapping_session, "NativeHIRC", SimpleNamespace(from_bnk=fail_native_from_bnk))
+    monkeypatch.setattr(mapping_session, "WwiserHIRC", SimpleNamespace(from_bnk=fake_wwiser_from_bnk))
 
-    result = m_mapping._get_cached_hirc(
+    result = mapping_session._get_cached_hirc(
         bnk_path=bnk_path,
         hirc_cache_dir=hirc_cache_dir,
         wwiser_manager=wwiser_manager,
@@ -337,3 +351,9 @@ def test_get_cached_hirc_uses_wwiser_when_manager_is_provided(monkeypatch: pytes
 
     assert result is wwiser_hirc
     assert captured["wwiser_args"] == (bnk_path, hirc_cache_dir, wwiser_manager)
+
+
+def test_mapping_module_exposes_execute_tasks() -> None:
+    """映射包应暴露新的批量入口。"""
+
+    assert callable(m_mapping.execute_tasks)

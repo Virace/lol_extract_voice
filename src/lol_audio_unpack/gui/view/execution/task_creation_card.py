@@ -59,12 +59,15 @@ def _build_task_scope_summary(
     *,
     include_preflight_update: bool,
     include_extract: bool,
+    include_wav: bool,
     include_mapping: bool,
 ) -> str:
     """构造当前任务包含的执行步骤摘要。"""
     parts: list[str] = []
     if include_extract:
         parts.append("音频解包")
+    if include_wav:
+        parts.append("音频转码")
     if include_mapping:
         parts.append("事件映射")
     if not parts:
@@ -112,6 +115,7 @@ class _ExecutionTaskFormState:
         return _build_task_scope_summary(
             include_preflight_update=self.force_update,
             include_extract=self.include_extract,
+            include_wav=self.wav_enabled,
             include_mapping=self.include_mapping,
         )
 
@@ -162,29 +166,27 @@ class TaskCreationCard(GroupHeaderCardWidget):
         self.bp_voice_cb = CheckBox("启用", self)
         self.force_update_cb = CheckBox("启用", self)
         self.integrate_data_cb = CheckBox("启用", self)
-        self.wav_output_cb = CheckBox("启用", self)
         self.wav_format_combo = ComboBox(self)
         self.wav_format_combo.addItems(["auto", "pcm16", "pcm24", "pcm32", "float"])
         self.wav_format_combo.setCurrentText("pcm16")
         self.wav_format_combo.setMinimumWidth(140)
         self.wav_format_combo.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
-        self.wav_format_combo.setVisible(False)
+        self.wav_format_combo.setVisible(True)
 
-        self.wav_output_row = QWidget(self)
-        self.wav_output_row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        wav_output_layout = QHBoxLayout(self.wav_output_row)
-        wav_output_layout.setContentsMargins(0, 0, 0, 0)
-        wav_output_layout.setSpacing(8)
-        wav_output_layout.addWidget(self.wav_output_cb)
-        wav_output_layout.addWidget(self.wav_format_combo)
-        wav_output_layout.addStretch(1)
+        self.wav_format_row = QWidget(self)
+        self.wav_format_row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        wav_format_layout = QHBoxLayout(self.wav_format_row)
+        wav_format_layout.setContentsMargins(0, 0, 0, 0)
+        wav_format_layout.setSpacing(8)
+        wav_format_layout.addWidget(self.wav_format_combo)
+        wav_format_layout.addStretch(1)
 
         self.addGroup(FIF.PEOPLE, "英雄 ID", "多个英雄 ID 用逗号分隔，如 1,103,555", self.champion_ids_input, stretch=1)
         self.addGroup(FIF.GLOBE, "地图 ID", "多个地图 ID 用逗号分隔，如 0,11,12", self.map_ids_input, stretch=1)
         self.addGroup(FIF.FILTER, "音频范围", "默认只处理 VO，需要时可切换为全部类型", self.vo_filter, stretch=1)
         self.addGroup(FIF.SPEED_HIGH, "并发数", "设置任务并发数；一般不建议超过 CPU 线程数", self.max_workers_combo)
         self.addGroup(FIF.MUSIC, "附加 BP 语音", "默认同时处理 BP 语音", self.bp_voice_cb)
-        self.addGroup(FIF.ALBUM, "派生 WAV", "解包完成后额外生成 WAV；启用后可选择输出格式", self.wav_output_row)
+        self.addGroup(FIF.ALBUM, "转码格式", "仅在启用音频转码时生效", self.wav_format_row)
         self.addGroup(
             FIF.SYNC,
             "前置强制更新",
@@ -205,6 +207,7 @@ class TaskCreationCard(GroupHeaderCardWidget):
         self.target_summary_value = BodyLabel("执行范围：全部英雄+地图", self)
         self.extract_task_cb = CheckBox("音频解包", self)
         self.extract_task_cb.setChecked(True)
+        self.wav_task_cb = CheckBox("音频转码", self)
         self.mapping_task_cb = CheckBox("事件映射", self)
         self.mapping_task_cb.setChecked(True)
         self.restore_defaults_btn = TransparentToolButton(FIF.SYNC, self)
@@ -224,6 +227,7 @@ class TaskCreationCard(GroupHeaderCardWidget):
         self.bottom_toolbar_layout.addWidget(self.target_summary_value, 0, Qt.AlignmentFlag.AlignLeft)
         self.bottom_toolbar_layout.addStretch(1)
         self.bottom_toolbar_layout.addWidget(self.extract_task_cb, 0, Qt.AlignmentFlag.AlignRight)
+        self.bottom_toolbar_layout.addWidget(self.wav_task_cb, 0, Qt.AlignmentFlag.AlignRight)
         self.bottom_toolbar_layout.addWidget(self.mapping_task_cb, 0, Qt.AlignmentFlag.AlignRight)
         self.bottom_toolbar_layout.addWidget(self.restore_defaults_btn, 0, Qt.AlignmentFlag.AlignRight)
         self.bottom_toolbar_layout.addWidget(self.create_task_btn, 0, Qt.AlignmentFlag.AlignRight)
@@ -236,18 +240,19 @@ class TaskCreationCard(GroupHeaderCardWidget):
             "champion_ids": (),
             "map_ids": (),
             "summary": "尚未从实体总览同步选择。",
+            "select_all": False,
         }
 
     def connect_form_signals(self, callback) -> None:
         """连接任务表单相关控件信号。"""
         self.extract_task_cb.stateChanged.connect(callback)
+        self.wav_task_cb.stateChanged.connect(callback)
         self.mapping_task_cb.stateChanged.connect(callback)
         self.champion_ids_input.textChanged.connect(callback)
         self.map_ids_input.textChanged.connect(callback)
         self.vo_filter.currentItemChanged.connect(callback)
         self.max_workers_combo.currentTextChanged.connect(callback)
         self.bp_voice_cb.stateChanged.connect(callback)
-        self.wav_output_cb.stateChanged.connect(callback)
         self.wav_format_combo.currentTextChanged.connect(callback)
         self.force_update_cb.stateChanged.connect(callback)
         self.integrate_data_cb.stateChanged.connect(callback)
@@ -256,15 +261,15 @@ class TaskCreationCard(GroupHeaderCardWidget):
         """将默认值应用到任务表单控件。"""
         defaults = self._defaults
         self.extract_task_cb.setChecked(True)
+        self.wav_task_cb.setChecked(defaults.wav_enabled)
         self.mapping_task_cb.setChecked(True)
         self.vo_filter.setCurrentItem(defaults.vo_filter_key)
         self.max_workers_combo.setCurrentText(defaults.max_workers_text)
         self.bp_voice_cb.setChecked(defaults.with_bp_vo)
-        self.wav_output_cb.setChecked(defaults.wav_enabled)
         self.wav_format_combo.setCurrentText(defaults.wav_format)
         self.force_update_cb.setChecked(defaults.force_update)
         self.integrate_data_cb.setChecked(defaults.integrate_data)
-        self._sync_wav_control_state(extract_enabled=True)
+        self._sync_wav_control_state()
 
     def apply_gui_config_defaults(self, gui_config) -> None:
         """根据当前 GUI 配置更新任务表单默认值。"""
@@ -278,27 +283,21 @@ class TaskCreationCard(GroupHeaderCardWidget):
             wav_format=str(getattr(gui_config, "wav_format", "pcm16") or "pcm16"),
         )
 
-    def _sync_wav_control_state(self, *, extract_enabled: bool) -> bool:
+    def _sync_wav_control_state(self) -> bool:
         """同步 WAV 控件状态，并返回当前是否启用 WAV。"""
-        if not extract_enabled and self.wav_output_cb.isChecked():
-            self.wav_output_cb.blockSignals(True)
-            self.wav_output_cb.setChecked(False)
-            self.wav_output_cb.blockSignals(False)
-
-        wav_enabled = bool(extract_enabled and self.wav_output_cb.isChecked())
-        self.set_wav_control_state(extract_enabled=extract_enabled, wav_enabled=wav_enabled)
+        wav_enabled = bool(self.wav_task_cb.isChecked())
+        self.set_wav_control_state(wav_enabled=wav_enabled)
         return wav_enabled
 
-    def set_wav_control_state(self, *, extract_enabled: bool, wav_enabled: bool) -> None:
+    def set_wav_control_state(self, *, wav_enabled: bool) -> None:
         """同步 WAV 开关与格式控件的可见性。"""
-        self.wav_output_cb.setEnabled(extract_enabled)
-        self.wav_format_combo.setVisible(wav_enabled)
+        self.wav_format_combo.setVisible(True)
         self.wav_format_combo.setEnabled(wav_enabled)
 
     def sync_state_from_widgets(self) -> None:
         """从当前控件值同步内部任务表单状态。"""
         include_extract = self.extract_task_cb.isChecked()
-        wav_enabled = self._sync_wav_control_state(extract_enabled=include_extract)
+        wav_enabled = self._sync_wav_control_state()
         self._state = _ExecutionTaskFormState(
             champion_ids=_parse_csv_ids(self.champion_ids_input.text()),
             map_ids=_parse_csv_ids(self.map_ids_input.text()),
@@ -346,7 +345,7 @@ class TaskCreationCard(GroupHeaderCardWidget):
             f"{state.task_scope_summary()} · 范围={state.target_summary()} · "
             f"VO={state.vo_filter_key} · "
             f"BP={state.with_bp_vo} · "
-            f"WAV={state.wav_format if state.wav_enabled else '关闭'} · "
+            f"转码={state.wav_format if state.wav_enabled else '关闭'} · "
             f"前置强制更新={state.force_update} · "
             f"整合={state.integrate_data} · "
             f"并发={state.max_workers_text}"
@@ -357,6 +356,9 @@ class TaskCreationCard(GroupHeaderCardWidget):
         state = self._state
         champion_ids = _parse_csv_int_ids(",".join(state.champion_ids), label="英雄 ID")
         map_ids = _parse_csv_int_ids(",".join(state.map_ids), label="地图 ID")
+        if self._synced_selection["select_all"] and self.current_selection_source() == str(self._synced_selection["source"]):
+            champion_ids = None
+            map_ids = None
         exclude_types = ("SFX", "MUSIC") if state.vo_filter_key == "VO" else ()
         wav_workers = int(getattr(gui_config, "wav_workers", 2) if gui_config else 2)
         wav_timeout = int(getattr(gui_config, "wav_timeout", 5) if gui_config else 5)
@@ -404,15 +406,15 @@ class TaskCreationCard(GroupHeaderCardWidget):
         self.champion_ids_input.setText("")
         self.map_ids_input.setText("")
         self.extract_task_cb.setChecked(self._state.include_extract)
+        self.wav_task_cb.setChecked(self._state.wav_enabled)
         self.mapping_task_cb.setChecked(self._state.include_mapping)
         self.vo_filter.setCurrentItem(self._state.vo_filter_key)
         self.max_workers_combo.setCurrentText(self._state.max_workers_text)
         self.bp_voice_cb.setChecked(self._state.with_bp_vo)
-        self.wav_output_cb.setChecked(self._state.wav_enabled)
         self.wav_format_combo.setCurrentText(self._state.wav_format)
         self.force_update_cb.setChecked(self._state.force_update)
         self.integrate_data_cb.setChecked(self._state.integrate_data)
-        self._sync_wav_control_state(extract_enabled=self._state.include_extract)
+        self._sync_wav_control_state()
         self.refresh_summary()
 
     def apply_selected_entities(
@@ -422,6 +424,7 @@ class TaskCreationCard(GroupHeaderCardWidget):
         map_ids: tuple[str, ...],
         source: str,
         summary: str,
+        select_all: bool = False,
     ) -> None:
         """将实体总览选择应用到任务表单。"""
         self._synced_selection = {
@@ -429,6 +432,7 @@ class TaskCreationCard(GroupHeaderCardWidget):
             "champion_ids": champion_ids,
             "map_ids": map_ids,
             "summary": summary,
+            "select_all": select_all,
         }
         self.champion_ids_input.setText(",".join(champion_ids))
         self.map_ids_input.setText(",".join(map_ids))

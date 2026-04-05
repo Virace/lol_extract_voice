@@ -8,53 +8,19 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from lol_audio_unpack.manager.utils import read_data, resolve_context_version
+from lol_audio_unpack.app.game_version import resolve_game_version
+from lol_audio_unpack.app.targets import (
+    filter_default_visible_champions,
+    get_default_hidden_champion_markers,
+    get_default_visible_champions,
+    should_hide_champion_by_default,
+)
+from lol_audio_unpack.manager.files import read_data
 from lol_audio_unpack.utils.common import Singleton
 from lol_audio_unpack.utils.logging import performance_monitor
 
 if TYPE_CHECKING:
-    from lol_audio_unpack.app_context import AppContext
-
-
-def get_default_hidden_champion_markers(champion: Mapping[str, Any]) -> tuple[str, ...]:
-    """返回英雄默认隐藏命中的稳定特征。
-
-    说明：
-        英雄名会随地区本地化变化，因此默认隐藏规则只依赖稳定字段：
-        alias、根 WAD 文件名和 ID 前缀。
-    """
-    markers: list[str] = []
-
-    alias = str(champion.get("alias", "")).strip().casefold()
-    if alias.startswith("ruby_"):
-        markers.append("alias:ruby")
-
-    wad_info = champion.get("wad", {})
-    wad_root = str(wad_info.get("root", "")) if isinstance(wad_info, dict) else ""
-    wad_filename = Path(wad_root).name.casefold()
-    if wad_filename.startswith("ruby_"):
-        markers.append("wad:ruby")
-
-    champion_id = str(champion.get("id", "")).strip()
-    if champion_id.startswith("666"):
-        markers.append("id:666")
-
-    return tuple(markers)
-
-
-def should_hide_champion_by_default(champion: Mapping[str, Any]) -> bool:
-    """判断英雄是否应在默认列表与默认全量任务中隐藏。"""
-    return bool(get_default_hidden_champion_markers(champion))
-
-
-def filter_default_visible_champions(champions: Iterable[dict]) -> list[dict]:
-    """过滤默认可见的英雄集合。"""
-    return [champion for champion in champions if not should_hide_champion_by_default(champion)]
-
-
-def get_default_visible_champions(reader: Any) -> list[dict]:
-    """从读取器中获取默认可见的英雄集合。"""
-    return filter_default_visible_champions(reader.get_champions())
+    from lol_audio_unpack.app.types import AppContext
 
 
 class DataReader(metaclass=Singleton):
@@ -62,7 +28,7 @@ class DataReader(metaclass=Singleton):
     从合并后的数据文件读取游戏数据
     """
 
-    CHECK_VERSION_DIFF = 2
+    MAX_MINOR_DIFF = 2
     AUDIO_TYPE_VO = "VO"
     AUDIO_TYPE_SFX = "SFX"
     AUDIO_TYPE_MUSIC = "MUSIC"
@@ -86,7 +52,7 @@ class DataReader(metaclass=Singleton):
         if not self.game_path or not self.manifest_path:
             raise ValueError("GAME_PATH 和 MANIFEST_PATH 必须在配置中设置")
 
-        self.version: str = resolve_context_version(self.ctx)
+        self.version: str = resolve_game_version(self.ctx)
         self.version_manifest_path: Path = self.manifest_path / self.version
 
         # 使用不带后缀的基础路径，让read_data自动寻找最佳格式
@@ -132,7 +98,7 @@ class DataReader(metaclass=Singleton):
         current_parts = self.version.split(".")
         data_parts = data_version_str.split(".")
 
-        if len(current_parts) < self.CHECK_VERSION_DIFF or len(data_parts) < self.CHECK_VERSION_DIFF:
+        if len(current_parts) < self.MAX_MINOR_DIFF or len(data_parts) < self.MAX_MINOR_DIFF:
             logger.error(f"版本号格式无效。当前游戏: '{self.version}', 数据文件: '{data_version_str}'")
             return
 
@@ -157,13 +123,13 @@ class DataReader(metaclass=Singleton):
                 version_msg = (
                     f"数据版本与当前游戏版本存在差异。\n  - 游戏版本: {self.version}\n  - 数据版本: {data_version_str}"
                 )
-                if minor_diff > self.CHECK_VERSION_DIFF:
+                if minor_diff > self.MAX_MINOR_DIFF:
                     logger.error(
-                        f"{version_msg}\n小版本差距过大(>{self.CHECK_VERSION_DIFF})，数据可能不准确，请立即更新数据。"
+                        f"{version_msg}\n小版本差距过大(>{self.MAX_MINOR_DIFF})，数据可能不准确，请立即更新数据。"
                     )
                 else:
                     logger.warning(
-                        f"{version_msg}\n小版本差距较小(≤{self.CHECK_VERSION_DIFF})，数据有可能不准确，建议更新数据。"
+                        f"{version_msg}\n小版本差距较小(≤{self.MAX_MINOR_DIFF})，数据有可能不准确，建议更新数据。"
                     )
 
         except ValueError:
@@ -217,7 +183,7 @@ class DataReader(metaclass=Singleton):
         return banks_data
 
     @performance_monitor(level="DEBUG")
-    def write_unknown_categories_to_file(self) -> None:
+    def write_unknown_categories(self) -> None:
         """将本次运行中收集到的所有未知分类写入到文件中"""
         if not self.unknown_categories:
             return

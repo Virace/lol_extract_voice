@@ -1,4 +1,4 @@
-"""应用主窗口与页面装配逻辑。"""
+﻿"""应用主窗口与页面装配逻辑。"""
 
 from __future__ import annotations
 
@@ -24,9 +24,10 @@ from qfluentwidgets import (
 )
 
 from lol_audio_unpack import __version__
-from lol_audio_unpack.app_context import OperationOptions, create_app_context
-from lol_audio_unpack.config_schema import SettingKey
-from lol_audio_unpack.facade import LolAudioUnpackApp
+from lol_audio_unpack.app.context import create_app_context
+from lol_audio_unpack.app.facade import LolAudioUnpackApp
+from lol_audio_unpack.app.types import OperationOptions
+from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.gui.common import (
     apply_smooth_scroll_enabled,
     get_app_context_block_reason,
@@ -38,15 +39,17 @@ from lol_audio_unpack.gui.components.global_progress_strip import GlobalProgress
 from lol_audio_unpack.gui.components.log_drawer import (
     GlobalLogDrawer,
 )
-from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
-from lol_audio_unpack.gui.controllers.dev_console_controller import DevConsoleController
-from lol_audio_unpack.gui.controllers.log_drawer_controller import LogDrawerController
-from lol_audio_unpack.gui.controllers.shared_data_controller import (
+from lol_audio_unpack.gui.controllers import (
+    DevConsoleController,
+    LogDrawerController,
     SharedDataController,
+)
+from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
+from lol_audio_unpack.gui.controllers.shared_data import (
     build_shared_entity_reader_signature,
     build_shared_entity_scan_signature,
 )
-from lol_audio_unpack.gui.controllers.window_shell_controller import (
+from lol_audio_unpack.gui.controllers.window_shell import (
     apply_runtime_logging,
     apply_smooth_scroll_settings,
     apply_task_queue_busy_state,
@@ -186,7 +189,6 @@ class MainWindow(FluentWindow):
             app_context_block_reason_fn=get_app_context_block_reason,
             parent=self,
         )
-        self._shared_context_build_timeout_timer = self._shared_data_controller.shared_context_build_timeout_timer
 
         register_navigation_items(self, self._shared_data_controller)
         previous_mark = _log_window_stage("导航初始化完成", startup_begin, previous_mark)
@@ -448,8 +450,8 @@ class MainWindow(FluentWindow):
             execution_page=self.executionInterface,
         )
 
-        self._shared_data_controller.shared_entity_reader_signature = build_shared_entity_reader_signature(cfg)
-        self._shared_data_controller.shared_entity_scan_signature = build_shared_entity_scan_signature(cfg)
+        self._shared_data_controller.reader_signature = build_shared_entity_reader_signature(cfg)
+        self._shared_data_controller.scan_signature = build_shared_entity_scan_signature(cfg)
 
         # 首页初始化完成后加载数据
         self._shared_data_controller.load_initial_data(cfg)
@@ -491,3 +493,6 @@ class MainWindow(FluentWindow):
             window_size=self.size(),
             navigation_width=navigation_interface.width(),
         )
+
+
+

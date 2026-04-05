@@ -30,8 +30,9 @@ import msgpack
 from loguru import logger
 from ruamel.yaml import YAML
 
-from lol_audio_unpack.app_context import OperationOptions, create_app_context
-from lol_audio_unpack.facade import LolAudioUnpackApp
+from lol_audio_unpack.app.context import create_app_context
+from lol_audio_unpack.app.facade import LolAudioUnpackApp
+from lol_audio_unpack.app.types import OperationOptions
 
 CHAMPION_ID_POOL: tuple[str, ...] = (
     "1",
@@ -1109,3 +1110,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+

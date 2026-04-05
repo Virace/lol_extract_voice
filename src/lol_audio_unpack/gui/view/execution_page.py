@@ -1,4 +1,4 @@
-"""执行中心页面，承接任务创建、队列执行与日志同步。"""
+﻿"""执行中心页面，承接任务创建、队列执行与日志同步。"""
 
 from __future__ import annotations
 
@@ -23,11 +23,13 @@ from lol_audio_unpack.gui.common.style import (
     configure_transparent_scroll_page,
 )
 from lol_audio_unpack.gui.components.global_progress_strip import GlobalProgressStripState
+from lol_audio_unpack.gui.controllers import (
+    ExecutionLogController,
+    ExecutionQueueController,
+    ExecutionSelectionController,
+)
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
 from lol_audio_unpack.gui.controllers.entity_data_store import EntityDataStore
-from lol_audio_unpack.gui.controllers.execution_log_controller import ExecutionLogController
-from lol_audio_unpack.gui.controllers.execution_queue_controller import ExecutionQueueController
-from lol_audio_unpack.gui.controllers.execution_selection_controller import ExecutionSelectionController
 from lol_audio_unpack.gui.task_models import ExecutionTaskResult, QueuedExecutionTask
 from lol_audio_unpack.gui.view.execution.progress_state import (
     build_global_progress_strip_state,
@@ -113,6 +115,7 @@ class ExecutionPage(SmoothScrollArea):
         self.force_update_cb = self.taskBuilderPanel.force_update_cb
         self.integrate_data_cb = self.taskBuilderPanel.integrate_data_cb
         self.extract_task_cb = self.taskBuilderPanel.extract_task_cb
+        self.wav_task_cb = self.taskBuilderPanel.wav_task_cb
         self.mapping_task_cb = self.taskBuilderPanel.mapping_task_cb
         self.create_task_btn = self.taskBuilderPanel.create_task_btn
         self.expandLayout.addWidget(self.taskBuilderPanel)
@@ -232,11 +235,17 @@ class ExecutionPage(SmoothScrollArea):
             self._log_gui_event("info", "[同步] 已取消从实体总览同步选择。")
             return None
 
+        all_champion_ids = {str(row.get("id")) for row in self._entity_data_store.rows_for("champions")}
+        all_map_ids = {str(row.get("id")) for row in self._entity_data_store.rows_for("maps")}
+        select_all = bool(all_champion_ids and all_map_ids) and (
+            set(update.champion_ids) == all_champion_ids and set(update.map_ids) == all_map_ids
+        )
         self.taskBuilderPanel.apply_selected_entities(
             champion_ids=update.champion_ids,
             map_ids=update.map_ids,
             source=update.source,
             summary=update.summary,
+            select_all=select_all,
         )
         self._log_gui_event("info", f"[同步] {update.summary}")
         return update.summary

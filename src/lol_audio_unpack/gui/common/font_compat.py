@@ -38,21 +38,37 @@ def build_font_with_point_size(font: QFont, *, dpi: float | None = None) -> QFon
     return safe_font
 
 
+def apply_safe_font(widget) -> QFont | None:
+    """为单个控件补齐安全 point size。
+
+    Args:
+        widget: 目标控件实例。
+
+    Returns:
+        QFont | None: 成功应用时返回兼容字体；若控件为空或无法推导安全字体则返回 `None`。
+    """
+    if widget is None:
+        return None
+
+    dpi = float(getattr(widget, "logicalDpiY", lambda: DEFAULT_DPI)())
+    safe_font = build_font_with_point_size(widget.font(), dpi=dpi)
+    if safe_font.pointSizeF() <= 0:
+        return None
+
+    widget.setFont(safe_font)
+    return safe_font
+
+
 def apply_switch_button_safe_font(switch_button) -> None:
     """为 `SwitchButton` 及其文本标签补齐安全字体。
 
     Args:
         switch_button: `qfluentwidgets.SwitchButton` 实例。
     """
-    if switch_button is None:
+    safe_font = apply_safe_font(switch_button)
+    if safe_font is None:
         return
 
-    dpi = float(getattr(switch_button, "logicalDpiY", lambda: DEFAULT_DPI)())
-    safe_font = build_font_with_point_size(switch_button.font(), dpi=dpi)
-    if safe_font.pointSizeF() <= 0:
-        return
-
-    switch_button.setFont(safe_font)
     indicator = getattr(switch_button, "indicator", None)
     if isinstance(indicator, QWidget):
         indicator.setFont(safe_font)
@@ -75,12 +91,17 @@ def apply_tool_button_safe_font(tool_button) -> None:
     Args:
         tool_button: 目标按钮实例。
     """
-    if tool_button is None:
+    apply_safe_font(tool_button)
+
+
+def apply_line_edit_safe_font(line_edit) -> None:
+    """为带内置图标按钮的输入框补齐安全字体。
+
+    Args:
+        line_edit: 目标输入框实例。
+    """
+    if line_edit is None:
         return
 
-    dpi = float(getattr(tool_button, "logicalDpiY", lambda: DEFAULT_DPI)())
-    safe_font = build_font_with_point_size(tool_button.font(), dpi=dpi)
-    if safe_font.pointSizeF() <= 0:
-        return
-
-    tool_button.setFont(safe_font)
+    for button_name in ("searchButton", "clearButton"):
+        apply_tool_button_safe_font(getattr(line_edit, button_name, None))

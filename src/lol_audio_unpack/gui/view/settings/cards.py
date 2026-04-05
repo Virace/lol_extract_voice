@@ -19,7 +19,7 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
-from lol_audio_unpack.config_schema import SettingKey
+from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.gui.common.font_compat import apply_switch_button_safe_font
 from lol_audio_unpack.gui.components.accordion_setting_card import FormAccordionCard
 
