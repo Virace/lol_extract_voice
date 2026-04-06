@@ -16,7 +16,7 @@ from lol_audio_unpack.gui.controllers.contracts import (
 )
 from lol_audio_unpack.gui.controllers.task_queue_store import (
     TaskQueueStore,
-    build_task_queue_row_text,
+    build_row_text,
 )
 from lol_audio_unpack.gui.service.task_runner import run_execution_task
 from lol_audio_unpack.gui.task_models import (
@@ -125,7 +125,7 @@ class ExecutionQueueController(QObject):
         queued_task = self._queue_store.append_task(
             QueuedExecutionTask(task_id=self._draft_count, draft=draft, summary=summary)
         )
-        row_text = build_task_queue_row_text(queued_task)
+        row_text = build_row_text(queued_task)
 
         self.log_requested.emit(GuiLogMessage(level="info", message=f"[队列] {row_text}"))
         started_task = self.start_next_waiting_task()

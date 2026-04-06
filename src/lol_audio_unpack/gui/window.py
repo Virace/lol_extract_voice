@@ -30,10 +30,10 @@ from lol_audio_unpack.app.types import OperationOptions
 from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.gui.common import (
     apply_smooth_scroll_enabled,
-    get_app_context_block_reason,
+    get_block_reason,
     show_feedback_infobar,
 )
-from lol_audio_unpack.gui.common.packaged_remote_mode_policy import normalize_app_context_settings
+from lol_audio_unpack.gui.common.remote_mode_policy import normalize_app_context_settings
 from lol_audio_unpack.gui.components.global_progress_strip import GlobalProgressStripHost
 from lol_audio_unpack.gui.components.log_drawer import (
     GlobalLogDrawer,
@@ -62,7 +62,7 @@ from lol_audio_unpack.gui.controllers.window_shell import (
 from lol_audio_unpack.gui.resources import assets
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 from lol_audio_unpack.gui.service.worker import DataLoadWorker
-from lol_audio_unpack.gui.view.about_page import AboutPage, get_about_page_minimum_shell_size
+from lol_audio_unpack.gui.view.about_page import AboutPage, get_minimum_shell_size
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 from lol_audio_unpack.gui.view.home_page import HomePage
 from lol_audio_unpack.gui.view.overview_page import OverviewPage
@@ -186,7 +186,7 @@ class MainWindow(FluentWindow):
             start_worker_fn=lambda worker: QThreadPool.globalInstance().start(worker),
             prepare_shared_entity_data_fn=_prepare_shared_entity_data,
             reset_data_reader_singleton_fn=_reset_data_reader_singleton,
-            app_context_block_reason_fn=get_app_context_block_reason,
+            app_context_block_reason_fn=get_block_reason,
             parent=self,
         )
 
@@ -209,7 +209,7 @@ class MainWindow(FluentWindow):
     def _initWindow(self):
         """设置主窗口尺寸、标题与基础事件过滤器。"""
         self.resize(1130, 800)
-        about_min_size = get_about_page_minimum_shell_size()
+        about_min_size = get_minimum_shell_size()
         self.setMinimumWidth(max(860, about_min_size.width()))
         self.setMinimumHeight(about_min_size.height())
         self.setWindowIcon(assets.app.window_icon())
@@ -408,7 +408,7 @@ class MainWindow(FluentWindow):
             self.executionInterface.current_global_progress_state(),
             animate=False,
         )
-        self.settingInterface.shared_context_input_changed.connect(self._shared_data_controller.on_shared_context_input_changed)
+        self.settingInterface.shared_context_input_changed.connect(self._shared_data_controller.on_context_input_changed)
         self.settingInterface.smooth_scroll_changed.connect(
             lambda page_enabled, widget_enabled: apply_smooth_scroll_settings(
                 setting_page=self.settingInterface,
@@ -493,5 +493,3 @@ class MainWindow(FluentWindow):
             window_size=self.size(),
             navigation_width=navigation_interface.width(),
         )
-
-

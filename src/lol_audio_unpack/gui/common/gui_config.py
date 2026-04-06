@@ -17,7 +17,7 @@ from lol_audio_unpack.config import (
     write_command_config,
     write_settings,
 )
-from lol_audio_unpack.gui.common.packaged_remote_mode_policy import effective_source_mode
+from lol_audio_unpack.gui.common.remote_mode_policy import resolve_source_mode
 from lol_audio_unpack.gui.task_models import AppContextInputSnapshot
 from lol_audio_unpack.gui.theme import (
     DEFAULT_ACCENT_PRESET_ID,
@@ -311,7 +311,7 @@ class GuiConfig:
     @property
     def effective_source_mode(self) -> str:
         """返回 GUI 当前运行时应使用的来源模式。"""
-        return effective_source_mode(self._source_mode)
+        return resolve_source_mode(self._source_mode)
 
     @source_mode.setter
     def source_mode(self, v: str) -> None:

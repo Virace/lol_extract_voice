@@ -27,8 +27,8 @@ from lol_audio_unpack.gui.common import (
     available_source_mode_labels,
     format_default_relative_path,
     format_path_for_display,
-    packaged_remote_mode_fallback_needed,
-    remote_source_panel_visible,
+    is_remote_panel_visible,
+    needs_remote_mode_fallback,
 )
 from lol_audio_unpack.gui.common.style import (
     apply_page_content_margins,
@@ -286,7 +286,7 @@ class SettingPage(SmoothScrollArea):
         """从 GuiConfig 读取保存的配置并应用到各控件。"""
         cfg = self._cfg
         cfg.load()
-        if packaged_remote_mode_fallback_needed(cfg.source_mode):
+        if needs_remote_mode_fallback(cfg.source_mode):
             logger.warning("检测到当前为打包版本，远程模式已临时禁用，本次运行将使用本地模式。")
 
         # 来源模式
@@ -516,7 +516,7 @@ class SettingPage(SmoothScrollArea):
 
     def _on_source_mode_changed(self, label: str, persist: bool = True) -> None:
         """根据来源模式（显示文字）切换 local / remote 子组的可见性。"""
-        is_local = not remote_source_panel_visible(self.sourceModeCard.value())
+        is_local = not is_remote_panel_visible(self.sourceModeCard.value())
         self.localGroup.setVisible(is_local)
         self.remoteSourcePanel.group.setVisible(not is_local)
         self.remoteSourcePanel.set_source_mode(self.sourceModeCard.value())

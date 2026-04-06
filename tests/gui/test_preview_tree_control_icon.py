@@ -9,9 +9,9 @@ from qfluentwidgets import qconfig
 
 from lol_audio_unpack.gui.components.preview_tree import (
     PreviewTreeView,
-    _build_preview_tree_active_row_color,
-    _build_preview_tree_audio_control_colors,
-    _build_preview_tree_progress_fill_color,
+    _build_active_row_color,
+    _build_audio_control_colors,
+    _build_progress_fill_color,
 )
 from lol_audio_unpack.gui.theme import apply_accent_preset, apply_shell_mode, get_accent_preset
 
@@ -47,9 +47,9 @@ def test_preview_tree_accent_helpers_use_preset_tones_in_light_mode() -> None:
         apply_accent_preset("orange")
         preset = get_accent_preset("orange")
 
-        row_color = _build_preview_tree_active_row_color(is_dark=False)
-        progress_color = _build_preview_tree_progress_fill_color(is_dark=False, is_playing=True)
-        button_background, icon_color = _build_preview_tree_audio_control_colors(is_dark=False)
+        row_color = _build_active_row_color(is_dark=False)
+        progress_color = _build_progress_fill_color(is_dark=False, is_playing=True)
+        button_background, icon_color = _build_audio_control_colors(is_dark=False)
 
         expected_row = preset.scale.color(100)
         expected_row.setAlpha(38)

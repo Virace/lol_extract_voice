@@ -14,7 +14,7 @@ from lol_audio_unpack.gui.common import (
     GUI_LOG_FORMAT,
     GUI_LOG_MAX_LINES,
     apply_smooth_scroll_enabled,
-    get_app_context_block_reason,
+    get_block_reason,
     get_buffered_log_lines,
     show_feedback_infobar,
 )
@@ -345,7 +345,7 @@ class ExecutionPage(SmoothScrollArea):
             )
             return
 
-        block_reason = get_app_context_block_reason(self.gui_config)
+        block_reason = get_block_reason(self.gui_config)
         if block_reason is not None:
             self._log_gui_event("warning", f"[队列] {block_reason}")
             show_feedback_infobar(

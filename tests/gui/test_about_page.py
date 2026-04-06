@@ -9,7 +9,7 @@ from lol_audio_unpack.gui.view.about_page import (
     SPONSOR_QR_SPECS,
     AboutActionCard,
     AboutPage,
-    get_about_page_minimum_shell_size,
+    get_minimum_shell_size,
 )
 
 EXPECTED_ABOUT_ACTION_CARD_COUNT = 4
@@ -25,7 +25,7 @@ def test_about_page_keeps_four_cards_visible_at_minimum_size(qtbot, tmp_path: Pa
     page = AboutPage()
     qtbot.addWidget(page)
 
-    minimum_size = get_about_page_minimum_shell_size()
+    minimum_size = get_minimum_shell_size()
     page.resize(minimum_size)
     page.show()
     qtbot.waitUntil(

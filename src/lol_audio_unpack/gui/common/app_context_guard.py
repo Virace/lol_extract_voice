@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-def get_app_context_block_reason(cfg: object | None) -> str | None:
+def get_block_reason(cfg: object | None) -> str | None:
     """返回当前配置是否应阻止创建 ``AppContext`` 的原因。
 
     Args:

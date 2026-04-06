@@ -42,7 +42,7 @@ PREVIEW_TREE_AUDIO_BUTTON_SIZE = 18
 PREVIEW_TREE_AUDIO_BUTTON_GAP = 6
 
 
-def _build_preview_tree_branch_styles() -> str:
+def _build_branch_styles() -> str:
     """构造 branch 区域样式。"""
     return """
     QTreeView::branch,
@@ -71,9 +71,9 @@ def _build_preview_tree_branch_styles() -> str:
     """
 
 
-def _build_preview_tree_styles() -> tuple[str, str]:
+def _build_styles() -> tuple[str, str]:
     """构造试听树的亮暗主题样式。"""
-    branch_qss = _build_preview_tree_branch_styles()
+    branch_qss = _build_branch_styles()
     item_rules = """
         padding: 4px 8px 4px 0;
         margin: 2px 0;
@@ -92,7 +92,7 @@ def _build_preview_tree_styles() -> tuple[str, str]:
     )
 
 
-def _build_preview_tree_active_row_color(*, is_dark: bool) -> QColor:
+def _build_active_row_color(*, is_dark: bool) -> QColor:
     """构造试听树活动叶子行的弱强调底色。"""
     tone = 900 if is_dark else 100
     color = get_accent_preset(current_accent_preset_id()).scale.color(tone)
@@ -100,7 +100,7 @@ def _build_preview_tree_active_row_color(*, is_dark: bool) -> QColor:
     return color
 
 
-def _build_preview_tree_progress_fill_color(*, is_dark: bool, is_playing: bool) -> QColor:
+def _build_progress_fill_color(*, is_dark: bool, is_playing: bool) -> QColor:
     """构造试听树整行播放进度的强调底色。"""
     tone = 700 if is_dark else 300
     color = get_accent_preset(current_accent_preset_id()).scale.color(tone)
@@ -108,7 +108,7 @@ def _build_preview_tree_progress_fill_color(*, is_dark: bool, is_playing: bool) 
     return color
 
 
-def _build_preview_tree_audio_control_colors(*, is_dark: bool) -> tuple[QColor, QColor]:
+def _build_audio_control_colors(*, is_dark: bool) -> tuple[QColor, QColor]:
     """构造试听树活动播放按钮的背景与图标颜色。"""
     preset = get_accent_preset(current_accent_preset_id())
     background = preset.scale.color(900 if is_dark else 100)
@@ -117,7 +117,7 @@ def _build_preview_tree_audio_control_colors(*, is_dark: bool) -> tuple[QColor, 
     return background, icon
 
 
-def _build_preview_tree_selection_bar_color(*, is_dark: bool) -> QColor:
+def _build_selection_bar_color(*, is_dark: bool) -> QColor:
     """构造试听树选中竖条的强调色。"""
     return get_accent_preset(current_accent_preset_id()).scale.color(300 if is_dark else 700)
 
@@ -132,7 +132,7 @@ def inject_preview_tree_style(tree_view: QTreeView) -> None:
     Args:
         tree_view: 当前要挂载局部样式的试听树实例。
     """
-    light_qss, dark_qss = _build_preview_tree_styles()
+    light_qss, dark_qss = _build_styles()
     setCustomStyleSheet(tree_view, light_qss, dark_qss)
     setStyleSheet(tree_view, CustomStyleSheet(tree_view))
 
@@ -880,7 +880,7 @@ class PreviewTreeView(QTreeView):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(_build_preview_tree_selection_bar_color(is_dark=isDarkTheme()))
+        painter.setBrush(_build_selection_bar_color(is_dark=isDarkTheme()))
         painter.drawRoundedRect(bar_rect, 2, 2)
         painter.restore()
 
@@ -952,7 +952,7 @@ class PreviewTreeView(QTreeView):
             return None
 
         if is_active_audio and not is_selected and not is_hovered:
-            return _build_preview_tree_active_row_color(is_dark=isDarkTheme())
+            return _build_active_row_color(is_dark=isDarkTheme())
         return resolve_fluent_neutral_surface(
             "emphasis_selected" if is_selected else "emphasis_hover"
         )
@@ -990,7 +990,7 @@ class PreviewTreeView(QTreeView):
         if progress <= 0:
             return
 
-        progress_color = _build_preview_tree_progress_fill_color(
+        progress_color = _build_progress_fill_color(
             is_dark=isDarkTheme(),
             is_playing=self._active_audio_is_playing,
         )
@@ -1022,7 +1022,7 @@ class PreviewTreeView(QTreeView):
 
         is_active_audio = self._audio_id_for_index(index) == self._active_audio_id
         if is_active_audio:
-            button_background, icon_color = _build_preview_tree_audio_control_colors(
+            button_background, icon_color = _build_audio_control_colors(
                 is_dark=isDarkTheme()
             )
         else:

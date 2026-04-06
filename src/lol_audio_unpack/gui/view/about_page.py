@@ -67,7 +67,7 @@ def _configure_label_font(
     label.setFont(font)
 
 
-def get_about_page_minimum_shell_size() -> QSize:
+def get_minimum_shell_size() -> QSize:
     """返回 About 页固定构图要求的最小窗口尺寸。"""
     cards_width = ABOUT_ACTION_CARD_SIZE.width() * 4 + ABOUT_ACTION_CARD_SPACING * 3
     content_width = cards_width + PAGE_CONTENT_MARGIN * 2
