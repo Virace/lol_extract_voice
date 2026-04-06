@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import Enum
-from pathlib import Path
 
+from loguru import logger
 from PySide6.QtCore import Property, QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter
 from PySide6.QtSvg import QSvgRenderer
@@ -19,16 +18,14 @@ from qfluentwidgets import (
     MessageBoxBase,
     SimpleCardWidget,
     SmoothScrollArea,
-    Theme,
     TitleLabel,
     isDarkTheme,
     qconfig,
 )
 from qfluentwidgets import FluentIcon as FIF
-from qfluentwidgets.common.icon import FluentIconBase, drawIcon
+from qfluentwidgets.common.icon import drawIcon
 
 from lol_audio_unpack import __version__
-from lol_audio_unpack.gui.common.icon import get_app_logo_path
 from lol_audio_unpack.gui.common.style import (
     PAGE_CONTENT_MARGIN,
     apply_page_content_margins,
@@ -38,13 +35,12 @@ from lol_audio_unpack.gui.common.styles import (
     get_fluent_frame_stroke_pair,
     get_fluent_neutral_surface_pair,
 )
+from lol_audio_unpack.gui.resources import ImageAsset, SvgAsset, assets
 
 AUTHOR_URL = "https://x-item.com"
 REPOSITORY_URL = "https://github.com/Virace/lol_audio_unpack"
 BILIBILI_URL = "https://space.bilibili.com/12353537"
 TECH_STACK = ("Python", "PySide6", "QFluentWidgets")
-BILIBILI_ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "bilibili.svg"
-QR_CODE_ASSET_DIR = Path(__file__).resolve().parent.parent / "assets" / "qr"
 ABOUT_HERO_CARD_HEIGHT = 326
 ABOUT_ACTION_CARD_SIZE = QSize(188, 224)
 ABOUT_ACTION_CARD_SPACING = 16
@@ -86,17 +82,6 @@ def get_about_page_minimum_shell_size() -> QSize:
     return QSize(content_width, content_height)
 
 
-class AboutCustomIcon(FluentIconBase, Enum):
-    """关于页使用的自定义 Fluent 图标。"""
-
-    BILIBILI = "bilibili"
-
-    def path(self, theme=Theme.AUTO) -> str:
-        """返回图标路径。"""
-        _ = theme
-        return str(BILIBILI_ICON_PATH)
-
-
 @dataclass(frozen=True, slots=True)
 class AboutActionSpec:
     """关于页底部动作卡片定义。"""
@@ -116,19 +101,19 @@ class SponsorQrSpec:
 
     object_name: str
     title: str
-    image_path: Path
+    image: ImageAsset
 
 
 SPONSOR_QR_SPECS = (
     SponsorQrSpec(
         object_name="SponsorDialogWechatCard",
         title="微信支付",
-        image_path=QR_CODE_ASSET_DIR / "wechat.png",
+        image=assets.images.wechat_qr(),
     ),
     SponsorQrSpec(
         object_name="SponsorDialogAlipayCard",
         title="支付宝",
-        image_path=QR_CODE_ASSET_DIR / "ali.png",
+        image=assets.images.alipay_qr(),
     ),
 )
 
@@ -143,9 +128,14 @@ class AboutRotatingLogoWidget(QWidget):
         self._rotation_angle = 0.0
         self._renderer = QSvgRenderer(self)
 
-    def load_logo(self, logo_path: str) -> None:
-        """加载 SVG Logo。"""
-        self._renderer.load(logo_path)
+    def load_logo(self, logo: SvgAsset) -> None:
+        """加载 SVG Logo 资源。
+
+        Args:
+            logo: 应用 logo 资源对象。
+        """
+
+        logo.load_into(self._renderer)
         self.update()
 
     def is_logo_ready(self) -> bool:
@@ -191,9 +181,14 @@ class HoverLogoShell(QFrame):
         self._rotation_animation.setDuration(220)
         self._rotation_animation.setEasingCurve(QEasingCurve.OutCubic)
 
-    def set_logo(self, logo_path: str) -> None:
-        """设置 SVG logo 路径。"""
-        self.logo_widget.load_logo(logo_path)
+    def set_logo(self, logo: SvgAsset) -> None:
+        """设置 SVG logo 资源。
+
+        Args:
+            logo: 应用 logo 资源对象。
+        """
+
+        self.logo_widget.load_logo(logo)
 
     def enterEvent(self, event) -> None:
         """鼠标进入时轻微旋转 logo。"""
@@ -392,7 +387,7 @@ class SponsorDialog(MessageBoxBase):
 
         image_label = ImageLabel(card)
         image_label.setObjectName(f"{spec.object_name}Image")
-        image_label.setImage(str(spec.image_path))
+        spec.image.apply_to(image_label)
         image_label.setScaledSize(QSize(160, 160))
         image_label.setFixedSize(160, 160)
         image_label.setBorderRadius(14, 14, 14, 14)
@@ -646,10 +641,15 @@ class AboutPage(SmoothScrollArea):
         hero_layout.setSpacing(6)
         hero_layout.setAlignment(Qt.AlignHCenter)
 
-        logo_path = get_app_logo_path()
-        if logo_path is not None:
+        try:
+            logo = assets.app.logo_svg()
+        except FileNotFoundError as exc:
+            logger.warning("未找到 About 页使用的 Logo 资源: {}", exc)
+            logo = None
+
+        if logo is not None:
             logo_shell = HoverLogoShell(hero_card)
-            logo_shell.set_logo(str(logo_path))
+            logo_shell.set_logo(logo)
             hero_layout.addWidget(logo_shell, alignment=Qt.AlignHCenter)
             hero_layout.addSpacing(34)
 
@@ -711,7 +711,7 @@ class AboutPage(SmoothScrollArea):
             ),
             AboutActionSpec(
                 object_name="AboutActionCardBilibili",
-                icon=AboutCustomIcon.BILIBILI.colored("#242424", "#F5F5F5"),
+                icon=assets.icons.BILIBILI.colored("#242424", "#F5F5F5"),
                 title="B站",
                 value="Virace",
                 helper="频道入口",

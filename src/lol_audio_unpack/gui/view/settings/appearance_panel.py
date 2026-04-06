@@ -2,21 +2,17 @@
 
 from __future__ import annotations
 
-from enum import Enum
-from pathlib import Path
-
 from PySide6.QtWidgets import QWidget
 from qfluentwidgets import (
     FluentIcon as FIF,
 )
 from qfluentwidgets import (
-    FluentIconBase,
     OptionsSettingCard,
     SettingCardGroup,
-    Theme,
     qconfig,
 )
 
+from lol_audio_unpack.gui.resources import assets
 from lol_audio_unpack.gui.theme import list_accent_presets
 from lol_audio_unpack.gui.view.settings.cards import (
     ComboRowSettingCard,
@@ -25,19 +21,6 @@ from lol_audio_unpack.gui.view.settings.cards import (
     SliderSettingCard,
     SmoothScrollSettingCard,
 )
-
-ICON_ASSET_DIR = Path(__file__).resolve().parents[2] / "assets" / "icon"
-
-
-class AccentPresetIcon(FluentIconBase, Enum):
-    """固定强调色预设使用的自定义 Fluent 图标。"""
-
-    DOT = "circle-solid-full.svg"
-
-    def path(self, theme=Theme.AUTO) -> str:
-        """返回图标资源路径。"""
-        _ = theme
-        return str(ICON_ASSET_DIR / self.value)
 
 
 class AppearancePanel:
@@ -71,7 +54,7 @@ class AppearancePanel:
         for index, preset in enumerate(accent_presets):
             self.accentPresetCard.comboBox.setItemIcon(
                 index,
-                AccentPresetIcon.DOT.icon(color=preset.primary_color),
+                assets.icons.DOT.icon(color=preset.primary_color),
             )
 
         self.group.addSettingCard(self.themeCard)

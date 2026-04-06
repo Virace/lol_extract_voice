@@ -31,7 +31,6 @@ from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.gui.common import (
     apply_smooth_scroll_enabled,
     get_app_context_block_reason,
-    load_app_icon,
     show_feedback_infobar,
 )
 from lol_audio_unpack.gui.common.packaged_remote_mode_policy import normalize_app_context_settings
@@ -60,6 +59,7 @@ from lol_audio_unpack.gui.controllers.window_shell import (
     register_navigation_items,
     sync_existing_runtime_logging,
 )
+from lol_audio_unpack.gui.resources import assets
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 from lol_audio_unpack.gui.service.worker import DataLoadWorker
 from lol_audio_unpack.gui.view.about_page import AboutPage, get_about_page_minimum_shell_size
@@ -212,7 +212,7 @@ class MainWindow(FluentWindow):
         about_min_size = get_about_page_minimum_shell_size()
         self.setMinimumWidth(max(860, about_min_size.width()))
         self.setMinimumHeight(about_min_size.height())
-        self.setWindowIcon(load_app_icon())
+        self.setWindowIcon(assets.app.window_icon())
         self.setWindowTitle(f"Lol Audio Unpack  {__version__}")
 
         # Calculate screen center
@@ -493,6 +493,5 @@ class MainWindow(FluentWindow):
             window_size=self.size(),
             navigation_width=navigation_interface.width(),
         )
-
 
 

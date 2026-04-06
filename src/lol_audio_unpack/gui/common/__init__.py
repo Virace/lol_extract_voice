@@ -6,7 +6,6 @@ from lol_audio_unpack.gui.common.feedback import (
     show_feedback_infobar,
 )
 from lol_audio_unpack.gui.common.gui_config import GuiConfig
-from lol_audio_unpack.gui.common.icon import load_app_icon
 from lol_audio_unpack.gui.common.log_bridge import (
     GUI_LOG_FORMAT,
     GUI_LOG_MAX_LINES,
@@ -43,7 +42,6 @@ __all__ = [
     "install_pyvgmstream_log_bridge",
     "install_qt_message_bridge",
     "install_startup_log_buffer",
-    "load_app_icon",
     "packaged_remote_mode_fallback_needed",
     "remove_startup_log_buffer",
     "remote_source_panel_visible",

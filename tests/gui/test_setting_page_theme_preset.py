@@ -5,13 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QSettings
-from PySide6.QtGui import QColor
 from qfluentwidgets import Theme, qconfig
 from qfluentwidgets.common.icon import writeSvg
 
+from lol_audio_unpack.gui.resources import assets
 from lol_audio_unpack.gui.theme.presets import get_accent_preset
 from lol_audio_unpack.gui.view.setting_page import SettingPage
-from lol_audio_unpack.gui.view.settings.appearance_panel import AccentPresetIcon
 
 EXPECTED_ICON_CHANNEL_TOLERANCE = 8
 
@@ -79,7 +78,7 @@ def test_setting_page_accent_preset_icon_uses_matching_item_color(qtbot) -> None
 
 def test_accent_dot_icon_svg_can_be_recolored_by_colored_icon() -> None:
     """accent dot SVG 模板应允许 ColoredFluentIcon 改写 fill 颜色。"""
-    svg = writeSvg(AccentPresetIcon.DOT.path(), fill="#4C83D2")
+    svg = writeSvg(assets.icons.DOT.path(), fill="#4C83D2")
 
     assert "<path" in svg
     assert 'fill="#4C83D2"' in svg
@@ -87,4 +86,11 @@ def test_accent_dot_icon_svg_can_be_recolored_by_colored_icon() -> None:
 
 def test_accent_dot_icon_uses_circle_solid_template() -> None:
     """accent preset 图标应复用现成的 circle-solid-full.svg 模板。"""
-    assert AccentPresetIcon.DOT.path().endswith("circle-solid-full.svg")
+    assert assets.icons.DOT.path().endswith("circle-solid-full.svg")
+
+
+def test_appearance_panel_does_not_keep_local_accent_icon_enum() -> None:
+    """个性化面板不应继续保留本地资源枚举。"""
+    source = Path("src/lol_audio_unpack/gui/view/settings/appearance_panel.py").read_text(encoding="utf-8")
+
+    assert "AccentPresetIcon" not in source

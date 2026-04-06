@@ -16,6 +16,7 @@ from lol_audio_unpack.gui.components.global_progress_strip import (
     GlobalProgressStripHost,
     GlobalProgressStripState,
 )
+from lol_audio_unpack.gui.resources import assets
 from lol_audio_unpack.gui.theme import apply_accent_preset, resolve_progress_palette
 
 WINDOW_WIDTH = 1120
@@ -91,6 +92,20 @@ def _running_state() -> GlobalProgressStripState:
         status_text="下载中",
         paused=False,
     )
+
+
+def test_progress_action_icons_exist_in_resource_catalog() -> None:
+    """进度条动作图标应由统一资源入口提供。"""
+    assert assets.icons.PAUSE.path().endswith("pause-solid-full.svg")
+    assert assets.icons.PLAY.path().endswith("play-solid-full.svg")
+    assert assets.icons.STOP.path().endswith("stop-solid-full.svg")
+
+
+def test_global_progress_strip_does_not_keep_local_action_icon_enum() -> None:
+    """全局进度条模块不应继续保留本地动作图标枚举。"""
+    source = Path("src/lol_audio_unpack/gui/components/global_progress_strip.py").read_text(encoding="utf-8")
+
+    assert "ProgressActionIcon" not in source
 
 
 def test_progress_host_hidden_keeps_viewport_without_extra_scroll(qtbot, tmp_path: Path) -> None:

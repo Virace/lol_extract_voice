@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
-from pathlib import Path
 from typing import Literal
 
 from PySide6.QtCore import (
@@ -26,9 +24,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import BodyLabel, FluentIconBase, TransparentToolButton, isDarkTheme, qconfig
+from qfluentwidgets import BodyLabel, TransparentToolButton, isDarkTheme, qconfig
 
 from lol_audio_unpack.gui.common.font_compat import apply_tool_button_safe_font
+from lol_audio_unpack.gui.resources import assets
 from lol_audio_unpack.gui.theme import (
     current_accent_preset_id,
     resolve_legacy_accent_preset,
@@ -38,7 +37,6 @@ from lol_audio_unpack.gui.theme import (
 ThemeMode = Literal["auto", "light", "dark"]
 ActionIconKind = Literal["pause", "play", "stop"]
 
-ICON_ASSET_DIR = Path(__file__).resolve().parent.parent / "assets" / "icon"
 PROGRESS_STRIP_HEIGHT = 44
 PROGRESS_STRIP_HOST_TOP_MARGIN = 0
 PROGRESS_STRIP_HOST_BOTTOM_MARGIN = 0
@@ -197,19 +195,6 @@ class _ProgressStripTextBlock(QWidget):
         return QRectF(self._detail_label.geometry())
 
 
-class ProgressActionIcon(FluentIconBase, Enum):
-    """全局进度条按钮使用的自定义 svg 图标。"""
-
-    PAUSE = "pause-solid-full.svg"
-    PLAY = "play-solid-full.svg"
-    STOP = "stop-solid-full.svg"
-
-    def path(self, theme=None) -> str:
-        """返回对应 svg 图标路径。"""
-        _ = theme
-        return str(ICON_ASSET_DIR / self.value)
-
-
 class _ProgressStripActionButton(TransparentToolButton):
     """进度条内部动作按钮。"""
 
@@ -280,10 +265,10 @@ class _ProgressStripActionButton(TransparentToolButton):
 
     def _sync_icon(self) -> None:
         """根据当前状态同步 qfluent svg 图标。"""
-        icon_map: dict[ActionIconKind, ProgressActionIcon] = {
-            "pause": ProgressActionIcon.PAUSE,
-            "play": ProgressActionIcon.PLAY,
-            "stop": ProgressActionIcon.STOP,
+        icon_map = {
+            "pause": assets.icons.PAUSE,
+            "play": assets.icons.PLAY,
+            "stop": assets.icons.STOP,
         }
         icon = icon_map[self._icon_kind].colored(self._icon_color, self._icon_color)
         self.setIcon(icon)
