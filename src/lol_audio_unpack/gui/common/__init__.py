@@ -1,12 +1,11 @@
 """GUI 公共能力导出。"""
 
-from lol_audio_unpack.gui.common.app_context_guard import get_app_context_block_reason
+from lol_audio_unpack.gui.common.app_context_guard import get_block_reason
 from lol_audio_unpack.gui.common.feedback import (
     calculate_feedback_duration,
     show_feedback_infobar,
 )
 from lol_audio_unpack.gui.common.gui_config import GuiConfig
-from lol_audio_unpack.gui.common.icon import load_app_icon
 from lol_audio_unpack.gui.common.log_bridge import (
     GUI_LOG_FORMAT,
     GUI_LOG_MAX_LINES,
@@ -17,10 +16,10 @@ from lol_audio_unpack.gui.common.log_bridge import (
     install_startup_log_buffer,
     remove_startup_log_buffer,
 )
-from lol_audio_unpack.gui.common.packaged_remote_mode_policy import (
+from lol_audio_unpack.gui.common.remote_mode_policy import (
     available_source_mode_labels,
-    packaged_remote_mode_fallback_needed,
-    remote_source_panel_visible,
+    is_remote_panel_visible,
+    needs_remote_mode_fallback,
 )
 from lol_audio_unpack.gui.common.path_display import (
     format_default_relative_path,
@@ -38,14 +37,13 @@ __all__ = [
     "clear_buffered_log_lines",
     "format_default_relative_path",
     "format_path_for_display",
-    "get_app_context_block_reason",
+    "get_block_reason",
     "get_buffered_log_lines",
     "install_pyvgmstream_log_bridge",
     "install_qt_message_bridge",
     "install_startup_log_buffer",
-    "load_app_icon",
-    "packaged_remote_mode_fallback_needed",
+    "needs_remote_mode_fallback",
     "remove_startup_log_buffer",
-    "remote_source_panel_visible",
+    "is_remote_panel_visible",
     "show_feedback_infobar",
 ]

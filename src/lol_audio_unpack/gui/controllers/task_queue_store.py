@@ -14,7 +14,7 @@ from lol_audio_unpack.gui.task_models import (
 )
 
 
-def build_task_queue_row_text(task: QueuedExecutionTask) -> str:
+def build_row_text(task: QueuedExecutionTask) -> str:
     """构造任务队列日志与通知使用的单行摘要。"""
     return f"#{task.task_id} · [{task.status}] {task.summary}"
 

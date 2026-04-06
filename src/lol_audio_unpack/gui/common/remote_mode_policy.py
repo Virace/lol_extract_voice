@@ -18,15 +18,15 @@ __all__ = [
     "REMOTE_SOURCE_MODE_LABEL",
     "REMOTE_SOURCE_MODE_VALUE",
     "available_source_mode_labels",
-    "effective_source_mode",
+    "resolve_source_mode",
+    "is_remote_mode_disabled",
+    "is_remote_panel_visible",
+    "needs_remote_mode_fallback",
     "normalize_app_context_settings",
-    "packaged_remote_mode_fallback_needed",
-    "packaged_remote_mode_disabled",
-    "remote_source_panel_visible",
 ]
 
 
-def packaged_remote_mode_disabled(*, is_frozen: bool | None = None) -> bool:
+def is_remote_mode_disabled(*, is_frozen: bool | None = None) -> bool:
     """返回当前 GUI 是否应临时禁用远程模式。
 
     Args:
@@ -41,7 +41,7 @@ def packaged_remote_mode_disabled(*, is_frozen: bool | None = None) -> bool:
     return detect_runtime_paths().is_frozen
 
 
-def effective_source_mode(source_mode: str, *, is_frozen: bool | None = None) -> str:
+def resolve_source_mode(source_mode: str, *, is_frozen: bool | None = None) -> str:
     """返回当前 GUI 运行时应使用的来源模式。
 
     Args:
@@ -54,7 +54,7 @@ def effective_source_mode(source_mode: str, *, is_frozen: bool | None = None) ->
 
     normalized_source_mode = str(source_mode or LOCAL_SOURCE_MODE_VALUE)
     if (
-        packaged_remote_mode_disabled(is_frozen=is_frozen)
+        is_remote_mode_disabled(is_frozen=is_frozen)
         and normalized_source_mode == REMOTE_SOURCE_MODE_VALUE
     ):
         return LOCAL_SOURCE_MODE_VALUE
@@ -71,12 +71,12 @@ def available_source_mode_labels(*, is_frozen: bool | None = None) -> list[str]:
         打包态下仅返回本地模式；源码运行时返回本地与远程模式。
     """
 
-    if packaged_remote_mode_disabled(is_frozen=is_frozen):
+    if is_remote_mode_disabled(is_frozen=is_frozen):
         return [LOCAL_SOURCE_MODE_LABEL]
     return [LOCAL_SOURCE_MODE_LABEL, REMOTE_SOURCE_MODE_LABEL]
 
 
-def packaged_remote_mode_fallback_needed(
+def needs_remote_mode_fallback(
     source_mode: str,
     *,
     is_frozen: bool | None = None,
@@ -92,12 +92,12 @@ def packaged_remote_mode_fallback_needed(
     """
 
     return (
-        packaged_remote_mode_disabled(is_frozen=is_frozen)
+        is_remote_mode_disabled(is_frozen=is_frozen)
         and str(source_mode or LOCAL_SOURCE_MODE_VALUE) == REMOTE_SOURCE_MODE_VALUE
     )
 
 
-def remote_source_panel_visible(source_mode: str, *, is_frozen: bool | None = None) -> bool:
+def is_remote_panel_visible(source_mode: str, *, is_frozen: bool | None = None) -> bool:
     """返回远程配置面板当前是否应显示。
 
     Args:
@@ -108,7 +108,7 @@ def remote_source_panel_visible(source_mode: str, *, is_frozen: bool | None = No
         当运行时有效来源模式仍为远程模式时返回 ``True``。
     """
 
-    return effective_source_mode(source_mode, is_frozen=is_frozen) == REMOTE_SOURCE_MODE_VALUE
+    return resolve_source_mode(source_mode, is_frozen=is_frozen) == REMOTE_SOURCE_MODE_VALUE
 
 
 def normalize_app_context_settings(
@@ -128,7 +128,7 @@ def normalize_app_context_settings(
     """
 
     normalized = dict(settings)
-    normalized[SettingKey.SOURCE_MODE] = effective_source_mode(
+    normalized[SettingKey.SOURCE_MODE] = resolve_source_mode(
         str(normalized.get(SettingKey.SOURCE_MODE, LOCAL_SOURCE_MODE_VALUE) or LOCAL_SOURCE_MODE_VALUE),
         is_frozen=is_frozen,
     )

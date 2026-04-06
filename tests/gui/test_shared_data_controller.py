@@ -205,7 +205,7 @@ def test_shared_data_controller_refresh_shared_output_state_emits_notice_when_re
     assert controller.pending_refresh_notice is False
 
 
-def test_shared_data_controller_on_shared_data_prepare_failed_logs_error(monkeypatch) -> None:
+def test_shared_data_controller_on_prepare_failed_logs_error(monkeypatch) -> None:
     controller = _build_controller()
     errors: list[str] = []
 
@@ -214,7 +214,7 @@ def test_shared_data_controller_on_shared_data_prepare_failed_logs_error(monkeyp
         SimpleNamespace(error=errors.append),
     )
 
-    controller.on_shared_data_prepare_failed("boom")
+    controller.on_prepare_failed("boom")
 
     assert errors == ["后台共享数据准备失败: boom"]
 
@@ -292,7 +292,7 @@ def test_shared_data_controller_load_initial_data_failed_callback_clears_state_a
     started_workers[0].signals.failed.emit("boom")
 
     assert controller.build_worker is None
-    assert controller.build_cfg is None
+    assert controller.build_config is None
     assert controller.is_loading_shared_data is False
     assert controller.app_context is None
     assert app_context_events == [None]
@@ -327,7 +327,7 @@ def test_shared_data_controller_on_shared_context_build_timeout_resets_state_and
 
     assert controller.build_request_id == expected_request_id_after_timeout
     assert controller.build_worker is None
-    assert controller.build_cfg is None
+    assert controller.build_config is None
     assert controller.is_loading_shared_data is False
     assert controller.app_context is None
     assert app_context_events == [None]
@@ -373,11 +373,11 @@ def test_shared_data_controller_reconfigures_logging_only_when_scan_signature_ch
     reconfigure_payloads = []
     controller.reconfigure_runtime_logging_requested.connect(reconfigure_payloads.append)
 
-    controller.on_shared_context_input_changed()
+    controller.on_context_input_changed()
     assert reconfigure_payloads == []
 
     cfg.output_path = "new-output"
-    controller.on_shared_context_input_changed()
+    controller.on_context_input_changed()
 
     assert len(reconfigure_payloads) == 1
     assert reconfigure_payloads[0].log_dir == Path("logs/runtime")

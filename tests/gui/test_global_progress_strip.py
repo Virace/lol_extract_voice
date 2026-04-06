@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtWidgets import QApplication, QFrame, QScrollArea, QVBoxLayout, QWidget
+from qfluentwidgets import qconfig
 
 from lol_audio_unpack.gui.components.global_progress_strip import (
     DEFAULT_PROGRESS_SWEEP_ANIMATION_MS,
@@ -14,6 +16,8 @@ from lol_audio_unpack.gui.components.global_progress_strip import (
     GlobalProgressStripHost,
     GlobalProgressStripState,
 )
+from lol_audio_unpack.gui.resources import assets
+from lol_audio_unpack.gui.theme import apply_accent_preset, resolve_progress_palette
 
 WINDOW_WIDTH = 1120
 WINDOW_HEIGHT = 800
@@ -25,6 +29,16 @@ EXPECTED_STRIP_HEIGHT = 44
 EXPECTED_STATUS_RIGHT_PADDING = 10.0
 EXPECTED_TITLE_DETAIL_MAX_GAP = 4
 EXPECTED_TITLE_FONT_PIXEL_SIZE = 13
+
+
+@contextmanager
+def _restore_theme_color():
+    """在测试结束后恢复 qconfig 主题色。"""
+    previous_color = qconfig.themeColor.value
+    try:
+        yield
+    finally:
+        qconfig.set(qconfig.themeColor, previous_color)
 
 
 class _ProgressStripShellDemo(QWidget):
@@ -80,6 +94,20 @@ def _running_state() -> GlobalProgressStripState:
     )
 
 
+def test_progress_action_icons_exist_in_resource_catalog() -> None:
+    """进度条动作图标应由统一资源入口提供。"""
+    assert assets.icons.PAUSE.path().endswith("pause-solid-full.svg")
+    assert assets.icons.PLAY.path().endswith("play-solid-full.svg")
+    assert assets.icons.STOP.path().endswith("stop-solid-full.svg")
+
+
+def test_global_progress_strip_does_not_keep_local_action_icon_enum() -> None:
+    """全局进度条模块不应继续保留本地动作图标枚举。"""
+    source = Path("src/lol_audio_unpack/gui/components/global_progress_strip.py").read_text(encoding="utf-8")
+
+    assert "ProgressActionIcon" not in source
+
+
 def test_progress_host_hidden_keeps_viewport_without_extra_scroll(qtbot, tmp_path: Path) -> None:
     shell = _ProgressStripShellDemo()
     qtbot.addWidget(shell)
@@ -120,6 +148,45 @@ def test_progress_host_visible_reduces_viewport_but_keeps_content_height(qtbot, 
     assert shell.scroll_area.viewport().height() < initial_viewport_height
     assert shell.scroll_area.verticalScrollBar().maximum() > 0
     assert shell.progress_host.height() == shell.progress_host.strip_widget().height()
+
+
+def test_progress_host_waits_before_hiding_after_completion(qtbot) -> None:
+    shell = _ProgressStripShellDemo()
+    qtbot.addWidget(shell)
+    shell.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
+    shell.show()
+    _wait_until_visible(qtbot, shell)
+
+    shell.progress_host.set_state(_running_state(), animate=False)
+    qtbot.waitUntil(lambda: shell.progress_host.height() > 0)
+
+    shell.progress_host.set_state(GlobalProgressStripState(), animate=False)
+
+    qtbot.wait(300)
+
+    assert shell.progress_host.height() > 0
+
+    qtbot.waitUntil(lambda: shell.progress_host.height() == 0, timeout=2200)
+
+
+def test_progress_host_cancels_pending_hide_when_new_progress_arrives(qtbot) -> None:
+    shell = _ProgressStripShellDemo()
+    qtbot.addWidget(shell)
+    shell.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
+    shell.show()
+    _wait_until_visible(qtbot, shell)
+
+    shell.progress_host.set_state(_running_state(), animate=False)
+    qtbot.waitUntil(lambda: shell.progress_host.height() > 0)
+
+    shell.progress_host.set_state(GlobalProgressStripState(), animate=False)
+    qtbot.wait(300)
+
+    shell.progress_host.set_state(replace(_running_state(), progress_current=2100), animate=False)
+    qtbot.wait(1700)
+
+    assert shell.progress_host.height() > 0
+    assert shell.progress_host.current_state().visible is True
 
 
 def test_progress_host_paused_state_desaturates_color_but_keeps_sweep_running(qtbot, tmp_path: Path) -> None:
@@ -289,7 +356,7 @@ def test_progress_strip_hidden_meta_labels_do_not_shrink_progress_rect(qtbot) ->
     assert progress_rect.right() >= action_rect.left() - PROGRESS_ACTION_GAP - 1.0
 
 
-def test_progress_strip_light_theme_switches_meta_text_after_fill_passes_label(qtbot) -> None:
+def test_progress_strip_light_theme_keeps_meta_text_stable_across_progress(qtbot) -> None:
     shell = _ProgressStripShellDemo()
     qtbot.addWidget(shell)
     shell.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
@@ -303,13 +370,28 @@ def test_progress_strip_light_theme_switches_meta_text_after_fill_passes_label(q
 
     high_progress = replace(_running_state(), theme_mode="light", progress_current=100, progress_total=100)
     shell.progress_host.set_state(high_progress, animate=False)
-    qtbot.waitUntil(
-        lambda: shell.progress_host.strip_widget().debug_fill_rect().right()
-        > shell.progress_host.strip_widget()._rate_label.geometry().left()
-    )
+    QApplication.processEvents()
     high_rate = shell.progress_host.strip_widget().current_rate_text_color()
 
-    assert low_rate.lightness() < high_rate.lightness()
+    assert low_rate == high_rate
+
+
+def test_progress_strip_uses_progress_palette_fill_for_accent_preset(qtbot) -> None:
+    with _restore_theme_color():
+        apply_accent_preset("orange")
+        shell = _ProgressStripShellDemo()
+        qtbot.addWidget(shell)
+        shell.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
+        shell.show()
+        _wait_until_visible(qtbot, shell)
+
+        state = replace(_running_state(), theme_mode="dark")
+        shell.progress_host.set_state(state, animate=False)
+
+        expected_fill = resolve_progress_palette(mode="Dark", preset_id="orange").fill_main
+        actual_fill = shell.progress_host.strip_widget().current_fill_color()
+
+        assert actual_fill == expected_fill
 
 
 def test_progress_strip_buttons_exist_and_pause_button_toggles_icon_with_state(qtbot) -> None:
