@@ -30,7 +30,7 @@ from lol_audio_unpack.gui.common import (
     is_remote_panel_visible,
     needs_remote_mode_fallback,
 )
-from lol_audio_unpack.gui.common.style import (
+from lol_audio_unpack.gui.common.page_style import (
     apply_page_content_margins,
     configure_transparent_scroll_page,
 )

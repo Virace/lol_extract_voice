@@ -49,7 +49,7 @@ from qfluentwidgets import (
 )
 
 from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled
-from lol_audio_unpack.gui.common.style import apply_page_content_margins
+from lol_audio_unpack.gui.common.page_style import apply_page_content_margins
 from lol_audio_unpack.gui.common.styles import build_fluent_panel_frame_theme_pair
 from lol_audio_unpack.gui.components.overview_entity_list import OVERVIEW_ROW_ROLE, OverviewEntityListView
 from lol_audio_unpack.gui.components.preview_tree import (

@@ -26,7 +26,7 @@ from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets.common.icon import drawIcon
 
 from lol_audio_unpack import __version__
-from lol_audio_unpack.gui.common.style import (
+from lol_audio_unpack.gui.common.page_style import (
     PAGE_CONTENT_MARGIN,
     apply_page_content_margins,
     configure_transparent_scroll_page,
