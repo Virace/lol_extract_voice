@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+from enum import Enum
+from pathlib import Path
+
 from PySide6.QtWidgets import QWidget
-from qfluentwidgets import (
-    CustomColorSettingCard,
-    OptionsSettingCard,
-    SettingCardGroup,
-    qconfig,
-)
 from qfluentwidgets import (
     FluentIcon as FIF,
 )
+from qfluentwidgets import (
+    FluentIconBase,
+    OptionsSettingCard,
+    SettingCardGroup,
+    Theme,
+    qconfig,
+)
 
+from lol_audio_unpack.gui.theme import list_accent_presets
 from lol_audio_unpack.gui.view.settings.cards import (
     ComboRowSettingCard,
     LocalizedSwitchSettingCard,
@@ -20,6 +25,19 @@ from lol_audio_unpack.gui.view.settings.cards import (
     SliderSettingCard,
     SmoothScrollSettingCard,
 )
+
+ICON_ASSET_DIR = Path(__file__).resolve().parents[2] / "assets" / "icon"
+
+
+class AccentPresetIcon(FluentIconBase, Enum):
+    """固定强调色预设使用的自定义 Fluent 图标。"""
+
+    DOT = "circle-solid-full.svg"
+
+    def path(self, theme=Theme.AUTO) -> str:
+        """返回图标资源路径。"""
+        _ = theme
+        return str(ICON_ASSET_DIR / self.value)
 
 
 class AppearancePanel:
@@ -31,6 +49,7 @@ class AppearancePanel:
         parent: QWidget,
         audio_output_device_options: list[tuple[str, str]],
     ) -> None:
+        accent_presets = list_accent_presets()
         self.group = SettingCardGroup("个性化", parent)
 
         self.themeCard = OptionsSettingCard(
@@ -41,22 +60,22 @@ class AppearancePanel:
             texts=["浅色", "深色", "跟随系统"],
             parent=self.group,
         )
-        self.colorCard = CustomColorSettingCard(
-            qconfig.themeColor,
+        self.accentPresetCard = ComboRowSettingCard(
             FIF.PALETTE,
             "主题颜色",
-            "自定义应用的强调色",
-            self.group,
+            "选择应用的固定强调色预设。",
+            [preset.label for preset in accent_presets],
+            label_map={preset.label: preset.id for preset in accent_presets},
+            parent=self.group,
         )
-        self.colorCard.defaultRadioButton.setText("默认颜色")
-        self.colorCard.customRadioButton.setText("自定义颜色")
-        self.colorCard.customLabel.setText("自定义颜色")
-        self.colorCard.chooseColorButton.setText("选择颜色")
-        self.colorCard.choiceLabel.setText(self.colorCard.buttonGroup.checkedButton().text())
-        self.colorCard.choiceLabel.adjustSize()
+        for index, preset in enumerate(accent_presets):
+            self.accentPresetCard.comboBox.setItemIcon(
+                index,
+                AccentPresetIcon.DOT.icon(color=preset.primary_color),
+            )
 
         self.group.addSettingCard(self.themeCard)
-        self.group.addSettingCard(self.colorCard)
+        self.group.addSettingCard(self.accentPresetCard)
         self.smoothScrollCard = SmoothScrollSettingCard(self.group)
         self.group.addSettingCard(self.smoothScrollCard)
 

@@ -242,7 +242,7 @@ class OverviewPage(QWidget):
         self.reveal_file_btn.clicked.connect(self._reveal_selected_mapping_file)
         self.audio_preview_tree.audio_id_toggle_requested.connect(self._on_audio_preview_toggle_requested)
         qconfig.themeChanged.connect(self._refresh_theme_styles)
-        qconfig.themeColorChanged.connect(self._refresh_theme_styles)
+        qconfig.themeColorChanged.connect(self._refresh_entity_list_theme)
 
         for entity_type, list_widget in self._entity_lists.items():
             selection_model = list_widget.selectionModel()
@@ -257,9 +257,12 @@ class OverviewPage(QWidget):
 
     def _disconnect_theme_refresh_listeners(self, *_args: object) -> None:
         """断开实体总览页注册的全局主题监听。"""
-        for signal in (qconfig.themeChanged, qconfig.themeColorChanged):
+        for signal, callback in (
+            (qconfig.themeChanged, self._refresh_theme_styles),
+            (qconfig.themeColorChanged, self._refresh_entity_list_theme),
+        ):
             try:
-                signal.disconnect(self._refresh_theme_styles)
+                signal.disconnect(callback)
             except (RuntimeError, TypeError):
                 pass
 

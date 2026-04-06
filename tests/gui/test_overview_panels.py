@@ -2,10 +2,28 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+
+from qfluentwidgets import qconfig
+
+from lol_audio_unpack.gui.components.overview_entity_list import _build_overview_interaction_colors
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
+from lol_audio_unpack.gui.theme import apply_accent_preset, apply_shell_mode, get_accent_preset
 from lol_audio_unpack.gui.view.overview.audio_preview_panel import OverviewAudioPreviewPanel
 from lol_audio_unpack.gui.view.overview.entity_list_panel import OverviewEntityListPanel
 from lol_audio_unpack.gui.view.overview.preview_panel import OverviewPreviewPanel
+
+
+@contextmanager
+def _restore_theme_state():
+    """在测试结束后恢复 qconfig 主题状态。"""
+    previous_theme = qconfig.themeMode.value
+    previous_color = qconfig.themeColor.value
+    try:
+        yield
+    finally:
+        qconfig.set(qconfig.themeMode, previous_theme)
+        qconfig.set(qconfig.themeColor, previous_color)
 
 
 def test_overview_entity_list_panel_switches_current_entity_type(qtbot) -> None:
@@ -90,6 +108,18 @@ def test_overview_entity_list_panel_can_build_selection_sync_request(qtbot) -> N
         map_ids=(11,),
         summary="已选择 2 个英雄、1 张地图，请前往执行中心继续创建任务。",
     )
+
+
+def test_overview_interaction_colors_use_accent_preset_tone() -> None:
+    """总览列表选中 accent 应来自固定 preset tone。"""
+    with _restore_theme_state():
+        apply_shell_mode("Light")
+        apply_accent_preset("green")
+
+        _hover_background, _selection_background, selection_accent = _build_overview_interaction_colors()
+        expected_accent = get_accent_preset("green").scale.color(700)
+
+        assert selection_accent == expected_accent
 
 
 def test_overview_preview_panel_show_placeholder_clears_preview_state(qtbot) -> None:

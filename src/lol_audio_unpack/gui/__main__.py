@@ -7,9 +7,8 @@ from time import perf_counter
 
 from loguru import logger
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
-from qfluentwidgets import Theme, qconfig, setTheme, setThemeColor
 
 from lol_audio_unpack.gui.common import (
     GuiConfig,
@@ -22,6 +21,7 @@ from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
 from lol_audio_unpack.gui.controllers.runtime_logging_session import (
     apply_runtime_logging_session,
 )
+from lol_audio_unpack.gui.theme import apply_accent_preset, apply_shell_mode
 from lol_audio_unpack.gui.window import MainWindow
 
 
@@ -87,14 +87,8 @@ def main() -> None:
     # 从 GuiConfig 应用主题配置
     previous_mark = _log_startup_stage("GuiConfig 加载完成", startup_begin, previous_mark)
 
-    theme_map = {"Light": Theme.LIGHT, "Dark": Theme.DARK, "Auto": Theme.AUTO}
-    theme = theme_map.get(cfg.theme_mode, Theme.LIGHT)
-    qconfig.set(qconfig.themeMode, theme)
-    setTheme(theme)
-
-    color = QColor(cfg.theme_color)
-    qconfig.set(qconfig.themeColor, color)
-    setThemeColor(color)
+    apply_shell_mode(cfg.theme_mode)
+    apply_accent_preset(cfg.accent_preset_id)
     previous_mark = _log_startup_stage("主题与主题色应用完成", startup_begin, previous_mark)
 
     # 获取桌面并应用大小

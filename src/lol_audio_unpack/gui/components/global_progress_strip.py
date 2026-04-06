@@ -26,15 +26,19 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from qfluentwidgets import BodyLabel, FluentIconBase, TransparentToolButton, isDarkTheme, qconfig, themeColor
+from qfluentwidgets import BodyLabel, FluentIconBase, TransparentToolButton, isDarkTheme, qconfig
 
 from lol_audio_unpack.gui.common.font_compat import apply_tool_button_safe_font
+from lol_audio_unpack.gui.theme import (
+    current_accent_preset_id,
+    resolve_legacy_accent_preset,
+    resolve_progress_palette,
+)
 
 ThemeMode = Literal["auto", "light", "dark"]
 ActionIconKind = Literal["pause", "play", "stop"]
 
 ICON_ASSET_DIR = Path(__file__).resolve().parent.parent / "assets" / "icon"
-DEFAULT_PROGRESS_STRIP_ACCENT = QColor(themeColor())
 PROGRESS_STRIP_HEIGHT = 44
 PROGRESS_STRIP_HOST_TOP_MARGIN = 0
 PROGRESS_STRIP_HOST_BOTTOM_MARGIN = 0
@@ -373,7 +377,7 @@ class GlobalProgressStrip(QWidget):
         self._sweep_animation.setLoopCount(-1)
         self._sweep_animation.setEasingCurve(QEasingCurve.Type.Linear)
 
-        self._theme_listener = lambda *_args: self._refresh_visuals_from_theme()
+        self._theme_listener = self._refresh_visuals_from_theme
         qconfig.themeChanged.connect(self._theme_listener)
         qconfig.themeColorChanged.connect(self._theme_listener)
         self.destroyed.connect(self._disconnect_theme_listeners)
@@ -394,10 +398,21 @@ class GlobalProgressStrip(QWidget):
             return self._state.theme_mode
         return "dark" if isDarkTheme() else "light"
 
+    def _resolved_accent_preset_id(self) -> str:
+        """返回当前进度条应使用的固定强调色预设标识。"""
+        if self._state.accent_color is None:
+            return current_accent_preset_id()
+        return resolve_legacy_accent_preset(self._state.accent_color.name())
+
+    def _resolved_progress_palette(self):
+        """返回当前主题模式下的进度条 palette。"""
+        mode = "Dark" if self._resolved_theme_mode() == "dark" else "Light"
+        return resolve_progress_palette(mode=mode, preset_id=self._resolved_accent_preset_id())
+
     def current_fill_color(self) -> QColor:
         """返回当前用于填充进度的颜色。"""
-        accent = QColor(self._state.accent_color) if self._state.accent_color is not None else QColor(themeColor())
-        return _desaturate_color(accent) if self._state.paused else accent
+        fill_color = QColor(self._resolved_progress_palette().fill_main)
+        return _desaturate_color(fill_color) if self._state.paused else fill_color
 
     def current_track_background_color(self) -> QColor:
         """返回当前轨道背景色。"""
@@ -409,11 +424,11 @@ class GlobalProgressStrip(QWidget):
 
     def current_rate_text_color(self) -> QColor:
         """返回速率文本当前颜色。"""
-        return self._dynamic_meta_color_for_widget(self._rate_label, fallback=self._meta_text_color)
+        return QColor(self._rate_text_color)
 
     def current_status_text_color(self) -> QColor:
         """返回状态文本当前颜色。"""
-        return self._dynamic_meta_color_for_widget(self._status_label, fallback=self._meta_text_color)
+        return QColor(self._status_text_color)
 
     def current_sweep_duration_ms(self) -> int:
         """返回当前 sweep 动画时长。"""
@@ -497,20 +512,13 @@ class GlobalProgressStrip(QWidget):
     def _apply_state(self) -> None:
         """同步当前状态到标签显隐与颜色。"""
         fill_text_color = _fill_text_color()
-        resolved_theme = self._resolved_theme_mode()
+        palette = self._resolved_progress_palette()
 
-        if resolved_theme == "dark":
-            self._track_background_color = QColor(20, 20, 20, 232)
-            self._track_border_color = QColor(255, 255, 255, 48)
-            self._meta_text_color = QColor(245, 245, 245, 230)
-            button_hover = QColor(255, 255, 255, 22)
-            button_pressed = QColor(255, 255, 255, 44)
-        else:
-            self._track_background_color = QColor(243, 243, 243, 240)
-            self._track_border_color = QColor(0, 0, 0, 22)
-            self._meta_text_color = QColor(32, 36, 42, 230)
-            button_hover = QColor(0, 0, 0, 18)
-            button_pressed = QColor(0, 0, 0, 34)
+        self._track_background_color = QColor(palette.track_base)
+        self._track_border_color = QColor(palette.track_border)
+        self._meta_text_color = QColor(palette.text_primary)
+        self._rate_text_color = QColor(palette.text_primary)
+        self._status_text_color = QColor(palette.text_secondary)
 
         self._title_text_color = fill_text_color
         self._detail_text_color = _with_alpha(fill_text_color, 214)
@@ -525,10 +533,10 @@ class GlobalProgressStrip(QWidget):
         self._status_label.setStyleSheet(f"color: {_qcolor_to_rgba_text(self._status_text_color)};")
         for button in (self._pause_button, self._stop_button):
             button.set_visual_style(
-                icon_color=self._meta_text_color,
+                icon_color=QColor(palette.button_icon),
                 idle_background=QColor(0, 0, 0, 0),
-                hover_background=button_hover,
-                pressed_background=button_pressed,
+                hover_background=QColor(palette.button_hover),
+                pressed_background=QColor(palette.button_pressed),
                 corner_radius=self._state.button_radius,
             )
 
@@ -536,7 +544,7 @@ class GlobalProgressStrip(QWidget):
         self._status_label.setVisible(bool(self._state.status_text))
 
     def _refresh_dynamic_meta_text_colors(self) -> None:
-        """根据当前填充覆盖范围刷新右侧文本颜色。"""
+        """根据当前 palette 刷新右侧文本颜色。"""
         self._rate_text_color = self.current_rate_text_color()
         self._status_text_color = self.current_status_text_color()
 
