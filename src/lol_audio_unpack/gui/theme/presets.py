@@ -39,11 +39,13 @@ class AccentPreset:
         id: 预设稳定标识。
         label: 面向用户的显示名称。
         scale: 该预设的参考色阶。
+        dark_hex: 深色主题下优先使用的主强调色；为空时回退到 ``scale[500]``。
     """
 
     id: AccentPresetId
     label: str
     scale: AccentScale
+    dark_hex: str | None = None
 
     @property
     def primary_hex(self) -> str:
@@ -54,6 +56,16 @@ class AccentPreset:
     def primary_color(self) -> QColor:
         """返回该预设当前用于 Fluent accent 的主色对象。"""
         return self.scale.color(500)
+
+    def resolve_primary_hex(self, *, dark: bool = False) -> str:
+        """返回指定主题模式下应使用的主强调色。"""
+        if dark and self.dark_hex:
+            return self.dark_hex
+        return self.primary_hex
+
+    def resolve_primary_color(self, *, dark: bool = False) -> QColor:
+        """返回指定主题模式下应使用的主强调色对象。"""
+        return QColor(self.resolve_primary_hex(dark=dark))
 
 
 @dataclass(slots=True, frozen=True)
@@ -121,15 +133,16 @@ _ACCENT_PRESETS: tuple[AccentPreset, ...] = (
         id="green",
         label="绿色",
         scale=_scale(
-            "#EEF9F2",
-            "#DCF1E3",
-            "#BFE4CB",
-            "#95D0A8",
-            "#4E9C71",
-            "#3A7A57",
-            "#284E39",
-            "#1A3325",
+            "#F7FAEF",
+            "#ECF2D8",
+            "#D3E2AF",
+            "#ADC878",
+            "#78964A",
+            "#567136",
+            "#374724",
+            "#243018",
         ),
+        dark_hex="#60783A",
     ),
     AccentPreset(
         id="orange",

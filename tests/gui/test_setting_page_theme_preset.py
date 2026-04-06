@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QSettings
-from qfluentwidgets import Theme, qconfig
+from qfluentwidgets import Theme, isDarkTheme, qconfig
 from qfluentwidgets.common.icon import writeSvg
 
 from lol_audio_unpack.gui.resources import assets
@@ -49,7 +49,7 @@ def test_setting_page_persists_selected_accent_preset(qtbot, tmp_path: Path) -> 
 
     assert page.config.accent_preset_id == "green"
     assert page.config._qs.value("accent_preset_id") == "green"
-    assert qconfig.themeColor.value.name().lower() == get_accent_preset("green").primary_hex.lower()
+    assert qconfig.themeColor.value.name().lower() == get_accent_preset("green").resolve_primary_hex(dark=isDarkTheme()).lower()
 
 
 def test_setting_page_accent_preset_items_show_color_icons(qtbot) -> None:

@@ -49,8 +49,20 @@ def test_apply_shell_mode_and_accent_preset_updates_qconfig() -> None:
 
         assert theme == Theme.DARK
         assert qconfig.themeMode.value == Theme.DARK
-        assert color.name().lower() == get_accent_preset("green").primary_hex.lower()
-        assert qconfig.themeColor.value.name().lower() == get_accent_preset("green").primary_hex.lower()
+        assert color.name().lower() == get_accent_preset("green").resolve_primary_hex(dark=True).lower()
+        assert qconfig.themeColor.value.name().lower() == get_accent_preset("green").resolve_primary_hex(dark=True).lower()
+
+
+def test_apply_shell_mode_reapplies_green_accent_for_dark_override() -> None:
+    """切换到深色模式后，green preset 应自动改用更深的主强调色。"""
+    with _restore_qconfig_theme_state():
+        apply_shell_mode("Light")
+        light_color = apply_accent_preset("green")
+        theme = apply_shell_mode("Dark")
+
+        assert theme == Theme.DARK
+        assert light_color.name().lower() == get_accent_preset("green").primary_hex.lower()
+        assert qconfig.themeColor.value.name().lower() == get_accent_preset("green").resolve_primary_hex(dark=True).lower()
 
 
 def test_resolve_progress_palette_returns_complete_palette() -> None:

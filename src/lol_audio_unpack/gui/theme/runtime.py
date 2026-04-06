@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtGui import QColor
-from qfluentwidgets import Theme, qconfig, setTheme, setThemeColor
+from qfluentwidgets import Theme, isDarkTheme, qconfig, setTheme, setThemeColor
 
 from lol_audio_unpack.gui.theme.presets import (
     DEFAULT_ACCENT_PRESET_ID,
@@ -29,6 +29,11 @@ _MODE_BY_THEME = {
 _runtime_state = {"accent_preset_id": DEFAULT_ACCENT_PRESET_ID}
 
 
+def _resolve_accent_color(preset: AccentPreset) -> QColor:
+    """按当前实际主题解析预设应使用的主强调色。"""
+    return preset.resolve_primary_color(dark=isDarkTheme())
+
+
 def apply_shell_mode(mode: str) -> Theme:
     """应用当前壳模式到 QFluentWidgets。
 
@@ -41,6 +46,7 @@ def apply_shell_mode(mode: str) -> Theme:
     theme = _THEME_BY_MODE.get(mode, Theme.AUTO)
     qconfig.set(qconfig.themeMode, theme)
     setTheme(theme)
+    apply_accent_preset(_runtime_state["accent_preset_id"])
     return theme
 
 
@@ -60,7 +66,7 @@ def apply_accent_preset(preset: AccentPresetId | str | AccentPreset) -> object:
     """
     resolved = preset if isinstance(preset, AccentPreset) else get_accent_preset(preset)
     _runtime_state["accent_preset_id"] = resolved.id
-    color = resolved.primary_color
+    color = _resolve_accent_color(resolved)
     qconfig.set(qconfig.themeColor, color)
     setThemeColor(color)
     return color

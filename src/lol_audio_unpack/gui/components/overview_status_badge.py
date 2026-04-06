@@ -9,7 +9,11 @@ from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPainterPath, QPalette
 from PySide6.QtWidgets import QLabel, QWidget
 from qfluentwidgets import CustomStyleSheet, isDarkTheme, setCustomStyleSheet, setStyleSheet
 
-from lol_audio_unpack.gui.common.styles import get_fluent_status_badge_color_pair, resolve_fluent_status_badge_colors
+from lol_audio_unpack.gui.common.styles import (
+    get_fluent_status_badge_color_pair,
+    resolve_fluent_entity_badge_colors,
+    resolve_fluent_status_badge_colors,
+)
 
 STATUS_BADGE_SIZE = 24
 STATUS_PILL_HORIZONTAL_PADDING = 9
@@ -89,34 +93,17 @@ def resolve_status_pill_segment_colors(
 ) -> tuple[QColor, QColor]:
     """根据段标签与状态返回分段胶囊的配色。
 
-    A 段固定走偏暖语义，M 段固定走偏绿语义；同一语义下再通过
-    状态区分“已存在 / 未存在”的明暗和饱和度。
+    A/M 两段固定表达资源类型；存在态跟随当前主题 preset，
+    缺失态统一退回透明底与弱化文字，避免用户再额外记忆颜色语义。
     """
-    is_dark = isDarkTheme()
     normalized_label = badge_label.upper().strip()
     normalized_status = badge_status.strip()
 
     if normalized_label == "A":
-        if normalized_status == "已存在":
-            return (
-                QColor("#8f6d33" if is_dark else "#bc8f36"),
-                QColor("#fffaf1"),
-            )
-        return (
-            QColor("#746445" if is_dark else "#d8c4a0"),
-            QColor("#e7d5b3" if is_dark else "#6d562f"),
-        )
+        return resolve_fluent_entity_badge_colors("audio", normalized_status, palette)
 
     if normalized_label == "M":
-        if normalized_status == "已存在":
-            return (
-                QColor("#5a8f56" if is_dark else "#67a85b"),
-                QColor("#f7fff5"),
-            )
-        return (
-            QColor("#4f6950" if is_dark else "#bdd1b8"),
-            QColor("#d3ebcf" if is_dark else "#48634a"),
-        )
+        return resolve_fluent_entity_badge_colors("mapping", normalized_status, palette)
 
     return resolve_status_badge_colors(badge_status, palette)
 
@@ -240,6 +227,25 @@ def paint_status_badge(
     painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, badge_label)
 
 
+def resolve_status_pill_chrome_colors(palette: QPalette) -> tuple[QColor, QColor]:
+    """按当前主题返回胶囊接缝线与外轮廓颜色。"""
+    if palette is None:
+        raise ValueError("palette must not be None")
+
+    if isDarkTheme():
+        seam = QColor(palette.color(QPalette.ColorRole.Midlight))
+        seam.setAlpha(186)
+        outline = QColor(palette.color(QPalette.ColorRole.Light))
+        outline.setAlpha(148)
+        return seam, outline
+
+    seam = QColor(palette.color(QPalette.ColorRole.Mid))
+    seam.setAlpha(136)
+    outline = QColor(palette.color(QPalette.ColorRole.Mid))
+    outline.setAlpha(92)
+    return seam, outline
+
+
 def paint_status_pill(
     painter: QPainter,
     rect: QRect,
@@ -279,18 +285,17 @@ def paint_status_pill(
 
     if len(segment_rects) > 1:
         painter.setBrush(Qt.BrushStyle.NoBrush)
-        seam_color = QColor(palette.color(QPalette.ColorRole.Mid))
-        seam_color.setAlpha(136)
+        seam_color, outline = resolve_status_pill_chrome_colors(palette)
         seam_pen = QPen(seam_color)
         seam_pen.setWidthF(1.2)
         seam_pen.setCapStyle(Qt.PenCapStyle.FlatCap)
         painter.setPen(seam_pen)
         for start, end in _build_status_pill_seam_lines(rect, segment_widths):
             painter.drawLine(start, end)
+    else:
+        _seam_color, outline = resolve_status_pill_chrome_colors(palette)
 
     painter.setClipping(False)
-    outline = QColor(palette.color(QPalette.ColorRole.Mid))
-    outline.setAlpha(92)
     outline_pen = QPen(outline)
     outline_pen.setWidthF(1.0)
     outline_pen.setCapStyle(Qt.PenCapStyle.FlatCap)
@@ -312,5 +317,6 @@ __all__ = [
     "paint_status_pill",
     "paint_status_badge",
     "resolve_status_badge_colors",
+    "resolve_status_pill_chrome_colors",
     "resolve_status_pill_segment_colors",
 ]
