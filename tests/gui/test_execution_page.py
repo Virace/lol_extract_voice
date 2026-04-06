@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
@@ -127,6 +128,60 @@ def test_execution_page_global_progress_state_hidden_by_default(qtbot) -> None:
     state = page.current_global_progress_state()
 
     assert state.visible is False
+
+
+def test_execution_page_primary_button_switches_to_cancel_when_task_running(qtbot, monkeypatch) -> None:
+    """任务启动后，主按钮应切换为取消。"""
+    _setting_page, execution_page = _build_linked_pages(qtbot)
+    monkeypatch.setattr("lol_audio_unpack.gui.view.execution_page.get_block_reason", lambda _cfg: None)
+    monkeypatch.setattr(execution_page._queue_controller, "start_task_worker", lambda _task: None)
+
+    execution_page._queue_task_draft()
+
+    assert execution_page.create_task_btn.text() == "取消"
+
+
+def test_execution_page_absorbs_duplicate_create_calls_in_single_task_mode(qtbot, monkeypatch) -> None:
+    """即使内部重复触发创建，也只能保留一条活跃任务。"""
+    _setting_page, execution_page = _build_linked_pages(qtbot)
+    started_tasks = []
+    monkeypatch.setattr("lol_audio_unpack.gui.view.execution_page.get_block_reason", lambda _cfg: None)
+
+    def _capture_started_task(task) -> None:
+        started_tasks.append(task)
+
+    monkeypatch.setattr(
+        execution_page._queue_controller,
+        "start_task_worker",
+        _capture_started_task,
+    )
+
+    execution_page._queue_task_draft()
+    execution_page._queue_task_draft()
+
+    assert execution_page._queue_controller.draft_queue_size() == 1
+    assert len(started_tasks) == 1
+
+
+def test_execution_page_clicking_cancel_confirms_and_stops_running_task(qtbot, monkeypatch) -> None:
+    """运行中的主按钮点击后应走全局确认，再触发强制结束。"""
+    _setting_page, execution_page = _build_linked_pages(qtbot)
+    monkeypatch.setattr("lol_audio_unpack.gui.view.execution_page.get_block_reason", lambda _cfg: None)
+    monkeypatch.setattr(execution_page._queue_controller, "start_task_worker", lambda _task: None)
+
+    execution_page._queue_task_draft()
+
+    cancelled = []
+    monkeypatch.setattr(execution_page, "_confirm_force_stop_task", lambda: True)
+    monkeypatch.setattr(
+        execution_page._queue_controller,
+        "cancel_active_task",
+        lambda: cancelled.append(True) or True,
+    )
+
+    qtbot.mouseClick(execution_page.create_task_btn, Qt.MouseButton.LeftButton)
+
+    assert cancelled == [True]
 
 
 def test_execution_page_mock_queue_updates_global_progress_state(qtbot) -> None:

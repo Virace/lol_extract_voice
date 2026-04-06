@@ -17,8 +17,14 @@ from lol_audio_unpack.config import (
     write_command_config,
     write_settings,
 )
-from lol_audio_unpack.gui.common.packaged_remote_mode_policy import effective_source_mode
+from lol_audio_unpack.gui.common.remote_mode_policy import resolve_source_mode
 from lol_audio_unpack.gui.task_models import AppContextInputSnapshot
+from lol_audio_unpack.gui.theme import (
+    DEFAULT_ACCENT_PRESET_ID,
+    get_accent_preset,
+    resolve_accent_preset_id,
+    resolve_legacy_accent_preset,
+)
 from lol_audio_unpack.utils.runtime_paths import (
     detect_runtime_paths,
     get_default_output_root,
@@ -67,7 +73,8 @@ class GuiConfig:
 
         # GUI 专有配置
         self._theme_mode: str = "Auto"  # Light, Dark, Auto
-        self._theme_color: str = "#009faa"
+        self._accent_preset_id: str = DEFAULT_ACCENT_PRESET_ID
+        self._theme_color: str = get_accent_preset(self._accent_preset_id).primary_hex
         self._page_smooth_scroll_enabled: bool = False
         self._widget_smooth_scroll_enabled: bool = False
         self._log_drawer_auto_collapse_enabled: bool = True
@@ -133,8 +140,14 @@ class GuiConfig:
             self._snapshot_game_url = str(stored_snapshot_game_url or "")
 
         # 3. 从 QSettings 读取 GUI 主题配置
-        self._theme_mode = self._qs.value("theme_mode", "Auto")
-        self._theme_color = self._qs.value("theme_color", "#009faa")
+        self._theme_mode = str(self._qs.value("theme_mode", "Auto") or "Auto")
+        stored_accent_preset = self._qs.value("accent_preset_id", _UNSET)
+        stored_theme_color = str(self._qs.value("theme_color", self._theme_color) or self._theme_color)
+        if stored_accent_preset is _UNSET:
+            self._accent_preset_id = resolve_legacy_accent_preset(stored_theme_color)
+        else:
+            self._accent_preset_id = resolve_accent_preset_id(str(stored_accent_preset))
+        self._theme_color = get_accent_preset(self._accent_preset_id).primary_hex
 
         legacy_smooth_scroll = self._qs.value("smooth_scroll_enabled", _UNSET)
         stored_page_smooth_scroll = self._qs.value("page_smooth_scroll_enabled", _UNSET)
@@ -207,7 +220,7 @@ class GuiConfig:
         self._qs.setValue("remote_snapshot_lcu_url", self._snapshot_lcu_url)
         self._qs.setValue("remote_snapshot_game_url", self._snapshot_game_url)
         self._qs.setValue("theme_mode", self._theme_mode)
-        self._qs.setValue("theme_color", self._theme_color)
+        self._qs.setValue("accent_preset_id", self._accent_preset_id)
         self._qs.setValue("page_smooth_scroll_enabled", self._page_smooth_scroll_enabled)
         self._qs.setValue("widget_smooth_scroll_enabled", self._widget_smooth_scroll_enabled)
         self._qs.setValue("log_drawer_auto_collapse_enabled", self._log_drawer_auto_collapse_enabled)
@@ -220,7 +233,7 @@ class GuiConfig:
     def save_theme_preferences(self) -> None:
         """仅保存主题相关的 GUI 偏好，不触碰共享 runtime 配置。"""
         self._qs.setValue("theme_mode", self._theme_mode)
-        self._qs.setValue("theme_color", self._theme_color)
+        self._qs.setValue("accent_preset_id", self._accent_preset_id)
 
     def to_app_context_settings(self) -> dict[str, str | bool]:
         """构建供 ``create_app_context`` 使用的共享配置映射。"""
@@ -298,7 +311,7 @@ class GuiConfig:
     @property
     def effective_source_mode(self) -> str:
         """返回 GUI 当前运行时应使用的来源模式。"""
-        return effective_source_mode(self._source_mode)
+        return resolve_source_mode(self._source_mode)
 
     @source_mode.setter
     def source_mode(self, v: str) -> None:
@@ -473,21 +486,32 @@ class GuiConfig:
 
     @property
     def theme_mode(self) -> str:
-        """主题模式: Light, Dark, Auto"""
+        """返回当前壳模式。"""
         return self._theme_mode
 
     @theme_mode.setter
     def theme_mode(self, v: str) -> None:
-        self._theme_mode = v
+        self._theme_mode = str(v or "Auto")
+
+    @property
+    def accent_preset_id(self) -> str:
+        """返回当前固定强调色预设标识。"""
+        return self._accent_preset_id
+
+    @accent_preset_id.setter
+    def accent_preset_id(self, value: str) -> None:
+        self._accent_preset_id = resolve_accent_preset_id(value)
+        self._theme_color = get_accent_preset(self._accent_preset_id).primary_hex
 
     @property
     def theme_color(self) -> str:
-        """主题颜色 (hex 格式，如 #009faa)"""
+        """返回当前强调色主值。"""
         return self._theme_color
 
     @theme_color.setter
     def theme_color(self, v: str) -> None:
-        self._theme_color = v
+        self._accent_preset_id = resolve_legacy_accent_preset(v)
+        self._theme_color = get_accent_preset(self._accent_preset_id).primary_hex
 
     @property
     def page_smooth_scroll_enabled(self) -> bool:

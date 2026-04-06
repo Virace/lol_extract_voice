@@ -117,9 +117,7 @@ def test_demo_window_strip_buttons_toggle_pause_and_stop(qtbot) -> None:
     qtbot.mouseClick(window.show_button, Qt.MouseButton.LeftButton)
     qtbot.waitUntil(lambda: window.progress_host.height() > 0)
 
-    qtbot.mouseClick(window.progress_host.strip_widget().pause_button(), Qt.MouseButton.LeftButton)
-    assert window.pause_checkbox.isChecked() is True
-    assert window.status_input.text() == "已暂停"
+    assert window.progress_host.strip_widget().pause_button().isHidden()
 
     qtbot.mouseClick(window.progress_host.strip_widget().stop_button(), Qt.MouseButton.LeftButton)
     qtbot.waitUntil(lambda: window.progress_host.height() == 0)

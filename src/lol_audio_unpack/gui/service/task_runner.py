@@ -12,7 +12,7 @@ from lol_audio_unpack.app.context import create_app_context
 from lol_audio_unpack.app.facade import LolAudioUnpackApp
 from lol_audio_unpack.app.targets import resolve_scope
 from lol_audio_unpack.config import SettingKey
-from lol_audio_unpack.gui.common.packaged_remote_mode_policy import normalize_app_context_settings
+from lol_audio_unpack.gui.common.remote_mode_policy import normalize_app_context_settings
 from lol_audio_unpack.gui.task_models import (
     ExecutionTaskProgress,
     ExecutionTaskResult,

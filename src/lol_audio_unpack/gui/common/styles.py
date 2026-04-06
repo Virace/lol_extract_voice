@@ -8,9 +8,11 @@ from __future__ import annotations
 
 from typing import Literal, TypeAlias
 
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QPalette
 from qfluentwidgets import Theme, isDarkTheme
 from qfluentwidgets.common.color import FluentSystemColor
+
+from lol_audio_unpack.gui.theme import current_accent_preset_id, get_accent_preset
 
 RgbaTuple: TypeAlias = tuple[int, int, int, int]
 
@@ -24,6 +26,13 @@ _FLUENT_NEUTRAL_SURFACE_PAIRS: dict[str, tuple[RgbaTuple, RgbaTuple]] = {
     "emphasis_selected": ((0, 0, 0, 26), (255, 255, 255, 36)),
 }
 _FLUENT_STATUS_TEXT_PAIR = ("#FFFFFF", "#111111")
+_FLUENT_ENTITY_BADGE_MAPPING_FILL_PAIRS = {
+    "purple": ("#6E58C9", "#A99BF4"),
+    "blue": ("#4E69CC", "#9FB3E9"),
+    "green": ("#6D7A42", "#93AC72"),
+    "orange": ("#C46F5A", "#F0A08D"),
+}
+_FLUENT_ENTITY_BADGE_MISSING_TEXT_ALPHA = (132, 170)
 
 
 def _rgba_text(rgba: RgbaTuple) -> str:
@@ -163,6 +172,39 @@ def resolve_fluent_status_badge_colors(status: str) -> tuple[QColor, QColor]:
     background = background_pair[1] if isDarkTheme() else background_pair[0]
     foreground = foreground_pair[1] if isDarkTheme() else foreground_pair[0]
     return QColor(background), QColor(foreground)
+
+
+def resolve_fluent_entity_badge_colors(
+    kind: Literal["audio", "mapping"],
+    status: str,
+    palette: QPalette,
+) -> tuple[QColor, QColor]:
+    """按当前主题解析 overview 实体胶囊的底色和文字色。
+
+    Args:
+        kind: 胶囊段类型，仅支持 ``audio`` 与 ``mapping``。
+        status: 当前资源状态文案。
+        palette: 当前绘制使用的调色板。
+
+    Returns:
+        ``(background, foreground)`` 颜色对。
+    """
+    if status != "已存在":
+        foreground = QColor(palette.color(QPalette.ColorRole.Text))
+        alpha = _FLUENT_ENTITY_BADGE_MISSING_TEXT_ALPHA[1] if isDarkTheme() else _FLUENT_ENTITY_BADGE_MISSING_TEXT_ALPHA[0]
+        foreground.setAlpha(alpha)
+        return QColor(0, 0, 0, 0), foreground
+
+    foreground = QColor(_FLUENT_STATUS_TEXT_PAIR[1] if isDarkTheme() else _FLUENT_STATUS_TEXT_PAIR[0])
+    preset = get_accent_preset(current_accent_preset_id())
+
+    if kind == "audio":
+        background = preset.scale.color(300 if isDarkTheme() else 500)
+        return background, foreground
+
+    light_fill, dark_fill = _FLUENT_ENTITY_BADGE_MAPPING_FILL_PAIRS[preset.id]
+    background = QColor(dark_fill if isDarkTheme() else light_fill)
+    return background, foreground
 
 
 def build_item_view_qss(  # noqa: PLR0913

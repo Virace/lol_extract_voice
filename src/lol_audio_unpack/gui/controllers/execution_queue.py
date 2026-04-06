@@ -7,7 +7,7 @@ from dataclasses import replace
 from datetime import datetime
 
 from loguru import logger
-from PySide6.QtCore import QObject, QThreadPool, Signal
+from PySide6.QtCore import QObject, Signal
 
 from lol_audio_unpack.gui.controllers.contracts import (
     GuiLogMessage,
@@ -16,10 +16,11 @@ from lol_audio_unpack.gui.controllers.contracts import (
 )
 from lol_audio_unpack.gui.controllers.task_queue_store import (
     TaskQueueStore,
-    build_task_queue_row_text,
+    build_row_text,
 )
-from lol_audio_unpack.gui.service.task_runner import run_execution_task
+from lol_audio_unpack.gui.service.execution_process_worker import ExecutionProcessWorker
 from lol_audio_unpack.gui.task_models import (
+    TASK_STATUS_CANCELLED,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
     TASK_STATUS_RUNNING,
@@ -30,7 +31,6 @@ from lol_audio_unpack.gui.task_models import (
     OutputStateRefreshRequest,
     QueuedExecutionTask,
 )
-from lol_audio_unpack.gui.workers import TaskWorker
 
 
 def _build_output_state_refresh_request(
@@ -74,15 +74,18 @@ class ExecutionQueueController(QObject):
         self,
         *,
         build_task_item_tooltip: Callable[[QueuedExecutionTask], str],
+        single_task_mode: bool = False,
         parent: QObject | None = None,
     ) -> None:
         """初始化执行队列控制器。"""
         super().__init__(parent)
         self._queue_store = TaskQueueStore()
         self._build_task_item_tooltip = build_task_item_tooltip
+        self._single_task_mode = single_task_mode
         self._draft_count = 0
         self._active_task_id: int | None = None
-        self._active_worker: TaskWorker | None = None
+        self._active_worker: ExecutionProcessWorker | object | None = None
+        self._ignored_task_ids: set[int] = set()
         self._stage_completion_notifications: set[tuple[int, str]] = set()
 
     @property
@@ -101,6 +104,8 @@ class ExecutionQueueController(QObject):
     def has_incomplete_tasks(self) -> bool:
         """返回当前队列中是否仍有未完成任务。"""
         counts = self.queue_status_counts()
+        if self._single_task_mode:
+            return counts[TASK_STATUS_RUNNING] + counts[TASK_STATUS_WAITING] > 0
         return counts[TASK_STATUS_RUNNING] + counts[TASK_STATUS_WAITING] + counts[TASK_STATUS_FAILED] > 0
 
     def draft_queue_size(self) -> int:
@@ -121,30 +126,43 @@ class ExecutionQueueController(QObject):
 
     def enqueue_task(self, *, draft: ExecutionTaskDraft, summary: str) -> QueuedExecutionTask:
         """将任务草稿加入队列，并尽可能立即启动。"""
+        if self._single_task_mode:
+            self._clear_single_task_history()
+            current_task = self.find_running_task()
+            if current_task is None:
+                current_task = next(iter(self._queue_store.tasks()), None)
+            if current_task is not None:
+                logger.debug("[执行中心] 单任务模式已忽略重复创建请求")
+                return current_task
+
         self._draft_count += 1
         queued_task = self._queue_store.append_task(
             QueuedExecutionTask(task_id=self._draft_count, draft=draft, summary=summary)
         )
-        row_text = build_task_queue_row_text(queued_task)
+        row_text = build_row_text(queued_task)
 
         self.log_requested.emit(GuiLogMessage(level="info", message=f"[队列] {row_text}"))
         started_task = self.start_next_waiting_task()
         if started_task is None:
             self.progress_display_requested.emit(
                 QueueProgressUpdate(
-                    status_text="状态：新任务已加入等待队列。",
-                    note_text="0% · 当前显示任务队列状态。",
+                    status_text="状态：任务已创建。",
+                    note_text="0% · 当前任务等待启动。",
                     progress_current=0,
                     progress_total=1,
                 )
             )
         elif self._active_task_id is not None:
-            self.progress_display_requested.emit(QueueProgressUpdate(status_text="状态：任务已加入队列。"))
+            self.progress_display_requested.emit(QueueProgressUpdate(status_text="状态：任务已创建。"))
         else:
             self.progress_display_requested.emit(QueueProgressUpdate())
 
         self.feedback_requested.emit(
-            GuiNotice(title="已加入任务队列", content=row_text, level="success")
+            GuiNotice(
+                title="任务已创建" if self._single_task_mode else "已加入任务队列",
+                content=summary if self._single_task_mode else row_text,
+                level="success",
+            )
         )
         return queued_task
 
@@ -192,11 +210,7 @@ class ExecutionQueueController(QObject):
 
     def start_task_worker(self, task: QueuedExecutionTask) -> None:
         """为指定任务创建后台 worker 并提交到线程池。"""
-
-        def run_with_signals(signals) -> ExecutionTaskResult:
-            return run_execution_task(task, signals)
-
-        worker = TaskWorker(run_with_signals, pass_signals=True)
+        worker = ExecutionProcessWorker(task, parent=self)
         worker.signals.started.connect(lambda task_id=task.task_id: self.on_task_started(task_id))
         worker.signals.progress.connect(
             lambda progress, task_id=task.task_id: self.on_task_progress(task_id, progress)
@@ -206,10 +220,12 @@ class ExecutionQueueController(QObject):
         )
         worker.signals.failed.connect(lambda error, task_id=task.task_id: self.on_task_failed(task_id, error))
         self._active_worker = worker
-        QThreadPool.globalInstance().start(worker)
+        worker.start()
 
     def on_task_started(self, task_id: int) -> None:
         """处理后台任务真正启动后的摘要更新。"""
+        if task_id in self._ignored_task_ids:
+            return
         task = self.find_task_by_id(task_id)
         if task is None:
             return
@@ -225,6 +241,8 @@ class ExecutionQueueController(QObject):
 
     def on_task_progress(self, task_id: int, progress: object) -> None:
         """接收后台任务进度并刷新队列状态。"""
+        if task_id in self._ignored_task_ids:
+            return
         if not isinstance(progress, ExecutionTaskProgress):
             return
 
@@ -260,6 +278,8 @@ class ExecutionQueueController(QObject):
 
     def on_task_finished(self, task_id: int, result: object) -> None:
         """处理后台任务成功完成后的状态收敛。"""
+        if task_id in self._ignored_task_ids:
+            return
         task = self.find_task_by_id(task_id)
         if task is None:
             return
@@ -295,6 +315,8 @@ class ExecutionQueueController(QObject):
 
     def on_task_failed(self, task_id: int, error: str) -> None:
         """处理后台任务失败后的状态收敛。"""
+        if task_id in self._ignored_task_ids:
+            return
         task = self.find_task_by_id(task_id)
         if task is None:
             return
@@ -321,6 +343,47 @@ class ExecutionQueueController(QObject):
             ExecutionTaskResult(completed_steps=(), summary=error, duration_seconds=0.0),
         )
         self.feedback_requested.emit(GuiNotice(title="任务执行失败", content=error, level="error"))
+
+    def cancel_active_task(self) -> bool:
+        """强制结束当前运行中的任务，并将其收口为已取消。"""
+        task = self.find_running_task()
+        if task is None:
+            return False
+
+        self._ignored_task_ids.add(task.task_id)
+        self._stop_active_worker()
+
+        cancelled_message = "任务已被强制结束。"
+        cancelled_progress_detail = None
+        if isinstance(task.progress_detail, ExecutionTaskProgress):
+            cancelled_progress_detail = replace(task.progress_detail, message=cancelled_message)
+
+        progress_total = max(task.progress_total, 1)
+        progress_current = min(task.progress_current, progress_total)
+        updated_task = self.update_task(
+            task.task_id,
+            status=TASK_STATUS_CANCELLED,
+            finished_at=datetime.now(),
+            progress_current=progress_current,
+            progress_total=progress_total,
+            progress_message=cancelled_message,
+            progress_detail=cancelled_progress_detail,
+            result_summary="",
+            error_message="",
+        )
+        self._after_task_stopped(task.task_id)
+        logger.warning(f"[队列] 任务 #{task.task_id} 已被强制结束")
+        self.task_queue_busy_changed.emit(self.has_incomplete_tasks())
+        self.progress_display_requested.emit(QueueProgressUpdate())
+        self.output_state_refresh_requested.emit(OutputStateRefreshRequest(requires_full_refresh=True))
+        self.feedback_requested.emit(
+            GuiNotice(
+                title="任务已取消",
+                content=f"任务 #{updated_task.task_id} 已强制结束。",
+                level="warning",
+            )
+        )
+        return True
 
     def _after_task_stopped(self, task_id: int) -> None:
         """清理一个任务结束后的通用运行态。"""
@@ -360,6 +423,46 @@ class ExecutionQueueController(QObject):
             )
         self.output_state_refresh_requested.emit(refresh_request)
 
+    def _clear_single_task_history(self) -> None:
+        """在单任务模式下清理已结束的历史任务快照。"""
+        if not self._single_task_mode or self.find_running_task() is not None:
+            return
+        if self.has_incomplete_tasks() or self.draft_queue_size() == 0:
+            return
+
+        self._queue_store.clear_tasks()
+        self._stage_completion_notifications.clear()
+        self._ignored_task_ids.clear()
+
+    def _stop_active_worker(self, *, wait_ms: int = 100) -> None:
+        """尽力结束当前执行线程，必要时退化到强制终止。"""
+        worker = self._active_worker
+        if worker is None:
+            return
+        try:
+            is_running = getattr(worker, "isRunning", lambda: False)()
+        except RuntimeError:
+            return
+        if not is_running:
+            return
+
+        for method_name in ("requestInterruption", "quit"):
+            method = getattr(worker, method_name, None)
+            if callable(method):
+                method()
+
+        wait = getattr(worker, "wait", None)
+        if callable(wait):
+            try:
+                if wait(wait_ms):
+                    return
+            except RuntimeError:
+                return
+
+        terminate = getattr(worker, "terminate", None)
+        if callable(terminate):
+            terminate()
+
     def clear_draft_queue(self) -> None:
         """清空当前任务队列中可直接移除的任务项。"""
         running_task = self.find_running_task()
@@ -397,6 +500,7 @@ class ExecutionQueueController(QObject):
         self._draft_count = count
         self._active_task_id = None
         self._active_worker = None
+        self._ignored_task_ids.clear()
         self._stage_completion_notifications.clear()
 
         for task_id in range(1, count + 1):
@@ -443,6 +547,7 @@ class ExecutionQueueController(QObject):
         self._queue_store.clear_tasks()
         self._active_task_id = None
         self._active_worker = None
+        self._ignored_task_ids.clear()
         self._stage_completion_notifications.clear()
         self.task_running_changed.emit(False)
         self.task_queue_busy_changed.emit(self.has_incomplete_tasks())
@@ -451,8 +556,10 @@ class ExecutionQueueController(QObject):
 
     def shutdown(self) -> None:
         """清理执行中心后台任务引用。"""
+        self._stop_active_worker()
         self._active_task_id = None
         self._active_worker = None
+        self._ignored_task_ids.clear()
         self._stage_completion_notifications.clear()
 
     def inspect_queue(self, *, builder_card_height: int) -> str:

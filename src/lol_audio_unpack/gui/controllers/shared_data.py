@@ -19,20 +19,20 @@ from lol_audio_unpack.gui.task_models import OutputStateRefreshRequest
 SHARED_CONTEXT_BUILD_TIMEOUT_MS = 15000
 
 
-def _get_effective_source_mode(cfg, overrides: dict[str, str | bool] | None = None) -> str:
+def _resolve_source_mode(config, overrides: dict[str, str | bool] | None = None) -> str:
     """返回共享数据控制器当前应使用的来源模式。"""
-    configured_mode = getattr(cfg, "effective_source_mode", None)
+    configured_mode = getattr(config, "effective_source_mode", None)
     if configured_mode:
         return str(configured_mode)
     if overrides is not None:
         return str(overrides.get(SettingKey.SOURCE_MODE, "local_path") or "local_path")
-    return str(getattr(cfg, "source_mode", "local_path") or "local_path")
+    return str(getattr(config, "source_mode", "local_path") or "local_path")
 
 
-def build_shared_entity_reader_signature(cfg) -> tuple[str | bool, ...]:
+def build_shared_entity_reader_signature(config) -> tuple[str | bool, ...]:
     """构建影响共享实体数据读取上下文的配置签名。"""
-    overrides = cfg.to_app_context_settings()
-    source_mode = _get_effective_source_mode(cfg, overrides)
+    overrides = config.to_app_context_settings()
+    source_mode = _resolve_source_mode(config, overrides)
     return (
         source_mode,
         overrides[SettingKey.GAME_PATH],
@@ -44,32 +44,32 @@ def build_shared_entity_reader_signature(cfg) -> tuple[str | bool, ...]:
     )
 
 
-def build_shared_entity_scan_signature(cfg) -> tuple[str | bool, ...]:
+def build_shared_entity_scan_signature(config) -> tuple[str | bool, ...]:
     """构建仅影响输出扫描结果的配置签名。"""
-    overrides = cfg.to_app_context_settings()
+    overrides = config.to_app_context_settings()
     return (
         overrides[SettingKey.OUTPUT_PATH],
         overrides[SettingKey.GROUP_BY_TYPE],
     )
 
 
-def build_shared_context_loading_message(cfg) -> str:
+def build_shared_context_loading_message(config) -> str:
     """根据当前模式生成首页共享数据加载阶段文案。"""
-    if _get_effective_source_mode(cfg) != "remote_snapshot":
+    if _resolve_source_mode(config) != "remote_snapshot":
         return "正在读取本地共享数据…"
 
-    if getattr(cfg, "remote_snapshot_strategy", "latest") == "custom":
+    if getattr(config, "remote_snapshot_strategy", "latest") == "custom":
         return "正在校验固定远端快照…"
 
     return "正在解析最新远端版本…"
 
 
-def build_shared_context_timeout_message(cfg) -> str:
+def build_shared_context_timeout_message(config) -> str:
     """根据当前模式生成共享数据加载超时提示。"""
-    if cfg is None or _get_effective_source_mode(cfg) != "remote_snapshot":
+    if config is None or _resolve_source_mode(config) != "remote_snapshot":
         return "读取共享数据超时，请重试。"
 
-    if getattr(cfg, "remote_snapshot_strategy", "latest") == "custom":
+    if getattr(config, "remote_snapshot_strategy", "latest") == "custom":
         return "校验固定远端快照超时，请检查配置后重试。"
 
     return "解析最新远端版本超时，请检查网络连接后重试。"
@@ -124,7 +124,7 @@ class SharedDataController(QObject):
         self.auto_prepare_attempted = False
         self.shared_data_prepare_worker = None
         self.build_worker = None
-        self.build_cfg = None
+        self.build_config = None
         self.build_request_id = 0
         self.reader_signature: tuple[str | bool, ...] | None = None
         self.scan_signature: tuple[str | bool, ...] | None = None
@@ -157,20 +157,20 @@ class SharedDataController(QObject):
             or self.build_timeout_timer.isActive()
         )
 
-    def bootstrap(self, cfg=None) -> None:
+    def bootstrap(self, config=None) -> None:
         """初始化共享数据签名，并决定是否执行首轮加载。"""
-        cfg = cfg or self._get_config()
-        self.reader_signature = build_shared_entity_reader_signature(cfg)
-        self.scan_signature = build_shared_entity_scan_signature(cfg)
+        config = config or self._get_config()
+        self.reader_signature = build_shared_entity_reader_signature(config)
+        self.scan_signature = build_shared_entity_scan_signature(config)
 
-        block_reason = self._get_app_context_block_reason(cfg)
+        block_reason = self._get_app_context_block_reason(config)
         if block_reason is not None:
             logger.info(f"共享实体数据首轮加载已跳过: {block_reason}")
             self._apply_blocked_state(block_reason)
             return
 
         logger.debug("准备触发首轮共享实体数据加载")
-        self.load_initial_data(cfg)
+        self.load_initial_data(config)
 
     def set_queue_busy(self, busy: bool) -> None:
         """在任务队列忙碌状态变化时暂停或恢复待处理刷新。"""
@@ -179,11 +179,11 @@ class SharedDataController(QObject):
             return
         self.flush_pending_runtime_entity_refresh()
 
-    def load_initial_data(self, cfg=None) -> None:
+    def load_initial_data(self, config=None) -> None:
         """程序启动或重载时加载共享实体数据。"""
-        cfg = cfg or self._get_config()
+        config = config or self._get_config()
         logger.info("开始加载共享实体数据")
-        block_reason = self._get_app_context_block_reason(cfg)
+        block_reason = self._get_app_context_block_reason(config)
         if block_reason is not None:
             logger.info(f"共享实体数据加载已跳过: {block_reason}")
             self._apply_blocked_state(block_reason)
@@ -192,35 +192,35 @@ class SharedDataController(QObject):
         self.is_loading_shared_data = True
         self.build_request_id += 1
         request_id = self.build_request_id
-        self.build_cfg = cfg
+        self.build_config = config
         self.loading_state_changed.emit(
             SharedDataLoadingState(
-                message=build_shared_context_loading_message(cfg),
+                message=build_shared_context_loading_message(config),
                 active=True,
             )
         )
 
-        source_mode = _get_effective_source_mode(cfg)
+        source_mode = _resolve_source_mode(config)
         if source_mode == "remote_snapshot":
-            strategy = getattr(cfg, "remote_snapshot_strategy", "latest")
+            strategy = getattr(config, "remote_snapshot_strategy", "latest")
             if strategy == "custom":
                 logger.debug(
                     "当前配置: source_mode=remote_snapshot, strategy=custom, "
-                    f"version={getattr(cfg, 'snapshot_version', '')}, output_path={cfg.output_path}"
+                    f"version={getattr(config, 'snapshot_version', '')}, output_path={config.output_path}"
                 )
             else:
                 logger.debug(
                     "当前配置: source_mode=remote_snapshot, strategy=latest, "
-                    f"live_region={getattr(cfg, 'remote_live_region', '')}, output_path={cfg.output_path}"
+                    f"live_region={getattr(config, 'remote_live_region', '')}, output_path={config.output_path}"
                 )
         else:
             logger.debug(
                 "当前配置: source_mode=local_path, "
-                f"output_path={cfg.output_path}, game_path={cfg.game_path}"
+                f"output_path={config.output_path}, game_path={config.game_path}"
             )
 
         worker = self._task_worker_cls(
-            lambda: self._create_app_context(settings=cfg.to_app_context_settings())
+            lambda: self._create_app_context(settings=config.to_app_context_settings())
         )
         worker.signals.finished.connect(
             lambda app_context, request_id=request_id: self.on_shared_context_build_finished(
@@ -241,7 +241,7 @@ class SharedDataController(QObject):
 
         self.build_timeout_timer.stop()
         self.build_worker = None
-        self.build_cfg = None
+        self.build_config = None
         self.app_context = app_context
         self.app_context_changed.emit(self.app_context)
         self.shared_data_cleared.emit()
@@ -262,7 +262,7 @@ class SharedDataController(QObject):
 
         self.build_timeout_timer.stop()
         self.build_worker = None
-        self.build_cfg = None
+        self.build_config = None
         self.is_loading_shared_data = False
         self.app_context = None
         self.app_context_changed.emit(None)
@@ -282,11 +282,11 @@ class SharedDataController(QObject):
         if self.build_worker is None:
             return
 
-        cfg = self.build_cfg
-        message = build_shared_context_timeout_message(cfg)
+        config = self.build_config
+        message = build_shared_context_timeout_message(config)
         self.build_request_id += 1
         self.build_worker = None
-        self.build_cfg = None
+        self.build_config = None
         self.is_loading_shared_data = False
         self.app_context = None
         self.app_context_changed.emit(None)
@@ -332,14 +332,14 @@ class SharedDataController(QObject):
         if (
             self.allow_auto_prepare_on_reload
             and not self.auto_prepare_attempted
-            and self.should_auto_prepare_shared_data(str(error))
+            and self.should_auto_prepare(str(error))
         ):
             self.auto_prepare_attempted = True
             logger.info("共享数据缺失或版本不兼容，转入后台数据准备流程")
             self.loading_state_changed.emit(
                 SharedDataLoadingState(message="正在刷新基础数据…", active=True)
             )
-            self.start_shared_data_prepare(self._get_config())
+            self.start_prepare(self._get_config())
             return
         self.loading_state_changed.emit(
             SharedDataLoadingState(message=f"加载失败: {error}", active=False)
@@ -433,10 +433,10 @@ class SharedDataController(QObject):
         self._champions_worker.error.connect(self.on_data_load_error)
         self._champions_worker.start()
 
-    def reload_unpack_data(self, cfg=None) -> None:
+    def reload_unpack_data(self, config=None) -> None:
         """重新加载页面共用的实体数据。"""
-        cfg = cfg or self._get_config()
-        block_reason = self._get_app_context_block_reason(cfg)
+        config = config or self._get_config()
+        block_reason = self._get_app_context_block_reason(config)
         if block_reason is not None:
             logger.info(f"共享实体数据重载已跳过: {block_reason}")
             self._apply_blocked_state(block_reason)
@@ -448,19 +448,19 @@ class SharedDataController(QObject):
         self.loading_state_changed.emit(
             SharedDataLoadingState(message="正在重新加载数据…", active=True)
         )
-        self.load_initial_data(cfg)
+        self.load_initial_data(config)
 
-    def on_shared_context_input_changed(self, cfg=None) -> None:
+    def on_context_input_changed(self, config=None) -> None:
         """根据共享上下文输入变化类型安排共享实体数据刷新。"""
-        cfg = cfg or self._get_config()
-        reader_signature = build_shared_entity_reader_signature(cfg)
-        scan_signature = build_shared_entity_scan_signature(cfg)
+        config = config or self._get_config()
+        reader_signature = build_shared_entity_reader_signature(config)
+        scan_signature = build_shared_entity_scan_signature(config)
         reader_changed = reader_signature != self.reader_signature
         scan_changed = scan_signature != self.scan_signature
 
         if scan_changed:
             self.reconfigure_runtime_logging_requested.emit(
-                RuntimeLoggingConfig.from_gui_config(cfg)
+                RuntimeLoggingConfig.from_gui_config(config)
             )
 
         self.reader_signature = reader_signature
@@ -512,7 +512,7 @@ class SharedDataController(QObject):
         self.auto_prepare_attempted = False
         self.reload_unpack_data(self._get_config())
 
-    def should_auto_prepare_shared_data(self, error: str) -> bool:
+    def should_auto_prepare(self, error: str) -> bool:
         """判断当前共享数据加载错误是否适合自动补一次后端更新。"""
         normalized = str(error)
         return (
@@ -522,27 +522,27 @@ class SharedDataController(QObject):
             or "数据版本与游戏版本严重不匹配" in normalized
         )
 
-    def start_shared_data_prepare(self, cfg=None) -> None:
+    def start_prepare(self, config=None) -> None:
         """在后台线程中补齐共享实体数据所需的后端更新。"""
-        cfg = cfg or self._get_config()
+        config = config or self._get_config()
         if self.shared_data_prepare_worker is not None:
             return
 
-        overrides = dict(cfg.to_app_context_settings())
+        overrides = dict(config.to_app_context_settings())
 
         def run_prepare() -> None:
             self._prepare_shared_entity_data(overrides)
 
         worker = self._task_worker_cls(run_prepare)
-        worker.signals.started.connect(self.on_shared_data_prepare_started)
+        worker.signals.started.connect(self.on_prepare_started)
         worker.signals.finished.connect(
-            lambda _result, refresh_cfg=cfg: self.on_shared_data_prepare_finished(refresh_cfg)
+            lambda _result, refresh_config=config: self.on_prepare_finished(refresh_config)
         )
-        worker.signals.failed.connect(self.on_shared_data_prepare_failed)
+        worker.signals.failed.connect(self.on_prepare_failed)
         self.shared_data_prepare_worker = worker
         self._start_worker(worker)
 
-    def on_shared_data_prepare_started(self) -> None:
+    def on_prepare_started(self) -> None:
         """同步后台共享数据准备开始时的界面状态。"""
         logger.info("开始后台共享数据准备")
         self.is_preparing_shared_data = True
@@ -550,14 +550,14 @@ class SharedDataController(QObject):
             SharedDataLoadingState(message="正在刷新基础数据…", active=True)
         )
 
-    def on_shared_data_prepare_finished(self, cfg) -> None:
+    def on_prepare_finished(self, config) -> None:
         """在后台数据准备结束后重新加载共享实体数据。"""
         logger.info("后台共享数据准备完成，重新加载共享实体数据")
         self.is_preparing_shared_data = False
         self.shared_data_prepare_worker = None
-        self.reload_unpack_data(cfg)
+        self.reload_unpack_data(config)
 
-    def on_shared_data_prepare_failed(self, error: str) -> None:
+    def on_prepare_failed(self, error: str) -> None:
         """处理后台共享数据准备失败后的界面状态。"""
         logger.error(f"后台共享数据准备失败: {error}")
         self.is_preparing_shared_data = False
@@ -576,7 +576,7 @@ class SharedDataController(QObject):
         self.is_loading_shared_data = False
         self.build_timeout_timer.stop()
         self.build_worker = None
-        self.build_cfg = None
+        self.build_config = None
         self.app_context = None
         self.shared_data_cleared.emit()
         self.app_context_changed.emit(None)
