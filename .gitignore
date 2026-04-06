@@ -90,6 +90,8 @@ ENV/
 env.bak/
 venv.bak/
 .lol.env
+lol-audio-unpack.ini
+lol-audio-unpack.dev.ini
 
 # Spyder project settings
 .spyderproject

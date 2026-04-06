@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
@@ -26,11 +26,11 @@ from qfluentwidgets import (
 from qfluentwidgets import FluentIcon as FIF
 
 from lol_audio_unpack.gui.common import GuiConfig, format_default_relative_path
-from lol_audio_unpack.gui.common.style import (
+from lol_audio_unpack.gui.common.page_style import (
     apply_page_content_margins,
     configure_transparent_scroll_page,
 )
-from lol_audio_unpack.gui.controllers.home_status_controller import (
+from lol_audio_unpack.gui.controllers import (
     HomeStatusController,
     HomeStatusDisplayState,
 )

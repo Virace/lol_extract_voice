@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
     QWidget,
 )
-from qfluentwidgets import CustomStyleSheet, setCustomStyleSheet, setStyleSheet, themeColor
+from qfluentwidgets import CustomStyleSheet, isDarkTheme, setCustomStyleSheet, setStyleSheet
 from qfluentwidgets.components.widgets.scroll_bar import SmoothScrollDelegate
 
 from lol_audio_unpack.gui.common.styles import (
@@ -27,6 +27,7 @@ from lol_audio_unpack.gui.components.overview_status_badge import (
     measure_status_pill_width,
     paint_status_pill,
 )
+from lol_audio_unpack.gui.theme import current_accent_preset_id, get_accent_preset
 
 EMPTY_MODEL_INDEX = QModelIndex()
 OVERVIEW_ITEM_HEIGHT = 40
@@ -109,10 +110,13 @@ def _build_overview_idle_background() -> QColor:
 
 def _build_overview_interaction_colors() -> tuple[QColor, QColor, QColor]:
     """构造总览列表 hover/selected 的中性底色与主题 accent。"""
+    selection_accent = get_accent_preset(current_accent_preset_id()).scale.color(
+        300 if isDarkTheme() else 700
+    )
     return (
         resolve_fluent_neutral_surface("subtle_hover"),
         resolve_fluent_neutral_surface("subtle_selected"),
-        QColor(themeColor()),
+        selection_accent,
     )
 
 

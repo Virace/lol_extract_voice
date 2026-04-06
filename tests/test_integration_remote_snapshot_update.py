@@ -4,8 +4,9 @@ from pathlib import Path
 import pytest
 from riotmanifest import LeagueManifestResolver
 
-from lol_audio_unpack.app_context import OperationOptions, create_app_context
-from lol_audio_unpack.facade import LolAudioUnpackApp
+from lol_audio_unpack.app import create_app_context
+from lol_audio_unpack.app.facade import LolAudioUnpackApp
+from lol_audio_unpack.app.types import OperationOptions
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.manager.utils import find_data_file, read_data
 from lol_audio_unpack.utils.common import Singleton
@@ -60,7 +61,7 @@ def test_remote_snapshot_update_champions_live_latest() -> None:
     _reset_data_reader_singleton()
     try:
         ctx = create_app_context(
-            cli_overrides={
+            settings={
                 "OUTPUT_PATH": str(output_path),
                 "GAME_REGION": GAME_REGION,
                 "SOURCE_MODE": "remote_snapshot",

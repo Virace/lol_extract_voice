@@ -19,6 +19,7 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
+from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.gui.common.font_compat import apply_switch_button_safe_font
 from lol_audio_unpack.gui.components.accordion_setting_card import FormAccordionCard
 
@@ -259,9 +260,9 @@ class FixedSnapshotCard(FormAccordionCard):
         self.gameUrlEdit.setFixedWidth(360)
         self.gameUrlEdit.setClearButtonEnabled(True)
 
-        self.add_form_row("版本号", "REMOTE_VERSION", self.versionEdit)
-        self.add_form_row("LCU Manifest URL", "REMOTE_LCU_MANIFEST_URL", self.lcuUrlEdit)
-        self.add_form_row("Game Manifest URL", "REMOTE_GAME_MANIFEST_URL", self.gameUrlEdit)
+        self.add_form_row("版本号", SettingKey.REMOTE_VERSION, self.versionEdit)
+        self.add_form_row("LCU Manifest URL", SettingKey.REMOTE_LCU_MANIFEST_URL, self.lcuUrlEdit)
+        self.add_form_row("Game Manifest URL", SettingKey.REMOTE_GAME_MANIFEST_URL, self.gameUrlEdit)
 
     def versionValue(self) -> str:
         """返回版本号输入值。"""

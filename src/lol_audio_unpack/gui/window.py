@@ -1,4 +1,4 @@
-"""应用主窗口与页面装配逻辑。"""
+﻿"""应用主窗口与页面装配逻辑。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from time import perf_counter
 from loguru import logger
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QThreadPool, QTimer
 from PySide6.QtGui import QCloseEvent, QIcon, QResizeEvent, QShowEvent
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication, QMessageBox, QVBoxLayout, QWidget
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets import (
     FluentWindow,
@@ -24,29 +24,31 @@ from qfluentwidgets import (
 )
 
 from lol_audio_unpack import __version__
-from lol_audio_unpack.app_context import OperationOptions, create_app_context
-from lol_audio_unpack.facade import LolAudioUnpackApp
+from lol_audio_unpack.app.context import create_app_context
+from lol_audio_unpack.app.facade import LolAudioUnpackApp
+from lol_audio_unpack.app.types import OperationOptions
+from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.gui.common import (
     apply_smooth_scroll_enabled,
-    get_app_context_block_reason,
-    load_app_icon,
+    get_block_reason,
     show_feedback_infobar,
 )
-from lol_audio_unpack.gui.common.packaged_remote_mode_policy import (
-    normalize_app_context_overrides,
-)
+from lol_audio_unpack.gui.common.remote_mode_policy import normalize_app_context_settings
+from lol_audio_unpack.gui.components.global_progress_strip import GlobalProgressStripHost
 from lol_audio_unpack.gui.components.log_drawer import (
     GlobalLogDrawer,
 )
-from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
-from lol_audio_unpack.gui.controllers.dev_console_controller import DevConsoleController
-from lol_audio_unpack.gui.controllers.log_drawer_controller import LogDrawerController
-from lol_audio_unpack.gui.controllers.shared_data_controller import (
+from lol_audio_unpack.gui.controllers import (
+    DevConsoleController,
+    LogDrawerController,
     SharedDataController,
+)
+from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
+from lol_audio_unpack.gui.controllers.shared_data import (
     build_shared_entity_reader_signature,
     build_shared_entity_scan_signature,
 )
-from lol_audio_unpack.gui.controllers.window_shell_controller import (
+from lol_audio_unpack.gui.controllers.window_shell import (
     apply_runtime_logging,
     apply_smooth_scroll_settings,
     apply_task_queue_busy_state,
@@ -57,9 +59,10 @@ from lol_audio_unpack.gui.controllers.window_shell_controller import (
     register_navigation_items,
     sync_existing_runtime_logging,
 )
+from lol_audio_unpack.gui.resources import assets
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 from lol_audio_unpack.gui.service.worker import DataLoadWorker
-from lol_audio_unpack.gui.view.about_page import AboutPage
+from lol_audio_unpack.gui.view.about_page import AboutPage, get_minimum_shell_size
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 from lol_audio_unpack.gui.view.home_page import HomePage
 from lol_audio_unpack.gui.view.overview_page import OverviewPage
@@ -84,12 +87,12 @@ def _log_window_stage(stage: str, startup_begin: float, previous_mark: float) ->
     return current_mark
 
 
-def _prepare_shared_entity_data(cli_overrides: dict[str, str | bool]) -> None:
+def _prepare_shared_entity_data(shared_settings: dict[str, str | bool]) -> None:
     """为实体列表准备后端共享数据。"""
-    prepare_overrides = dict(cli_overrides)
-    prepare_overrides["WITH_BP_VO"] = True
-    prepare_overrides = normalize_app_context_overrides(prepare_overrides)
-    app_context = create_app_context(cli_overrides=prepare_overrides)
+    prepare_settings = dict(shared_settings)
+    prepare_settings[SettingKey.WITH_BP_VO] = True
+    prepare_settings = normalize_app_context_settings(prepare_settings)
+    app_context = create_app_context(settings=prepare_settings)
     app = LolAudioUnpackApp(app_context)
     app.update(OperationOptions(), target="all")
 
@@ -110,6 +113,18 @@ class MainWindow(FluentWindow):
         self._log_drawer_controller = LogDrawerController()
         super().__init__()
         previous_mark = _log_window_stage("FluentWindow 基类初始化", startup_begin, previous_mark)
+        self._progress_strip_host = GlobalProgressStripHost(self)
+        self._content_shell = QWidget(self)
+        self._content_shell_layout = QVBoxLayout(self._content_shell)
+        self._content_shell_layout.setContentsMargins(0, 0, 0, 0)
+        self._content_shell_layout.setSpacing(0)
+        self.widgetLayout.setContentsMargins(0, 48, 0, 0)
+        self.widgetLayout.removeWidget(self.stackedWidget)
+        self._content_shell_layout.addWidget(self.stackedWidget, 1)
+        self._content_shell_layout.addWidget(self._progress_strip_host, 0)
+        self.widgetLayout.addWidget(self._content_shell)
+        self.titleBar.raise_()
+        previous_mark = _log_window_stage("主内容壳层初始化完成", startup_begin, previous_mark)
 
         # apply specific real-time listeners for theme tracking
         qconfig.themeChanged.connect(setTheme)
@@ -171,10 +186,9 @@ class MainWindow(FluentWindow):
             start_worker_fn=lambda worker: QThreadPool.globalInstance().start(worker),
             prepare_shared_entity_data_fn=_prepare_shared_entity_data,
             reset_data_reader_singleton_fn=_reset_data_reader_singleton,
-            app_context_block_reason_fn=get_app_context_block_reason,
+            app_context_block_reason_fn=get_block_reason,
             parent=self,
         )
-        self._shared_context_build_timeout_timer = self._shared_data_controller.shared_context_build_timeout_timer
 
         register_navigation_items(self, self._shared_data_controller)
         previous_mark = _log_window_stage("导航初始化完成", startup_begin, previous_mark)
@@ -195,8 +209,10 @@ class MainWindow(FluentWindow):
     def _initWindow(self):
         """设置主窗口尺寸、标题与基础事件过滤器。"""
         self.resize(1130, 800)
-        self.setMinimumWidth(860)
-        self.setWindowIcon(load_app_icon())
+        about_min_size = get_minimum_shell_size()
+        self.setMinimumWidth(max(860, about_min_size.width()))
+        self.setMinimumHeight(about_min_size.height())
+        self.setWindowIcon(assets.app.window_icon())
         self.setWindowTitle(f"Lol Audio Unpack  {__version__}")
 
         # Calculate screen center
@@ -288,6 +304,8 @@ class MainWindow(FluentWindow):
             event.ignore()
             return
         should_force_quit = self._has_active_background_work()
+        if should_force_quit:
+            self._shutdown_background_work()
         self._disconnect_theme_material_listener()
         self._unregister_app_event_filter()
         super().closeEvent(event)
@@ -374,6 +392,9 @@ class MainWindow(FluentWindow):
         self.executionInterface.output_state_refresh_requested.connect(
             self._shared_data_controller.refresh_shared_output_state
         )
+        self.executionInterface.global_progress_state_changed.connect(
+            lambda state: self._progress_strip_host.set_state(state, animate=True)
+        )
         self.executionInterface.task_queue_busy_changed.connect(
             lambda busy: apply_task_queue_busy_state(
                 busy=busy,
@@ -382,8 +403,15 @@ class MainWindow(FluentWindow):
                 shared_data_controller=self._shared_data_controller,
             )
         )
+        self._progress_strip_host.strip_widget().stop_requested.connect(
+            self.executionInterface.request_cancel_task
+        )
         self.executionInterface.log_lines_appended.connect(self._log_drawer_controller.append_log_lines)
-        self.settingInterface.shared_context_input_changed.connect(self._shared_data_controller.on_shared_context_input_changed)
+        self._progress_strip_host.set_state(
+            self.executionInterface.current_global_progress_state(),
+            animate=False,
+        )
+        self.settingInterface.shared_context_input_changed.connect(self._shared_data_controller.on_context_input_changed)
         self.settingInterface.smooth_scroll_changed.connect(
             lambda page_enabled, widget_enabled: apply_smooth_scroll_settings(
                 setting_page=self.settingInterface,
@@ -425,8 +453,8 @@ class MainWindow(FluentWindow):
             execution_page=self.executionInterface,
         )
 
-        self._shared_data_controller.shared_entity_reader_signature = build_shared_entity_reader_signature(cfg)
-        self._shared_data_controller.shared_entity_scan_signature = build_shared_entity_scan_signature(cfg)
+        self._shared_data_controller.reader_signature = build_shared_entity_reader_signature(cfg)
+        self._shared_data_controller.scan_signature = build_shared_entity_scan_signature(cfg)
 
         # 首页初始化完成后加载数据
         self._shared_data_controller.load_initial_data(cfg)

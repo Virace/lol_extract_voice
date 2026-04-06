@@ -1,4 +1,4 @@
-"""实体总览页面，负责展示实体状态并预留右侧资源预览区。"""
+﻿"""实体总览页面，负责展示实体状态并预留右侧资源预览区。"""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
 from PySide6.QtCore import (
     QItemSelectionModel,
     QModelIndex,
@@ -48,7 +49,7 @@ from qfluentwidgets import (
 )
 
 from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled
-from lol_audio_unpack.gui.common.style import apply_page_content_margins
+from lol_audio_unpack.gui.common.page_style import apply_page_content_margins
 from lol_audio_unpack.gui.common.styles import build_fluent_panel_frame_theme_pair
 from lol_audio_unpack.gui.components.overview_entity_list import OVERVIEW_ROW_ROLE, OverviewEntityListView
 from lol_audio_unpack.gui.components.preview_tree import (
@@ -56,21 +57,24 @@ from lol_audio_unpack.gui.components.preview_tree import (
     PreviewTreeView,
     build_tree_summary_text,
     collect_tree_stats,
+    extract_preview_modifiers,
+    filter_preview_mapping_data,
+)
+from lol_audio_unpack.gui.controllers import (
+    OverviewPreviewController,
+    PreviewPlaybackController,
 )
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
 from lol_audio_unpack.gui.controllers.entity_data_store import EntityDataStore
-from lol_audio_unpack.gui.controllers.overview_preview_controller import (
-    AudioPreviewToggleResult,
-    OverviewPreviewController,
-)
-from lol_audio_unpack.gui.controllers.preview_playback_controller import (
-    PreviewPlaybackController,
-    PreviewPlaybackState,
-)
+from lol_audio_unpack.gui.controllers.overview_preview import AudioPreviewToggleResult
+from lol_audio_unpack.gui.controllers.preview_playback import PreviewPlaybackState
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 from lol_audio_unpack.gui.view.overview.audio_preview_panel import OverviewAudioPreviewPanel
 from lol_audio_unpack.gui.view.overview.entity_list_panel import OverviewEntityListPanel
-from lol_audio_unpack.gui.view.overview.preview_panel import OverviewPreviewPanel
+from lol_audio_unpack.gui.view.overview.preview_panel import (
+    DEFAULT_PREVIEW_PLACEHOLDER_TEXT,
+    OverviewPreviewPanel,
+)
 
 DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT = 10
 DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY = "default"
@@ -95,7 +99,7 @@ def create_preview_path_edit(parent: QWidget | None = None) -> LineEdit:
     line_edit = LineEdit(parent)
     line_edit.setReadOnly(True)
     line_edit.setClearButtonEnabled(False)
-    line_edit.setPlaceholderText("请选择左侧实体以查看原始数据。")
+    line_edit.setPlaceholderText(DEFAULT_PREVIEW_PLACEHOLDER_TEXT)
     line_edit.setMinimumWidth(0)
     line_edit.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
     return line_edit
@@ -129,10 +133,13 @@ class OverviewPage(QWidget):
         self._current_audio_preview_progress = 0.0
         self._current_audio_preview_is_playing = False
         self._current_audio_preview_is_paused = False
+        self._current_preview_mapping_data: dict[str, Any] | None = None
+        self._current_preview_available_audio_ids: set[str] = set()
+        self._current_preview_group_label_map: dict[str, str] = {}
         self._preview_audio_volume_percent = DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT
         self._preview_audio_output_device_key = DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY
         self._entity_lists: dict[str, OverviewEntityListView] = {}
-        self._audio_preview_placeholder = "请选择左侧实体以查看事件内容。"
+        self._audio_preview_placeholder = DEFAULT_PREVIEW_PLACEHOLDER_TEXT
         self._build_ui()
         self._preview_playback_controller = PreviewPlaybackController(parent=self)
         self._preview_playback_controller.playback_state_changed.connect(
@@ -239,12 +246,13 @@ class OverviewPage(QWidget):
         self.nav_pivot.currentItemChanged.connect(self._on_nav_changed)
         self.preview_mode_pivot.currentItemChanged.connect(self._on_preview_mode_changed)
         self.search_input.textChanged.connect(self._on_search_text_changed)
+        self.previewPanel.preview_search_input.textChanged.connect(self._on_preview_search_text_changed)
         self.sync_selection_btn.clicked.connect(self._sync_selected_entities)
         self.clear_selection_btn.clicked.connect(self._clear_selected_entities)
         self.reveal_file_btn.clicked.connect(self._reveal_selected_mapping_file)
         self.audio_preview_tree.audio_id_toggle_requested.connect(self._on_audio_preview_toggle_requested)
         qconfig.themeChanged.connect(self._refresh_theme_styles)
-        qconfig.themeColorChanged.connect(self._refresh_theme_styles)
+        qconfig.themeColorChanged.connect(self._refresh_entity_list_theme)
 
         for entity_type, list_widget in self._entity_lists.items():
             selection_model = list_widget.selectionModel()
@@ -259,9 +267,12 @@ class OverviewPage(QWidget):
 
     def _disconnect_theme_refresh_listeners(self, *_args: object) -> None:
         """断开实体总览页注册的全局主题监听。"""
-        for signal in (qconfig.themeChanged, qconfig.themeColorChanged):
+        for signal, callback in (
+            (qconfig.themeChanged, self._refresh_theme_styles),
+            (qconfig.themeColorChanged, self._refresh_entity_list_theme),
+        ):
             try:
-                signal.disconnect(self._refresh_theme_styles)
+                signal.disconnect(callback)
             except (RuntimeError, TypeError):
                 pass
 
@@ -280,6 +291,7 @@ class OverviewPage(QWidget):
 
         light_qss, dark_qss = build_fluent_panel_frame_theme_pair("QFrame#AudioPreviewSummaryCard")
         self.audio_preview_summary_card.setStyleSheet(dark_qss if qconfig.theme == Theme.DARK else light_qss)
+        self.previewPanel.refresh_theme()
 
     def _refresh_theme_styles(self, *_args: object) -> None:
         """统一刷新总览页当前主题相关样式。"""
@@ -290,6 +302,7 @@ class OverviewPage(QWidget):
         """切换右侧 Raw 与试听视图。"""
         is_audio_mode = mode_key == "audio"
         self.previewPanel.set_audio_mode(is_audio_mode)
+        self.previewPanel.preview_search_input.setEnabled(is_audio_mode)
 
     def _current_entity_type(self) -> str:
         return self.nav_pivot.currentRouteKey() or "champions"
@@ -417,7 +430,7 @@ class OverviewPage(QWidget):
         if current_preview_id is None:
             list_widget.setCurrentIndex(QModelIndex())
             self._set_splitter_sizes_evenly()
-            self._show_placeholder("请选择左侧实体以查看原始数据。")
+            self._show_placeholder(DEFAULT_PREVIEW_PLACEHOLDER_TEXT)
             self._update_selection_summary()
             return
 
@@ -471,6 +484,9 @@ class OverviewPage(QWidget):
     def _on_search_text_changed(self, _text: str) -> None:
         self._sync_current_list_view()
 
+    def _on_preview_search_text_changed(self, _text: str) -> None:
+        self._refresh_audio_preview_tree()
+
     def _on_current_item_changed(self, entity_type: str, current, _previous) -> None:
         if entity_type != self._current_entity_type():
             return
@@ -484,7 +500,7 @@ class OverviewPage(QWidget):
         row = self.entityListPanel.resolve_row_payload(item)
         if not row:
             self._current_preview_ids[entity_type] = None
-            self._show_placeholder("请选择左侧实体以查看原始数据。")
+            self._show_placeholder(DEFAULT_PREVIEW_PLACEHOLDER_TEXT)
             return
 
         self._current_preview_ids[entity_type] = str(row["id"])
@@ -506,14 +522,20 @@ class OverviewPage(QWidget):
         self.preview_path_edit.setCursorPosition(0)
         self.text_preview.setPlainText(preview_result.preview_content)
         self._clear_audio_preview_request()
-        stats = collect_tree_stats(preview_result.mapping_data, preview_result.available_audio_ids)
-        self.audioPreviewPanel.set_preview_data(
-            mapping_data=preview_result.mapping_data,
-            available_audio_ids=preview_result.available_audio_ids,
-            group_label_map=preview_result.group_label_map,
-            summary_text=build_tree_summary_text(stats),
+        self._current_preview_mapping_data = preview_result.mapping_data
+        self._current_preview_available_audio_ids = set(preview_result.available_audio_ids)
+        self._current_preview_group_label_map = dict(preview_result.group_label_map)
+        modifiers = extract_preview_modifiers(preview_result.mapping_data)
+        logger.debug(
+            "[总览预览] entity_type={} entity_id={} prefixes={} suffixes={} audio_types={}",
+            entity_type,
+            row["id"],
+            list(modifiers.prefixes),
+            list(modifiers.suffixes),
+            list(modifiers.audio_types),
         )
-        self._on_preview_mode_changed(self.preview_mode_pivot.currentRouteKey() or "audio")
+        self._refresh_audio_preview_tree()
+        self.previewPanel.show_current_preview()
         self._sync_audio_preview_playback_state()
         self.reveal_file_btn.setEnabled(True)
 
@@ -590,9 +612,33 @@ class OverviewPage(QWidget):
         self._current_mapping_path = None
         self._current_preview_entity_type = None
         self._current_preview_entity_id = None
+        self._current_preview_mapping_data = None
+        self._current_preview_available_audio_ids = set()
+        self._current_preview_group_label_map = {}
         self.previewPanel.show_placeholder(message)
         self._clear_audio_preview_request()
         self._sync_audio_preview_playback_state()
+
+    def _refresh_audio_preview_tree(self) -> None:
+        """根据当前搜索状态刷新右侧事件树。"""
+        keyword = self.previewPanel.preview_search_input.text()
+        filter_result = filter_preview_mapping_data(self._current_preview_mapping_data, keyword)
+        stats = collect_tree_stats(filter_result.mapping_data, self._current_preview_available_audio_ids)
+        summary_text = build_tree_summary_text(stats)
+        if filter_result.is_active:
+            summary_text = (
+                f"{summary_text} · 匹配事件 {filter_result.matched_event_count} · "
+                f"匹配 ID {filter_result.matched_audio_id_count}"
+            )
+
+        self.audioPreviewPanel.set_preview_data(
+            mapping_data=filter_result.mapping_data,
+            available_audio_ids=self._current_preview_available_audio_ids,
+            group_label_map=self._current_preview_group_label_map,
+            summary_text=summary_text,
+        )
+        if filter_result.is_active:
+            self.audio_preview_tree.expandAll()
 
     def _set_splitter_sizes_evenly(self) -> None:
         """在页面宽度已知时将左右面板收敛到更适合缩放的宽度比例。"""

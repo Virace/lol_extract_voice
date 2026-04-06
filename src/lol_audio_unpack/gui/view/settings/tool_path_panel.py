@@ -55,8 +55,37 @@ class ToolPathPanel:
             "选择文件",
             FIF.COMMAND_PROMPT,
             "vgmstream-cli 路径",
-            "音频转码依赖此工具 (vgmstream-cli.exe)  —  解包 .wem → .wav 格式",
+            "音频转码依赖此工具 (vgmstream-cli.exe)  —  将 .wem 批量转成 .wav",
         )
 
         self.group.addSettingCard(self.wwiserCard)
         self.group.addSettingCard(self.vgmstreamCard)
+
+
+class WavSettingsPanel:
+    """承载音频转码默认参数设置。"""
+
+    def __init__(self, *, parent: QWidget) -> None:
+        self.group = SettingCardGroup("音频转码", parent)
+        self.wavWorkersCard = ComboRowSettingCard(
+            FIF.SETTING,
+            "默认并发数",
+            "创建任务时默认使用的音频转码并发数",
+            ["1", "2", "4", "8", "16", "32", "64"],
+        )
+        self.wavTimeoutCard = ComboRowSettingCard(
+            FIF.SETTING,
+            "单任务超时",
+            "单个音频转码任务的默认超时时间（秒）",
+            ["3", "5", "8", "10", "15", "20", "30", "60"],
+        )
+        self.wavRetriesCard = ComboRowSettingCard(
+            FIF.SETTING,
+            "最大重试次数",
+            "单个音频转码任务失败后的默认最大重试次数",
+            ["0", "1", "2", "3", "4", "5"],
+        )
+
+        self.group.addSettingCard(self.wavWorkersCard)
+        self.group.addSettingCard(self.wavTimeoutCard)
+        self.group.addSettingCard(self.wavRetriesCard)

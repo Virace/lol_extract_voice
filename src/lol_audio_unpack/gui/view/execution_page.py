@@ -1,63 +1,47 @@
-"""执行中心页面，承接任务队列、参数配置与日志同步。"""
+﻿"""执行中心页面，承接任务创建、队列执行与日志同步。"""
 
 from __future__ import annotations
 
 from typing import Any
 
 from loguru import logger
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import (
-    QHBoxLayout,
-    QVBoxLayout,
-    QWidget,
-)
-from qfluentwidgets import (
-    CaptionLabel,
-    ExpandLayout,
-    InfoBar,
-    InfoBarPosition,
-    SmoothScrollArea,
-    SubtitleLabel,
-)
-from qfluentwidgets import FluentIcon as FIF
+from PySide6.QtCore import Signal
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QWidget
+from qfluentwidgets import CaptionLabel, InfoBarPosition, SmoothScrollArea, SubtitleLabel
 
 from lol_audio_unpack.gui.common import (
     GUI_LOG_FORMAT,
     GUI_LOG_MAX_LINES,
     apply_smooth_scroll_enabled,
-    get_app_context_block_reason,
+    get_block_reason,
     get_buffered_log_lines,
     show_feedback_infobar,
 )
-from lol_audio_unpack.gui.common.style import (
+from lol_audio_unpack.gui.common.page_style import (
     apply_page_content_margins,
     configure_transparent_scroll_page,
 )
-from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
-from lol_audio_unpack.gui.controllers.entity_data_store import EntityDataStore
-from lol_audio_unpack.gui.controllers.execution_log_controller import ExecutionLogController
-from lol_audio_unpack.gui.controllers.execution_queue_controller import (
-    TASK_ITEM_ROLE,
+from lol_audio_unpack.gui.components.global_progress_strip import GlobalProgressStripState
+from lol_audio_unpack.gui.controllers import (
+    ExecutionLogController,
     ExecutionQueueController,
-)
-from lol_audio_unpack.gui.controllers.execution_selection_controller import (
     ExecutionSelectionController,
 )
-from lol_audio_unpack.gui.task_models import (
-    ExecutionTaskDraft,
-    ExecutionTaskProgress,
-    QueuedExecutionTask,
-)
-from lol_audio_unpack.gui.view.execution.advanced_input_panel import AdvancedInputPanel
-from lol_audio_unpack.gui.view.execution.progress_panel import (
-    ProgressPanel,
+from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
+from lol_audio_unpack.gui.controllers.entity_data_store import EntityDataStore
+from lol_audio_unpack.gui.task_models import ExecutionTaskResult, QueuedExecutionTask
+from lol_audio_unpack.gui.view.execution.progress_state import (
+    build_global_progress_strip_state,
     build_progress_display_state,
 )
 from lol_audio_unpack.gui.view.execution.selection_conflict_dialog import (
     ask_selection_conflict_resolution,
 )
-from lol_audio_unpack.gui.view.execution.task_builder_panel import TaskBuilderPanel
+from lol_audio_unpack.gui.view.execution.task_creation_card import TaskCreationCard
+
+FLUENT_CONTENT_TEXT_LIGHT = QColor(96, 96, 96)
+FLUENT_CONTENT_TEXT_DARK = QColor(206, 206, 206)
 
 
 class ExecutionPage(SmoothScrollArea):
@@ -67,6 +51,7 @@ class ExecutionPage(SmoothScrollArea):
     task_running_changed = Signal(bool)
     task_queue_busy_changed = Signal(bool)
     log_lines_appended = Signal(object)
+    global_progress_state_changed = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent=parent)
@@ -79,11 +64,12 @@ class ExecutionPage(SmoothScrollArea):
         self._entity_data_store = EntityDataStore(entity_types=("champions", "maps"))
         self._is_task_running = False
         self._is_task_queue_busy = False
+        self._current_global_progress_state = GlobalProgressStripState()
         self._selection_controller = ExecutionSelectionController()
         self._log_controller = ExecutionLogController(
             initial_lines=(
                 "执行中心日志会同步到主窗口底部日志面板。",
-                "执行中心已就绪，开始记录任务队列与界面操作。",
+                "执行中心已就绪，开始记录任务执行与界面操作。",
                 *tuple(get_buffered_log_lines()),
             ),
             max_lines=GUI_LOG_MAX_LINES,
@@ -94,18 +80,15 @@ class ExecutionPage(SmoothScrollArea):
         self.destroyed.connect(self._log_controller.detach_runtime_log_sink)
         self._build_ui()
         self._queue_controller = ExecutionQueueController(
-            queue_panel=self.progressPanel.queue_panel,
             build_task_item_tooltip=self._build_task_item_tooltip,
+            single_task_mode=True,
             parent=self,
         )
-        self._queue_controller.set_queue_placeholder()
-        self._queue_controller.apply_queue_list_height()
-        self.taskBuilderPanel.apply_defaults()
         self.taskBuilderPanel.sync_state_from_widgets()
         self._setup_connections()
 
     def _build_ui(self) -> None:
-        self.expandLayout = ExpandLayout(self.view)
+        self.expandLayout = QVBoxLayout(self.view)
         apply_page_content_margins(self.expandLayout)
         self.expandLayout.setSpacing(16)
 
@@ -114,53 +97,30 @@ class ExecutionPage(SmoothScrollArea):
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(4)
         title_label = SubtitleLabel("执行中心", header_widget)
-        subtitle_label = CaptionLabel("在这里创建任务、查看进度，也可以复制当前任务命令。", header_widget)
-        subtitle_label.setWordWrap(True)
+        self.subtitle_label = CaptionLabel("在这里补充自定义参数并创建任务。", header_widget)
+        self.subtitle_label.setWordWrap(True)
+        self.subtitle_label.setTextColor(FLUENT_CONTENT_TEXT_LIGHT, FLUENT_CONTENT_TEXT_DARK)
         header_layout.addWidget(title_label)
-        header_layout.addWidget(subtitle_label)
+        header_layout.addWidget(self.subtitle_label)
         header_widget.resize(header_widget.width(), header_widget.sizeHint().height())
         self.expandLayout.addWidget(header_widget)
 
-        top_widget = QWidget(self.view)
-        top_layout = QHBoxLayout(top_widget)
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(12)
-
-        self.taskBuilderPanel = TaskBuilderPanel(self.view)
-        self.task_builder_card = self.taskBuilderPanel
-        self.target_title_label = self.taskBuilderPanel.target_title_label
-        self.target_summary_value = self.taskBuilderPanel.target_summary_value
-        self.task_kind_title_label = self.taskBuilderPanel.task_kind_title_label
+        self.taskBuilderPanel = TaskCreationCard(self.view)
+        self.advancedPanel = self.taskBuilderPanel
+        self.advanced_card = self.taskBuilderPanel
+        self.champion_ids_input = self.taskBuilderPanel.champion_ids_input
+        self.map_ids_input = self.taskBuilderPanel.map_ids_input
+        self.vo_filter = self.taskBuilderPanel.vo_filter
+        self.max_workers_combo = self.taskBuilderPanel.max_workers_combo
+        self.bp_voice_cb = self.taskBuilderPanel.bp_voice_cb
+        self.force_update_cb = self.taskBuilderPanel.force_update_cb
+        self.integrate_data_cb = self.taskBuilderPanel.integrate_data_cb
         self.extract_task_cb = self.taskBuilderPanel.extract_task_cb
+        self.wav_task_cb = self.taskBuilderPanel.wav_task_cb
         self.mapping_task_cb = self.taskBuilderPanel.mapping_task_cb
-        self.task_builder_summary_label = self.taskBuilderPanel.task_builder_summary_label
         self.create_task_btn = self.taskBuilderPanel.create_task_btn
-        self.copy_cli_btn = self.taskBuilderPanel.copy_cli_btn
+        self.expandLayout.addWidget(self.taskBuilderPanel)
 
-        self.progressPanel = ProgressPanel(self.view)
-        self.progress_card = self.progressPanel
-        self.task_status_label = self.progressPanel.task_status_label
-        self.task_progress_bar = self.progressPanel.task_progress_bar
-        self.task_progress_note = self.progressPanel.task_progress_note
-        self.queue_progress_label = self.progressPanel.queue_progress_label
-        self.draft_list = self.progressPanel.draft_list
-
-        top_layout.addWidget(self.progressPanel, 1)
-        top_layout.addWidget(self.taskBuilderPanel, 1)
-        top_widget.resize(top_widget.width(), top_widget.sizeHint().height())
-        self.expandLayout.addWidget(top_widget)
-
-        self.advancedPanel = AdvancedInputPanel(self.view)
-        self.advanced_card = self.advancedPanel
-        self.champion_ids_input = self.advancedPanel.champion_ids_input
-        self.map_ids_input = self.advancedPanel.map_ids_input
-        self.vo_filter = self.advancedPanel.vo_filter
-        self.max_workers_combo = self.advancedPanel.max_workers_combo
-        self.bp_voice_cb = self.advancedPanel.bp_voice_cb
-        self.force_update_cb = self.advancedPanel.force_update_cb
-        self.integrate_data_cb = self.advancedPanel.integrate_data_cb
-        self.expandLayout.addWidget(self.advancedPanel)
-        self.taskBuilderPanel.bind_advanced_panel(self.advancedPanel)
         self.bottom_spacing_widget = QWidget(self.view)
         self.bottom_spacing_widget.setFixedHeight(20)
         self.expandLayout.addWidget(self.bottom_spacing_widget)
@@ -189,17 +149,17 @@ class ExecutionPage(SmoothScrollArea):
                 position=InfoBarPosition.TOP,
             )
         )
-        self.create_task_btn.clicked.connect(self._queue_task_draft)
-        self.copy_cli_btn.clicked.connect(self._copy_cli_command)
+        self.create_task_btn.clicked.connect(self._handle_primary_task_action)
         self.taskBuilderPanel.connect_form_signals(self.taskBuilderPanel.sync_state_from_widgets)
-        self.draft_list.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.draft_list.customContextMenuRequested.connect(self._open_task_queue_context_menu)
         self.taskBuilderPanel.refresh_summary()
+        self._sync_primary_action_button()
         self._refresh_progress_panel()
 
     def set_gui_config(self, cfg) -> None:
         """注入 GUI 配置并刷新默认值。"""
         self.gui_config = cfg
+        self.taskBuilderPanel.apply_gui_config_defaults(cfg)
+        self.taskBuilderPanel.apply_defaults()
         self.taskBuilderPanel.sync_state_from_widgets()
         self.taskBuilderPanel.refresh_summary()
         fallback_enabled = bool(getattr(cfg, "smooth_scroll_enabled", False))
@@ -225,12 +185,7 @@ class ExecutionPage(SmoothScrollArea):
         self._log_controller.attach_runtime_log_sink(level)
 
     def _log_gui_event(self, level: str, message: str) -> None:
-        """通过 loguru 记录执行中心的界面交互日志。
-
-        Args:
-            level: loguru 使用的日志级别名称。
-            message: 需要写入统一日志链路的文本。
-        """
+        """通过 loguru 记录执行中心的界面交互日志。"""
         logger.log(level.upper(), message)
 
     def set_selected_entities(
@@ -282,11 +237,17 @@ class ExecutionPage(SmoothScrollArea):
             self._log_gui_event("info", "[同步] 已取消从实体总览同步选择。")
             return None
 
+        all_champion_ids = {str(row.get("id")) for row in self._entity_data_store.rows_for("champions")}
+        all_map_ids = {str(row.get("id")) for row in self._entity_data_store.rows_for("maps")}
+        select_all = bool(all_champion_ids and all_map_ids) and (
+            set(update.champion_ids) == all_champion_ids and set(update.map_ids) == all_map_ids
+        )
         self.taskBuilderPanel.apply_selected_entities(
             champion_ids=update.champion_ids,
             map_ids=update.map_ids,
             source=update.source,
             summary=update.summary,
+            select_all=select_all,
         )
         self._log_gui_event("info", f"[同步] {update.summary}")
         return update.summary
@@ -300,11 +261,11 @@ class ExecutionPage(SmoothScrollArea):
         return self._queue_controller.has_active_background_work()
 
     def has_incomplete_tasks(self) -> bool:
-        """返回队列中是否仍存在等待或运行中的任务。"""
+        """返回队列中是否仍存在等待、运行或失败任务。"""
         return self._queue_controller.has_incomplete_tasks()
 
     def _build_task_item_tooltip(self, task: QueuedExecutionTask) -> str:
-        """构造任务列表项的悬停提示文本。"""
+        """构造任务悬停提示文本。"""
         lines = [task.summary]
         if task.result_summary:
             lines.append(task.result_summary)
@@ -317,6 +278,7 @@ class ExecutionPage(SmoothScrollArea):
         if self._is_task_running == running:
             return
         self._is_task_running = running
+        self._sync_primary_action_button()
         self.task_running_changed.emit(running)
 
     def _set_task_queue_busy_state(self, busy: bool) -> None:
@@ -330,13 +292,8 @@ class ExecutionPage(SmoothScrollArea):
         """返回全局通知应挂载的父级窗口。"""
         if feedback_parent is not None:
             return feedback_parent
-
         window = self.window()
         return window if isinstance(window, QWidget) else self
-
-    def _open_task_queue_context_menu(self, pos) -> None:
-        """打开任务队列右键菜单。"""
-        self.progressPanel.queue_panel.open_context_menu(pos, queue_controller=self._queue_controller)
 
     def _refresh_progress_panel(
         self,
@@ -346,45 +303,70 @@ class ExecutionPage(SmoothScrollArea):
         progress_current: int | None = None,
         progress_total: int | None = None,
     ) -> None:
-        """刷新右侧任务进度面板的摘要。"""
+        """刷新主窗口底部全局进度条状态。"""
         draft_count = self._queue_controller.draft_queue_size()
         counts = self._queue_controller.queue_status_counts()
-        running_item = self._queue_controller.find_running_task_item()
-        running_task = running_item.data(TASK_ITEM_ROLE) if running_item is not None else None
-        state = build_progress_display_state(
+        running_task = self._queue_controller.find_running_task()
+        display_state = build_progress_display_state(
             draft_count=draft_count,
             counts=counts,
-            running_task=running_task if isinstance(running_task, QueuedExecutionTask) else None,
+            running_task=running_task,
             status_text=status_text,
             note_text=note_text,
             progress_current=progress_current,
             progress_total=progress_total,
         )
-        self.progressPanel.apply_display_state(state)
-
-    def _copy_cli_command(self) -> None:
-        """复制当前配置对应的 CLI 命令。"""
-        command_text = self.taskBuilderPanel.build_cli_command_text()
-        if command_text is None:
-            self._log_gui_event("warning", "[CLI] 未勾选任何执行步骤，无法复制命令。")
-            show_feedback_infobar(
-                title="无法复制 CLI 命令",
-                content="请至少勾选音频解包或事件映射中的一个步骤。",
-                parent=self._feedback_parent(),
-                level="warning",
-                position=InfoBarPosition.TOP,
-            )
-            return
-
-        QGuiApplication.clipboard().setText(command_text)
-        self._log_gui_event("info", f"[CLI] 已复制命令：{command_text}")
-        show_feedback_infobar(
-            title="已复制 CLI 命令",
-            content=command_text,
-            parent=self._feedback_parent(),
-            level="success",
-            position=InfoBarPosition.TOP,
+        next_global_progress_state = build_global_progress_strip_state(
+            draft_count=draft_count,
+            counts=counts,
+            running_task=running_task,
+            status_text=display_state.status_text,
+            note_text=display_state.note_text,
+            progress_current=display_state.progress_value,
+            progress_total=display_state.progress_total,
         )
+        if next_global_progress_state == self._current_global_progress_state:
+            return
+        self._current_global_progress_state = next_global_progress_state
+        self.global_progress_state_changed.emit(self._current_global_progress_state)
+
+    def current_global_progress_state(self) -> GlobalProgressStripState:
+        """返回当前应同步到主窗口底部的全局进度条状态。"""
+        return self._current_global_progress_state
+
+    def _sync_primary_action_button(self) -> None:
+        """根据当前运行态切换主按钮文案。"""
+        self.create_task_btn.setText("取消" if self._is_task_running else "创建任务")
+
+    def _handle_primary_task_action(self) -> None:
+        """根据当前运行态分派创建或取消行为。"""
+        if self._is_task_running:
+            self.request_cancel_task()
+            return
+        self._queue_task_draft()
+
+    def request_cancel_task(self) -> bool:
+        """请求取消当前运行中的任务。"""
+        if not self._is_task_running:
+            return False
+        if not self._confirm_force_stop_task():
+            return False
+        return self._queue_controller.cancel_active_task()
+
+    def _confirm_force_stop_task(self) -> bool:
+        """弹出全局确认框，确认是否强制结束当前任务。"""
+        dialog = QMessageBox(self._feedback_parent())
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("结束当前任务")
+        dialog.setText("当前任务仍在执行。")
+        dialog.setInformativeText("确认后会强制结束当前任务，未完成的执行过程会立即停止。")
+        dialog.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
+        )
+        dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        dialog.button(QMessageBox.StandardButton.Yes).setText("结束任务")
+        dialog.button(QMessageBox.StandardButton.Cancel).setText("取消")
+        return dialog.exec() == int(QMessageBox.StandardButton.Yes)
 
     def _queue_task_draft(self) -> None:
         """将当前界面参数写入任务队列，并自动开始首个任务。"""
@@ -400,7 +382,7 @@ class ExecutionPage(SmoothScrollArea):
             )
             return
 
-        block_reason = get_app_context_block_reason(self.gui_config)
+        block_reason = get_block_reason(self.gui_config)
         if block_reason is not None:
             self._log_gui_event("warning", f"[队列] {block_reason}")
             show_feedback_infobar(
@@ -430,18 +412,17 @@ class ExecutionPage(SmoothScrollArea):
         self.taskBuilderPanel.reset_custom_inputs_to_defaults()
 
     def _debug_fill_mock_queue(self, count: int) -> str:
-        """填充指定数量的 mock 队列项，方便调试列表布局。"""
+        """填充指定数量的 mock 队列项，方便调试全局进度状态。"""
         return self._queue_controller.fill_mock_queue(count=count)
 
     def _debug_clear_mock_queue(self) -> str:
-        """清空当前调试队列并恢复占位状态。"""
+        """清空当前调试队列并恢复空状态。"""
         return self._queue_controller.clear_mock_queue()
 
     def _debug_inspect_queue(self) -> str:
-        """返回当前队列列表与卡片尺寸信息。"""
+        """返回当前队列与卡片尺寸信息。"""
         return self._queue_controller.inspect_queue(
-            progress_card_height=self.progress_card.height(),
-            builder_card_height=self.task_builder_card.height(),
+            builder_card_height=self.taskBuilderPanel.height(),
         )
 
     def shutdown_background_tasks(self) -> None:
@@ -449,11 +430,7 @@ class ExecutionPage(SmoothScrollArea):
         self._queue_controller.shutdown()
 
     def current_log_text(self) -> str:
-        """返回执行中心当前累计日志文本。
-
-        Returns:
-            用换行拼接后的日志全文。
-        """
+        """返回执行中心当前累计日志文本。"""
         return self._log_controller.current_log_text()
 
     def set_smooth_scroll_enabled(
@@ -464,7 +441,5 @@ class ExecutionPage(SmoothScrollArea):
         """根据设置分别应用页面与内部控件的滚动模式。"""
         if widget_enabled is None:
             widget_enabled = page_enabled
-
         apply_smooth_scroll_enabled(self, page_enabled)
         apply_smooth_scroll_enabled(self.advanced_card, widget_enabled)
-        apply_smooth_scroll_enabled(self.draft_list, widget_enabled)

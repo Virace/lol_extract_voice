@@ -90,7 +90,37 @@ jobs:
           "asset_path=$assetPath" >> $env:GITHUB_OUTPUT
           "hash_path=$hashPath" >> $env:GITHUB_OUTPUT
 
-      - name: Publish GitHub release
+      - name: Resolve release notes source
+        id: notes
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $bodyPath = Join-Path $PWD ".github/release-notes/$tag.md"
+
+          if (Test-Path $bodyPath) {
+              "use_custom=true" >> $env:GITHUB_OUTPUT
+              "body_path=$bodyPath" >> $env:GITHUB_OUTPUT
+              "Using custom release notes: $bodyPath" >> $env:GITHUB_STEP_SUMMARY
+              exit 0
+          }
+
+          "use_custom=false" >> $env:GITHUB_OUTPUT
+          "No custom release notes found for $tag. Fallback to generated notes." >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Publish GitHub release with custom notes
+        if: steps.notes.outputs.use_custom == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          files: |
+            ${{ steps.assets.outputs.asset_path }}
+            ${{ steps.assets.outputs.hash_path }}
+          prerelease: ${{ needs.verify-tag-target.outputs.is_prerelease == 'true' }}
+          body_path: ${{ steps.notes.outputs.body_path }}
+          fail_on_unmatched_files: true
+
+      - name: Publish GitHub release with generated notes
+        if: steps.notes.outputs.use_custom != 'true'
         uses: softprops/action-gh-release@v2
         with:
           name: ${{ github.ref_name }}

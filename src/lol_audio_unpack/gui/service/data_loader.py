@@ -8,13 +8,20 @@ from typing import TYPE_CHECKING, Literal
 
 from loguru import logger
 
-if TYPE_CHECKING:
-    from lol_audio_unpack.app_context import AppContext
-
-from lol_audio_unpack.manager.data_reader import DataReader, get_default_visible_champions
-from lol_audio_unpack.manager.utils import find_data_file, read_data
+from lol_audio_unpack.app.artifacts import (
+    resolve_audio_paths as resolve_artifact_audio_paths,
+)
+from lol_audio_unpack.app.artifacts import (
+    resolve_mapping_path as resolve_artifact_mapping_path,
+)
+from lol_audio_unpack.app.path_layout import get_output_dir_name
+from lol_audio_unpack.app.targets import get_default_visible_champions
+from lol_audio_unpack.manager.data_reader import DataReader
+from lol_audio_unpack.manager.files import read_data
 from lol_audio_unpack.model import AudioEntityData
-from lol_audio_unpack.utils.path_constants import format_entity_folder_name, get_output_dir_name
+
+if TYPE_CHECKING:
+    from lol_audio_unpack.app.types import AppContext
 
 GuiEntityType = Literal["champions", "maps"]
 
@@ -106,16 +113,14 @@ def _normalize_integrated_mapping_data(
     normalized["mapId"] = data_payload.get("mapId", entity_id)
     normalized["name"] = data_payload.get("name", "")
     normalized_events = _normalize_integrated_events(map_payload.get("events"))
-    normalized["map"] = {
-        str(data_payload.get("mapId", entity_id)): {"events": normalized_events}
-    }
+    normalized["map"] = {str(data_payload.get("mapId", entity_id)): {"events": normalized_events}}
     return normalized
 
 
 def resolve_entity_audio_paths(
     ctx: AppContext,
     entity_data: AudioEntityData,
-    version: str
+    version: str,
 ) -> tuple[Path, ...]:
     """解析实体解包后的实际输出目录。
 
@@ -127,28 +132,7 @@ def resolve_entity_audio_paths(
     Returns:
         实际存在的音频输出目录列表。
     """
-    audio_base = Path(ctx.paths.audio_path)
-    entity_dir = get_output_dir_name(entity_data.entity_type)
-    entity_folder_name = format_entity_folder_name(
-        entity_data.entity_id,
-        entity_data.entity_alias,
-        entity_data.entity_name,
-        entity_data.entity_title,
-    )
-    version_audio_root = audio_base / version
-
-    if ctx.config.group_by_type:
-        paths = tuple(
-            candidate
-            for audio_type in ctx.config.include_types
-            if (candidate := version_audio_root / audio_type / entity_dir / entity_folder_name).exists()
-        )
-        return paths
-
-    candidate = version_audio_root / entity_dir / entity_folder_name
-    if candidate.exists():
-        return (candidate,)
-    return ()
+    return resolve_artifact_audio_paths(ctx, entity_data, version)
 
 
 def resolve_mapping_file_path(
@@ -168,26 +152,18 @@ def resolve_mapping_file_path(
     Returns:
         映射文件的实际路径；不存在时返回 ``None``。
     """
-    hash_root = Path(ctx.paths.hash_path) / version
-    dev_mode = getattr(ctx.config, "dev_mode", False)
-
-    integrated_path = find_data_file(
-        hash_root / "integrated" / entity_type / str(entity_id),
-        dev_mode=dev_mode,
-    )
-    if integrated_path is not None:
-        return integrated_path
-
-    return find_data_file(
-        hash_root / entity_type / str(entity_id),
-        dev_mode=dev_mode,
+    return resolve_artifact_mapping_path(
+        ctx,
+        entity_dir=entity_type,
+        entity_id=entity_id,
+        version=version,
     )
 
 
 def check_entity_status(
     ctx: AppContext,
     entity_data: AudioEntityData,
-    version: str
+    version: str,
 ) -> tuple[str, str]:
     """检查实体的解包和映射状态。
 
@@ -200,10 +176,7 @@ def check_entity_status(
         音频状态与映射状态组成的二元组。
     """
     audio_paths = resolve_entity_audio_paths(ctx, entity_data, version)
-    audio_exists = any(
-        path.exists() and any(path.iterdir())
-        for path in audio_paths
-    )
+    audio_exists = any(path.exists() and any(path.iterdir()) for path in audio_paths)
 
     mapping_path = resolve_mapping_file_path(
         ctx,
@@ -215,7 +188,7 @@ def check_entity_status(
 
     return (
         "已存在" if audio_exists else "未存在",
-        "已存在" if mapping_exists else "未存在"
+        "已存在" if mapping_exists else "未存在",
     )
 
 
@@ -241,10 +214,13 @@ class EntityDataLoader:
         Returns:
             对应实体的数据对象。
         """
-        if entity_type == "champions":
-            return AudioEntityData.from_champion(int(entity_id), self.data_reader, ctx=self.ctx)
-
-        return AudioEntityData.from_map(int(entity_id), self.data_reader, ctx=self.ctx)
+        normalized_type = "champion" if entity_type == "champions" else "map"
+        return AudioEntityData.from_entity(
+            normalized_type,
+            int(entity_id),
+            self.data_reader,
+            ctx=self.ctx,
+        )
 
     def _load_raw_entities(self, entity_type: GuiEntityType) -> tuple[str, list[dict]]:
         """读取指定实体类型对应的原始实体列表与版本号。"""
@@ -259,25 +235,19 @@ class EntityDataLoader:
     def _ensure_bank_dataset_ready(self, entity_type: GuiEntityType) -> None:
         """在按实体扫描前，先确认对应 bank 数据集根目录已经就绪。"""
         bank_root = (
-            self.data_reader.champion_banks_dir
-            if entity_type == "champions"
-            else self.data_reader.map_banks_dir
+            self.data_reader.champion_banks_dir if entity_type == "champions" else self.data_reader.map_banks_dir
         )
         if bank_root.is_dir():
             return
 
-        raise FileNotFoundError(
-            f"{entity_type} 共享 bank 数据目录不存在，请先运行更新程序。path={bank_root}"
-        )
+        raise FileNotFoundError(f"{entity_type} 共享 bank 数据目录不存在，请先运行更新程序。path={bank_root}")
 
     def _build_entity_row(self, entity_type: GuiEntityType, entity_dict: dict, version: str) -> dict:
         """将单个原始实体字典转换为 GUI 行数据。"""
         entity_id = str(entity_dict["id"])
         entity_data = self._build_entity_data(entity_type, entity_id)
 
-        audio_status, mapping_status = check_entity_status(
-            self.ctx, entity_data, version
-        )
+        audio_status, mapping_status = check_entity_status(self.ctx, entity_data, version)
         mapping_path = resolve_mapping_file_path(
             self.ctx,
             entity_type,
@@ -321,9 +291,7 @@ class EntityDataLoader:
             try:
                 result.append(self._build_entity_row(entity_type, entity_dict, version))
             except Exception as e:
-                logger.opt(exception=True).warning(
-                    f"Error loading entity {entity_dict.get('id', 'unknown')}: {e}"
-                )
+                logger.opt(exception=True).warning(f"Error loading entity {entity_dict.get('id', 'unknown')}: {e}")
                 continue
 
         return result
@@ -349,9 +317,7 @@ class EntityDataLoader:
             try:
                 result.append(self._build_entity_row(entity_type, entity_dict, version))
             except Exception as e:
-                logger.opt(exception=True).warning(
-                    f"Error loading entity {entity_dict.get('id', 'unknown')}: {e}"
-                )
+                logger.opt(exception=True).warning(f"Error loading entity {entity_dict.get('id', 'unknown')}: {e}")
                 continue
 
         return result

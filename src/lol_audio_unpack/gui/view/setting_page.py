@@ -1,27 +1,21 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from time import perf_counter
 from weakref import ref
 
 from loguru import logger
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
 from PySide6.QtMultimedia import QMediaDevices
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
-    CustomColorSettingCard,
     ExpandLayout,
     MessageBox,
-    OptionsSettingCard,
     PushSettingCard,
     SettingCardGroup,
     SmoothScrollArea,
-    Theme,
     TitleLabel,
     qconfig,
-    setTheme,
-    setThemeColor,
 )
 from qfluentwidgets import (
     FluentIcon as FIF,
@@ -33,24 +27,27 @@ from lol_audio_unpack.gui.common import (
     available_source_mode_labels,
     format_default_relative_path,
     format_path_for_display,
-    packaged_remote_mode_fallback_needed,
-    remote_source_panel_visible,
+    is_remote_panel_visible,
+    needs_remote_mode_fallback,
 )
-from lol_audio_unpack.gui.common.style import (
+from lol_audio_unpack.gui.common.page_style import (
     apply_page_content_margins,
     configure_transparent_scroll_page,
 )
+from lol_audio_unpack.gui.controllers import RemoteSourceController
 from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
-from lol_audio_unpack.gui.controllers.path_picker_controller import (
+from lol_audio_unpack.gui.controllers.path_picker import (
     apply_path_card_label,
     pick_and_apply_directory,
     pick_and_apply_file,
     pick_directory,
     pick_file,
 )
-from lol_audio_unpack.gui.controllers.remote_source_controller import (
-    RemoteSourceController,
-    RemoteSourceDraft,
+from lol_audio_unpack.gui.controllers.remote_source import RemoteSourceDraft
+from lol_audio_unpack.gui.theme import (
+    apply_accent_preset,
+    apply_shell_mode,
+    shell_mode_from_theme,
 )
 from lol_audio_unpack.gui.view.settings.appearance_panel import AppearancePanel
 from lol_audio_unpack.gui.view.settings.cards import (
@@ -65,6 +62,7 @@ from lol_audio_unpack.gui.view.settings.source_mode_panel import SourceModePanel
 from lol_audio_unpack.gui.view.settings.tool_path_panel import (
     BaseSettingsPanel,
     ToolPathPanel,
+    WavSettingsPanel,
 )
 from lol_audio_unpack.utils.runtime_paths import (
     get_default_output_relative_path,
@@ -148,6 +146,7 @@ class SettingPage(SmoothScrollArea):
         self._cfg = GuiConfig()
         self._remote_source_controller = RemoteSourceController()
         self._theme_persistence_listener = None
+        self._applying_theme_config = False
         previous_mark = _log_setting_stage("GuiConfig 实例创建完成", startup_begin, previous_mark)
 
         self._build_ui()
@@ -199,7 +198,9 @@ class SettingPage(SmoothScrollArea):
         build_mark = _log_setting_stage("_build_base_group 完成", build_begin, build_mark)
         self._build_tools_group()    # 3. 工具配置
         build_mark = _log_setting_stage("_build_tools_group 完成", build_begin, build_mark)
-        self._build_personal_group() # 4. 个性化
+        self._build_wav_group()      # 4. WAV 默认参数
+        build_mark = _log_setting_stage("_build_wav_group 完成", build_begin, build_mark)
+        self._build_personal_group() # 5. 个性化
         _log_setting_stage("_build_personal_group 完成", build_begin, build_mark)
 
     # 1. 数据来源 -------------------------------------------------------
@@ -247,7 +248,17 @@ class SettingPage(SmoothScrollArea):
         self.vgmstreamCard = self.toolPathPanel.vgmstreamCard
         self.expandLayout.addWidget(self.toolsGroup)
 
-    # 4. 个性化 ---------------------------------------------------------
+    # 4. WAV 默认参数 ---------------------------------------------------
+
+    def _build_wav_group(self):
+        self.wavSettingsPanel = WavSettingsPanel(parent=self.content_widget)
+        self.wavGroup = self.wavSettingsPanel.group
+        self.wavWorkersCard = self.wavSettingsPanel.wavWorkersCard
+        self.wavTimeoutCard = self.wavSettingsPanel.wavTimeoutCard
+        self.wavRetriesCard = self.wavSettingsPanel.wavRetriesCard
+        self.expandLayout.addWidget(self.wavGroup)
+
+    # 5. 个性化 ---------------------------------------------------------
 
     def _build_personal_group(self):
         audio_output_device_options = get_preview_audio_output_device_options()
@@ -257,7 +268,7 @@ class SettingPage(SmoothScrollArea):
         )
         self.personalGroup = self.appearancePanel.group
         self.themeCard = self.appearancePanel.themeCard
-        self.colorCard = self.appearancePanel.colorCard
+        self.accentPresetCard = self.appearancePanel.accentPresetCard
         self.smoothScrollCard = self.appearancePanel.smoothScrollCard
         self.previewAudioOutputDeviceCard = self.appearancePanel.previewAudioOutputDeviceCard
         self.previewAudioVolumeCard = self.appearancePanel.previewAudioVolumeCard
@@ -275,7 +286,7 @@ class SettingPage(SmoothScrollArea):
         """从 GuiConfig 读取保存的配置并应用到各控件。"""
         cfg = self._cfg
         cfg.load()
-        if packaged_remote_mode_fallback_needed(cfg.source_mode):
+        if needs_remote_mode_fallback(cfg.source_mode):
             logger.warning("检测到当前为打包版本，远程模式已临时禁用，本次运行将使用本地模式。")
 
         # 来源模式
@@ -297,6 +308,9 @@ class SettingPage(SmoothScrollArea):
         # 工具配置
         apply_path_card_label(self.wwiserCard, cfg.wwiser_path, f"./{get_default_wwiser_relative_path()}")
         apply_path_card_label(self.vgmstreamCard, cfg.vgmstream_path, f"./{get_default_vgmstream_relative_path()}")
+        self.wavWorkersCard.setValue(str(cfg.wav_workers))
+        self.wavTimeoutCard.setValue(str(cfg.wav_timeout))
+        self.wavRetriesCard.setValue(str(cfg.wav_retries))
 
         # 个性化 — 应用已保存的主题
         self._apply_theme_from_config()
@@ -330,6 +344,9 @@ class SettingPage(SmoothScrollArea):
         )
         cfg.game_region = self.gameRegionCard.value()
         cfg.group_by_type = self.groupByTypeCard.isChecked()
+        cfg.wav_workers = int(self.wavWorkersCard.value())
+        cfg.wav_timeout = int(self.wavTimeoutCard.value())
+        cfg.wav_retries = int(self.wavRetriesCard.value())
         cfg.page_smooth_scroll_enabled = self.smoothScrollCard.pageScrollEnabled()
         cfg.widget_smooth_scroll_enabled = self.smoothScrollCard.widgetScrollEnabled()
         cfg.log_drawer_auto_collapse_enabled = self.logDrawerAutoCollapseCard.isChecked()
@@ -354,18 +371,27 @@ class SettingPage(SmoothScrollArea):
 
     def _save_theme_config(self) -> None:
         """保存主题配置到 GuiConfig。"""
+        if self._applying_theme_config:
+            return
         cfg = self._cfg
-        # 从 qconfig 读取当前主题设置
-        theme_map = {Theme.LIGHT: "Light", Theme.DARK: "Dark", Theme.AUTO: "Auto"}
-        cfg.theme_mode = theme_map.get(qconfig.themeMode.value, "Light")
-        cfg.theme_color = qconfig.themeColor.value.name()
+        cfg.theme_mode = shell_mode_from_theme(qconfig.themeMode.value)
+        cfg.accent_preset_id = self.accentPresetCard.value()
         cfg.save_theme_preferences()
+
+    def _on_accent_preset_changed(self, _text: str) -> None:
+        """在固定 accent preset 变更后同步 Fluent 与持久化配置。"""
+        if self._applying_theme_config:
+            return
+        preset_id = self.accentPresetCard.value()
+        self._cfg.accent_preset_id = preset_id
+        apply_accent_preset(preset_id)
+        self._save_theme_config()
 
     def _disconnect_theme_persistence_signals(self, *_args: object) -> None:
         """断开设置页注册的全局主题持久化监听。"""
         if self._theme_persistence_listener is None:
             return
-        for signal in (qconfig.themeChanged, qconfig.themeColorChanged):
+        for signal in (qconfig.themeChanged,):
             try:
                 signal.disconnect(self._theme_persistence_listener)
             except (RuntimeError, TypeError):
@@ -392,7 +418,7 @@ class SettingPage(SmoothScrollArea):
                 card=self.gamePathCard,
                 default="",
                 changed_signal=self.game_path_changed,
-                emit_shared_context_input_changed=self.shared_context_input_changed.emit,
+                emit_context_changed=self.shared_context_input_changed.emit,
             )
         )
         self.outputPathCard.clicked.connect(
@@ -405,7 +431,7 @@ class SettingPage(SmoothScrollArea):
                 card=self.outputPathCard,
                 default=f"./{get_default_output_relative_path()}",
                 changed_signal=self.output_path_changed,
-                emit_shared_context_input_changed=self.shared_context_input_changed.emit,
+                emit_context_changed=self.shared_context_input_changed.emit,
             )
         )
         self.wwiserCard.clicked.connect(
@@ -442,6 +468,15 @@ class SettingPage(SmoothScrollArea):
         # 基础设置
         self.gameRegionCard.comboBox.currentTextChanged.connect(self._save_config)
         self.groupByTypeCard.checkedChanged.connect(self._save_config)
+        self.wavWorkersCard.comboBox.currentTextChanged.connect(
+            lambda _value: self._save_wav_defaults()
+        )
+        self.wavTimeoutCard.comboBox.currentTextChanged.connect(
+            lambda _value: self._save_wav_defaults()
+        )
+        self.wavRetriesCard.comboBox.currentTextChanged.connect(
+            lambda _value: self._save_wav_defaults()
+        )
         self.smoothScrollCard.pageSwitchButton.checkedChanged.connect(self._on_smooth_scroll_changed)
         self.smoothScrollCard.widgetSwitchButton.checkedChanged.connect(self._on_smooth_scroll_changed)
         self.previewAudioOutputDeviceCard.comboBox.currentTextChanged.connect(
@@ -450,6 +485,7 @@ class SettingPage(SmoothScrollArea):
         self.previewAudioVolumeCard.slider.valueChanged.connect(
             lambda value: self._save_preview_audio_volume(int(value))
         )
+        self.accentPresetCard.comboBox.currentTextChanged.connect(self._on_accent_preset_changed)
         self.logDrawerAutoCollapseCard.checkedChanged.connect(
             lambda _checked: self._save_log_drawer_auto_collapse()
         )
@@ -469,7 +505,6 @@ class SettingPage(SmoothScrollArea):
 
             self._theme_persistence_listener = _save_theme_config_with_weakref
         qconfig.themeChanged.connect(self._theme_persistence_listener)
-        qconfig.themeColorChanged.connect(self._theme_persistence_listener)
 
     # ------------------------------------------------------------------
     # 目录 / 文件选择槽
@@ -481,7 +516,7 @@ class SettingPage(SmoothScrollArea):
 
     def _on_source_mode_changed(self, label: str, persist: bool = True) -> None:
         """根据来源模式（显示文字）切换 local / remote 子组的可见性。"""
-        is_local = not remote_source_panel_visible(self.sourceModeCard.value())
+        is_local = not is_remote_panel_visible(self.sourceModeCard.value())
         self.localGroup.setVisible(is_local)
         self.remoteSourcePanel.group.setVisible(not is_local)
         self.remoteSourcePanel.set_source_mode(self.sourceModeCard.value())
@@ -527,16 +562,13 @@ class SettingPage(SmoothScrollArea):
     def _apply_theme_from_config(self) -> None:
         """从 GuiConfig 应用主题设置到 qconfig。"""
         cfg = self._cfg
-        # 应用主题模式
-        theme_map = {"Light": Theme.LIGHT, "Dark": Theme.DARK, "Auto": Theme.AUTO}
-        theme = theme_map.get(cfg.theme_mode, Theme.LIGHT)
-        qconfig.set(qconfig.themeMode, theme)
-        setTheme(theme)
-
-        # 应用主题颜色
-        color = QColor(cfg.theme_color)
-        qconfig.set(qconfig.themeColor, color)
-        setThemeColor(color)
+        self._applying_theme_config = True
+        try:
+            apply_shell_mode(cfg.theme_mode)
+            self.accentPresetCard.setValue(cfg.accent_preset_id)
+            apply_accent_preset(cfg.accent_preset_id)
+        finally:
+            self._applying_theme_config = False
 
     def set_runtime_config_locked(self, locked: bool) -> None:
         """按分层策略锁定或解锁后端上下文相关配置。"""
@@ -548,6 +580,7 @@ class SettingPage(SmoothScrollArea):
         self.baseGroup.setEnabled(enabled)
         self.wwiserCard.setEnabled(enabled)
         self.vgmstreamCard.setEnabled(True)
+        self.wavGroup.setEnabled(True)
         self.toolsGroup.setEnabled(True)
         self.personalGroup.setEnabled(True)
 
@@ -595,6 +628,13 @@ class SettingPage(SmoothScrollArea):
         """保存文件日志等级并广播配置变更。"""
         self._save_config(emit_shared_context_input_change=False)
         self.log_levels_changed.emit(RuntimeLoggingConfig.from_gui_config(self._cfg))
+
+    def _save_wav_defaults(self) -> None:
+        """保存音频转码默认参数，不触发共享实体刷新。"""
+        self._cfg.wav_workers = int(self.wavWorkersCard.value())
+        self._cfg.wav_timeout = int(self.wavTimeoutCard.value())
+        self._cfg.wav_retries = int(self.wavRetriesCard.value())
+        self._cfg.save()
 
     # ------------------------------------------------------------------
     # 公共值读取（供其他页面或 Worker 调用）

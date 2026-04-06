@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from time import perf_counter
 from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from lol_audio_unpack.app_context import create_app_context
-from lol_audio_unpack.facade import LolAudioUnpackApp
-from lol_audio_unpack.gui.common.packaged_remote_mode_policy import (
-    normalize_app_context_overrides,
-)
+from lol_audio_unpack.app.context import create_app_context
+from lol_audio_unpack.app.facade import LolAudioUnpackApp
+from lol_audio_unpack.app.targets import resolve_scope
+from lol_audio_unpack.config import SettingKey
+from lol_audio_unpack.gui.common.remote_mode_policy import normalize_app_context_settings
 from lol_audio_unpack.gui.task_models import (
     ExecutionTaskProgress,
     ExecutionTaskResult,
@@ -23,18 +24,21 @@ if TYPE_CHECKING:
 
 
 STAGE_KEY_BY_STEP_NAME = {
-    "更新数据": "update",
+    "前置强制更新": "update",
     "音频解包": "extract",
+    "音频转码": "wav",
     "事件映射": "mapping",
 }
 STAGE_LABEL_BY_KEY = {
-    "update": "更新数据",
+    "update": "前置强制更新",
     "extract": "音频解包",
+    "wav": "音频转码",
     "mapping": "事件映射",
 }
 ENTITY_SCOPE_LABEL_BY_TYPE = {
     "champion": "英雄",
     "map": "地图",
+    "wav": "音频转码",
 }
 
 
@@ -48,22 +52,13 @@ def _resolve_task_scope(task: QueuedExecutionTask) -> tuple[str, bool, bool]:
         ``(target, include_champions, include_maps)`` 元组。
     """
     task_params = task.draft.task_params
-    champion_ids = task_params.champion_ids
-    map_ids = task_params.map_ids
-
-    include_champions = champion_ids is None or len(champion_ids) > 0
-    include_maps = map_ids is None or len(map_ids) > 0
-
-    if champion_ids is not None and map_ids is not None:
-        return "all", True, True
-    if champion_ids is not None:
-        return "skin", True, False
-    if map_ids is not None:
-        return "map", False, True
-    return "all", include_champions, include_maps
+    return resolve_scope(
+        champion_ids=task_params.champion_ids,
+        map_ids=task_params.map_ids,
+    )
 
 
-def _build_runtime_overrides(
+def _build_runtime_settings(
     task: QueuedExecutionTask,
     *,
     force_bp_vo: bool = False,
@@ -75,13 +70,13 @@ def _build_runtime_overrides(
         force_bp_vo: 是否在当前阶段强制准备 BP 语音资源。
 
     Returns:
-        可直接传给 ``create_app_context`` 的配置映射。
+        可直接传给 ``create_app_context`` 的共享配置映射。
     """
-    overrides = task.draft.context_input.to_cli_overrides()
-    overrides.update(task.draft.task_params.to_runtime_overrides())
+    settings = task.draft.context_input.to_settings()
+    settings.update(task.draft.task_params.to_runtime_overrides())
     if force_bp_vo:
-        overrides["WITH_BP_VO"] = True
-    return normalize_app_context_overrides(overrides)
+        settings[SettingKey.WITH_BP_VO] = True
+    return normalize_app_context_settings(settings)
 
 
 def _build_scope_label(*, include_champions: bool, include_maps: bool) -> str:
@@ -142,31 +137,33 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     steps = task_params.selected_steps()
     completed_steps: list[str] = []
     runtime_app: LolAudioUnpackApp | None = None
-    runtime_overrides = _build_runtime_overrides(task)
-    source_mode = runtime_overrides.get("SOURCE_MODE", "local_path")
+    runtime_settings = _build_runtime_settings(task)
+    source_mode = runtime_settings.get(SettingKey.SOURCE_MODE, "local_path")
 
     try:
         logger.info(f"[执行中心] 任务 #{task.task_id} 开始执行: {' -> '.join(steps)}")
+        logger.debug(f"[执行中心] 任务 #{task.task_id} 范围={task_scope_label}, source_mode={source_mode}")
+        logger.debug(f"[执行中心] 任务 #{task.task_id} 共享上下文快照={task.draft.context_input.to_settings()}")
         logger.debug(
-            f"[执行中心] 任务 #{task.task_id} 范围={task_scope_label}, "
-            f"source_mode={source_mode}"
+            f"[执行中心] 任务 #{task.task_id} 参数快照 "
+            f"task_params={asdict(task_params)}, runtime_settings={runtime_settings}, options={asdict(options)}"
         )
         for step_name in steps:
             stage_key = STAGE_KEY_BY_STEP_NAME.get(step_name, "unknown")
             logger.info(f"[执行中心] 任务 #{task.task_id} 开始{step_name}")
 
-            if step_name == "更新数据":
+            if step_name == "前置强制更新":
                 _emit_stage_progress(
                     signals,
                     stage_key=stage_key,
                     entity_scope_label=task_scope_label,
                     current=0,
                     total=1,
-                    message="正在更新基础数据…",
+                    message="正在强制刷新基础数据…",
                 )
                 update_app = LolAudioUnpackApp(
                     create_app_context(
-                        cli_overrides=_build_runtime_overrides(task, force_bp_vo=True),
+                        settings=_build_runtime_settings(task, force_bp_vo=True),
                     )
                 )
                 update_app.update(options, target=target)
@@ -176,9 +173,10 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     entity_scope_label=task_scope_label,
                     current=1,
                     total=1,
-                    message="更新数据完成",
+                    message="基础数据刷新完成",
                 )
             elif step_name == "音频解包":
+
                 def emit_extract_progress(
                     entity_type: str,
                     current: int,
@@ -200,7 +198,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     logger.debug(f"[执行中心] 任务 #{task.task_id} 创建运行时 AppContext")
                     runtime_app = LolAudioUnpackApp(
                         create_app_context(
-                            cli_overrides=runtime_overrides,
+                            settings=runtime_settings,
                         )
                     )
 
@@ -223,6 +221,53 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     current=1,
                     total=1,
                     message="音频解包阶段已结束",
+                    stage_finished=True,
+                )
+            elif step_name == "音频转码":
+
+                def emit_wav_progress(
+                    entity_type: str,
+                    current: int,
+                    total: int,
+                    message: str,
+                    *,
+                    resolved_stage_key: str = stage_key,
+                ) -> None:
+                    _emit_stage_progress(
+                        signals,
+                        stage_key=resolved_stage_key,
+                        entity_scope_label=ENTITY_SCOPE_LABEL_BY_TYPE.get(entity_type, task_scope_label),
+                        current=current,
+                        total=total,
+                        message=message,
+                    )
+
+                if runtime_app is None:
+                    logger.debug(f"[执行中心] 任务 #{task.task_id} 创建运行时 AppContext")
+                    runtime_app = LolAudioUnpackApp(
+                        create_app_context(
+                            settings=runtime_settings,
+                        )
+                    )
+
+                _emit_stage_progress(
+                    signals,
+                    stage_key=stage_key,
+                    entity_scope_label=task_scope_label,
+                    message="正在准备音频转码…",
+                )
+                runtime_app.transcode_wav(
+                    options,
+                    progress_callback=emit_wav_progress,
+                    job_label=f"gui-task-{task.task_id}",
+                )
+                _emit_stage_progress(
+                    signals,
+                    stage_key=stage_key,
+                    entity_scope_label=task_scope_label,
+                    current=1,
+                    total=1,
+                    message="音频转码完成",
                     stage_finished=True,
                 )
             elif step_name == "事件映射":
@@ -251,7 +296,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     logger.debug(f"[执行中心] 任务 #{task.task_id} 创建运行时 AppContext")
                     runtime_app = LolAudioUnpackApp(
                         create_app_context(
-                            cli_overrides=runtime_overrides,
+                            settings=runtime_settings,
                         )
                     )
 

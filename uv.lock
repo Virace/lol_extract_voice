@@ -578,6 +578,7 @@ dependencies = [
     { name = "league-tools" },
     { name = "msgpack" },
     { name = "python-dotenv" },
+    { name = "pyvgmstream" },
     { name = "riotmanifest" },
     { name = "ruamel-yaml" },
 ]
@@ -586,7 +587,6 @@ dependencies = [
 gui = [
     { name = "pyside6" },
     { name = "pyside6-fluent-widgets" },
-    { name = "pyvgmstream" },
 ]
 
 [package.dev-dependencies]
@@ -607,7 +607,7 @@ requires-dist = [
     { name = "pyside6", marker = "extra == 'gui'", specifier = ">=6" },
     { name = "pyside6-fluent-widgets", marker = "extra == 'gui'", specifier = ">=1.7.0" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
-    { name = "pyvgmstream", marker = "extra == 'gui'", specifier = ">=0.1.0" },
+    { name = "pyvgmstream", specifier = ">=0.1.0" },
     { name = "riotmanifest", specifier = ">=2.4.0" },
     { name = "ruamel-yaml", specifier = ">=0.18.14" },
 ]
@@ -4198,25 +4198,25 @@ wheels = [
 
 [[package]]
 name = "pyvgmstream"
-version = "0.1.0"
+version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/8f/cc/8509554783ca0033b684cdd7151e0a136fec6ad7a25bd1c0fa9ee4a62d71/pyvgmstream-0.1.0.tar.gz", hash = "sha256:552f7c7d89d3e0d862f2058a51880f4aae09ac656b5b61e3dd7c6fce243306d7", size = 8569347, upload-time = "2026-03-29T23:01:43.69Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/12/83/f937c638178e54b60822bb8db800028fb89aae9684b845263133906328d0/pyvgmstream-0.1.1.tar.gz", hash = "sha256:56a79bb93a8894730c0b4f3d42c0c2aee218668d6a36f0eb160f18626467b35a", size = 8570213, upload-time = "2026-04-04T22:16:22.09Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/09/b8/58bfb4adec45ef34f94f42389e0b70ce8a5ff25f97a470077b6ff08a20f4/pyvgmstream-0.1.0-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:3a0fc894606a41d5ce741d2de49e3e385291e2cecbbf3275d3ff61cc2b0345ce", size = 1079861, upload-time = "2026-03-29T23:01:19.922Z" },
-    { url = "https://files.pythonhosted.org/packages/2b/3f/eab161b237778088ce073f7bd24b4684e061dbe5fd98ca40456382885e01/pyvgmstream-0.1.0-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:48ca2c257f6882460907f8f93deb961dda3ebcce874ebac57828ffe64ac9ae3f", size = 1240838, upload-time = "2026-03-29T23:01:21.624Z" },
-    { url = "https://files.pythonhosted.org/packages/9a/33/1b072fa31e78e5cdc9f7ba79bd2ced6829ab665f81b1fc906998dcc12208/pyvgmstream-0.1.0-cp310-cp310-win_amd64.whl", hash = "sha256:af3fe97f0b40288057c3ceecf908be46859cb751d0b873c2b4c6cd3b131f65f3", size = 1207661, upload-time = "2026-03-29T23:01:23.041Z" },
-    { url = "https://files.pythonhosted.org/packages/90/58/1152498b2aa40615de2c195158e92c759914f025626221f47ef79da151a1/pyvgmstream-0.1.0-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:d6fa15c9997cf45457124b6278285d1157c6bd809df480bbdc59fa5837db3a8f", size = 1081404, upload-time = "2026-03-29T23:01:24.401Z" },
-    { url = "https://files.pythonhosted.org/packages/62/ce/5f94c5794aa1da6fb4228746b95fdd5cd73a0c88e156d3e79d17781faeed/pyvgmstream-0.1.0-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:8a369f28949e76bcadee3194e85889fe9a7aae2bd3f6cb1d266bbeee8c59f59f", size = 1242306, upload-time = "2026-03-29T23:01:26.031Z" },
-    { url = "https://files.pythonhosted.org/packages/3b/06/56ee1a07916a7e231f818e262fbb7a42d4fdf0da9d198f5e67e07624de72/pyvgmstream-0.1.0-cp311-cp311-win_amd64.whl", hash = "sha256:942abdcebafc0d34600ec1626f29162d5972cef00fc523c975fe54f146958c4f", size = 1208352, upload-time = "2026-03-29T23:01:27.755Z" },
-    { url = "https://files.pythonhosted.org/packages/e1/0e/d868e5a09051128e753d3592d80eb36b2a1ca11def68eca7fac74d7f3d84/pyvgmstream-0.1.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:ae7afd0de8ddcfcee70894ff978151d996eb5e7413725fd9b685ee6889259c5a", size = 1082583, upload-time = "2026-03-29T23:01:29.361Z" },
-    { url = "https://files.pythonhosted.org/packages/74/69/ceba86e1e3554822145a45bb2fb14ec114776bee00f5e328eaf4f33a1d78/pyvgmstream-0.1.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:dd2dd6e388d1b14a22ee7f5d1f1ef5fdf15899dc0322a1ab168b5fcf7437dbf4", size = 1243483, upload-time = "2026-03-29T23:01:30.973Z" },
-    { url = "https://files.pythonhosted.org/packages/35/e9/ee3b23d43aa6ee6be94b00de060eb07492a5502fa290cee0ce08981a6f01/pyvgmstream-0.1.0-cp312-cp312-win_amd64.whl", hash = "sha256:b8a65f473d5bdd4061142b489497b52dddf2d1c5af4008c1e2e2a2687be67325", size = 1209418, upload-time = "2026-03-29T23:01:32.245Z" },
-    { url = "https://files.pythonhosted.org/packages/01/ba/a724cae67dc6dd3b4fd98f02dbe8bef9fbb89de2dc8e722dec3b373fe92c/pyvgmstream-0.1.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:1fddadfd5620d569b88bb122aa820d56e777bc47d9cb9aa305c0a75e5f8bb843", size = 1082692, upload-time = "2026-03-29T23:01:33.977Z" },
-    { url = "https://files.pythonhosted.org/packages/cf/09/aec090a74a88a02deef5a1fc8fc1cef53a17372d3c2b5696588fb5ff1a8d/pyvgmstream-0.1.0-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:2686e320c1d9327d8e701ca139b4f184f01efc7cc0b3cb0c5c9f3588d8a70f2a", size = 1243431, upload-time = "2026-03-29T23:01:35.573Z" },
-    { url = "https://files.pythonhosted.org/packages/19/3d/35a1cfd639ea3d790b0dd52414e52178155bfeb1029d86a4e46cfc454579/pyvgmstream-0.1.0-cp313-cp313-win_amd64.whl", hash = "sha256:2d6b9aeb3956476f32b1f0baf40e27c2f8310495537c92eb1e6e664aebcc0267", size = 1209401, upload-time = "2026-03-29T23:01:37.377Z" },
-    { url = "https://files.pythonhosted.org/packages/81/b3/65c02fc2b4d367c3673fb114efa35537b06f0519e69b4fe2be5402a2d030/pyvgmstream-0.1.0-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:b1d596404e1d5c45065c06e54be49ccbe615dbcd66cbfd5b8713123d69c5551e", size = 1083087, upload-time = "2026-03-29T23:01:38.673Z" },
-    { url = "https://files.pythonhosted.org/packages/d9/b0/bbba1317196720fa3a8912239e350b8ed3c16b03069c8dcf87834a937d36/pyvgmstream-0.1.0-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f48d5c4e672ba1771bfadd6c6894ad542c8817dd765c90ec846ed3cdb8152133", size = 1243483, upload-time = "2026-03-29T23:01:40.366Z" },
-    { url = "https://files.pythonhosted.org/packages/15/d9/b8bebe03adf5fa6056fad7d9e8fee59d8968d7914d6b5200728fb6e6c930/pyvgmstream-0.1.0-cp314-cp314-win_amd64.whl", hash = "sha256:8a1f7064c0739760aa496531a068b947c7d3d35151d247ac7683b60b2643e4b5", size = 1243092, upload-time = "2026-03-29T23:01:41.772Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/e7/b0b11af9900966860572fb447ef1215ea3f04cc77e8530ef98025ad0d41d/pyvgmstream-0.1.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:377cd43a446acea8fa830307292556173d6e982e23bb76091694fd5e6499e432", size = 1081578, upload-time = "2026-04-04T22:15:57.422Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/89/0791ad5b16bac7913ecd3aac6fc90a0efbc7e4661a182e31d8649d22328a/pyvgmstream-0.1.1-cp310-cp310-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:dc77ceea14094436d04164be1d7766a187b34a2b3bb07c86ef28c8be8db45e10", size = 1242179, upload-time = "2026-04-04T22:15:59.273Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/7e/fdf37861743e7a68911e7d7bbdd6e8260695f3c880a5db5bef9ce30800b9/pyvgmstream-0.1.1-cp310-cp310-win_amd64.whl", hash = "sha256:f53c8aa72cf6d84d3f09bf882fd992bc0e33eeb9c72c70986f4f2b61a223db6d", size = 1209149, upload-time = "2026-04-04T22:16:01.258Z" },
+    { url = "https://files.pythonhosted.org/packages/f4/69/979b1c56426ddd96984506794fbbd9bfba3698ea2735beed82db91b0f5b6/pyvgmstream-0.1.1-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:b759cf5e3e23f3cca319208292b063da5707213e93c3043ead88f2556389f2c7", size = 1083239, upload-time = "2026-04-04T22:16:02.663Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/6f/42d314e594537d253bbb55cd1ebe7e8774a7da52eaf2e9e6ef36ecc243be/pyvgmstream-0.1.1-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:48a58832e2bf42998a3770cffacb40ba1d42a1f33bdd1bc0540daabf171c92f7", size = 1243540, upload-time = "2026-04-04T22:16:04.628Z" },
+    { url = "https://files.pythonhosted.org/packages/48/3d/c2808fea29b7979c20bb219217c618f2bbe8319bcc807fac2d673188214e/pyvgmstream-0.1.1-cp311-cp311-win_amd64.whl", hash = "sha256:fcdc1f3f02fd61cfb56ced5d67bd2175d441b78c401796d092d5e10164ea77f0", size = 1209684, upload-time = "2026-04-04T22:16:06.472Z" },
+    { url = "https://files.pythonhosted.org/packages/ac/de/8285c1e9b5c4a707ee058c2df5bbd6083a428dca1ffc0d60393196b62136/pyvgmstream-0.1.1-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:1d25214b056e869b2a0001e458075e6e45a626a415b3b0b58f47605263844dc3", size = 1084554, upload-time = "2026-04-04T22:16:08.048Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/d8/98923d31cc6dc2e3fb56eec0da9d2c9f7e7cc5f4eebd7ec1c8010f47da05/pyvgmstream-0.1.1-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:f98896739af0103a6780827d005206670e5b21024a2d3e087765e0fd77261178", size = 1245188, upload-time = "2026-04-04T22:16:09.676Z" },
+    { url = "https://files.pythonhosted.org/packages/a7/7d/495beb754f4a942110d6554f3f41699260362d562d5f232df602f8248b0e/pyvgmstream-0.1.1-cp312-cp312-win_amd64.whl", hash = "sha256:eb73f713e108013db735baa6c949c45eec815d60ae3ac0a8547e136fe2bdbdc8", size = 1210857, upload-time = "2026-04-04T22:16:11.273Z" },
+    { url = "https://files.pythonhosted.org/packages/83/49/048cd2fe77e176efb9d3284e777ae98efd83a7fd9e0cc106bb56c4e1a78b/pyvgmstream-0.1.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:12855fc41a38dd5387be8af98c0b92289c8910f6c9b46df9e83583dc1807aa91", size = 1084627, upload-time = "2026-04-04T22:16:12.992Z" },
+    { url = "https://files.pythonhosted.org/packages/7a/b1/9db4612b5c8025ed0a0948e2151914e468f858c1fb4a8916c388dc830b41/pyvgmstream-0.1.1-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:88e7b92020e4f161697481fe3e736c8eb47458b8b6548c75195db2a67fcd8f4e", size = 1245112, upload-time = "2026-04-04T22:16:14.598Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/3a/79fdee43cac0eb8766b25b0fcea885c5fd2de9a29b3c942e713f32fea8d2/pyvgmstream-0.1.1-cp313-cp313-win_amd64.whl", hash = "sha256:6ac2e05d789b5bbdd3150a8180c6de140fe7abdda9d1cf4a6c8211f4431e4fbc", size = 1210848, upload-time = "2026-04-04T22:16:15.989Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/04/dd15b3ef8eefc2e3c97bfc115bbe84729c81480b5e67c11345bf6eb3ad1b/pyvgmstream-0.1.1-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:d7e0b8a52e03a0cb1bf79c0e8a84c2b8800b6979bc55ad99cd430241fa2c84b4", size = 1084744, upload-time = "2026-04-04T22:16:17.442Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/59/3cf8ba505b3fd672a51486bbf4ff7f6dca32fa9bfb956749c3cea4f0bf2b/pyvgmstream-0.1.1-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:59671533542ff1f95a1cf97ec9e58bacc42fc3fcb403fb9fd4ccc28e5ea1c41b", size = 1245188, upload-time = "2026-04-04T22:16:18.844Z" },
+    { url = "https://files.pythonhosted.org/packages/32/f1/6e0960978a3b4773f07076fb2390ab288d21be492e9ef2e5f7f60b8de744/pyvgmstream-0.1.1-cp314-cp314-win_amd64.whl", hash = "sha256:c704b63ae57f535c930e2b69822617cfabd40a1b9e36d0701565d4cd64f817a3", size = 1244620, upload-time = "2026-04-04T22:16:20.398Z" },
 ]
 
 [[package]]

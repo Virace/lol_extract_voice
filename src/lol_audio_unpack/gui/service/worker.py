@@ -6,7 +6,7 @@ from loguru import logger
 from PySide6.QtCore import QThread, Signal
 
 if TYPE_CHECKING:
-    from lol_audio_unpack.app_context import AppContext
+    from lol_audio_unpack.app.types import AppContext
 
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 
@@ -48,3 +48,5 @@ class DataLoadWorker(QThread):
             else:
                 logger.opt(exception=True).error(f"{self.entity_type} 实体扫描失败: {e}")
             self.error.emit(str(e))
+
+

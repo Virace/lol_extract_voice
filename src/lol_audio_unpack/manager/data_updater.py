@@ -1,12 +1,4 @@
-# 🐍 Sparse is better than dense.
-# 🐼 稀疏优于稠密
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2025/7/30 7:39
-# @Update  : 2025/8/2 19:08
-# @Detail  : 数据更新器
+"""结构化数据更新与多语言资源合并逻辑。"""
 
 from __future__ import annotations
 
@@ -19,20 +11,16 @@ from typing import TYPE_CHECKING, Any
 from league_tools.formats import WAD
 from loguru import logger
 
-from lol_audio_unpack.app_context import SourceMode
-from lol_audio_unpack.manager.utils import (
-    create_metadata_object,
-    needs_update,
-    read_data,
-    resolve_context_version,
-    write_data,
-)
+from lol_audio_unpack.app.game_version import resolve_game_version
+from lol_audio_unpack.app.types import SourceMode
+from lol_audio_unpack.manager.files import needs_update, read_data, write_data
+from lol_audio_unpack.manager.utils import build_metadata_payload
 from lol_audio_unpack.utils.common import format_region, load_json
 from lol_audio_unpack.utils.logging import performance_monitor
 from lol_audio_unpack.utils.type_hints import StrPath
 
 if TYPE_CHECKING:
-    from lol_audio_unpack.app_context import AppContext
+    from lol_audio_unpack.app.types import AppContext
 
 CHAMPIONS_REL_PATH = Path("Game") / "DATA" / "FINAL" / "Champions"
 MAPS_SHIPPING_REL_PATH = Path("Game") / "DATA" / "FINAL" / "Maps" / "Shipping"
@@ -73,7 +61,7 @@ class DataUpdater:
         else:
             self.languages: list[str] = languages
 
-        self.version: str = resolve_context_version(self.ctx)
+        self.version: str = resolve_game_version(self.ctx)
         self.version_manifest_path: Path = self.manifest_path / self.version
         self.data_file_base: Path = self.version_manifest_path / "data"
         self.process_languages: list[str] = self._prepare_language_list(self.languages)
@@ -119,9 +107,7 @@ class DataUpdater:
         try:
             return target_path.relative_to(self.game_path).as_posix()
         except ValueError:
-            logger.warning(
-                f"路径不在游戏目录内，回退到默认相对路径: target={target_path}, fallback={fallback}"
-            )
+            logger.warning(f"路径不在游戏目录内，回退到默认相对路径: target={target_path}, fallback={fallback}")
             return fallback.as_posix()
 
     def _build_champion_wad_info(self, alias: str) -> dict[str, str]:
@@ -133,11 +119,7 @@ class DataUpdater:
         wad_path_base = f"{champions_rel_base}/{alias}"
         return {
             "root": f"{wad_path_base}.wad.client",
-            **{
-                lang: f"{wad_path_base}.{lang}.wad.client"
-                for lang in self.process_languages
-                if lang != "default"
-            },
+            **{lang: f"{wad_path_base}.{lang}.wad.client" for lang in self.process_languages if lang != "default"},
         }
 
     def _build_map_wad_info(self, wad_prefix: str) -> dict[str, str]:
@@ -149,11 +131,7 @@ class DataUpdater:
         wad_path_base = f"{maps_rel_base}/{wad_prefix}"
         return {
             "root": f"{wad_path_base}.wad.client",
-            **{
-                lang: f"{wad_path_base}.{lang}.wad.client"
-                for lang in self.process_languages
-                if lang != "default"
-            },
+            **{lang: f"{wad_path_base}.{lang}.wad.client" for lang in self.process_languages if lang != "default"},
         }
 
     @staticmethod
@@ -161,7 +139,7 @@ class DataUpdater:
         """构建 rcp-be-lol-game-data 的 v1 资源路径。"""
         return f"{RCP_GLOBAL_PREFIX}/{region}/v1/{entry}"
 
-    def _resolve_asset_bundle_names_from_description(self, region: str, head: str) -> list[str]:
+    def _resolve_bundle_names(self, region: str, head: str) -> list[str]:
         """从 description.json 解析指定区域对应的 asset bundle 文件名列表。
 
         Args:
@@ -213,7 +191,7 @@ class DataUpdater:
     def _resolve_wad_files(self, region: str, head: str) -> list[Path]:
         """解析待处理 WAD 文件列表（仅使用 description.json 清单）。"""
         lcu_root = self._get_game_lcu_path()
-        bundle_names = self._resolve_asset_bundle_names_from_description(region, head)
+        bundle_names = self._resolve_bundle_names(region, head)
 
         if not bundle_names:
             logger.error(f"description.json 未提供区域资源清单: region={region}, head={head}")
@@ -229,9 +207,7 @@ class DataUpdater:
                 missing_names.append(bundle_name)
 
         if missing_names:
-            logger.warning(
-                f"description.json 中有 {len(missing_names)} 个资源文件不存在: {missing_names[:5]}"
-            )
+            logger.warning(f"description.json 中有 {len(missing_names)} 个资源文件不存在: {missing_names[:5]}")
 
         return resolved_files
 
@@ -246,7 +222,10 @@ class DataUpdater:
     @performance_monitor(level="INFO")
     def check_and_update(self) -> Path:
         """检查游戏版本并更新数据"""
-        if not needs_update(self.data_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()) and self._check_languages():
+        if (
+            not needs_update(self.data_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode())
+            and self._check_languages()
+        ):
             logger.info(f"数据文件已是最新版本 {self.version} 且包含所有请求的语言，无需更新。")
             # 返回基础路径，让调用者决定使用哪个具体文件
             return self.data_file_base
@@ -457,7 +436,7 @@ class DataUpdater:
                 "wad": self._build_champion_wad_info(alias),
             }
 
-        final_result = create_metadata_object(
+        final_result = build_metadata_payload(
             self.version, [lang for lang in self.process_languages if lang != "default"]
         )
         final_result["champions"] = final_champions
@@ -513,9 +492,7 @@ class DataUpdater:
                 if should_keep_wad_info:
                     map_data["wad"] = wad_info
                 else:
-                    logger.warning(
-                        f"地图 {wad_prefix} 的WAD文件不存在，已跳过: {self.game_path / wad_info['root']}"
-                    )
+                    logger.warning(f"地图 {wad_prefix} 的WAD文件不存在，已跳过: {self.game_path / wad_info['root']}")
 
                 final_maps[str(map_id)] = map_data
             final_result["maps"] = final_maps
@@ -580,18 +557,14 @@ class DataUpdater:
                     if item["id"] != -1
                 ]
 
-                logger.debug(
-                    f"准备提取 {len(champion_hashes)} 个英雄详细信息，用于后续 bin 元数据装配"
-                )
+                logger.debug(f"准备提取 {len(champion_hashes)} 个英雄详细信息，用于后续 bin 元数据装配")
                 (out_path / "champions").mkdir(exist_ok=True)
 
                 for wad_file in wad_files:
                     logger.trace(f"从 {wad_file.name} 提取英雄详细信息")
                     WAD(wad_file).extract(champion_hashes, output_file_name)
 
-                logger.success(
-                    f"英雄信息提取完成，共 {len(champion_hashes)} 个英雄，将进入 bin 元数据装配"
-                )
+                logger.success(f"英雄信息提取完成，共 {len(champion_hashes)} 个英雄，将进入 bin 元数据装配")
 
                 if self._is_bp_vo_enabled():
                     bp_vo_hashes: list[str] = []
