@@ -39,8 +39,15 @@ runtime_hooks.append(str(RUNTIME_HOOK))
 
 datas = collect_data_files("qfluentwidgets")
 datas += [
-    (str(path), "lol_audio_unpack/gui/assets")
-    for path in GUI_ASSET_ROOT.iterdir()
+    (
+        str(path),
+        (
+            f"lol_audio_unpack/gui/assets/{path.relative_to(GUI_ASSET_ROOT).parent.as_posix()}"
+            if path.relative_to(GUI_ASSET_ROOT).parent.as_posix() != "."
+            else "lol_audio_unpack/gui/assets"
+        ),
+    )
+    for path in GUI_ASSET_ROOT.rglob("*")
     if path.is_file()
 ]
 

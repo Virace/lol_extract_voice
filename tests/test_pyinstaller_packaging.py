@@ -50,6 +50,15 @@ def test_pyinstaller_spec_supports_default_onefile_and_optional_onedir() -> None
     assert "exclude_binaries=True" in spec_text
 
 
+def test_pyinstaller_spec_recursively_packages_nested_gui_assets() -> None:
+    """spec 应递归打包 GUI 资源子目录，避免冻结态缺少二维码等嵌套资源。"""
+    spec_text = (PYINSTALLER_DIR / "gui.spec").read_text(encoding="utf-8")
+
+    assert 'GUI_ASSET_ROOT.rglob("*")' in spec_text
+    assert "relative_to(GUI_ASSET_ROOT)" in spec_text
+    assert "lol_audio_unpack/gui/assets/" in spec_text
+
+
 def test_pyinstaller_python_build_script_defaults_to_onefile() -> None:
     """Python 构建入口应默认 onefile，并把模式参数转发给 spec。"""
     script_text = (PYINSTALLER_DIR / "build_gui.py").read_text(encoding="utf-8")
