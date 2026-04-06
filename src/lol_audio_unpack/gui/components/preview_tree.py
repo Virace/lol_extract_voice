@@ -148,6 +148,33 @@ class TreeStats:
     available_audio_id_count: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class PreviewFilterResult:
+    """描述事件树过滤后的结构与命中统计。"""
+
+    mapping_data: dict[str, Any] | None
+    is_active: bool
+    matched_event_count: int = 0
+    matched_audio_id_count: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewModifierSummary:
+    """描述预览树中可观察到的前缀/后缀修饰符集合。"""
+
+    prefixes: tuple[str, ...] = ()
+    suffixes: tuple[str, ...] = ()
+    audio_types: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewSearchScope:
+    """描述一次预览搜索的修饰符与关键字范围。"""
+
+    modifier: str | None = None
+    keyword: str = ""
+
+
 @dataclass(slots=True)
 class _PreviewTreeNode:
     """树形预览中的轻量节点。"""
@@ -259,6 +286,174 @@ def build_tree_summary_text(stats: TreeStats) -> str:
     return (
         f"分组 {stats.skin_count} · 类型 {stats.audio_type_count} · "
         f"事件 {stats.event_count} · ID {stats.audio_id_count} · 可试听 {stats.available_audio_id_count}"
+    )
+
+
+def filter_preview_mapping_data(
+    mapping_data: dict[str, Any] | None,
+    keyword: str,
+) -> PreviewFilterResult:
+    """按关键字过滤事件树原始数据，同时保留必要祖先路径。
+
+    Args:
+        mapping_data: 当前实体的原始 mapping 数据。
+        keyword: 搜索关键字。
+
+    Returns:
+        过滤后的 mapping 数据与命中统计。
+    """
+    scope = parse_preview_search_scope(keyword)
+    normalized = scope.keyword.casefold()
+    modifier = scope.modifier.casefold() if scope.modifier else None
+    if not modifier and not normalized:
+        return PreviewFilterResult(mapping_data=mapping_data, is_active=False)
+
+    groups = extract_tree_groups(mapping_data)
+    if not groups:
+        return PreviewFilterResult(mapping_data=mapping_data, is_active=True)
+
+    filtered_groups: dict[str, dict[str, dict[str, list[str]]]] = {}
+    matched_event_count = 0
+    matched_audio_id_count = 0
+
+    for group_id, group_payload in groups.items():
+        if not isinstance(group_payload, dict):
+            continue
+
+        events_payload = group_payload.get("events", {})
+        if not isinstance(events_payload, dict):
+            continue
+
+        filtered_audio_types: dict[str, dict[str, list[str]]] = {}
+        for audio_type_name, event_payload in events_payload.items():
+            if not isinstance(event_payload, dict):
+                continue
+
+            audio_type = str(audio_type_name).strip()
+            if modifier and not _audio_type_matches_modifier(audio_type, modifier):
+                continue
+
+            filtered_events: dict[str, list[str]] = {}
+            for event_name, audio_ids in event_payload.items():
+                if not isinstance(audio_ids, list | tuple):
+                    continue
+
+                event_label = str(event_name)
+                clean_audio_ids = [str(audio_id).strip() for audio_id in audio_ids if str(audio_id).strip()]
+                event_match = not normalized or normalized in event_label.casefold()
+                matched_audio_ids = [audio_id for audio_id in clean_audio_ids if normalized in audio_id.casefold()]
+
+                if event_match:
+                    filtered_events[event_label] = clean_audio_ids
+                    matched_event_count += 1
+                    matched_audio_id_count += len(clean_audio_ids)
+                    continue
+
+                if not matched_audio_ids:
+                    continue
+
+                filtered_events[event_label] = matched_audio_ids
+                matched_event_count += 1
+                matched_audio_id_count += len(matched_audio_ids)
+
+            if filtered_events:
+                filtered_audio_types[str(audio_type_name)] = filtered_events
+
+        if filtered_audio_types:
+            filtered_groups[str(group_id)] = {"events": filtered_audio_types}
+
+    root_key = next(
+        (key for key in ("skins", "map") if isinstance(mapping_data, dict) and key in mapping_data),
+        "skins",
+    )
+    return PreviewFilterResult(
+        mapping_data={root_key: filtered_groups},
+        is_active=True,
+        matched_event_count=matched_event_count,
+        matched_audio_id_count=matched_audio_id_count,
+    )
+
+
+def parse_preview_search_scope(keyword: str) -> PreviewSearchScope:
+    """解析搜索串中的动态修饰符范围。
+
+    Args:
+        keyword: 原始搜索字符串。
+
+    Returns:
+        解析后的修饰符与实际关键字。
+    """
+    raw = keyword.strip()
+    if ":" not in raw:
+        return PreviewSearchScope(keyword=raw)
+
+    modifier_text, content = raw.split(":", 1)
+    modifier = modifier_text.strip()
+    if not modifier:
+        return PreviewSearchScope(keyword=raw)
+
+    return PreviewSearchScope(modifier=modifier, keyword=content.strip())
+
+
+def _audio_type_matches_modifier(audio_type: str, modifier: str) -> bool:
+    """判断音频类型是否匹配给定的动态修饰符。"""
+    audio_type_text = audio_type.strip()
+    if not audio_type_text:
+        return False
+
+    normalized_audio_type = audio_type_text.casefold()
+    if normalized_audio_type == modifier:
+        return True
+
+    parts = tuple(part.casefold() for part in audio_type_text.split("_") if part.strip())
+    if not parts:
+        return False
+    return parts[0] == modifier or parts[-1] == modifier
+
+
+def extract_preview_modifiers(mapping_data: dict[str, Any] | None) -> PreviewModifierSummary:
+    """从当前预览树数据中提取音频类型前缀/后缀修饰符。
+
+    Args:
+        mapping_data: 当前实体的原始 mapping 数据。
+
+    Returns:
+        去重后的前缀、后缀与完整音频类型名集合。
+    """
+    groups = extract_tree_groups(mapping_data)
+    if not groups:
+        return PreviewModifierSummary()
+
+    prefixes: set[str] = set()
+    suffixes: set[str] = set()
+    audio_types: set[str] = set()
+
+    for group_payload in groups.values():
+        if not isinstance(group_payload, dict):
+            continue
+
+        events_payload = group_payload.get("events", {})
+        if not isinstance(events_payload, dict):
+            continue
+
+        for audio_type_name in events_payload.keys():
+            audio_type = str(audio_type_name).strip()
+            if not audio_type:
+                continue
+
+            audio_types.add(audio_type)
+            parts = tuple(part.strip() for part in audio_type.split("_") if part.strip())
+            if not parts:
+                continue
+
+            prefixes.add(parts[0])
+            suffixes.add(parts[-1])
+
+    sort_key = lambda value: value.casefold()
+    return PreviewModifierSummary(
+        prefixes=tuple(sorted(prefixes, key=sort_key)),
+        suffixes=tuple(sorted(suffixes, key=sort_key)),
+        audio_types=tuple(sorted(audio_types, key=sort_key)),
     )
 
 

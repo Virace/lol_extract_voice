@@ -12,6 +12,11 @@ from lol_audio_unpack.gui.components.overview_status_badge import (
     resolve_status_pill_chrome_colors,
     resolve_status_pill_segment_colors,
 )
+from lol_audio_unpack.gui.components.preview_tree import (
+    extract_preview_modifiers,
+    extract_tree_groups,
+    filter_preview_mapping_data,
+)
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
 from lol_audio_unpack.gui.theme import apply_accent_preset, apply_shell_mode, get_accent_preset
 from lol_audio_unpack.gui.view.overview.audio_preview_panel import OverviewAudioPreviewPanel
@@ -223,7 +228,7 @@ def test_overview_preview_panel_show_placeholder_clears_preview_state(qtbot) -> 
     assert panel.preview_path_edit.text() == ""
     assert panel.preview_path_edit.toolTip() == ""
     assert panel.text_preview.toPlainText() == "请选择左侧实体。"
-    assert panel.preview_stack.currentWidget() is panel.text_preview
+    assert panel.preview_stack.currentWidget() is panel.placeholder_panel
     assert panel.reveal_file_btn.isEnabled() is False
 
 
@@ -260,3 +265,139 @@ def test_overview_audio_preview_panel_can_set_preview_data_and_playback_state(qt
     panel.set_playback_state("1001", progress=0.25, is_playing=False, is_paused=True)
 
     assert panel.summary_label.text() == "分组 1 · 类型 0 · 事件 0"
+
+
+def test_filter_preview_mapping_data_keeps_full_event_when_event_name_matches() -> None:
+    mapping_data = {
+        "skins": {
+            "1000": {
+                "events": {
+                    "XinZhao_Base_VO": {
+                        "Play_vo_XinZhao_Attack2DBaron": ["261984525", "520515702"],
+                        "Play_vo_XinZhao_Attack2DDragon": ["888888888"],
+                    }
+                }
+            }
+        }
+    }
+
+    result = filter_preview_mapping_data(mapping_data, "baron")
+    groups = extract_tree_groups(result.mapping_data)
+    events = groups["1000"]["events"]["XinZhao_Base_VO"]
+
+    assert result.is_active is True
+    assert result.matched_event_count == 1
+    assert result.matched_audio_id_count == 2
+    assert events == {"Play_vo_XinZhao_Attack2DBaron": ["261984525", "520515702"]}
+
+
+def test_filter_preview_mapping_data_keeps_only_matching_audio_id_when_id_matches() -> None:
+    mapping_data = {
+        "skins": {
+            "1000": {
+                "events": {
+                    "XinZhao_Base_VO": {
+                        "Play_vo_XinZhao_Attack2DBaron": ["261984525", "520515702"],
+                        "Play_vo_XinZhao_Attack2DDragon": ["888888888"],
+                    }
+                }
+            }
+        }
+    }
+
+    result = filter_preview_mapping_data(mapping_data, "2619")
+    groups = extract_tree_groups(result.mapping_data)
+    events = groups["1000"]["events"]["XinZhao_Base_VO"]
+
+    assert result.is_active is True
+    assert result.matched_event_count == 1
+    assert result.matched_audio_id_count == 1
+    assert events == {"Play_vo_XinZhao_Attack2DBaron": ["261984525"]}
+
+
+def test_extract_preview_modifiers_collects_prefixes_and_suffixes() -> None:
+    mapping_data = {
+        "map": {
+            "12": {
+                "events": {
+                    "NPC_Map12_VO": {},
+                    "MUS_Map12_FirstBlood": {},
+                    "ITEMS_Global": {},
+                    "HUD_Global": {},
+                    "ENV_Map12_SFX": {},
+                }
+            }
+        }
+    }
+
+    result = extract_preview_modifiers(mapping_data)
+
+    assert result.prefixes == ("ENV", "HUD", "ITEMS", "MUS", "NPC")
+    assert result.suffixes == ("FirstBlood", "Global", "SFX", "VO")
+    assert result.audio_types == (
+        "ENV_Map12_SFX",
+        "HUD_Global",
+        "ITEMS_Global",
+        "MUS_Map12_FirstBlood",
+        "NPC_Map12_VO",
+    )
+
+
+def test_filter_preview_mapping_data_supports_suffix_modifier_scope() -> None:
+    mapping_data = {
+        "skins": {
+            "1000": {
+                "events": {
+                    "XinZhao_Base_VO": {
+                        "Play_vo_XinZhao_Attack2DBaron": ["261984525", "520515702"],
+                    },
+                    "XinZhao_Base_SFX": {
+                        "Play_sfx_XinZhao_Attack2DBaron": ["777777777"],
+                    },
+                }
+            }
+        }
+    }
+
+    result = filter_preview_mapping_data(mapping_data, "vo:baron")
+    groups = extract_tree_groups(result.mapping_data)
+    events = groups["1000"]["events"]
+
+    assert result.is_active is True
+    assert result.matched_event_count == 1
+    assert result.matched_audio_id_count == 2
+    assert events == {
+        "XinZhao_Base_VO": {
+            "Play_vo_XinZhao_Attack2DBaron": ["261984525", "520515702"],
+        }
+    }
+
+
+def test_filter_preview_mapping_data_supports_prefix_modifier_scope_without_keyword() -> None:
+    mapping_data = {
+        "map": {
+            "12": {
+                "events": {
+                    "ITEMS_Global": {
+                        "Play_items_shop": ["8053", "8054"],
+                    },
+                    "HUD_Global": {
+                        "Play_hud_ping": ["9001"],
+                    },
+                }
+            }
+        }
+    }
+
+    result = filter_preview_mapping_data(mapping_data, "items:")
+    groups = extract_tree_groups(result.mapping_data)
+    events = groups["12"]["events"]
+
+    assert result.is_active is True
+    assert result.matched_event_count == 1
+    assert result.matched_audio_id_count == 2
+    assert events == {
+        "ITEMS_Global": {
+            "Play_items_shop": ["8053", "8054"],
+        }
+    }
