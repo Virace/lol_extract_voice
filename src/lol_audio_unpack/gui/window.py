@@ -403,6 +403,9 @@ class MainWindow(FluentWindow):
                 shared_data_controller=self._shared_data_controller,
             )
         )
+        self._progress_strip_host.strip_widget().stop_requested.connect(
+            self.executionInterface.request_cancel_task
+        )
         self.executionInterface.log_lines_appended.connect(self._log_drawer_controller.append_log_lines)
         self._progress_strip_host.set_state(
             self.executionInterface.current_global_progress_state(),

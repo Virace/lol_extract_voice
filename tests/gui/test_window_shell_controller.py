@@ -365,6 +365,20 @@ def test_main_window_connect_pages_forwards_execution_progress_to_global_strip()
     assert "self._progress_strip_host.set_state" in body
 
 
+def test_main_window_connect_pages_forwards_progress_strip_stop_to_execution_cancel() -> None:
+    window_source = Path("src/lol_audio_unpack/gui/window.py").read_text(encoding="utf-8")
+    connect_pages_match = re.search(
+        r"def _connect_pages\(self\):(?P<body>.*?)(?:\n    def |\Z)",
+        window_source,
+        re.DOTALL,
+    )
+    assert connect_pages_match is not None
+    body = connect_pages_match.group("body")
+
+    assert "self._progress_strip_host.strip_widget().stop_requested.connect(" in body
+    assert "self.executionInterface.request_cancel_task" in body
+
+
 def test_execution_log_controller_runtime_sink_uses_async_queue() -> None:
     controller_source = Path(
         "src/lol_audio_unpack/gui/controllers/execution_log.py"

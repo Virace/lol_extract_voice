@@ -7,7 +7,7 @@ from typing import Any
 from loguru import logger
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QWidget
 from qfluentwidgets import CaptionLabel, InfoBarPosition, SmoothScrollArea, SubtitleLabel
 
 from lol_audio_unpack.gui.common import (
@@ -69,7 +69,7 @@ class ExecutionPage(SmoothScrollArea):
         self._log_controller = ExecutionLogController(
             initial_lines=(
                 "执行中心日志会同步到主窗口底部日志面板。",
-                "执行中心已就绪，开始记录任务队列与界面操作。",
+                "执行中心已就绪，开始记录任务执行与界面操作。",
                 *tuple(get_buffered_log_lines()),
             ),
             max_lines=GUI_LOG_MAX_LINES,
@@ -81,6 +81,7 @@ class ExecutionPage(SmoothScrollArea):
         self._build_ui()
         self._queue_controller = ExecutionQueueController(
             build_task_item_tooltip=self._build_task_item_tooltip,
+            single_task_mode=True,
             parent=self,
         )
         self.taskBuilderPanel.sync_state_from_widgets()
@@ -148,9 +149,10 @@ class ExecutionPage(SmoothScrollArea):
                 position=InfoBarPosition.TOP,
             )
         )
-        self.create_task_btn.clicked.connect(self._queue_task_draft)
+        self.create_task_btn.clicked.connect(self._handle_primary_task_action)
         self.taskBuilderPanel.connect_form_signals(self.taskBuilderPanel.sync_state_from_widgets)
         self.taskBuilderPanel.refresh_summary()
+        self._sync_primary_action_button()
         self._refresh_progress_panel()
 
     def set_gui_config(self, cfg) -> None:
@@ -276,6 +278,7 @@ class ExecutionPage(SmoothScrollArea):
         if self._is_task_running == running:
             return
         self._is_task_running = running
+        self._sync_primary_action_button()
         self.task_running_changed.emit(running)
 
     def _set_task_queue_busy_state(self, busy: bool) -> None:
@@ -330,6 +333,40 @@ class ExecutionPage(SmoothScrollArea):
     def current_global_progress_state(self) -> GlobalProgressStripState:
         """返回当前应同步到主窗口底部的全局进度条状态。"""
         return self._current_global_progress_state
+
+    def _sync_primary_action_button(self) -> None:
+        """根据当前运行态切换主按钮文案。"""
+        self.create_task_btn.setText("取消" if self._is_task_running else "创建任务")
+
+    def _handle_primary_task_action(self) -> None:
+        """根据当前运行态分派创建或取消行为。"""
+        if self._is_task_running:
+            self.request_cancel_task()
+            return
+        self._queue_task_draft()
+
+    def request_cancel_task(self) -> bool:
+        """请求取消当前运行中的任务。"""
+        if not self._is_task_running:
+            return False
+        if not self._confirm_force_stop_task():
+            return False
+        return self._queue_controller.cancel_active_task()
+
+    def _confirm_force_stop_task(self) -> bool:
+        """弹出全局确认框，确认是否强制结束当前任务。"""
+        dialog = QMessageBox(self._feedback_parent())
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("结束当前任务")
+        dialog.setText("当前任务仍在执行。")
+        dialog.setInformativeText("确认后会强制结束当前任务，未完成的执行过程会立即停止。")
+        dialog.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
+        )
+        dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
+        dialog.button(QMessageBox.StandardButton.Yes).setText("结束任务")
+        dialog.button(QMessageBox.StandardButton.Cancel).setText("取消")
+        return dialog.exec() == int(QMessageBox.StandardButton.Yes)
 
     def _queue_task_draft(self) -> None:
         """将当前界面参数写入任务队列，并自动开始首个任务。"""

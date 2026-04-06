@@ -338,6 +338,8 @@ class GlobalProgressStrip(QWidget):
         self._pause_button.setFixedWidth(PROGRESS_ACTION_BUTTON_WIDTH)
         self._pause_button.setFixedHeight(PROGRESS_STRIP_HEIGHT - PROGRESS_CONTENT_VERTICAL_MARGIN * 2)
         self._pause_button.clicked.connect(self.pause_requested.emit)
+        # TODO: 当前执行中心仍是临时单任务模式，暂停/恢复语义未正式落地前先隐藏暂停按钮。
+        self._pause_button.hide()
 
         self._stop_button = _ProgressStripActionButton("stop", self._action_widget)
         self._stop_button.setToolTip("停止")

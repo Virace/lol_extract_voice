@@ -394,7 +394,7 @@ def test_progress_strip_uses_progress_palette_fill_for_accent_preset(qtbot) -> N
         assert actual_fill == expected_fill
 
 
-def test_progress_strip_buttons_exist_and_pause_button_toggles_icon_with_state(qtbot) -> None:
+def test_progress_strip_stop_button_emits_signal_and_pause_button_stays_hidden(qtbot) -> None:
     shell = _ProgressStripShellDemo()
     qtbot.addWidget(shell)
     shell.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
@@ -405,15 +405,16 @@ def test_progress_strip_buttons_exist_and_pause_button_toggles_icon_with_state(q
     strip = shell.progress_host.strip_widget()
     pause_button = strip.pause_button()
     stop_button = strip.stop_button()
+    stop_events = []
+    strip.stop_requested.connect(lambda: stop_events.append(True))
 
-    assert pause_button.isVisible()
+    assert pause_button.isHidden()
     assert stop_button.isVisible()
-    assert pause_button.toolTip() == "暂停"
     assert stop_button.toolTip() == "停止"
 
-    shell.progress_host.set_state(replace(_running_state(), paused=True), animate=False)
-    assert pause_button.toolTip() == "继续"
-    assert pause_button.font().pointSizeF() > 0
+    qtbot.mouseClick(stop_button, Qt.MouseButton.LeftButton)
+
+    assert stop_events == [True]
     assert stop_button.font().pointSizeF() > 0
 
 
