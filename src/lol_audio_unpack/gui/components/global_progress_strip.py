@@ -15,6 +15,7 @@ from PySide6.QtCore import (
     QRectF,
     QSize,
     Qt,
+    QTimer,
     Signal,
 )
 from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPainterPath, QPen
@@ -39,6 +40,7 @@ PROGRESS_STRIP_HOST_TOP_MARGIN = 0
 PROGRESS_STRIP_HOST_BOTTOM_MARGIN = 0
 PROGRESS_STRIP_HOST_HORIZONTAL_MARGIN = 0
 PROGRESS_STRIP_ANIMATION_MS = 220
+PROGRESS_STRIP_HIDE_DELAY_MS = 1500
 DEFAULT_PROGRESS_SWEEP_ANIMATION_MS = 4600
 DEFAULT_PROGRESS_SWEEP_IDLE_DELAY_MS = 800
 PROGRESS_TRACK_RADIUS = 12.0
@@ -710,6 +712,8 @@ class GlobalProgressStripHost(QWidget):
         super().__init__(parent)
         self._state = GlobalProgressStripState()
         self._host_height = 0
+        self._pending_hide_state: GlobalProgressStripState | None = None
+        self._pending_hide_animate = True
 
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setFixedHeight(0)
@@ -732,6 +736,11 @@ class GlobalProgressStripHost(QWidget):
         self._height_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._height_animation.finished.connect(self._sync_strip_visibility)
 
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.setInterval(PROGRESS_STRIP_HIDE_DELAY_MS)
+        self._hide_timer.timeout.connect(self._commit_hide)
+
     def strip_widget(self) -> GlobalProgressStrip:
         """返回内部实际渲染的进度条组件。"""
         return self._strip
@@ -747,6 +756,29 @@ class GlobalProgressStripHost(QWidget):
             state: 新状态。
             animate: 是否对宿主高度变化启用动画。
         """
+        # 收到新的可见状态时，立即取消待执行的延迟隐藏。
+        if state.visible:
+            self._hide_timer.stop()
+            self._pending_hide_state = None
+            self._pending_hide_animate = True
+            self._apply_state(state, animate=animate)
+            return
+
+        # 从可见态切到隐藏态时，保留当前进度条片刻，避免完成瞬间闪退。
+        if self._state.visible and self._host_height > 0:
+            self._pending_hide_state = state
+            self._pending_hide_animate = animate
+            self._hide_timer.stop()
+            self._hide_timer.start()
+            return
+
+        self._hide_timer.stop()
+        self._pending_hide_state = None
+        self._pending_hide_animate = True
+        self._apply_state(state, animate=animate)
+
+    def _apply_state(self, state: GlobalProgressStripState, *, animate: bool) -> None:
+        """立即把状态应用到进度条与宿主高度。"""
         previous_state = self._state
         self._state = state
         self._strip.set_state(state, animate=animate)
@@ -762,6 +794,17 @@ class GlobalProgressStripHost(QWidget):
         else:
             self.set_host_height(target_height)
             self._sync_strip_visibility()
+
+    def _commit_hide(self) -> None:
+        """在延迟结束后真正提交隐藏态。"""
+        state = self._pending_hide_state
+        if state is None:
+            return
+
+        animate = self._pending_hide_animate
+        self._pending_hide_state = None
+        self._pending_hide_animate = True
+        self._apply_state(state, animate=animate)
 
     def _target_host_height(self) -> int:
         """返回显示态下宿主应占用的总高度。"""

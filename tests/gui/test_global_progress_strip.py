@@ -122,6 +122,45 @@ def test_progress_host_visible_reduces_viewport_but_keeps_content_height(qtbot, 
     assert shell.progress_host.height() == shell.progress_host.strip_widget().height()
 
 
+def test_progress_host_waits_before_hiding_after_completion(qtbot) -> None:
+    shell = _ProgressStripShellDemo()
+    qtbot.addWidget(shell)
+    shell.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
+    shell.show()
+    _wait_until_visible(qtbot, shell)
+
+    shell.progress_host.set_state(_running_state(), animate=False)
+    qtbot.waitUntil(lambda: shell.progress_host.height() > 0)
+
+    shell.progress_host.set_state(GlobalProgressStripState(), animate=False)
+
+    qtbot.wait(300)
+
+    assert shell.progress_host.height() > 0
+
+    qtbot.waitUntil(lambda: shell.progress_host.height() == 0, timeout=2200)
+
+
+def test_progress_host_cancels_pending_hide_when_new_progress_arrives(qtbot) -> None:
+    shell = _ProgressStripShellDemo()
+    qtbot.addWidget(shell)
+    shell.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
+    shell.show()
+    _wait_until_visible(qtbot, shell)
+
+    shell.progress_host.set_state(_running_state(), animate=False)
+    qtbot.waitUntil(lambda: shell.progress_host.height() > 0)
+
+    shell.progress_host.set_state(GlobalProgressStripState(), animate=False)
+    qtbot.wait(300)
+
+    shell.progress_host.set_state(replace(_running_state(), progress_current=2100), animate=False)
+    qtbot.wait(1700)
+
+    assert shell.progress_host.height() > 0
+    assert shell.progress_host.current_state().visible is True
+
+
 def test_progress_host_paused_state_desaturates_color_but_keeps_sweep_running(qtbot, tmp_path: Path) -> None:
     shell = _ProgressStripShellDemo()
     qtbot.addWidget(shell)
