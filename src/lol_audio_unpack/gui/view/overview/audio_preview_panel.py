@@ -81,6 +81,24 @@ class OverviewAudioPreviewPanel(QWidget):
         if isinstance(model, PreviewTreeModel):
             self.audio_preview_tree.collapseAll()
             model.set_preview_data(mapping_data, available_audio_ids, group_label_map)
+            self._expand_single_root()
+
+    def _expand_single_root(self) -> None:
+        """在仅有一个根节点时自动展开首层。
+
+        地图预览通常只有一个 map 根节点，单皮肤英雄也只有一个 skin 根节点。
+        这两类场景下直接展开首层，可以减少一次无意义的点击；多根节点时仍保留
+        现有折叠态，避免打乱多皮肤英雄的层级浏览。
+        """
+        model = self.audio_preview_tree.model()
+        if not isinstance(model, PreviewTreeModel) or model.rowCount() != 1:
+            return
+
+        root_index = model.index(0, 0)
+        if not root_index.isValid():
+            return
+
+        self.audio_preview_tree.expand(root_index)
 
     def set_playback_state(
         self,

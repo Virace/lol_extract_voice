@@ -267,6 +267,45 @@ def test_overview_audio_preview_panel_can_set_preview_data_and_playback_state(qt
     assert panel.summary_label.text() == "分组 1 · 类型 0 · 事件 0"
 
 
+def test_overview_audio_preview_panel_expands_single_root_by_default(qtbot) -> None:
+    panel = OverviewAudioPreviewPanel(summary_placeholder="等待事件数据。")
+    qtbot.addWidget(panel)
+
+    panel.set_preview_data(
+        mapping_data={"map": {"0": {"events": {"NPC_Map0_VO": {"Play_map0_intro": ["1001"]}}}}},
+        available_audio_ids={"1001"},
+        group_label_map={"0": "常规"},
+        summary_text="分组 1 · 类型 1 · 事件 1",
+    )
+
+    root_index = panel.audio_preview_tree.model().index(0, 0)
+
+    assert panel.audio_preview_tree.isExpanded(root_index) is True
+
+
+def test_overview_audio_preview_panel_keeps_multiple_roots_collapsed_by_default(qtbot) -> None:
+    panel = OverviewAudioPreviewPanel(summary_placeholder="等待事件数据。")
+    qtbot.addWidget(panel)
+
+    panel.set_preview_data(
+        mapping_data={
+            "skins": {
+                "1000": {"events": {"XinZhao_Base_VO": {"Play_base_intro": ["1001"]}}},
+                "1001": {"events": {"XinZhao_Skin_VO": {"Play_skin_intro": ["1002"]}}},
+            }
+        },
+        available_audio_ids={"1001", "1002"},
+        group_label_map={"1000": "经典", "1001": "屠龙勇士"},
+        summary_text="分组 2 · 类型 2 · 事件 2",
+    )
+
+    first_root_index = panel.audio_preview_tree.model().index(0, 0)
+    second_root_index = panel.audio_preview_tree.model().index(1, 0)
+
+    assert panel.audio_preview_tree.isExpanded(first_root_index) is False
+    assert panel.audio_preview_tree.isExpanded(second_root_index) is False
+
+
 def test_filter_preview_mapping_data_keeps_full_event_when_event_name_matches() -> None:
     mapping_data = {
         "skins": {
