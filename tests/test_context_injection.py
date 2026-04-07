@@ -115,11 +115,11 @@ def test_attach_bp_vo_to_champion_uses_ctx_without_global_config(
     ctx = _build_ctx(tmp_path, game_region="zh_CN", with_bp_vo=True)
 
     manifest_root = ctx.paths.manifest_path
-    (manifest_root / version / "lobby_vo" / "zh_CN" / "champion-ban-vo").mkdir(parents=True, exist_ok=True)
-    (manifest_root / version / "lobby_vo" / "zh_CN" / "champion-choose-vo").mkdir(parents=True, exist_ok=True)
+    (manifest_root / version / "lobby" / "zh_CN" / "champion-ban-vo").mkdir(parents=True, exist_ok=True)
+    (manifest_root / version / "lobby" / "zh_CN" / "champion-choose-vo").mkdir(parents=True, exist_ok=True)
 
-    (manifest_root / version / "lobby_vo" / "zh_CN" / "champion-ban-vo" / "1.ogg").write_bytes(b"ban")
-    (manifest_root / version / "lobby_vo" / "zh_CN" / "champion-choose-vo" / "1.ogg").write_bytes(b"choose")
+    (manifest_root / version / "lobby" / "zh_CN" / "champion-ban-vo" / "1.ogg").write_bytes(b"ban")
+    (manifest_root / version / "lobby" / "zh_CN" / "champion-choose-vo" / "1.ogg").write_bytes(b"choose")
 
     monkeypatch.setattr(unpack_bp_vo.os, "link", lambda _src, _dst: (_ for _ in ()).throw(OSError("no link")))
 
@@ -138,7 +138,7 @@ def test_attach_bp_vo_to_champion_uses_ctx_without_global_config(
     unpack_bp_vo.attach_bp_vo(entity_data, reader, ctx=ctx)
 
     entity_folder = format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
-    target_dir = ctx.paths.audio_path / version / "champions" / entity_folder / "BP_VO"
+    target_dir = ctx.paths.audio_path / version / "champions" / entity_folder / "lobby"
     assert (target_dir / "ban.ogg").read_bytes() == b"ban"
     assert (target_dir / "choose.ogg").read_bytes() == b"choose"
 
