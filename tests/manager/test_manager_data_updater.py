@@ -333,6 +333,74 @@ def test_extract_wad_data_includes_bp_vo_when_enabled(tmp_path, monkeypatch):
     all_requested_paths = [path for _, hash_table in calls for path in hash_table]
     assert "plugins/rcp-be-lol-game-data/global/zh_CN/v1/champion-ban-vo/1.ogg" in all_requested_paths
     assert "plugins/rcp-be-lol-game-data/global/zh_CN/v1/champion-choose-vo/1.ogg" in all_requested_paths
+    assert "plugins/rcp-be-lol-game-data/global/default/v1/champion-sfx-audios/1.ogg" in all_requested_paths
+
+
+def test_extract_wad_data_writes_default_sfx_audio_into_region_output(tmp_path, monkeypatch):
+    wad_root = tmp_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data"
+    wad_root.mkdir(parents=True, exist_ok=True)
+    (wad_root / "zh_CN-assets.wad").write_bytes(b"")
+    (wad_root / "description.json").write_text(
+        json.dumps(
+            {
+                "riotMeta": {
+                    "globalAssetBundles": ["default-assets.wad"],
+                    "perLocaleAssetBundles": {"zh_CN": ["zh_CN-assets.wad"]},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    extracted_outputs: list[Path] = []
+
+    class FakeWAD:
+        def __init__(self, path):
+            self.path = Path(path)
+
+        def extract(self, hash_table, out_dir):
+            if any(path.endswith("champion-summary.json") for path in hash_table):
+                summary_virtual_path = next(path for path in hash_table if path.endswith("champion-summary.json"))
+                summary_output = out_dir(summary_virtual_path)
+                summary_output.parent.mkdir(parents=True, exist_ok=True)
+                summary_output.write_text(
+                    json.dumps([{"id": 1, "alias": "Annie", "name": "安妮"}]),
+                    encoding="utf-8",
+                )
+
+            for path in hash_table:
+                if path.endswith("champion-sfx-audios/1.ogg"):
+                    output = out_dir(path)
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    output.write_bytes(b"sfx")
+                    extracted_outputs.append(output)
+
+            return []
+
+    monkeypatch.setattr(m_data_updater, "WAD", FakeWAD)
+
+    updater = _build_updater(tmp_path)
+    updater.ctx.config.with_bp_vo = True
+    updater._extract_wad_data(tmp_path / "out", "zh_CN")
+
+    assert extracted_outputs == [tmp_path / "out" / updater.version / "zh_CN" / "champion-sfx-audios" / "1.ogg"]
+    assert extracted_outputs[0].read_bytes() == b"sfx"
+
+
+def test_persist_bp_vo_files_copies_new_sfx_category(tmp_path):
+    updater = _build_updater(tmp_path)
+    updater.version_manifest_path = tmp_path / "manifest" / updater.version
+    updater.process_languages = ["zh_CN"]
+
+    temp_root = tmp_path / "temp"
+    source_dir = temp_root / updater.version / "zh_CN" / "champion-sfx-audios"
+    source_dir.mkdir(parents=True, exist_ok=True)
+    (source_dir / "1.ogg").write_bytes(b"sfx")
+
+    updater._persist_bp_vo_files(temp_root)
+
+    target_file = updater.version_manifest_path / "lobby" / "zh_CN" / "champion-sfx-audios" / "1.ogg"
+    assert target_file.read_bytes() == b"sfx"
 
 
 def test_merge_and_build_data_keeps_remote_map_wad_info_without_local_files(tmp_path):

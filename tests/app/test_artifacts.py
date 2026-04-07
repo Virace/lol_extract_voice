@@ -67,6 +67,20 @@ def test_resolve_audio_paths_returns_existing_grouped_type_dirs(tmp_path: Path) 
     assert resolve_audio_paths(ctx, entity, version) == (vo_dir, sfx_dir)
 
 
+def test_resolve_audio_paths_grouped_type_includes_lobby_dir_when_present(tmp_path: Path) -> None:
+    ctx = _build_ctx(tmp_path, group_by_type=True, include_types=("VO", "SFX", "MUSIC"))
+    entity = _build_entity()
+    version = "15.7"
+    entity_folder = _entity_folder(entity)
+
+    vo_dir = ctx.paths.audio_path / version / "VO" / "champions" / entity_folder
+    lobby_dir = ctx.paths.audio_path / version / "champions" / entity_folder / "lobby"
+    vo_dir.mkdir(parents=True)
+    lobby_dir.mkdir(parents=True)
+
+    assert resolve_audio_paths(ctx, entity, version) == (vo_dir, lobby_dir)
+
+
 def test_resolve_audio_paths_returns_flat_entity_dir_when_not_grouped(tmp_path: Path) -> None:
     ctx = _build_ctx(tmp_path, group_by_type=False)
     entity = _build_entity()

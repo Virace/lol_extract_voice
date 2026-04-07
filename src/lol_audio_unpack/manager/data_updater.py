@@ -26,6 +26,9 @@ CHAMPIONS_REL_PATH = Path("Game") / "DATA" / "FINAL" / "Champions"
 MAPS_SHIPPING_REL_PATH = Path("Game") / "DATA" / "FINAL" / "Maps" / "Shipping"
 LCU_PLUGIN_REL_PATH = Path("LeagueClient") / "Plugins" / "rcp-be-lol-game-data"
 RCP_GLOBAL_PREFIX = "plugins/rcp-be-lol-game-data/global"
+LOCALIZED_BP_VO_CATEGORIES = ("champion-ban-vo", "champion-choose-vo")
+DEFAULT_BP_VO_CATEGORIES = ("champion-sfx-audios",)
+BP_VO_CATEGORIES = LOCALIZED_BP_VO_CATEGORIES + DEFAULT_BP_VO_CATEGORIES
 
 
 class DataUpdater:
@@ -296,13 +299,13 @@ class DataUpdater:
 
     @performance_monitor(level="DEBUG")
     def _persist_bp_vo_files(self, temp_path: Path) -> None:
-        """将临时目录中的大厅 BP 语音持久化到 manifest 目录。"""
+        """将临时目录中的大厅音频持久化到 manifest 目录。"""
         temp_version_path = temp_path / self.version
-        target_root = self.version_manifest_path / "lobby_vo"
+        target_root = self.version_manifest_path / "lobby"
         copied_count = 0
 
         for region in self.process_languages:
-            for category in ("champion-ban-vo", "champion-choose-vo"):
+            for category in BP_VO_CATEGORIES:
                 source_dir = temp_version_path / region / category
                 if not source_dir.exists():
                     continue
@@ -315,9 +318,9 @@ class DataUpdater:
                     copied_count += 1
 
         if copied_count > 0:
-            logger.success(f"大厅 BP 语音持久化完成，共 {copied_count} 个文件: {target_root}")
+            logger.success(f"大厅音频持久化完成，共 {copied_count} 个文件: {target_root}")
         else:
-            logger.warning("已启用 WITH_BP_VO，但未提取到任何大厅 BP 语音文件。")
+            logger.warning("已启用 WITH_BP_VO，但未提取到任何大厅音频文件。")
 
     def _load_language_json(self, base_path: Path, filename_template: str) -> dict[str, Any]:
         """加载指定模板的、所有语言的JSON文件"""
@@ -535,8 +538,8 @@ class DataUpdater:
         ]
 
         def output_file_name(path: str) -> Path:
-            # 修正正则表达式以匹配更通用的路径
-            reg = re.compile(rf"{RCP_GLOBAL_PREFIX}/{_region}/v\d+/", re.IGNORECASE)
+            # 这里统一裁掉任意语言段，保证 default-only 资源也能写回当前语言目录。
+            reg = re.compile(rf"{RCP_GLOBAL_PREFIX}/[^/]+/v\d+/", re.IGNORECASE)
             new = reg.sub("", path)
             return out_path / new
 
@@ -577,18 +580,18 @@ class DataUpdater:
                         champion_id = item.get("id")
                         if champion_id in (-1, None):
                             continue
+
                         for region_name in region_candidates:
-                            bp_vo_hashes.append(
-                                self._build_rcp_v1_path(region_name, f"champion-ban-vo/{champion_id}.ogg")
-                            )
-                            bp_vo_hashes.append(
-                                self._build_rcp_v1_path(region_name, f"champion-choose-vo/{champion_id}.ogg")
-                            )
+                            for category in LOCALIZED_BP_VO_CATEGORIES:
+                                bp_vo_hashes.append(self._build_rcp_v1_path(region_name, f"{category}/{champion_id}.ogg"))
+
+                        for category in DEFAULT_BP_VO_CATEGORIES:
+                            bp_vo_hashes.append(self._build_rcp_v1_path("default", f"{category}/{champion_id}.ogg"))
 
                     if bp_vo_hashes:
-                        logger.debug(f"准备提取大厅 BP 语音，共 {len(bp_vo_hashes)} 个目标路径")
+                        logger.debug(f"准备提取大厅音频，共 {len(bp_vo_hashes)} 个目标路径")
                         for wad_file in wad_files:
-                            logger.trace(f"从 {wad_file.name} 提取大厅 BP 语音")
+                            logger.trace(f"从 {wad_file.name} 提取大厅音频")
                             WAD(wad_file).extract(bp_vo_hashes, output_file_name)
             except Exception:
                 logger.opt(exception=True).error(f"解包 {_region} 区域英雄信息时出错")
