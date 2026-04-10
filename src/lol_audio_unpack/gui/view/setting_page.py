@@ -192,18 +192,18 @@ class SettingPage(SmoothScrollArea):
         build_begin = perf_counter()
         build_mark = build_begin
 
-        self._build_source_group()   # 1. 数据来源（动态显隐子组）
-        build_mark = _log_setting_stage("_build_source_group 完成", build_begin, build_mark)
-        self._build_base_group()     # 2. 基础设置
+        self._build_base_group()     # 基础设置
         build_mark = _log_setting_stage("_build_base_group 完成", build_begin, build_mark)
-        self._build_tools_group()    # 3. 工具配置
+        self._build_source_group()   # 数据来源（动态显隐子组）
+        build_mark = _log_setting_stage("_build_source_group 完成", build_begin, build_mark)
+        self._build_tools_group()    # 工具配置
         build_mark = _log_setting_stage("_build_tools_group 完成", build_begin, build_mark)
-        self._build_wav_group()      # 4. WAV 默认参数
+        self._build_wav_group()      # WAV 默认参数
         build_mark = _log_setting_stage("_build_wav_group 完成", build_begin, build_mark)
-        self._build_personal_group() # 5. 个性化
+        self._build_personal_group() # 个性化
         _log_setting_stage("_build_personal_group 完成", build_begin, build_mark)
 
-    # 1. 数据来源 -------------------------------------------------------
+    # 数据来源 ----------------------------------------------------------
 
     # 来源模式：显示文字 → 实际 env 值的映射
     _SOURCE_MODE_MAP = {
@@ -229,7 +229,7 @@ class SettingPage(SmoothScrollArea):
         self.sourceModePanel.add_to_layout(self.expandLayout)
         _log_setting_stage("source: remoteGroup.addWidget 完成", group_begin, group_mark)
 
-    # 2. 基础设置 -------------------------------------------------------
+    # 基础设置 ----------------------------------------------------------
 
     def _build_base_group(self):
         self.baseSettingsPanel = BaseSettingsPanel(parent=self.content_widget)
@@ -423,7 +423,7 @@ class SettingPage(SmoothScrollArea):
         )
         self.outputPathCard.clicked.connect(
             lambda: pick_and_apply_directory(
-                title="选择解包输出目录",
+                title="选择输出目录",
                 host=self,
                 current=str(self._cfg.resolve_output_path()),
                 assign=lambda path: setattr(self._cfg, "output_path", path),

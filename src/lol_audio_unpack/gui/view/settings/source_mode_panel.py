@@ -25,7 +25,7 @@ class SourceModePanel:
         )
         self.sourceModeGroup.addSettingCard(self.sourceModeCard)
 
-        self.localGroup = SettingCardGroup("本地目录", parent)
+        self.localGroup = SettingCardGroup("游戏目录", parent)
         self.gamePathCard = PushSettingCard(
             "选择文件夹",
             FIF.FOLDER,
