@@ -20,7 +20,7 @@ class BaseSettingsPanel:
         self.outputPathCard = PushSettingCard(
             "选择文件夹",
             FIF.FOLDER,
-            "解包输出目录",
+            "输出目录",
             "当前: 未设置",
         )
         self.gameRegionCard = ComboRowSettingCard(
