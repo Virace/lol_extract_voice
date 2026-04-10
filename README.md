@@ -52,7 +52,7 @@
 
 方式一：直接使用 release 包。
 
-- 从 GitHub Releases 下载对应平台的发布包。
+- 从 [GitHub Releases Latest](https://github.com/Virace/lol_extract_voice/releases/latest) 下载当前最新的发布包。
 - 解压后直接运行其中的 GUI 可执行文件。
 
 方式二：从源码启动 GUI。
