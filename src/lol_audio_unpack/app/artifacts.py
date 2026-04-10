@@ -37,11 +37,15 @@ def resolve_audio_paths(
     audio_root = audio_base / version
 
     if ctx.config.group_by_type:
-        return tuple(
+        grouped_paths = tuple(
             candidate
             for audio_type in ctx.config.include_types
             if (candidate := audio_root / audio_type / entity_dir / entity_folder).exists()
         )
+        lobby_dir = audio_root / entity_dir / entity_folder / "lobby"
+        if lobby_dir.exists():
+            return (*grouped_paths, lobby_dir)
+        return grouped_paths
 
     candidate = audio_root / entity_dir / entity_folder
     if candidate.exists():
