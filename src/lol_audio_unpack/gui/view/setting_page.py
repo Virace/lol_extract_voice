@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+from pathlib import Path
 from time import perf_counter
 from weakref import ref
 
@@ -29,6 +30,7 @@ from lol_audio_unpack.gui.common import (
     format_path_for_display,
     is_remote_panel_visible,
     needs_remote_mode_fallback,
+    show_feedback_infobar,
 )
 from lol_audio_unpack.gui.common.page_style import (
     apply_page_content_margins,
@@ -36,6 +38,8 @@ from lol_audio_unpack.gui.common.page_style import (
 )
 from lol_audio_unpack.gui.controllers import RemoteSourceController
 from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
+from lol_audio_unpack.gui.controllers.game_path_resolver import resolve_game_path as resolve_selected_game_path
+from lol_audio_unpack.gui.controllers.onboarding_state import GUIDE_VERSION
 from lol_audio_unpack.gui.controllers.path_picker import (
     apply_path_card_label,
     pick_and_apply_directory,
@@ -276,6 +280,13 @@ class SettingPage(SmoothScrollArea):
         self.logLevelCard = self.appearancePanel.logLevelCard
         self.consoleLogLevelCard = self.appearancePanel.consoleLogLevelCard
         self.fileLogLevelCard = self.appearancePanel.fileLogLevelCard
+        self.onboardingResetCard = PushSettingCard(
+            "重置",
+            FIF.INFO,
+            "重置引导",
+            "清除新手引导状态，下次启动后自动显示。",
+        )
+        self.personalGroup.addSettingCard(self.onboardingResetCard)
         self.expandLayout.addWidget(self.personalGroup)
 
     # ------------------------------------------------------------------
@@ -408,19 +419,7 @@ class SettingPage(SmoothScrollArea):
         self.sourceModeCard.comboBox.currentTextChanged.connect(self._on_source_mode_changed)
 
         # 目录 / 文件选择按钮
-        self.gamePathCard.clicked.connect(
-            lambda: pick_and_apply_directory(
-                title="选择游戏根目录",
-                host=self,
-                current=str(self._cfg.resolve_game_path() or ""),
-                assign=lambda path: setattr(self._cfg, "game_path", path),
-                save=self._cfg.save,
-                card=self.gamePathCard,
-                default="",
-                changed_signal=self.game_path_changed,
-                emit_context_changed=self.shared_context_input_changed.emit,
-            )
-        )
+        self.gamePathCard.clicked.connect(self._pick_game_path)
         self.outputPathCard.clicked.connect(
             lambda: pick_and_apply_directory(
                 title="选择输出目录",
@@ -460,6 +459,7 @@ class SettingPage(SmoothScrollArea):
                 changed_signal=self.vgmstream_path_changed,
             )
         )
+        self.onboardingResetCard.clicked.connect(self._reset_onboarding_state)
 
         # 远程配置草稿
         self.remoteSourcePanel.draft_changed.connect(self._save_remote_draft_config)
@@ -509,6 +509,73 @@ class SettingPage(SmoothScrollArea):
     # ------------------------------------------------------------------
     # 目录 / 文件选择槽
     # ------------------------------------------------------------------
+
+    def _pick_game_path(self) -> None:
+        """选择并归一化本地游戏目录。"""
+
+        selected = pick_directory(
+            title="选择英雄联盟安装位置",
+            host=self,
+            current=str(self._cfg.resolve_game_path() or ""),
+        )
+        if not selected:
+            return
+
+        result = resolve_selected_game_path(selected)
+        if not result.resolved or result.root is None:
+            if result.reason == "ambiguous":
+                self._show_feedback(
+                    title="找到多个可能的游戏目录",
+                    content="请选择更具体的英雄联盟安装位置，例如具体游戏目录下的 Game 或 LeagueClient。",
+                    level="warning",
+                )
+                return
+
+            self._show_feedback(
+                title="未识别到游戏目录",
+                content="请选择英雄联盟安装相关位置，例如安装目录、Game 目录或 LeagueClient 目录。",
+                level="warning",
+            )
+            return
+
+        root = result.root.resolve(strict=False)
+        normalized = str(root)
+        self._cfg.game_path = normalized
+        self._cfg.save()
+        apply_path_card_label(self.gamePathCard, normalized)
+        self.game_path_changed.emit(normalized)
+        self.shared_context_input_changed.emit()
+
+        selected_path = Path(selected).resolve(strict=False)
+        version_text = f"版本：{result.version}" if result.version else "版本：未知"
+        if selected_path == root:
+            content = f"当前目录符合英雄联盟现行客户端结构。{version_text}"
+        else:
+            content = (
+                f"你选择的是 {format_path_for_display(str(selected_path))}，"
+                f"已自动识别为 {format_path_for_display(normalized)}。{version_text}"
+            )
+        self._show_feedback(title="已识别游戏目录", content=content, level="success")
+
+    def _reset_onboarding_state(self) -> None:
+        """重置新手引导状态，并等下次启动自动显示。"""
+
+        self._cfg.reset_onboarding(GUIDE_VERSION)
+        self._show_feedback(
+            title="已重置",
+            content="下次启动后会自动显示新手引导。",
+            level="success",
+        )
+
+    def _show_feedback(self, *, title: str, content: str, level: str) -> None:
+        """使用统一 InfoBar 显示设置页反馈。"""
+
+        show_feedback_infobar(
+            parent=self.window() or self,
+            title=title,
+            content=content,
+            level=level,
+        )
 
     # ------------------------------------------------------------------
     # 动态显隐

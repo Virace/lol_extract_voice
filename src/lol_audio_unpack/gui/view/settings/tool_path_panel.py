@@ -49,13 +49,13 @@ class ToolPathPanel:
             "选择文件",
             FIF.DEVELOPER_TOOLS,
             "wwiser 路径",
-            "Mapping 功能依赖此工具 (wwiser.py)  —  https://github.com/bnnm/wwiser",
+            "可选兼容工具。默认使用内置 NativeHIRC；需要旧 wwiser 流程时再设置。",
         )
         self.vgmstreamCard = PushSettingCard(
             "选择文件",
             FIF.COMMAND_PROMPT,
             "vgmstream-cli 路径",
-            "音频转码依赖此工具 (vgmstream-cli.exe)  —  将 .wem 批量转成 .wav",
+            "可选外部工具。默认使用内置 pyvgmstream；高级兼容场景再设置。",
         )
 
         self.group.addSettingCard(self.wwiserCard)
