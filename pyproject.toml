@@ -18,8 +18,8 @@ requires-python = ">= 3.10"
 
 [project.optional-dependencies]
 gui = [
-    "pyside6>=6",
-    "pyside6-fluent-widgets>=1.7.0",
+    "pyside6>=6.11.1",
+    "pyside6-fluent-widgets>=1.11.2",
 ]
 
 [project.scripts]
@@ -37,13 +37,13 @@ default-groups = ["dev"]
 
 [dependency-groups]
 build = [
-    "pyinstaller>=6.19.0",
+    "pyinstaller>=6.20.0",
 ]
 dev = [
     "memory-profiler>=0.61.0",
-    "pytest>=9.0.0",
+    "pytest>=9.0.3",
     "pytest-qt>=4.5.0",
-    "ruff>=0.13.0",
+    "ruff>=0.15.16",
 ]
 
 [tool.hatch.metadata]

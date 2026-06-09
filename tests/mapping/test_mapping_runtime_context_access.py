@@ -8,10 +8,13 @@ from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
 
 pytestmark = pytest.mark.unit
 
+FAKE_GAME_PATH = Path("FakeGame")
+FAKE_OUTPUT_PATH = Path("FakeOut")
+
 
 def _build_ctx() -> AppContext:
-    game_path = Path("H:/FakeGame")
-    output_path = Path("H:/FakeOut")
+    game_path = FAKE_GAME_PATH
+    output_path = FAKE_OUTPUT_PATH
     return AppContext(
         config=AppConfig(
             game_path=game_path,
@@ -39,6 +42,6 @@ def test_app_context_exposes_mapping_runtime_paths() -> None:
     """mapping 侧应通过 AppContext 读取标准化后的派生路径。"""
     ctx = _build_ctx()
 
-    assert ctx.game_path == Path("H:/FakeGame")
-    assert ctx.cache_path == Path("H:/FakeOut/cache")
-    assert ctx.hash_path == Path("H:/FakeOut/hashes")
+    assert ctx.game_path == FAKE_GAME_PATH
+    assert ctx.cache_path == FAKE_OUTPUT_PATH / "cache"
+    assert ctx.hash_path == FAKE_OUTPUT_PATH / "hashes"
