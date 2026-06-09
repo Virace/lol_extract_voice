@@ -12,6 +12,9 @@ from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
 from lol_audio_unpack.mapping import build_entity
 from lol_audio_unpack.model import AudioEntityData
 
+FAKE_GAME_PATH = Path("FakeGame")
+FAKE_OUTPUT_PATH = Path("FakeOut")
+
 
 class _FakeReader:
     """提供 `build_entity` 所需最小读取接口。"""
@@ -70,8 +73,8 @@ def _build_fake_ctx(
     hash_path: Path | None = None,
 ) -> AppContext:
     """创建最小运行上下文。"""
-    game_path = game_path or Path("H:/FakeGame")
-    output_path = (cache_path.parent if cache_path is not None else Path("H:/FakeOut"))
+    game_path = game_path or FAKE_GAME_PATH
+    output_path = cache_path.parent if cache_path is not None else FAKE_OUTPUT_PATH
     cache_path = cache_path or output_path / "cache"
     hash_path = hash_path or output_path / "hashes"
     return AppContext(

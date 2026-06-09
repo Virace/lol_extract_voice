@@ -24,6 +24,7 @@ from lol_audio_unpack.gui.view.overview.entity_list_panel import OverviewEntityL
 from lol_audio_unpack.gui.view.overview.preview_panel import OverviewPreviewPanel
 
 ALPHA_OPAQUE = 255
+MATCHED_AUDIO_IDS = 2
 
 
 @contextmanager
@@ -326,7 +327,7 @@ def test_filter_preview_mapping_data_keeps_full_event_when_event_name_matches() 
 
     assert result.is_active is True
     assert result.matched_event_count == 1
-    assert result.matched_audio_id_count == 2
+    assert result.matched_audio_id_count == MATCHED_AUDIO_IDS
     assert events == {"Play_vo_XinZhao_Attack2DBaron": ["261984525", "520515702"]}
 
 
@@ -404,7 +405,7 @@ def test_filter_preview_mapping_data_supports_suffix_modifier_scope() -> None:
 
     assert result.is_active is True
     assert result.matched_event_count == 1
-    assert result.matched_audio_id_count == 2
+    assert result.matched_audio_id_count == MATCHED_AUDIO_IDS
     assert events == {
         "XinZhao_Base_VO": {
             "Play_vo_XinZhao_Attack2DBaron": ["261984525", "520515702"],
@@ -434,7 +435,7 @@ def test_filter_preview_mapping_data_supports_prefix_modifier_scope_without_keyw
 
     assert result.is_active is True
     assert result.matched_event_count == 1
-    assert result.matched_audio_id_count == 2
+    assert result.matched_audio_id_count == MATCHED_AUDIO_IDS
     assert events == {
         "ITEMS_Global": {
             "Play_items_shop": ["8053", "8054"],

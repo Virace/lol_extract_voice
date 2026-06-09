@@ -6,9 +6,10 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
 from typing import Any
+
+import tomllib
 
 MAIN_BRANCHES = {"main", "master"}
 

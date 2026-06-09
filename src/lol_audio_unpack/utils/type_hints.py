@@ -1,12 +1,6 @@
-# -*- coding: utf-8 -*-
-# @Author  : Virace
-# @Email   : Virace@aliyun.com
-# @Site    : x-item.com
-# @Software: Pycharm
-# @Create  : 2024/3/12 12:39
-# @Update  : 2024/9/8 19:46
-# @Detail  : 
+"""项目内复用的类型别名。"""
 
-from typing import Union
+from os import PathLike
+from typing import TypeAlias
 
-StrPath = Union[str, "os.PathLike[str]"]
+StrPath: TypeAlias = str | PathLike[str]
