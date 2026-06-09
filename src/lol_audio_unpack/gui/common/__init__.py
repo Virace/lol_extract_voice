@@ -16,14 +16,14 @@ from lol_audio_unpack.gui.common.log_bridge import (
     install_startup_log_buffer,
     remove_startup_log_buffer,
 )
+from lol_audio_unpack.gui.common.path_display import (
+    format_default_relative_path,
+    format_path_for_display,
+)
 from lol_audio_unpack.gui.common.remote_mode_policy import (
     available_source_mode_labels,
     is_remote_panel_visible,
     needs_remote_mode_fallback,
-)
-from lol_audio_unpack.gui.common.path_display import (
-    format_default_relative_path,
-    format_path_for_display,
 )
 from lol_audio_unpack.gui.common.scrolling import apply_smooth_scroll_enabled
 
