@@ -449,7 +449,9 @@ def extract_preview_modifiers(mapping_data: dict[str, Any] | None) -> PreviewMod
             prefixes.add(parts[0])
             suffixes.add(parts[-1])
 
-    sort_key = lambda value: value.casefold()
+    def sort_key(value: str) -> str:
+        return value.casefold()
+
     return PreviewModifierSummary(
         prefixes=tuple(sorted(prefixes, key=sort_key)),
         suffixes=tuple(sorted(suffixes, key=sort_key)),
@@ -790,6 +792,7 @@ class PreviewTreeView(QTreeView):
     """最基础的试听树视图。"""
 
     audio_id_toggle_requested = Signal(str)
+    audio_context_menu_requested = Signal(str, QPoint)
 
     def _index_depth(self, index: QModelIndex) -> int:
         """返回当前节点深度。"""
@@ -978,6 +981,15 @@ class PreviewTreeView(QTreeView):
         model = self.model()
         return bool(index.isValid() and model is not None and model.data(index, AUDIO_AVAILABLE_ROLE))
 
+    def _context_audio_id_at(self, pos: QPoint) -> str | None:
+        """解析右键位置命中的可用音频 ID。"""
+        index = self.indexAt(pos)
+        if not index.isValid():
+            return None
+        if not self._is_audio_leaf(index) or not self._is_audio_available(index):
+            return None
+        return self._audio_id_for_index(index)
+
     def _playback_progress_for_index(self, index: QModelIndex) -> float:
         """返回当前行的试听进度。"""
         if self._audio_id_for_index(index) != self._active_audio_id:
@@ -1101,6 +1113,15 @@ class PreviewTreeView(QTreeView):
                 event.accept()
                 return
         super().mouseReleaseEvent(event)
+
+    def contextMenuEvent(self, event) -> None:
+        """只在右键命中可试听音频叶子项时请求页面展示菜单。"""
+        audio_id = self._context_audio_id_at(event.pos())
+        if audio_id is None:
+            event.ignore()
+            return
+        self.audio_context_menu_requested.emit(audio_id, event.globalPos())
+        event.accept()
 
     def drawBranches(self, painter: QPainter, rect: QRect, index: QModelIndex) -> None:
         """只绘制展开/收缩图标，避免默认 branch 连接线与背景叠加。"""
