@@ -11,6 +11,7 @@ from loguru import logger
 from PySide6.QtCore import (
     QItemSelectionModel,
     QModelIndex,
+    QPoint,
     QSignalBlocker,
     Qt,
     QUrl,
@@ -18,6 +19,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtGui import QDesktopServices, QTextOption
 from PySide6.QtWidgets import (
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QPlainTextEdit,
@@ -28,14 +30,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from qfluentwidgets import (
+    Action,
     BodyLabel,
     CaptionLabel,
     InfoBar,
     InfoBarPosition,
     LineEdit,
+    MenuAnimationType,
     PlainTextEdit,
     PrimaryPushButton,
     PushButton,
+    RoundMenu,
     SearchLineEdit,
     SegmentedWidget,
     StrongBodyLabel,
@@ -69,6 +74,7 @@ from lol_audio_unpack.gui.controllers.entity_data_store import EntityDataStore
 from lol_audio_unpack.gui.controllers.overview_preview import AudioPreviewToggleResult
 from lol_audio_unpack.gui.controllers.preview_playback import PreviewPlaybackState
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
+from lol_audio_unpack.gui.service.preview_export import resolve_wav_path, transcode_wav
 from lol_audio_unpack.gui.view.overview.audio_preview_panel import OverviewAudioPreviewPanel
 from lol_audio_unpack.gui.view.overview.entity_list_panel import OverviewEntityListPanel
 from lol_audio_unpack.gui.view.overview.preview_panel import (
@@ -251,6 +257,7 @@ class OverviewPage(QWidget):
         self.clear_selection_btn.clicked.connect(self._clear_selected_entities)
         self.reveal_file_btn.clicked.connect(self._reveal_selected_mapping_file)
         self.audio_preview_tree.audio_id_toggle_requested.connect(self._on_audio_preview_toggle_requested)
+        self.audio_preview_tree.audio_context_menu_requested.connect(self._show_audio_menu)
         qconfig.themeChanged.connect(self._refresh_theme_styles)
         qconfig.themeColorChanged.connect(self._refresh_entity_list_theme)
 
@@ -568,6 +575,121 @@ class OverviewPage(QWidget):
             audio_path=result.audio_path,
         )
 
+    def _audio_menu_wem_path(self, audio_id: str) -> Path | None:
+        """解析右键菜单目标音频的 WEM 路径。"""
+        loader = self._ensure_loader()
+        if (
+            loader is None
+            or self._current_preview_entity_type is None
+            or self._current_preview_entity_id is None
+        ):
+            return None
+        return loader.resolve_audio_file_path(
+            self._current_preview_entity_type,
+            self._current_preview_entity_id,
+            audio_id,
+        )
+
+    def _show_audio_menu(self, audio_id: str, global_pos: QPoint) -> None:
+        """显示试听音频叶子项右键菜单。"""
+        wem_path = self._audio_menu_wem_path(audio_id)
+        if wem_path is None:
+            return
+
+        menu = RoundMenu(parent=self.audio_preview_tree)
+
+        save_action = Action("另存为 WAV...", menu)
+        save_action.triggered.connect(lambda: self._save_audio_wav(audio_id, wem_path))
+        menu.addAction(save_action)
+
+        reveal_wem_action = Action("打开 WEM 所在位置", menu)
+        reveal_wem_action.triggered.connect(lambda: self._reveal_wem(wem_path))
+        menu.addAction(reveal_wem_action)
+
+        reveal_wav_action = Action("转码并打开 WAV 所在位置", menu)
+        reveal_wav_action.triggered.connect(lambda: self._reveal_wav(wem_path))
+        menu.addAction(reveal_wav_action)
+
+        menu.exec(global_pos, aniType=MenuAnimationType.DROP_DOWN)
+
+    def _wav_format(self) -> str:
+        """返回右键单文件转码使用的 WAV 格式。"""
+        return str(getattr(self.gui_config, "wav_format", "pcm16") or "pcm16")
+
+    def _save_audio_wav(self, audio_id: str, wem_path: Path) -> None:
+        """把当前试听音频另存为用户选择的 WAV 文件。"""
+        output_text, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "另存为 WAV",
+            f"{audio_id}.wav",
+            "WAV 音频 (*.wav);;所有文件 (*)",
+        )
+        if not output_text:
+            return
+
+        output = Path(output_text)
+        if output.suffix.lower() != ".wav":
+            output = output.with_suffix(".wav")
+
+        try:
+            transcode_wav(wem_path, output, wav_format=self._wav_format())
+        except Exception as exc:  # noqa: BLE001
+            InfoBar.warning(
+                "另存 WAV 失败",
+                f"{type(exc).__name__}: {exc}",
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+            )
+            return
+
+        InfoBar.success(
+            "已保存 WAV",
+            str(output),
+            parent=self.window(),
+            position=InfoBarPosition.TOP,
+        )
+
+    def _reveal_wem(self, wem_path: Path) -> None:
+        """打开当前试听 WEM 所在位置。"""
+        if self._reveal_file_path(wem_path):
+            return
+        InfoBar.warning(
+            "打开目录失败",
+            f"无法打开目录：{wem_path.parent}",
+            parent=self.window(),
+            position=InfoBarPosition.TOP,
+        )
+
+    def _reveal_wav(self, wem_path: Path) -> None:
+        """转码当前试听音频到默认 WAV 镜像路径并定位文件。"""
+        loader = self._ensure_loader()
+        if self._app_context is None or loader is None:
+            return
+
+        version = loader.data_reader.version
+        audio_root = Path(self._app_context.paths.audio_path) / version
+        wav_root = Path(self._app_context.paths.wav_path) / version
+        try:
+            wav_path = resolve_wav_path(wem_path, audio_root=audio_root, wav_root=wav_root)
+            if not wav_path.exists():
+                transcode_wav(wem_path, wav_path, wav_format=self._wav_format())
+        except Exception as exc:  # noqa: BLE001
+            InfoBar.warning(
+                "转码 WAV 失败",
+                f"{type(exc).__name__}: {exc}",
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+            )
+            return
+
+        if not self._reveal_file_path(wav_path):
+            InfoBar.warning(
+                "打开目录失败",
+                f"无法打开目录：{wav_path.parent}",
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+            )
+
     def _apply_audio_preview_playback_state(self, state: PreviewPlaybackState) -> None:
         """同步播放控制器发出的最新试听状态。"""
         self._current_audio_preview_audio_id = state.audio_id
@@ -660,23 +782,28 @@ class OverviewPage(QWidget):
             return
 
         target_path = self._current_mapping_path
-        directory = target_path.parent
+        if self._reveal_file_path(target_path):
+            return
 
+        directory = target_path.parent
+        InfoBar.warning(
+            "打开目录失败",
+            f"无法打开目录：{directory}",
+            parent=self.window(),
+            position=InfoBarPosition.TOP,
+        )
+
+    def _reveal_file_path(self, target_path: Path) -> bool:
+        """在系统文件管理器中定位指定文件。"""
+        directory = target_path.parent
         try:
             if os.name == "nt" and target_path.exists():
                 subprocess.Popen(["explorer.exe", "/select,", str(target_path)])
-                return
+                return True
         except OSError:
             pass
 
-        opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
-        if not opened:
-            InfoBar.warning(
-                "打开目录失败",
-                f"无法打开目录：{directory}",
-                parent=self.window(),
-                position=InfoBarPosition.TOP,
-            )
+        return QDesktopServices.openUrl(QUrl.fromLocalFile(str(directory)))
 
     def set_smooth_scroll_enabled(self, enabled: bool) -> None:
         """根据设置应用总览页的滚动模式。"""
