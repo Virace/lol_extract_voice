@@ -12,6 +12,8 @@ from lol_audio_unpack.gui.controllers.overview_preview import (
 )
 from lol_audio_unpack.gui.view.overview_page import OverviewPage
 
+MAP_PREVIEW_ENTITY_ID = 12
+
 
 def test_overview_page_preview_audio_settings_forward_to_playback_controller(qtbot) -> None:
     page = OverviewPage()
@@ -159,7 +161,7 @@ def test_overview_page_logs_preview_modifiers_after_loading_preview(qtbot) -> No
     )
     page._preview_controller = SimpleNamespace(
         load_preview=lambda **_kwargs: OverviewPreviewLoadResult(
-            entity_id="12",
+            entity_id=str(MAP_PREVIEW_ENTITY_ID),
             mapping_path=Path("preview.msgpack"),
             mapping_data={
                 "map": {
@@ -192,7 +194,60 @@ def test_overview_page_logs_preview_modifiers_after_loading_preview(qtbot) -> No
     template, entity_type, entity_id, prefixes, suffixes, audio_types = records[0]
     assert template.startswith("[总览预览]")
     assert entity_type == "maps"
-    assert entity_id == 12
+    assert entity_id == MAP_PREVIEW_ENTITY_ID
     assert prefixes == ["ENV", "MUS", "NPC"]
     assert suffixes == ["FirstBlood", "SFX", "VO"]
     assert audio_types == ["ENV_Map12_SFX", "MUS_Map12_FirstBlood", "NPC_Map12_VO"]
+
+
+def test_overview_page_audio_menu_resolves_wem_without_toggling_playback(qtbot) -> None:
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    stopped: list[bool] = []
+    page._preview_playback_controller = SimpleNamespace(
+        set_volume_percent=lambda _value: None,
+        set_output_device_key=lambda _value: None,
+        play=lambda **_kwargs: None,
+        stop=lambda: stopped.append(True),
+    )
+    page._loader = SimpleNamespace(
+        resolve_audio_file_path=lambda entity_type, entity_id, audio_id: Path("1001.wem"),
+    )
+    page._current_preview_entity_type = "champions"
+    page._current_preview_entity_id = "1"
+
+    result = page._audio_menu_wem_path("1001")
+
+    assert result == Path("1001.wem")
+    assert stopped == []
+
+
+def test_overview_page_reveal_wav_reuses_existing_file(qtbot, tmp_path, monkeypatch) -> None:
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    wem_path = tmp_path / "audios" / "15.10" / "champions" / "1" / "VO" / "1001.wem"
+    wav_path = tmp_path / "wavs" / "15.10" / "champions" / "1" / "VO" / "1001.wav"
+    wav_path.parent.mkdir(parents=True)
+    wav_path.write_bytes(b"RIFF....WAVE")
+    page._app_context = SimpleNamespace(
+        paths=SimpleNamespace(
+            audio_path=tmp_path / "audios",
+            wav_path=tmp_path / "wavs",
+        )
+    )
+    page._loader = SimpleNamespace(data_reader=SimpleNamespace(version="15.10"))
+    opened: list[Path] = []
+    transcoded: list[tuple[Path, Path]] = []
+
+    monkeypatch.setattr(page, "_reveal_file_path", lambda path: opened.append(Path(path)) or True)
+    monkeypatch.setattr(
+        overview_page_module,
+        "transcode_wav",
+        lambda source, target, *, wav_format: transcoded.append((Path(source), Path(target))) or Path(target),
+        raising=False,
+    )
+
+    page._reveal_wav(wem_path)
+
+    assert opened == [wav_path]
+    assert transcoded == []

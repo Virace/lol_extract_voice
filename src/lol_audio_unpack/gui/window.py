@@ -44,6 +44,7 @@ from lol_audio_unpack.gui.controllers import (
     SharedDataController,
 )
 from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
+from lol_audio_unpack.gui.controllers.onboarding import OnboardingTourController
 from lol_audio_unpack.gui.controllers.shared_data import (
     build_shared_entity_reader_signature,
     build_shared_entity_scan_signature,
@@ -134,6 +135,7 @@ class MainWindow(FluentWindow):
         previous_mark = _log_window_stage("主题变更信号连接完成", startup_begin, previous_mark)
 
         self._shared_data_controller: SharedDataController | None = None
+        self._onboarding_controller: OnboardingTourController | None = None
         self._window_material_bootstrapped = False
         self._last_window_material_logged_state: bool | None = None
         self._dev_console_controller: DevConsoleController | None = None
@@ -204,6 +206,16 @@ class MainWindow(FluentWindow):
         # 连接设置页面和首页
         self._connect_pages()
         previous_mark = _log_window_stage("页面连接与首轮数据加载触发完成", startup_begin, previous_mark)
+        self._onboarding_controller = OnboardingTourController(
+            window=self,
+            config=cfg,
+            setting_page=self.settingInterface,
+            execution_page=self.executionInterface,
+            overview_page=self.overviewInterface,
+            has_active_work=self._has_active_background_work,
+        )
+        QTimer.singleShot(600, self._onboarding_controller.start_if_needed)
+        previous_mark = _log_window_stage("新手引导启动检查已安排", startup_begin, previous_mark)
         return previous_mark
 
     def _initWindow(self):
@@ -306,6 +318,8 @@ class MainWindow(FluentWindow):
         should_force_quit = self._has_active_background_work()
         if should_force_quit:
             self._shutdown_background_work()
+        if self._onboarding_controller is not None:
+            self._onboarding_controller.close()
         self._disconnect_theme_material_listener()
         self._unregister_app_event_filter()
         super().closeEvent(event)
