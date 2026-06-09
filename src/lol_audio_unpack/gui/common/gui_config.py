@@ -36,6 +36,8 @@ from lol_audio_unpack.utils.runtime_paths import (
 # ---------------------------------------------------------------------------
 
 _UNSET = object()  # distinguishes "not in file" from ""
+_ONBOARDING_COMPLETED_KEY = "onboarding/completed_version"
+_ONBOARDING_SKIPPED_KEY = "onboarding/skipped_version"
 
 
 class GuiConfig:
@@ -298,6 +300,61 @@ class GuiConfig:
     def resolve_vgmstream_path(self) -> Path | None:
         """解析当前 GUI 配置对应的有效 vgmstream 工具路径。"""
         return self._resolve_optional_runtime_path(self._vgmstream_path)
+
+    def should_show_onboarding(self, guide_version: str) -> bool:
+        """返回当前引导版本是否应该自动展示。
+
+        Args:
+            guide_version: 当前引导内容版本。
+
+        Returns:
+            bool: 当前版本既未完成也未跳过时返回 ``True``。
+        """
+
+        version = str(guide_version or "").strip()
+        if not version:
+            return False
+        completed = str(self._qs.value(_ONBOARDING_COMPLETED_KEY, "") or "")
+        skipped = str(self._qs.value(_ONBOARDING_SKIPPED_KEY, "") or "")
+        return version not in (completed, skipped)
+
+    def mark_onboarding_completed(self, guide_version: str) -> None:
+        """记录当前引导版本已经完成。
+
+        Args:
+            guide_version: 当前引导内容版本。
+        """
+
+        version = str(guide_version or "").strip()
+        if version:
+            self._qs.setValue(_ONBOARDING_COMPLETED_KEY, version)
+
+    def mark_onboarding_skipped(self, guide_version: str) -> None:
+        """记录当前引导版本已经跳过。
+
+        Args:
+            guide_version: 当前引导内容版本。
+        """
+
+        version = str(guide_version or "").strip()
+        if version:
+            self._qs.setValue(_ONBOARDING_SKIPPED_KEY, version)
+
+    def reset_onboarding(self, guide_version: str) -> None:
+        """清除当前引导版本的完成与跳过状态。
+
+        Args:
+            guide_version: 当前引导内容版本。
+        """
+
+        version = str(guide_version or "").strip()
+        if not version:
+            return
+
+        if str(self._qs.value(_ONBOARDING_COMPLETED_KEY, "") or "") == version:
+            self._qs.setValue(_ONBOARDING_COMPLETED_KEY, "")
+        if str(self._qs.value(_ONBOARDING_SKIPPED_KEY, "") or "") == version:
+            self._qs.setValue(_ONBOARDING_SKIPPED_KEY, "")
 
     # ------------------------------------------------------------------
     # Properties — source
