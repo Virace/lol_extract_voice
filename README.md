@@ -28,7 +28,7 @@
 - 支持提取英雄与地图的 `VO`、`SFX`、`MUSIC` 音频。
 - 默认输出原始 `.wem` 文件，文件名保留游戏数据中的原始 ID。
 - 数据更新阶段会携带事件信息，可进一步用于映射生成。
-- GUI 当前已完成：执行解包、生成映射、查看映射。
+- GUI 当前已完成：执行解包、WAV 转码、生成映射、查看映射、音频试听与首次使用引导。
 
 文档导航、GUI 当前状态、Remote 模式、基准测试与设计说明见：
 
@@ -52,8 +52,8 @@
 
 方式一：直接使用 release 包。
 
-- 从 GitHub Releases 下载对应平台的发布包。
-- 解压后直接运行其中的 GUI 可执行文件。
+- 从 GitHub Releases 下载对应平台的 GUI 可执行文件。
+- 直接运行下载到的 `LolAudioUnpack-<version>-windows-x64.exe`。
 
 方式二：从源码启动 GUI。
 
@@ -187,11 +187,11 @@ CLI 参数总表：
 
 ## 后续处理
 
-当前工具专注于更新、解包与映射生成；后处理仍建议独立完成。
+当前工具专注于更新、解包、WAV 转码与映射生成；更复杂的后处理仍建议独立完成。
 
-- 本工具输出原始 `.wem` 文件。
-- 音频试听、转码等能力当前未在 GUI 内完成。
-- 若需要转码，可使用配套的 [vgmstream-cli-build](https://github.com/Virace/vgmstream-cli-build/releases)。
+- 本工具默认输出原始 `.wem` 文件。
+- GUI 与 CLI 已支持内置 WAV 转码，实体总览也支持音频试听与单文件 WAV 导出。
+- 若需要额外的批量后处理或特殊格式转换，可继续使用配套的 [vgmstream-cli-build](https://github.com/Virace/vgmstream-cli-build/releases)。
 
 示例：
 
