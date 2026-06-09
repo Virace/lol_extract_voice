@@ -192,10 +192,10 @@ class SettingPage(SmoothScrollArea):
         build_begin = perf_counter()
         build_mark = build_begin
 
-        self._build_base_group()     # 基础设置
-        build_mark = _log_setting_stage("_build_base_group 完成", build_begin, build_mark)
         self._build_source_group()   # 数据来源（动态显隐子组）
         build_mark = _log_setting_stage("_build_source_group 完成", build_begin, build_mark)
+        self._build_base_group()     # 基础设置
+        build_mark = _log_setting_stage("_build_base_group 完成", build_begin, build_mark)
         self._build_tools_group()    # 工具配置
         build_mark = _log_setting_stage("_build_tools_group 完成", build_begin, build_mark)
         self._build_wav_group()      # WAV 默认参数
