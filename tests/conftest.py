@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import pytest
 
@@ -8,6 +9,26 @@ from lol_audio_unpack.gui.common import gui_config as gui_config_module
 from lol_audio_unpack.manager.data_reader import DataReader
 from lol_audio_unpack.utils.common import Singleton
 from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
+
+GUI_TEST_DIR = ("tests", "gui")
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """按目录自动标记功能测试与 GUI 测试。
+
+    Args:
+        config: pytest 配置对象。
+        items: 已收集的测试项。
+    """
+    root = Path(config.rootpath)
+    for item in items:
+        try:
+            relative_path = Path(item.path).relative_to(root)
+        except ValueError:
+            relative_path = Path(item.path)
+
+        layer = "gui" if relative_path.parts[:2] == GUI_TEST_DIR else "functional"
+        item.add_marker(layer)
 
 
 class FakeQSettings:

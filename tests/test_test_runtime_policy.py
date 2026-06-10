@@ -59,6 +59,14 @@ def test_gui_config_uses_fake_qsettings_backend_in_tests() -> None:
     assert type(cfg._qs).__name__ == "FakeQSettings"
 
 
+def test_non_gui_tests_get_functional_layer_marker(request: pytest.FixtureRequest) -> None:
+    """非 GUI 测试应自动归入 functional 分层。"""
+    marker_names = {marker.name for marker in request.node.iter_markers()}
+
+    assert "functional" in marker_names
+    assert "gui" not in marker_names
+
+
 def test_tests_do_not_embed_nonportable_absolute_path_literals() -> None:
     """测试源码中不应再写入非便携的绝对路径字面量。"""
     offenders: list[str] = []

@@ -17,6 +17,7 @@ def test_runtime_wav_package_exports_stable_public_api() -> None:
         "JobFailure",
         "TranscodeCoordinator",
         "TranscodePaths",
+        "TranscodeTarget",
         "TranscodeProgress",
         "TranscodeSummary",
         "build_output_path",

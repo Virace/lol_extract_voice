@@ -349,6 +349,7 @@ def test_remote_snapshot_preparer_extracts_bin_inputs_for_bin_updater(
         {
             "get_champions": lambda self: [
                 {
+                    "id": 1,
                     "alias": "Annie",
                     "wad": {"root": "Game/DATA/FINAL/Champions/Annie.wad.client"},
                     "skins": [
@@ -363,12 +364,13 @@ def test_remote_snapshot_preparer_extracts_bin_inputs_for_bin_updater(
             ],
             "get_maps": lambda self: [
                 {
+                    "id": 11,
                     "wad": {"root": "Game/DATA/FINAL/Maps/Shipping/Map11/Map11.wad.client"},
                     "binPath": "data/maps/shipping/map11/map11.bin",
                 }
             ],
-            "get_champion": lambda self, _id: {},
-            "get_map": lambda self, _id: {},
+            "get_champion": lambda self, _id: self.get_champions()[0],
+            "get_map": lambda self, _id: self.get_maps()[0],
         },
     )()
 
@@ -723,6 +725,9 @@ def test_facade_transcode_wav_uses_selected_entity_audio_dirs(monkeypatch: pytes
     app._build_entity_data = lambda reader, **kwargs: SimpleNamespace(  # type: ignore[method-assign]
         entity_type=kwargs["entity_type"],
         entity_id=str(kwargs["entity_id"]),
+        entity_name="测试实体",
+        entity_alias="test",
+        entity_title=None,
     )
     app._resolve_audio_paths = lambda entity_data: {  # type: ignore[method-assign]
         ("champion", "103"): (champion_dir,),
@@ -743,7 +748,9 @@ def test_facade_transcode_wav_uses_selected_entity_audio_dirs(monkeypatch: pytes
     )
 
     assert calls["version"] == "16.5"
-    assert calls["audio_roots"] == (champion_dir, map_dir)
+    audio_targets = calls["audio_targets"]
+    assert tuple(target.root_path for target in audio_targets) == (champion_dir, map_dir)
+    assert "audio_roots" not in calls
 
 
 def test_facade_build_work_items_merges_extract_and_mapping_targets(
@@ -1190,13 +1197,19 @@ def test_remote_snapshot_preparer_cleanup_artifacts_supports_dry_run(
     reader = SimpleNamespace(
         get_champions=lambda: [
             {
+                "id": 1,
                 "alias": "Annie",
                 "wad": {"root": "Game/DATA/FINAL/Champions/Annie.wad.client"},
                 "skins": [{"id": 1000, "binPath": "data/characters/Annie/skins/skin0.bin"}],
             }
         ],
         get_maps=lambda: [],
-        get_champion=lambda _id: {},
+        get_champion=lambda _id: {
+            "id": 1,
+            "alias": "Annie",
+            "wad": {"root": "Game/DATA/FINAL/Champions/Annie.wad.client"},
+            "skins": [{"id": 1000, "binPath": "data/characters/Annie/skins/skin0.bin"}],
+        },
         get_map=lambda _id: {},
         ctx=ctx,
     )
