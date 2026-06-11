@@ -215,6 +215,7 @@ class MainWindow(FluentWindow):
             setting_page=self.settingInterface,
             execution_page=self.executionInterface,
             overview_page=self.overviewInterface,
+            item_lookup_page=self.itemLookupInterface,
             has_active_work=self._has_active_background_work,
         )
         QTimer.singleShot(600, self._onboarding_controller.start_if_needed)

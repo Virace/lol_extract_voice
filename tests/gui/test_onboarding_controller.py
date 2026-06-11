@@ -45,9 +45,12 @@ class _FakeWindow(QWidget):
         self.executionNav.setGeometry(12, 92, 120, 42)
         self.overviewNav = QWidget(self)
         self.overviewNav.setGeometry(12, 140, 120, 42)
+        self.itemLookupNav = QWidget(self)
+        self.itemLookupNav.setGeometry(12, 188, 120, 42)
         self.settingNav.show()
         self.executionNav.show()
         self.overviewNav.show()
+        self.itemLookupNav.show()
         self.navigationInterface = SimpleNamespace(widget=self._navigation_widget)
         self.stackedWidget = _FakeStack()
 
@@ -62,6 +65,7 @@ class _FakeWindow(QWidget):
             "SettingPage": self.settingNav,
             "ExecutionPage": self.executionNav,
             "OverviewPage": self.overviewNav,
+            "ItemLookupPage": self.itemLookupNav,
         }
         if route_key not in items:
             raise KeyError(route_key)
@@ -150,6 +154,12 @@ def _build_controller(qtbot, monkeypatch, *, should_show: bool = True, active: b
         previewPanel=_widget(qtbot),
         audio_preview_tree=_widget(qtbot),
     )
+    item_lookup_page = _page(
+        qtbot,
+        "ItemLookupPage",
+        search_input=_widget(qtbot),
+        mode_tabs=_widget(qtbot),
+    )
     config = _FakeConfig(should_show=should_show)
     controller = OnboardingTourController(
         window=window,
@@ -157,9 +167,15 @@ def _build_controller(qtbot, monkeypatch, *, should_show: bool = True, active: b
         setting_page=setting_page,
         execution_page=execution_page,
         overview_page=overview_page,
+        item_lookup_page=item_lookup_page,
         has_active_work=lambda: active,
     )
-    pages = SimpleNamespace(setting=setting_page, execution=execution_page, overview=overview_page)
+    pages = SimpleNamespace(
+        setting=setting_page,
+        execution=execution_page,
+        overview=overview_page,
+        item_lookup=item_lookup_page,
+    )
     return controller, config, window, created, pages
 
 
@@ -244,6 +260,7 @@ def test_route_change_waits_before_showing_page_step(qtbot, monkeypatch) -> None
         setting_page=setting_page,
         execution_page=_page(qtbot, "ExecutionPage"),
         overview_page=_page(qtbot, "OverviewPage"),
+        item_lookup_page=_page(qtbot, "ItemLookupPage"),
         has_active_work=lambda: False,
     )
 
@@ -325,6 +342,82 @@ def test_next_from_execution_prompts_overview_navigation(qtbot, monkeypatch) -> 
     assert created[-1]["target"] is window.overviewNav
 
 
+def test_next_from_overview_prompts_item_lookup_navigation(qtbot, monkeypatch) -> None:
+    """实体总览讲完后应提示用户自己点击装备查询。"""
+
+    controller, _config, window, created, pages = _build_controller(qtbot, monkeypatch)
+    controller.start()
+    window.stackedWidget.setCurrentWidget(pages.setting)
+    controller._next()
+    controller._next()
+    controller._next()
+    window.stackedWidget.setCurrentWidget(pages.execution)
+    controller._next()
+    controller._next()
+    controller._next()
+    controller._next()
+    window.stackedWidget.setCurrentWidget(pages.overview)
+    created.clear()
+    window.switched.clear()
+
+    controller._next()
+    controller._next()
+
+    assert window.switched == []
+    assert created[-1]["target"] is window.itemLookupNav
+
+
+def test_switching_to_item_lookup_advances_from_navigation_step(qtbot, monkeypatch) -> None:
+    """用户点击装备查询后，引导应进入装备查询页内部步骤。"""
+
+    controller, _config, window, created, pages = _build_controller(qtbot, monkeypatch)
+    controller.start()
+    window.stackedWidget.setCurrentWidget(pages.setting)
+    controller._next()
+    controller._next()
+    controller._next()
+    window.stackedWidget.setCurrentWidget(pages.execution)
+    controller._next()
+    controller._next()
+    controller._next()
+    controller._next()
+    window.stackedWidget.setCurrentWidget(pages.overview)
+    controller._next()
+    controller._next()
+    item_lookup_tip = created[-1]["tip"]
+
+    window.stackedWidget.setCurrentWidget(pages.item_lookup)
+
+    assert item_lookup_tip.closed is True
+    assert created[-1]["target"] is pages.item_lookup.search_input
+
+
+def test_next_from_item_lookup_explains_mode_tabs(qtbot, monkeypatch) -> None:
+    """装备查询页搜索框之后应继续说明模式 tab 与复制 ID。"""
+
+    controller, _config, window, created, pages = _build_controller(qtbot, monkeypatch)
+    controller.start()
+    window.stackedWidget.setCurrentWidget(pages.setting)
+    controller._next()
+    controller._next()
+    controller._next()
+    window.stackedWidget.setCurrentWidget(pages.execution)
+    controller._next()
+    controller._next()
+    controller._next()
+    controller._next()
+    window.stackedWidget.setCurrentWidget(pages.overview)
+    controller._next()
+    controller._next()
+    window.stackedWidget.setCurrentWidget(pages.item_lookup)
+    created.clear()
+
+    controller._next()
+
+    assert created[-1]["target"] is pages.item_lookup.mode_tabs
+    assert "复制 ID" in created[-1]["view"].contentLabel.text()
+
+
 def test_skip_marks_state_and_closes_tip(qtbot, monkeypatch) -> None:
     """跳过引导时应持久化跳过状态并关闭气泡。"""
 
@@ -397,6 +490,7 @@ def test_close_before_delayed_show_prevents_tip_creation(qtbot, monkeypatch) -> 
         setting_page=setting_page,
         execution_page=execution_page,
         overview_page=overview_page,
+        item_lookup_page=_page(qtbot, "ItemLookupPage"),
         has_active_work=lambda: False,
     )
 

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from lol_audio_unpack.gui.common.gui_config import GuiConfig
+from lol_audio_unpack.gui.controllers.onboarding_state import GUIDE_VERSION
 
-GUIDE_VERSION = "2026-06-gui-basics"
 OLD_GUIDE_VERSION = "2026-05-old-guide"
 
 
