@@ -29,13 +29,15 @@ def test_release_build_gui_workflow_builds_windows_gui_and_publishes_release() -
     """workflow 应在 Windows 上构建 GUI 并发布 GitHub Release。"""
     workflow_text = WORKFLOW_PATH.read_text(encoding="utf-8")
 
-    assert "windows-latest" in workflow_text
-    assert "actions/checkout@v6" in workflow_text
-    assert "actions/setup-python@v6" in workflow_text
-    assert "astral-sh/setup-uv@v6" in workflow_text
+    assert "windows-2025" in workflow_text
+    assert "windows-latest" not in workflow_text
+    assert "actions/checkout@v6.0.3" in workflow_text
+    assert "actions/setup-python@v6.2.0" in workflow_text
+    assert "astral-sh/setup-uv@v8.2.0" in workflow_text
     assert "python-version: '3.13'" in workflow_text
     assert "python scripts/pyinstaller/build_gui.py --clean" in workflow_text
     assert "LolAudioUnpack-$tag-windows-x64.exe" in workflow_text
-    assert "softprops/action-gh-release@v2" in workflow_text
+    assert "softprops/action-gh-release@v3.0.0" in workflow_text
+    assert "softprops/action-gh-release@v2" not in workflow_text
     assert "prerelease:" in workflow_text
     assert "generate_release_notes: true" in workflow_text
