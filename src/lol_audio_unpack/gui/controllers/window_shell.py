@@ -150,6 +150,7 @@ def register_navigation_items(window, shared_data_controller) -> None:
     window.addSubInterface(window.homeInterface, FIF.HOME, "主页")
     window.addSubInterface(window.executionInterface, FIF.DOWNLOAD, "执行中心")
     window.addSubInterface(window.overviewInterface, FIF.DOCUMENT, "实体总览")
+    window.addSubInterface(window.itemLookupInterface, FIF.TAG, "装备查询")
 
     window.navigationInterface.addSeparator()
     window.navigationInterface.addItem(
