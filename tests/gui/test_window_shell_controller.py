@@ -98,6 +98,7 @@ def test_register_navigation_items_adds_expected_entries() -> None:
         homeInterface = "home"
         executionInterface = "execution"
         overviewInterface = "overview"
+        itemLookupInterface = "item_lookup"
         settingInterface = "setting"
         aboutInterface = "about"
         navigationInterface = type(
@@ -125,6 +126,7 @@ def test_register_navigation_items_adds_expected_entries() -> None:
     assert ("sub", ("home", "主页", None)) in events
     assert ("sub", ("execution", "执行中心", None)) in events
     assert ("sub", ("overview", "实体总览", None)) in events
+    assert ("sub", ("item_lookup", "装备查询", None)) in events
     assert ("sub", ("setting", "全局设置", NavigationItemPosition.BOTTOM)) in events
     assert ("sub", ("about", "关于", NavigationItemPosition.BOTTOM)) in events
     assert any(event[0] == "item" and event[1]["routeKey"] == "refreshSharedData" for event in events)
