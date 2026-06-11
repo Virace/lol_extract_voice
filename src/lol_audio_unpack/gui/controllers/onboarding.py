@@ -140,6 +140,7 @@ class OnboardingTourController:
         setting_page,
         execution_page,
         overview_page,
+        item_lookup_page,
         has_active_work: Callable[[], bool],
     ) -> None:
         """创建新手引导控制器。
@@ -150,6 +151,7 @@ class OnboardingTourController:
             setting_page: 设置页实例。
             execution_page: 执行中心实例。
             overview_page: 实体总览实例。
+            item_lookup_page: 装备查询页实例。
             has_active_work: 判断是否存在后台任务的回调。
         """
 
@@ -158,6 +160,7 @@ class OnboardingTourController:
         self._setting_page = setting_page
         self._execution_page = execution_page
         self._overview_page = overview_page
+        self._item_lookup_page = item_lookup_page
         self._has_active_work = has_active_work
         self._steps = self._build_steps()
         self._index = 0
@@ -318,6 +321,7 @@ class OnboardingTourController:
             "settings": self._setting_page,
             "execution": self._execution_page,
             "overview": self._overview_page,
+            "item_lookup": self._item_lookup_page,
         }.get(name)
 
     def _current_page(self) -> Any:
@@ -381,6 +385,7 @@ class OnboardingTourController:
                 "settings": "SettingPage",
                 "execution": "ExecutionPage",
                 "overview": "OverviewPage",
+                "item_lookup": "ItemLookupPage",
             }.get(page_name, "")
         try:
             return nav.widget(route_key)
@@ -484,6 +489,29 @@ class OnboardingTourController:
                 ),
                 title="事件与音频预览",
                 content="更新和映射完成后，可以在这里查看事件树、音频列表和试听结果。看不到内容时，通常需要先更新数据或执行映射。",
+            ),
+            TourStep(
+                key="item-lookup-entry",
+                page_name="navigation",
+                target=lambda: self._target_nav_for("item_lookup"),
+                title="打开装备查询",
+                content="装备查询在左侧导航栏。它是独立的装备 ID 工具，不需要先更新或解包语音数据。",
+                allow_next=False,
+                wait_for_page_name="item_lookup",
+            ),
+            TourStep(
+                key="item-lookup-search",
+                page_name="item_lookup",
+                target=lambda: getattr(self._item_lookup_page, "search_input", None),
+                title="搜索装备 ID",
+                content="这里可以按装备名称、关键词或 ID 过滤官网装备数据。页面加载失败时，不会影响解包和事件映射功能。",
+            ),
+            TourStep(
+                key="item-lookup-modes",
+                page_name="item_lookup",
+                target=lambda: getattr(self._item_lookup_page, "mode_tabs", None),
+                title="区分模式并复制 ID",
+                content="普通模式和斗魂竞技场可能有同名不同 ID。先切换模式确认来源，再点击装备卡片复制 ID。",
             ),
             TourStep(
                 key="settings-tools-entry",
