@@ -66,6 +66,7 @@ from lol_audio_unpack.gui.service.worker import DataLoadWorker
 from lol_audio_unpack.gui.view.about_page import AboutPage, get_minimum_shell_size
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 from lol_audio_unpack.gui.view.home_page import HomePage
+from lol_audio_unpack.gui.view.item_lookup_page import ItemLookupPage
 from lol_audio_unpack.gui.view.overview_page import OverviewPage
 from lol_audio_unpack.gui.view.setting_page import SettingPage
 from lol_audio_unpack.gui.workers import TaskWorker
@@ -176,6 +177,8 @@ class MainWindow(FluentWindow):
         previous_mark = _log_window_stage("ExecutionPage 初始化完成", startup_begin, previous_mark)
         self.overviewInterface = OverviewPage(self)
         previous_mark = _log_window_stage("OverviewPage 初始化完成", startup_begin, previous_mark)
+        self.itemLookupInterface = ItemLookupPage(self)
+        previous_mark = _log_window_stage("ItemLookupPage 初始化完成", startup_begin, previous_mark)
         self.aboutInterface = AboutPage(self)
         previous_mark = _log_window_stage("AboutPage 初始化完成", startup_begin, previous_mark)
         self._shared_data_controller = SharedDataController(
@@ -212,6 +215,7 @@ class MainWindow(FluentWindow):
             setting_page=self.settingInterface,
             execution_page=self.executionInterface,
             overview_page=self.overviewInterface,
+            item_lookup_page=self.itemLookupInterface,
             has_active_work=self._has_active_background_work,
         )
         QTimer.singleShot(600, self._onboarding_controller.start_if_needed)
