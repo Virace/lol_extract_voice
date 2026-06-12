@@ -18,6 +18,7 @@ from lol_audio_unpack.gui.task_models import (
     ExecutionTaskResult,
     QueuedExecutionTask,
 )
+from lol_audio_unpack.manager import DataReader
 
 if TYPE_CHECKING:
     from lol_audio_unpack.gui.workers import WorkerSignals
@@ -113,6 +114,44 @@ def _emit_stage_progress(  # noqa: PLR0913
     )
 
 
+def _ensure_map_banks_ready(
+    runtime_app: LolAudioUnpackApp,
+    task: QueuedExecutionTask,
+    *,
+    include_maps: bool,
+) -> None:
+    """在执行地图任务前确认地图 banks 已完成生成。
+
+    Args:
+        runtime_app: 当前任务使用的运行时门面。
+        task: 已入队任务。
+        include_maps: 当前任务范围是否包含地图。
+
+    Raises:
+        RuntimeError: 地图基础 banks 缺失时抛出，避免静默跳过地图输出。
+    """
+    if not include_maps:
+        return
+
+    ctx = getattr(runtime_app, "ctx", None)
+    if ctx is None:
+        return
+
+    reader = DataReader(ctx=ctx)
+    map_ids = task.draft.task_params.map_ids
+    target_ids = tuple(int(map_id) for map_id in map_ids) if map_ids is not None else tuple(
+        int(map_data["id"]) for map_data in reader.get_maps() if map_data.get("id") is not None
+    )
+    missing_ids = [map_id for map_id in target_ids if not reader.get_map_banks(map_id)]
+    if not missing_ids:
+        return
+
+    raise RuntimeError(
+        "地图基础数据仍未准备完成，缺少地图 banks: "
+        f"{missing_ids[:10]}。请等待后台数据准备完成后再创建任务。"
+    )
+
+
 def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> ExecutionTaskResult:
     """在后台线程中执行单个队列任务。
 
@@ -137,6 +176,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     steps = task_params.selected_steps()
     completed_steps: list[str] = []
     runtime_app: LolAudioUnpackApp | None = None
+    map_banks_checked = False
     runtime_settings = _build_runtime_settings(task)
     source_mode = runtime_settings.get(SettingKey.SOURCE_MODE, "local_path")
 
@@ -201,6 +241,9 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                             settings=runtime_settings,
                         )
                     )
+                if not map_banks_checked:
+                    _ensure_map_banks_ready(runtime_app, task, include_maps=include_maps)
+                    map_banks_checked = True
 
                 _emit_stage_progress(
                     signals,
@@ -299,6 +342,9 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                             settings=runtime_settings,
                         )
                     )
+                if not map_banks_checked:
+                    _ensure_map_banks_ready(runtime_app, task, include_maps=include_maps)
+                    map_banks_checked = True
 
                 _emit_stage_progress(
                     signals,

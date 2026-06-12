@@ -197,6 +197,7 @@ def bind_shared_data_controller_signals(  # noqa: PLR0913
     controller.loading_state_changed.connect(
         lambda state: home_page.set_loading_state(state.message, active=state.active)
     )
+    controller.loading_state_changed.connect(execution_page.set_shared_data_loading_state)
     controller.shared_data_cleared.connect(execution_page.clear_entity_data)
     controller.shared_data_cleared.connect(overview_page.clear_data)
     controller.app_context_changed.connect(overview_page.set_app_context)

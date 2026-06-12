@@ -31,27 +31,6 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         item.add_marker(layer)
 
 
-class FakeQSettings:
-    """测试环境使用的内存版 QSettings 替身。"""
-
-    class Format:
-        IniFormat = object()
-
-    class Scope:
-        UserScope = object()
-
-    _store: dict[str, object] = {}
-
-    def __init__(self, *args, **kwargs) -> None:
-        _ = args, kwargs
-
-    def value(self, key: str, default=None):
-        return self._store.get(key, default)
-
-    def setValue(self, key: str, value) -> None:
-        self._store[key] = value
-
-
 @pytest.fixture(autouse=True)
 def _reset_config_state(monkeypatch, tmp_path):
     # 避免测试受到本地环境变量污染
@@ -61,7 +40,6 @@ def _reset_config_state(monkeypatch, tmp_path):
 
     isolated_work_dir = tmp_path / "isolated_env"
     isolated_work_dir.mkdir(parents=True, exist_ok=True)
-    FakeQSettings._store = {}
 
     # 强制把默认配置目录切换到临时目录，避免读取真实配置文件
     monkeypatch.setattr(
@@ -91,7 +69,6 @@ def _reset_config_state(monkeypatch, tmp_path):
             executable=isolated_work_dir / "python.exe",
         ),
     )
-    monkeypatch.setattr(gui_config_module, "QSettings", FakeQSettings)
 
     Singleton._instances.pop(DataReader, None)
 

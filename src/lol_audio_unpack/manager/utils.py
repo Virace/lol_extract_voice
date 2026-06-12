@@ -10,6 +10,7 @@ from importlib.metadata import version as get_package_version
 
 from loguru import logger
 
+import lol_audio_unpack
 from lol_audio_unpack.app.game_version import (
     get_game_version,
     get_lcu_version,
@@ -17,6 +18,24 @@ from lol_audio_unpack.app.game_version import (
     validate_install_version,
 )
 from lol_audio_unpack.manager.files import find_data_file, needs_update, read_data, write_data
+from lol_audio_unpack.utils.versioning import BUILD_VERSION_ENV
+
+
+def _resolve_script_version() -> str:
+    """按运行环境解析 metadata 使用的脚本版本。"""
+    injected_version = os.getenv(BUILD_VERSION_ENV, "").strip()
+    if injected_version:
+        return injected_version
+
+    __version__ = getattr(lol_audio_unpack, "__version__", "")
+    if str(__version__).strip():
+        return str(__version__).strip()
+
+    try:
+        return get_package_version("lol-audio-unpack")
+    except PackageNotFoundError:
+        logger.debug("无法获取包版本，metadata scriptVersion 回退到 '0.0.0-dev'。")
+        return "0.0.0-dev"
 
 
 def build_metadata_payload(game_version: str, languages: list[str]) -> dict:
@@ -29,11 +48,7 @@ def build_metadata_payload(game_version: str, languages: list[str]) -> dict:
     Returns:
         一个包含所有元数据的字典。
     """
-    try:
-        script_version = get_package_version("lol-audio-unpack")
-    except PackageNotFoundError:
-        script_version = "0.0.0-dev"
-        logger.warning("无法获取包版本，请使用 'pip install -e .' 在可编辑模式下安装。将版本设置为 '0.0.0-dev'。")
+    script_version = _resolve_script_version()
 
     metadata = {
         "gameVersion": game_version,

@@ -296,7 +296,8 @@ def test_load_command_config_reads_runtime_and_wav_sections(tmp_path: Path) -> N
 def test_resolve_default_path_uses_runtime_config_root() -> None:
     config_file = resolve_default_path()
     assert config_file.name == "lol-audio-unpack.ini"
-    assert config_file.parent.name == "isolated_env"
+    assert config_file.parent.name == "config"
+    assert config_file.parent.parent.name == "isolated_env"
 
 
 def test_write_settings_creates_expected_section(tmp_path: Path) -> None:
