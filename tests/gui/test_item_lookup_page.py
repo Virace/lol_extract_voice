@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from PySide6.QtWidgets import QApplication
 
+import lol_audio_unpack.gui.view.item_lookup_page as item_lookup_page_module
 from lol_audio_unpack.gui.components.item_lookup_grid import ITEM_MODE_ARENA
 from lol_audio_unpack.gui.service.item_catalog import ItemCatalogPayload, ItemRecord
 from lol_audio_unpack.gui.view.item_lookup_page import ItemLookupPage
@@ -85,3 +88,20 @@ def test_item_lookup_page_shows_failure_state_without_hiding_refresh(qtbot) -> N
     assert page.refresh_button.isEnabled() is True
     assert "装备数据加载失败" in page.status_label.text()
     assert "offline" in page.status_label.toolTip()
+
+
+def test_item_lookup_page_logs_load_failure(qtbot, monkeypatch) -> None:
+    """装备数据加载失败时应写入日志，便于定位网络或数据格式问题。"""
+    errors: list[str] = []
+    monkeypatch.setattr(
+        item_lookup_page_module,
+        "logger",
+        SimpleNamespace(error=errors.append),
+    )
+
+    page = ItemLookupPage(fetch_items_fn=lambda: (_ for _ in ()).throw(RuntimeError("offline")), start_worker_fn=_run_worker_sync)
+    qtbot.addWidget(page)
+
+    page.load_items()
+
+    assert errors == ["装备数据加载失败: offline"]

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import configparser
 from pathlib import Path
 
-from PySide6.QtCore import QSettings
 from qfluentwidgets import Theme, isDarkTheme, qconfig
 from qfluentwidgets.common.icon import writeSvg
 
@@ -16,11 +16,8 @@ EXPECTED_ICON_CHANNEL_TOLERANCE = 8
 
 
 def _use_temp_settings(page: SettingPage, tmp_path: Path) -> None:
-    """把页面配置切到临时 QSettings 文件。"""
-    settings_file = tmp_path / "gui-settings.ini"
-    page.config._qs = QSettings(str(settings_file), QSettings.Format.IniFormat)
-    page.config._qs.clear()
-    page.config._qs.sync()
+    """把页面配置切到临时项目 INI 文件。"""
+    page.config._config_file = tmp_path / "config" / "lol-audio-unpack.ini"
 
 
 def test_setting_page_applies_saved_accent_preset_to_selector(qtbot, tmp_path: Path) -> None:
@@ -48,7 +45,10 @@ def test_setting_page_persists_selected_accent_preset(qtbot, tmp_path: Path) -> 
     qtbot.wait(0)
 
     assert page.config.accent_preset_id == "green"
-    assert page.config._qs.value("accent_preset_id") == "green"
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.optionxform = str
+    parser.read(page.config._config_file, encoding="utf-8")
+    assert parser["gui"]["accent_preset_id"] == "green"
     assert qconfig.themeColor.value.name().lower() == get_accent_preset("green").resolve_primary_hex(dark=isDarkTheme()).lower()
 
 

@@ -162,6 +162,9 @@ def test_bind_shared_data_controller_signals_wires_payload_consumers() -> None:
             events.append(("loading", (message, active)))
 
     class _FakeExecution:
+        def set_shared_data_loading_state(self, state) -> None:
+            events.append(("exec_loading", (state.message, state.active)))
+
         def clear_entity_data(self) -> None:
             events.append(("exec_clear", None))
 
@@ -200,6 +203,7 @@ def test_bind_shared_data_controller_signals_wires_payload_consumers() -> None:
     controller.notice_requested.emit(type("Notice", (), {"title": "ok", "content": "done", "level": "success"})())
 
     assert ("loading", ("loading", True)) in events
+    assert ("exec_loading", ("loading", True)) in events
     assert ("exec_replace", ("champions", ({"id": 1},))) in events
     assert ("overview_replace", ("champions", ({"id": 1},))) in events
     assert ("notice", ("ok", "done", "success")) in events

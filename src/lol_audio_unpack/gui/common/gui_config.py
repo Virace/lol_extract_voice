@@ -4,17 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QSettings
-
 from lol_audio_unpack.config import (
     DEFAULT_REMOTE_LIVE_REGION,
     ConfigSection,
     SettingKey,
     load_command_config,
+    load_section,
     load_settings,
     remove_command_config_keys,
     resolve_default_path,
     write_command_config,
+    write_section,
     write_settings,
 )
 from lol_audio_unpack.gui.common.remote_mode_policy import resolve_source_mode
@@ -35,9 +35,8 @@ from lol_audio_unpack.utils.runtime_paths import (
 # Sentinel
 # ---------------------------------------------------------------------------
 
-_UNSET = object()  # distinguishes "not in file" from ""
-_ONBOARDING_COMPLETED_KEY = "onboarding/completed_version"
-_ONBOARDING_SKIPPED_KEY = "onboarding/skipped_version"
+_ONBOARDING_COMPLETED_KEY = "completed_version"
+_ONBOARDING_SKIPPED_KEY = "skipped_version"
 
 
 class GuiConfig:
@@ -49,9 +48,6 @@ class GuiConfig:
 
         self._dev_mode = dev_mode
         self._config_file = resolve_default_path(dev_mode=dev_mode)
-
-        # QSettings 用于 GUI 独有配置
-        self._qs = QSettings(QSettings.Format.IniFormat, QSettings.Scope.UserScope, "ViraceLab", "LolAudioUnpack")
 
         # 内部缓存 — CLI 共享配置
         self._source_mode: str = "local_path"
@@ -86,16 +82,25 @@ class GuiConfig:
         self._preview_audio_output_device_key: str = "default"
 
     def load(self) -> None:
-        """从标准 INI 和 QSettings 加载配置。"""
+        """从项目标准 INI 加载配置。"""
         shared_settings = load_settings(self._config_file, require_exists=False)
         wav_settings = load_command_config(
             self._config_file,
             command=ConfigSection.WAV,
             require_exists=False,
         )
+        gui_settings = load_section(
+            self._config_file,
+            section=ConfigSection.GUI,
+            require_exists=False,
+        )
 
         def _shared_value(key: str, default: str) -> str:
             file_value = shared_settings.get(key)
+            return default if file_value is None else str(file_value)
+
+        def _gui_value(key: str, default: str) -> str:
+            file_value = gui_settings.get(key)
             return default if file_value is None else str(file_value)
 
         # 1. 读取共享配置
@@ -116,71 +121,40 @@ class GuiConfig:
         self._wav_retries = int(wav_settings.get("wav_retries", 3))
         self._wav_format = str(wav_settings.get("wav_format", "pcm16") or "pcm16")
 
-        # 2. GUI 专有配置只走 QSettings
-        stored_vgmstream_path = self._qs.value("vgmstream_path", _UNSET)
-        if stored_vgmstream_path is _UNSET:
-            self._vgmstream_path = ""
-        else:
-            self._vgmstream_path = str(stored_vgmstream_path or "")
+        # 2. GUI 专有配置统一走项目 INI，不再读取用户全局 QSettings。
+        self._vgmstream_path = _gui_value("vgmstream_path", "")
 
         inferred_snapshot_strategy = (
             "custom"
             if self._snapshot_version and self._snapshot_lcu_url and self._snapshot_game_url
             else "latest"
         )
-        self._remote_snapshot_strategy = str(
-            self._qs.value("remote_snapshot_strategy", inferred_snapshot_strategy) or inferred_snapshot_strategy
+        self._remote_snapshot_strategy = (
+            _gui_value("remote_snapshot_strategy", inferred_snapshot_strategy) or inferred_snapshot_strategy
         )
-        stored_snapshot_version = self._qs.value("remote_snapshot_version", _UNSET)
-        if stored_snapshot_version is not _UNSET:
-            self._snapshot_version = str(stored_snapshot_version or "")
-        stored_snapshot_lcu_url = self._qs.value("remote_snapshot_lcu_url", _UNSET)
-        if stored_snapshot_lcu_url is not _UNSET:
-            self._snapshot_lcu_url = str(stored_snapshot_lcu_url or "")
-        stored_snapshot_game_url = self._qs.value("remote_snapshot_game_url", _UNSET)
-        if stored_snapshot_game_url is not _UNSET:
-            self._snapshot_game_url = str(stored_snapshot_game_url or "")
+        self.remote_snapshot_strategy = self._remote_snapshot_strategy
+        self._snapshot_version = _gui_value("remote_snapshot_version", self._snapshot_version)
+        self._snapshot_lcu_url = _gui_value("remote_snapshot_lcu_url", self._snapshot_lcu_url)
+        self._snapshot_game_url = _gui_value("remote_snapshot_game_url", self._snapshot_game_url)
 
-        # 3. 从 QSettings 读取 GUI 主题配置
-        self._theme_mode = str(self._qs.value("theme_mode", "Auto") or "Auto")
-        stored_accent_preset = self._qs.value("accent_preset_id", _UNSET)
-        stored_theme_color = str(self._qs.value("theme_color", self._theme_color) or self._theme_color)
-        if stored_accent_preset is _UNSET:
-            self._accent_preset_id = resolve_legacy_accent_preset(stored_theme_color)
-        else:
-            self._accent_preset_id = resolve_accent_preset_id(str(stored_accent_preset))
+        self._theme_mode = _gui_value("theme_mode", "Auto") or "Auto"
+        self._accent_preset_id = resolve_accent_preset_id(_gui_value("accent_preset_id", self._accent_preset_id))
         self._theme_color = get_accent_preset(self._accent_preset_id).primary_hex
 
-        legacy_smooth_scroll = self._qs.value("smooth_scroll_enabled", _UNSET)
-        stored_page_smooth_scroll = self._qs.value("page_smooth_scroll_enabled", _UNSET)
-        stored_widget_smooth_scroll = self._qs.value("widget_smooth_scroll_enabled", _UNSET)
-        legacy_smooth_scroll_enabled = (
-            False if legacy_smooth_scroll is _UNSET else self._to_bool(legacy_smooth_scroll)
-        )
-        self._page_smooth_scroll_enabled = (
-            legacy_smooth_scroll_enabled
-            if stored_page_smooth_scroll is _UNSET
-            else self._to_bool(stored_page_smooth_scroll)
-        )
-        self._widget_smooth_scroll_enabled = (
-            legacy_smooth_scroll_enabled
-            if stored_widget_smooth_scroll is _UNSET
-            else self._to_bool(stored_widget_smooth_scroll)
-        )
+        self._page_smooth_scroll_enabled = self._to_bool(_gui_value("page_smooth_scroll_enabled", "false"))
+        self._widget_smooth_scroll_enabled = self._to_bool(_gui_value("widget_smooth_scroll_enabled", "false"))
         self._log_drawer_auto_collapse_enabled = self._to_bool(
-            self._qs.value("log_drawer_auto_collapse_enabled", True)
+            _gui_value("log_drawer_auto_collapse_enabled", "true")
         )
-        self._console_log_level = str(self._qs.value("console_log_level", "INFO") or "INFO").upper()
-        self._file_log_level = str(self._qs.value("file_log_level", "DEBUG") or "DEBUG").upper()
+        self._console_log_level = _gui_value("console_log_level", "INFO").upper()
+        self._file_log_level = _gui_value("file_log_level", "DEBUG").upper()
         self._preview_audio_volume_percent = self._clamp_percentage(
-            self._qs.value("preview_audio_volume_percent", 10)
+            _gui_value("preview_audio_volume_percent", "10")
         )
-        self._preview_audio_output_device_key = str(
-            self._qs.value("preview_audio_output_device_key", "default") or "default"
-        )
+        self.preview_audio_output_device_key = _gui_value("preview_audio_output_device_key", "default")
 
     def save(self) -> None:
-        """保存配置到标准 INI 与 QSettings。"""
+        """保存配置到项目标准 INI。"""
         snapshot_overrides = self._snapshot_overrides()
         write_settings(
             self._config_file,
@@ -215,27 +189,18 @@ class GuiConfig:
             ini_keys=("wav",),
         )
 
-        # 保存 GUI 专有配置到 QSettings
-        self._qs.setValue("vgmstream_path", self._vgmstream_path)
-        self._qs.setValue("remote_snapshot_strategy", self._remote_snapshot_strategy)
-        self._qs.setValue("remote_snapshot_version", self._snapshot_version)
-        self._qs.setValue("remote_snapshot_lcu_url", self._snapshot_lcu_url)
-        self._qs.setValue("remote_snapshot_game_url", self._snapshot_game_url)
-        self._qs.setValue("theme_mode", self._theme_mode)
-        self._qs.setValue("accent_preset_id", self._accent_preset_id)
-        self._qs.setValue("page_smooth_scroll_enabled", self._page_smooth_scroll_enabled)
-        self._qs.setValue("widget_smooth_scroll_enabled", self._widget_smooth_scroll_enabled)
-        self._qs.setValue("log_drawer_auto_collapse_enabled", self._log_drawer_auto_collapse_enabled)
-        self._qs.setValue("console_log_level", self._console_log_level)
-        self._qs.setValue("file_log_level", self._file_log_level)
-        self._qs.setValue("preview_audio_volume_percent", self._preview_audio_volume_percent)
-        self._qs.setValue("preview_audio_output_device_key", self._preview_audio_output_device_key)
-        self._qs.setValue("smooth_scroll_enabled", self.smooth_scroll_enabled)
+        self._write_gui_section()
 
     def save_theme_preferences(self) -> None:
         """仅保存主题相关的 GUI 偏好，不触碰共享 runtime 配置。"""
-        self._qs.setValue("theme_mode", self._theme_mode)
-        self._qs.setValue("accent_preset_id", self._accent_preset_id)
+        write_section(
+            self._config_file,
+            section=ConfigSection.GUI,
+            values={
+                "theme_mode": self._theme_mode,
+                "accent_preset_id": self._accent_preset_id,
+            },
+        )
 
     def to_app_context_settings(self) -> dict[str, str | bool]:
         """构建供 ``create_app_context`` 使用的共享配置映射。"""
@@ -314,8 +279,9 @@ class GuiConfig:
         version = str(guide_version or "").strip()
         if not version:
             return False
-        completed = str(self._qs.value(_ONBOARDING_COMPLETED_KEY, "") or "")
-        skipped = str(self._qs.value(_ONBOARDING_SKIPPED_KEY, "") or "")
+        state = self._load_onboarding_state()
+        completed = state.get(_ONBOARDING_COMPLETED_KEY, "")
+        skipped = state.get(_ONBOARDING_SKIPPED_KEY, "")
         return version not in (completed, skipped)
 
     def mark_onboarding_completed(self, guide_version: str) -> None:
@@ -327,7 +293,7 @@ class GuiConfig:
 
         version = str(guide_version or "").strip()
         if version:
-            self._qs.setValue(_ONBOARDING_COMPLETED_KEY, version)
+            self._write_onboarding_state(completed=version)
 
     def mark_onboarding_skipped(self, guide_version: str) -> None:
         """记录当前引导版本已经跳过。
@@ -338,7 +304,7 @@ class GuiConfig:
 
         version = str(guide_version or "").strip()
         if version:
-            self._qs.setValue(_ONBOARDING_SKIPPED_KEY, version)
+            self._write_onboarding_state(skipped=version)
 
     def reset_onboarding(self, guide_version: str) -> None:
         """清除当前引导版本的完成与跳过状态。
@@ -351,10 +317,14 @@ class GuiConfig:
         if not version:
             return
 
-        if str(self._qs.value(_ONBOARDING_COMPLETED_KEY, "") or "") == version:
-            self._qs.setValue(_ONBOARDING_COMPLETED_KEY, "")
-        if str(self._qs.value(_ONBOARDING_SKIPPED_KEY, "") or "") == version:
-            self._qs.setValue(_ONBOARDING_SKIPPED_KEY, "")
+        state = self._load_onboarding_state()
+        completed = (
+            ""
+            if state.get(_ONBOARDING_COMPLETED_KEY, "") == version
+            else state.get(_ONBOARDING_COMPLETED_KEY, "")
+        )
+        skipped = "" if state.get(_ONBOARDING_SKIPPED_KEY, "") == version else state.get(_ONBOARDING_SKIPPED_KEY, "")
+        self._write_onboarding_state(completed=completed, skipped=skipped)
 
     # ------------------------------------------------------------------
     # Properties — source
@@ -666,6 +636,59 @@ class GuiConfig:
         except (TypeError, ValueError):
             normalized = 10
         return max(0, min(100, normalized))
+
+    def _write_gui_section(self) -> None:
+        """将 GUI 专有状态写入项目 INI 的 ``gui`` 分组。"""
+        write_section(
+            self._config_file,
+            section=ConfigSection.GUI,
+            values={
+                "vgmstream_path": self._vgmstream_path,
+                "remote_snapshot_strategy": self._remote_snapshot_strategy,
+                "remote_snapshot_version": self._snapshot_version,
+                "remote_snapshot_lcu_url": self._snapshot_lcu_url,
+                "remote_snapshot_game_url": self._snapshot_game_url,
+                "theme_mode": self._theme_mode,
+                "accent_preset_id": self._accent_preset_id,
+                "page_smooth_scroll_enabled": self._page_smooth_scroll_enabled,
+                "widget_smooth_scroll_enabled": self._widget_smooth_scroll_enabled,
+                "log_drawer_auto_collapse_enabled": self._log_drawer_auto_collapse_enabled,
+                "console_log_level": self._console_log_level,
+                "file_log_level": self._file_log_level,
+                "preview_audio_volume_percent": self._preview_audio_volume_percent,
+                "preview_audio_output_device_key": self._preview_audio_output_device_key,
+            },
+        )
+
+    def _load_onboarding_state(self) -> dict[str, str]:
+        """读取项目 INI 中的新手引导状态。"""
+        return load_section(
+            self._config_file,
+            section=ConfigSection.ONBOARDING,
+            require_exists=False,
+        )
+
+    def _write_onboarding_state(
+        self,
+        *,
+        completed: str | None = None,
+        skipped: str | None = None,
+    ) -> None:
+        """写入新手引导状态，并保留未显式更新的字段。"""
+        state = self._load_onboarding_state()
+        if completed is not None:
+            state[_ONBOARDING_COMPLETED_KEY] = completed
+        if skipped is not None:
+            state[_ONBOARDING_SKIPPED_KEY] = skipped
+
+        write_section(
+            self._config_file,
+            section=ConfigSection.ONBOARDING,
+            values={
+                _ONBOARDING_COMPLETED_KEY: state.get(_ONBOARDING_COMPLETED_KEY, ""),
+                _ONBOARDING_SKIPPED_KEY: state.get(_ONBOARDING_SKIPPED_KEY, ""),
+            },
+        )
 
     def _snapshot_overrides(self) -> dict[str, str]:
         """根据当前远端快照策略构建实际生效的快照覆盖项。"""

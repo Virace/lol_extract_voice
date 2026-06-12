@@ -7,6 +7,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 
+from lol_audio_unpack.gui.controllers.contracts import SharedDataLoadingState
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 from lol_audio_unpack.gui.view.setting_page import SettingPage
 
@@ -139,6 +140,50 @@ def test_execution_page_primary_button_switches_to_cancel_when_task_running(qtbo
     execution_page._queue_task_draft()
 
     assert execution_page.create_task_btn.text() == "取消"
+
+
+def test_execution_page_blocks_task_creation_while_shared_data_is_busy(qtbot, monkeypatch) -> None:
+    """共享数据后台准备期间，执行中心不应创建任务。"""
+    _setting_page, execution_page = _build_linked_pages(qtbot)
+    started_tasks = []
+    monkeypatch.setattr("lol_audio_unpack.gui.view.execution_page.get_block_reason", lambda _cfg: None)
+    monkeypatch.setattr(
+        execution_page._queue_controller,
+        "start_task_worker",
+        started_tasks.append,
+    )
+
+    execution_page.set_shared_data_loading_state(
+        SharedDataLoadingState(message="正在刷新基础数据…", active=True)
+    )
+    execution_page._queue_task_draft()
+
+    assert execution_page.create_task_btn.text() == "准备数据中"
+    assert "正在刷新基础数据" in execution_page.create_task_btn.toolTip()
+    assert execution_page._queue_controller.draft_queue_size() == 0
+    assert started_tasks == []
+
+
+def test_execution_page_keeps_failure_as_block_reason_without_busy_lock(qtbot, monkeypatch) -> None:
+    """共享数据准备失败后应解除忙碌态，但继续给出明确阻止原因。"""
+    _setting_page, execution_page = _build_linked_pages(qtbot)
+    started_tasks = []
+    monkeypatch.setattr("lol_audio_unpack.gui.view.execution_page.get_block_reason", lambda _cfg: None)
+    monkeypatch.setattr(
+        execution_page._queue_controller,
+        "start_task_worker",
+        started_tasks.append,
+    )
+
+    execution_page.set_shared_data_loading_state(
+        SharedDataLoadingState(message="加载失败: 地图 banks 未生成", active=False)
+    )
+    execution_page._queue_task_draft()
+
+    assert execution_page.create_task_btn.text() == "创建任务"
+    assert "地图 banks 未生成" in execution_page.create_task_btn.toolTip()
+    assert execution_page._queue_controller.draft_queue_size() == 0
+    assert started_tasks == []
 
 
 def test_execution_page_absorbs_duplicate_create_calls_in_single_task_mode(qtbot, monkeypatch) -> None:

@@ -27,6 +27,14 @@ def test_pyinstaller_entry_files_exist() -> None:
     assert (PYINSTALLER_DIR / "runtime_hook_chdir.py").is_file()
 
 
+def test_gui_entry_calls_freeze_support_before_qt_imports() -> None:
+    """GUI 入口必须先处理 PyInstaller multiprocessing 子进程参数。"""
+    entry_text = (PROJECT_ROOT / "src" / "lol_audio_unpack" / "gui" / "__main__.py").read_text(encoding="utf-8")
+
+    assert "multiprocessing.freeze_support()" in entry_text
+    assert entry_text.index("multiprocessing.freeze_support()") < entry_text.index("from PySide6")
+
+
 def test_pyinstaller_spec_supports_default_onefile_and_optional_onedir() -> None:
     """spec 文件应默认 onefile，并允许切换到 onedir。"""
     spec_text = (PYINSTALLER_DIR / "gui.spec").read_text(encoding="utf-8")

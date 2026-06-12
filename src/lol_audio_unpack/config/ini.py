@@ -197,6 +197,46 @@ def remove_command_config_keys(
         parser.write(handle)
 
 
+def load_section(
+    config_file: StrPath,
+    *,
+    section: str,
+    require_exists: bool = True,
+) -> dict[str, str]:
+    """读取指定 INI section 的原始键值。"""
+    parser = _load_config_parser(config_file, require_exists=require_exists)
+    if parser is None or not parser.has_section(section):
+        return {}
+    return {key: value.strip() for key, value in parser.items(section)}
+
+
+def write_section(
+    config_file: StrPath,
+    *,
+    section: str,
+    values: dict[str, Any],
+) -> None:
+    """写入指定 INI section 的原始键值，并保留其他 section。"""
+    config_path, parser = _ensure_parser(config_file)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not parser.has_section(section):
+        parser.add_section(section)
+    target = parser[section]
+
+    for key, value in values.items():
+        if value is None:
+            target.pop(key, None)
+            continue
+        target[key] = str(value).lower() if isinstance(value, bool) else str(value)
+
+    if not list(target.items()):
+        parser.remove_section(section)
+
+    with config_path.open("w", encoding="utf-8") as handle:
+        parser.write(handle)
+
+
 def _parse_command_value(
     section: configparser.SectionProxy,
     *,
@@ -240,9 +280,11 @@ __all__ = [
     "DEFAULT_CONFIG_FILENAME",
     "DEFAULT_DEV_CONFIG_FILENAME",
     "load_command_config",
+    "load_section",
     "load_settings",
     "remove_command_config_keys",
     "resolve_default_path",
     "write_command_config",
+    "write_section",
     "write_settings",
 ]

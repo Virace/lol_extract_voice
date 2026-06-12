@@ -1,18 +1,19 @@
-"""GUI 配置中的 WAV 默认值回归测试。"""
+"""GUI 配置持久化回归测试。"""
 
 from __future__ import annotations
 
+import configparser
 from pathlib import Path
 
-from PySide6.QtCore import QSettings
-
-from lol_audio_unpack.config import load_command_config
+from lol_audio_unpack.config import ConfigSection, load_command_config
 from lol_audio_unpack.gui.common.gui_config import GuiConfig
 from lol_audio_unpack.gui.theme.presets import get_accent_preset
 
 EXPECTED_WAV_WORKERS = 6
 EXPECTED_WAV_TIMEOUT = 9
 EXPECTED_WAV_RETRIES = 4
+DEFAULT_PREVIEW_VOLUME_PERCENT = 10
+EXPECTED_PREVIEW_VOLUME_PERCENT = 42
 
 
 def test_gui_config_load_reads_wav_command_defaults(tmp_path: Path) -> None:
@@ -86,61 +87,120 @@ def test_gui_config_save_updates_wav_group_enable_and_tuning(tmp_path: Path) -> 
     assert "wav = true" not in config_file.read_text(encoding="utf-8")
 
 
-def test_gui_config_load_migrates_legacy_theme_color_to_accent_preset(tmp_path: Path) -> None:
-    """旧主题色应迁移到固定 accent preset。"""
-    settings_file = tmp_path / "gui-settings.ini"
-    legacy_settings = QSettings(str(settings_file), QSettings.Format.IniFormat)
-    legacy_settings.setValue("theme_mode", "Dark")
-    legacy_settings.setValue("theme_color", get_accent_preset("purple").primary_hex)
-    legacy_settings.sync()
-
+def test_gui_config_uses_defaults_when_project_ini_is_missing() -> None:
+    """项目配置缺失时应使用 GUI 默认值。"""
     cfg = GuiConfig()
-    cfg._qs = QSettings(str(settings_file), QSettings.Format.IniFormat)
 
     cfg.load()
 
-    assert cfg.theme_mode == "Dark"
-    assert cfg.accent_preset_id == "purple"
-    assert cfg.theme_color.lower() == get_accent_preset("purple").primary_hex.lower()
+    assert cfg.preview_audio_volume_percent == DEFAULT_PREVIEW_VOLUME_PERCENT
 
 
-def test_gui_config_save_persists_theme_mode_and_accent_preset(tmp_path: Path) -> None:
-    """新主题配置应写回壳模式与 accent preset。"""
-    config_file = tmp_path / "lol-audio-unpack.ini"
-    settings_file = tmp_path / "gui-settings.ini"
+def test_gui_config_load_reads_gui_section_from_project_ini(tmp_path: Path) -> None:
+    """GUI 专有状态应从项目 INI 的 gui 分组读取。"""
+    config_file = tmp_path / "config" / "lol-audio-unpack.ini"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(
+        (
+            "[gui]\n"
+            "vgmstream_path = tools/vgmstream/vgmstream-cli.exe\n"
+            "remote_snapshot_strategy = custom\n"
+            "remote_snapshot_version = 16.12\n"
+            "remote_snapshot_lcu_url = https://example.com/lcu.manifest\n"
+            "remote_snapshot_game_url = https://example.com/game.manifest\n"
+            "theme_mode = Dark\n"
+            "accent_preset_id = purple\n"
+            "page_smooth_scroll_enabled = true\n"
+            "widget_smooth_scroll_enabled = true\n"
+            "log_drawer_auto_collapse_enabled = false\n"
+            "console_log_level = warning\n"
+            "file_log_level = info\n"
+            f"preview_audio_volume_percent = {EXPECTED_PREVIEW_VOLUME_PERCENT}\n"
+            "preview_audio_output_device_key = device-a\n"
+        ),
+        encoding="utf-8",
+    )
 
     cfg = GuiConfig()
     cfg._config_file = config_file
-    cfg._qs = QSettings(str(settings_file), QSettings.Format.IniFormat)
+    cfg.load()
+
+    assert cfg.vgmstream_path == "tools/vgmstream/vgmstream-cli.exe"
+    assert cfg.remote_snapshot_strategy == "custom"
+    assert cfg.snapshot_version == "16.12"
+    assert cfg.snapshot_lcu_url == "https://example.com/lcu.manifest"
+    assert cfg.snapshot_game_url == "https://example.com/game.manifest"
+    assert cfg.theme_mode == "Dark"
+    assert cfg.accent_preset_id == "purple"
+    assert cfg.theme_color.lower() == get_accent_preset("purple").primary_hex.lower()
+    assert cfg.page_smooth_scroll_enabled is True
+    assert cfg.widget_smooth_scroll_enabled is True
+    assert cfg.log_drawer_auto_collapse_enabled is False
+    assert cfg.console_log_level == "WARNING"
+    assert cfg.file_log_level == "INFO"
+    assert cfg.preview_audio_volume_percent == EXPECTED_PREVIEW_VOLUME_PERCENT
+    assert cfg.preview_audio_output_device_key == "device-a"
+
+
+def test_gui_config_save_persists_gui_state_to_project_ini(tmp_path: Path) -> None:
+    """保存 GUI 配置时应把 GUI 状态统一写入项目 INI。"""
+    config_file = tmp_path / "config" / "lol-audio-unpack.ini"
+    cfg = GuiConfig()
+    cfg._config_file = config_file
+    cfg.vgmstream_path = "tools/vgmstream/vgmstream-cli.exe"
+    cfg.remote_snapshot_strategy = "custom"
+    cfg.snapshot_version = "16.12"
+    cfg.snapshot_lcu_url = "https://example.com/lcu.manifest"
+    cfg.snapshot_game_url = "https://example.com/game.manifest"
     cfg.theme_mode = "Dark"
     cfg.accent_preset_id = "orange"
+    cfg.page_smooth_scroll_enabled = True
+    cfg.widget_smooth_scroll_enabled = True
+    cfg.log_drawer_auto_collapse_enabled = False
+    cfg.console_log_level = "WARNING"
+    cfg.file_log_level = "INFO"
+    cfg.preview_audio_volume_percent = EXPECTED_PREVIEW_VOLUME_PERCENT
+    cfg.preview_audio_output_device_key = "device-a"
 
-    cfg.save_theme_preferences()
-    cfg._qs.sync()
+    cfg.save()
 
     reloaded = GuiConfig()
     reloaded._config_file = config_file
-    reloaded._qs = QSettings(str(settings_file), QSettings.Format.IniFormat)
     reloaded.load()
 
+    assert reloaded.vgmstream_path == "tools/vgmstream/vgmstream-cli.exe"
+    assert reloaded.remote_snapshot_strategy == "custom"
+    assert reloaded.snapshot_version == "16.12"
+    assert reloaded.snapshot_lcu_url == "https://example.com/lcu.manifest"
+    assert reloaded.snapshot_game_url == "https://example.com/game.manifest"
     assert reloaded.theme_mode == "Dark"
     assert reloaded.accent_preset_id == "orange"
     assert reloaded.theme_color.lower() == get_accent_preset("orange").primary_hex.lower()
+    assert reloaded.page_smooth_scroll_enabled is True
+    assert reloaded.widget_smooth_scroll_enabled is True
+    assert reloaded.log_drawer_auto_collapse_enabled is False
+    assert reloaded.console_log_level == "WARNING"
+    assert reloaded.file_log_level == "INFO"
+    assert reloaded.preview_audio_volume_percent == EXPECTED_PREVIEW_VOLUME_PERCENT
+    assert reloaded.preview_audio_output_device_key == "device-a"
 
 
-def test_gui_config_save_theme_preferences_stops_writing_legacy_theme_color(tmp_path: Path) -> None:
-    """新主题配置不应继续把 legacy theme_color 作为主写回字段。"""
-    settings_file = tmp_path / "gui-settings.ini"
-
+def test_gui_config_save_theme_preferences_updates_project_ini_only(tmp_path: Path) -> None:
+    """主题快速保存只应更新项目 INI 的主题字段并保留其他 GUI 字段。"""
+    config_file = tmp_path / "config" / "lol-audio-unpack.ini"
     cfg = GuiConfig()
-    cfg._qs = QSettings(str(settings_file), QSettings.Format.IniFormat)
+    cfg._config_file = config_file
+    cfg.preview_audio_volume_percent = EXPECTED_PREVIEW_VOLUME_PERCENT
+    cfg.save()
     cfg.theme_mode = "Light"
     cfg.accent_preset_id = "blue"
 
     cfg.save_theme_preferences()
-    cfg._qs.sync()
 
-    stored = QSettings(str(settings_file), QSettings.Format.IniFormat)
-    assert stored.value("theme_mode") == "Light"
-    assert stored.value("accent_preset_id") == "blue"
-    assert stored.value("theme_color") is None
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.optionxform = str
+    parser.read(config_file, encoding="utf-8")
+    assert parser[ConfigSection.GUI]["theme_mode"] == "Light"
+    assert parser[ConfigSection.GUI]["accent_preset_id"] == "blue"
+    assert parser[ConfigSection.GUI]["preview_audio_volume_percent"] == str(EXPECTED_PREVIEW_VOLUME_PERCENT)
+    assert "theme_color" not in parser[ConfigSection.GUI]

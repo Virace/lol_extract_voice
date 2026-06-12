@@ -1,9 +1,15 @@
 """GUI 应用入口。"""
 
+# ruff: noqa: E402
+
 from __future__ import annotations
 
+import multiprocessing
 import sys
 from time import perf_counter
+
+# PyInstaller 冻结态的 multiprocessing 子进程必须在导入 Qt 前完成分流。
+multiprocessing.freeze_support()
 
 from loguru import logger
 from PySide6.QtCore import Qt
@@ -21,6 +27,7 @@ from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
 from lol_audio_unpack.gui.controllers.runtime_logging_session import (
     apply_runtime_logging_session,
 )
+from lol_audio_unpack.gui.single_instance import acquire_or_activate
 from lol_audio_unpack.gui.theme import apply_accent_preset, apply_shell_mode
 from lol_audio_unpack.gui.window import MainWindow
 
@@ -74,6 +81,11 @@ def main() -> None:
 
     app = QApplication(sys.argv)
     previous_mark = _log_startup_stage("QApplication 创建完成", startup_begin, previous_mark)
+    instance_guard = acquire_or_activate(parent=app)
+    if instance_guard is None:
+        logger.info("已有 GUI 实例正在运行，已发送窗口激活请求。")
+        return
+    previous_mark = _log_startup_stage("单实例守卫初始化完成", startup_begin, previous_mark)
 
     # 彻底解决 Windows 下中文 HighDPI 渲染 "横线发虚/掉底" 问题
     font = QFont("Microsoft YaHei")
@@ -93,6 +105,7 @@ def main() -> None:
 
     # 获取桌面并应用大小
     window = MainWindow()
+    instance_guard.set_window(window)
     remove_startup_log_buffer()
     previous_mark = _log_startup_stage("MainWindow 构建完成", startup_begin, previous_mark)
     if not window.isVisible():

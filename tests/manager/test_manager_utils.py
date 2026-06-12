@@ -116,6 +116,30 @@ def test_build_metadata_payload():
     assert "createdAt" in metadata
 
 
+def test_build_metadata_payload_prefers_injected_build_version(monkeypatch):
+    monkeypatch.setenv("LOL_AUDIO_UNPACK_BUILD_VERSION", "3.7.1.dev14+gabc123")
+
+    result = mutils.build_metadata_payload("16.12", ["zh_CN"])
+
+    assert result["metadata"]["scriptVersion"] == "3.7.1.dev14+gabc123"
+
+
+def test_build_metadata_payload_does_not_warn_when_injected_version_exists(monkeypatch):
+    warnings: list[str] = []
+    monkeypatch.setenv("LOL_AUDIO_UNPACK_BUILD_VERSION", "3.7.1")
+    monkeypatch.setattr(
+        mutils,
+        "get_package_version",
+        lambda _name: (_ for _ in ()).throw(mutils.PackageNotFoundError()),
+    )
+    monkeypatch.setattr(mutils.logger, "warning", warnings.append)
+
+    result = mutils.build_metadata_payload("16.12", ["zh_CN"])
+
+    assert result["metadata"]["scriptVersion"] == "3.7.1"
+    assert warnings == []
+
+
 def test_needs_update_behavior(tmp_path):
     base = tmp_path / "manifest" / "data"
     base.parent.mkdir(parents=True, exist_ok=True)

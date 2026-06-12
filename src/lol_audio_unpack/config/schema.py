@@ -45,6 +45,8 @@ class ConfigSection:
     EXTRACT = "extract"
     WAV = "wav"
     MAPPING = "mapping"
+    GUI = "gui"
+    ONBOARDING = "onboarding"
 
 
 DEFAULT_REMOTE_LIVE_REGION = "EUW"
