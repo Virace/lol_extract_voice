@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+from loguru import logger
 from PySide6.QtCore import Qt, QThreadPool, QTimer
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
@@ -207,6 +208,7 @@ class ItemLookupPage(QWidget):
 
     def _on_load_failed(self, message: str) -> None:
         """显示加载失败状态，等待用户手动刷新。"""
+        logger.error(f"装备数据加载失败: {message}")
         self._is_loading = False
         self._active_worker = None
         self.refresh_button.setEnabled(True)

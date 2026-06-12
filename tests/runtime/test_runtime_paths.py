@@ -25,7 +25,7 @@ def test_detect_runtime_paths_uses_cwd_for_source_runs(tmp_path: Path) -> None:
 
     assert runtime_paths.is_frozen is False
     assert runtime_paths.launch_root == source_cwd.resolve()
-    assert runtime_paths.config_root == source_cwd.resolve()
+    assert runtime_paths.config_root == source_cwd.resolve() / "config"
     assert runtime_paths.bundle_root == source_cwd.resolve()
     assert runtime_paths.executable_path == executable.resolve(strict=False)
 
@@ -46,7 +46,7 @@ def test_detect_runtime_paths_uses_executable_dir_for_frozen_runs(tmp_path: Path
 
     assert runtime_paths.is_frozen is True
     assert runtime_paths.launch_root == expected_root
-    assert runtime_paths.config_root == expected_root
+    assert runtime_paths.config_root == expected_root / "config"
     assert runtime_paths.bundle_root == expected_root
     assert runtime_paths.executable_path == executable.resolve(strict=False)
 

@@ -50,6 +50,19 @@ def _build_task(
     )
 
 
+class _ReadyMapBanksReader:
+    """提供已就绪地图 banks 的轻量测试读取器。"""
+
+    def __init__(self, *, ctx) -> None:
+        self.ctx = ctx
+
+    def get_maps(self) -> list[dict]:
+        return [{"id": 11}]
+
+    def get_map_banks(self, _map_id: int) -> dict:
+        return {"banks": {"VO": [["map.wpk"]]}}
+
+
 def test_build_runtime_settings_forces_local_path_when_packaged(monkeypatch) -> None:
     monkeypatch.setattr(
         task_runner,
@@ -233,6 +246,7 @@ def test_run_execution_task_runs_wav_stage_between_extract_and_mapping(monkeypat
         ),
     )
     monkeypatch.setattr(task_runner, "create_app_context", lambda *, settings: runtime_context)
+    monkeypatch.setattr(task_runner, "DataReader", _ReadyMapBanksReader)
 
     class FakeApp:
         def __init__(self, app_context) -> None:
@@ -316,3 +330,54 @@ def test_run_execution_task_allows_wav_stage_without_extract(monkeypatch, tmp_pa
 
     assert events == ["wav"]
     assert result.completed_steps == ("音频转码",)
+
+
+def test_run_execution_task_rejects_missing_map_banks_before_runtime_steps(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """地图 banks 尚未生成时，GUI 任务不应静默跳过地图输出。"""
+    task = _build_task(source_mode="local_path", run_mapping=False)
+    runtime_context = SimpleNamespace(
+        paths=SimpleNamespace(
+            manifest_path=tmp_path / "manifest",
+            audio_path=tmp_path / "audios",
+            wav_path=tmp_path / "wavs",
+            report_path=tmp_path / "reports",
+        ),
+        runtime_cache={},
+        config=SimpleNamespace(dev_mode=False),
+    )
+    data_dir = runtime_context.paths.manifest_path / "16.5"
+    data_dir.mkdir(parents=True)
+    (data_dir / "data.msgpack").write_bytes(b"placeholder")
+
+    class FakeReader:
+        version = "16.5"
+
+        def __init__(self, *, ctx) -> None:
+            pass
+
+        def get_champions(self) -> list[dict]:
+            return [{"id": 1}]
+
+        def get_maps(self) -> list[dict]:
+            return [{"id": 11}]
+
+        def get_map_banks(self, _map_id: int):
+            return None
+
+    class FakeApp:
+        def __init__(self, app_context) -> None:
+            self.ctx = app_context
+
+        def extract(self, _options, **_kwargs) -> None:
+            pytest.fail("地图 banks 缺失时不应进入 extract")
+
+    monkeypatch.setattr(task_runner, "create_app_context", lambda *, settings: runtime_context)
+    monkeypatch.setattr(task_runner, "DataReader", FakeReader)
+    monkeypatch.setattr(task_runner, "LolAudioUnpackApp", FakeApp)
+    signals = SimpleNamespace(progress=SimpleNamespace(emit=lambda _payload: None))
+
+    with pytest.raises(RuntimeError, match="地图基础数据仍未准备完成"):
+        task_runner.run_execution_task(task, signals)

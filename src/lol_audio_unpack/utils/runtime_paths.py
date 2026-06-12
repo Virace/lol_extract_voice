@@ -76,7 +76,7 @@ def detect_runtime_paths(
         is_frozen=frozen,
         executable_path=executable_path,
         launch_root=launch_root,
-        config_root=launch_root,
+        config_root=launch_root / "config",
         bundle_root=launch_root,
     )
 

@@ -66,8 +66,8 @@ def test_config_package_default_path_uses_runtime_config_root(
 
     config_file = config_pkg.resolve_default_path()
 
-    assert config_file == runtime_root / "lol-audio-unpack.ini"
-    assert config_file.parent == runtime_root
+    assert config_file == runtime_root / "config" / "lol-audio-unpack.ini"
+    assert config_file.parent == runtime_root / "config"
 
 
 def test_config_package_keeps_short_public_api() -> None:

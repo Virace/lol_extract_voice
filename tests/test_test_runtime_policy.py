@@ -53,10 +53,11 @@ def test_gui_config_default_env_file_stays_inside_repo_temp() -> None:
     assert cfg._config_file.resolve().is_relative_to(PYTEST_TEMP_ROOT)
 
 
-def test_gui_config_uses_fake_qsettings_backend_in_tests() -> None:
-    """测试环境中的 GuiConfig 不应直接使用系统真实 QSettings。"""
+def test_gui_config_project_ini_lives_under_config_dir() -> None:
+    """测试环境中的 GuiConfig 项目 INI 应落在隔离 config 目录。"""
     cfg = GuiConfig()
-    assert type(cfg._qs).__name__ == "FakeQSettings"
+    assert cfg._config_file.name == "lol-audio-unpack.ini"
+    assert cfg._config_file.parent.name == "config"
 
 
 def test_tests_do_not_embed_nonportable_absolute_path_literals() -> None:

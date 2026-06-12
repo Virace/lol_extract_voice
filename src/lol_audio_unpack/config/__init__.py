@@ -7,10 +7,12 @@ from .ini import (
     DEFAULT_CONFIG_FILENAME,
     DEFAULT_DEV_CONFIG_FILENAME,
     load_command_config,
+    load_section,
     load_settings,
     remove_command_config_keys,
     resolve_default_path,
     write_command_config,
+    write_section,
     write_settings,
 )
 from .schema import (
@@ -49,9 +51,11 @@ __all__ = [
     "SharedSettingField",
     "build_settings",
     "load_command_config",
+    "load_section",
     "load_settings",
     "remove_command_config_keys",
     "resolve_default_path",
     "write_command_config",
+    "write_section",
     "write_settings",
 ]
