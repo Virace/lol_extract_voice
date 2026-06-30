@@ -68,7 +68,7 @@ def _get_wad_instance(
     return get_wad(wad_path, cache=wad_cache, lock=cache_lock)
 
 
-@logger.catch
+@logger.catch(reraise=True)
 @performance_monitor(level="DEBUG")
 def unpack_entity(  # noqa: PLR0913
     entity_data: AudioEntityData,
@@ -509,8 +509,10 @@ def unpack_champion(  # noqa: PLR0913
         )
         attach_bp_vo(entity_data, reader, ctx=ctx)
     except ValueError as e:
+        # 显式记录边界错误后向上抛出，交由 batch 统一计入失败计数；
+        # 不在此处吞掉返回 None，否则失败会被误判为成功（见 AGENTS.project.md 日志硬规则）。
         logger.error(str(e))
-        return
+        raise
 
 
 def unpack_map(  # noqa: PLR0913
@@ -548,5 +550,7 @@ def unpack_map(  # noqa: PLR0913
             persisted_wem_callback=persisted_wem_callback,
         )
     except ValueError as e:
+        # 显式记录边界错误后向上抛出，交由 batch 统一计入失败计数；
+        # 不在此处吞掉返回 None，否则失败会被误判为成功（见 AGENTS.project.md 日志硬规则）。
         logger.error(str(e))
-        return
+        raise
