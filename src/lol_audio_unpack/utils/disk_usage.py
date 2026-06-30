@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+from loguru import logger
+
 SIZE_BASE = 1024
 
 
@@ -171,7 +173,7 @@ def monitor_directory_usage(
     finally:
         report = monitor.stop()
         report_path = write_disk_usage_report(output_path, report)
-        print(
+        logger.info(
             f"[space] {label}: peak={format_size(report.peak_bytes)}, "
             f"final={format_size(report.final_bytes)}, "
             f"duration={report.duration_seconds:.2f}s, report={report_path}"

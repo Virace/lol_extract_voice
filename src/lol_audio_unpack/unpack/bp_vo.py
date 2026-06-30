@@ -42,7 +42,8 @@ def find_bp_vo_source(
         命中的语音文件路径；未找到时返回 ``None``。
     """
     manifest_root = Path(ctx.paths.manifest_path) / reader.version / "lobby"
-    region = str(ctx.config.game_region or "zh_CN")
+    # 复用 AppContext 已标准化的语言区域，避免本层再自行补 fallback；default 仍作兜底候选。
+    region = ctx.game_region
     region_candidates: list[str] = []
 
     if region:

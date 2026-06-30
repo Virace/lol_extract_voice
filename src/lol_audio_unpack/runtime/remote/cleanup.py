@@ -79,7 +79,10 @@ def link_or_copy(source_path: Path, target_path: Path) -> None:
     target_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         os.link(source_path, target_path)
-    except OSError:
+    except OSError as exc:
+        # 硬链接失败（跨盘/权限/文件系统不支持）时回退为复制；这是远端模式控制磁盘峰值的
+        # 关键路径，回退需留痕以便诊断异常（与 remove_paths 的告警风格保持一致）。
+        logger.debug(f"硬链接失败，回退为复制: {source_path} -> {target_path}（原因: {exc}）")
         shutil.copy2(source_path, target_path)
 
 
