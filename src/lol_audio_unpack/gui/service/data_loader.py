@@ -17,6 +17,7 @@ from lol_audio_unpack.app.artifacts import (
 from lol_audio_unpack.app.path_layout import get_output_dir_name
 from lol_audio_unpack.app.targets import get_default_visible_champions
 from lol_audio_unpack.manager.data_reader import DataReader
+from lol_audio_unpack.manager.errors import SharedDataMissingError
 from lol_audio_unpack.manager.files import read_data
 from lol_audio_unpack.model import AudioEntityData
 
@@ -240,7 +241,7 @@ class EntityDataLoader:
         if bank_root.is_dir():
             return
 
-        raise FileNotFoundError(f"{entity_type} 共享 bank 数据目录不存在，请先运行更新程序。path={bank_root}")
+        raise SharedDataMissingError(f"{entity_type} 共享 bank 数据目录不存在，请先运行更新程序。path={bank_root}")
 
     def _build_entity_row(self, entity_type: GuiEntityType, entity_dict: dict, version: str) -> dict:
         """将单个原始实体字典转换为 GUI 行数据。"""

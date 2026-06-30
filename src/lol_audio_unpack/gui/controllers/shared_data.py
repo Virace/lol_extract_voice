@@ -15,6 +15,7 @@ from lol_audio_unpack.gui.controllers.contracts import (
     SharedDataLoadingState,
 )
 from lol_audio_unpack.gui.task_models import OutputStateRefreshRequest
+from lol_audio_unpack.manager.errors import is_shared_data_not_ready
 
 SHARED_CONTEXT_BUILD_TIMEOUT_MS = 15000
 
@@ -513,14 +514,12 @@ class SharedDataController(QObject):
         self.reload_unpack_data(self._get_config())
 
     def should_auto_prepare(self, error: str) -> bool:
-        """判断当前共享数据加载错误是否适合自动补一次后端更新。"""
-        normalized = str(error)
-        return (
-            "请先运行更新程序" in normalized
-            or "请立即运行数据更新程序" in normalized
-            or "核心数据文件" in normalized
-            or "数据版本与游戏版本严重不匹配" in normalized
-        )
+        """判断当前共享数据加载错误是否适合自动补一次后端更新。
+
+        分类逻辑集中在 ``manager.errors.is_shared_data_not_ready``；此处经 Qt 信号
+        拿到的是错误字符串，走集中维护的文案兜底判定，避免与后端各处文案漂移。
+        """
+        return is_shared_data_not_ready(error)
 
     def start_prepare(self, config=None) -> None:
         """在后台线程中补齐共享实体数据所需的后端更新。"""

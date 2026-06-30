@@ -15,6 +15,7 @@ from lol_audio_unpack.app.targets import (
     get_default_visible_champions,
     should_hide_champion_by_default,
 )
+from lol_audio_unpack.manager.errors import DataVersionMismatchError, SharedDataMissingError
 from lol_audio_unpack.manager.files import read_data
 from lol_audio_unpack.utils.common import Singleton
 from lol_audio_unpack.utils.logging import performance_monitor
@@ -58,7 +59,7 @@ class DataReader(metaclass=Singleton):
         # 使用不带后缀的基础路径，让read_data自动寻找最佳格式
         self.data = read_data(self.version_manifest_path / "data", dev_mode=self.ctx.config.dev_mode)
         if not self.data:
-            raise FileNotFoundError("核心数据文件 (data.yml/json/msgpack) 不存在，请先运行更新程序。")
+            raise SharedDataMissingError("核心数据文件 (data.yml/json/msgpack) 不存在，请先运行更新程序。")
 
         # 校验数据版本
         self._validate_data_version()
@@ -111,7 +112,7 @@ class DataReader(metaclass=Singleton):
                 f"请立即运行数据更新程序。"
             )
             logger.critical(error_msg)
-            raise ValueError(error_msg)
+            raise DataVersionMismatchError(error_msg)
 
         try:
             # 2. 检查小版本 (Minor version)
