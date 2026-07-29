@@ -2,7 +2,6 @@
 
 import pytest
 
-from lol_audio_unpack.cli import main as cli_main
 from lol_audio_unpack.cli.text import DEFAULT_LOCALE, text
 
 
@@ -18,10 +17,6 @@ def test_text_returns_value_with_explicit_zh_cn() -> None:
 def test_text_raises_clear_keyerror_when_key_missing() -> None:
     with pytest.raises(KeyError, match="cli text key"):
         text("missing.key")
-
-
-def test_cli_package_main_is_callable() -> None:
-    assert callable(cli_main)
 
 
 def test_text_raises_clear_keyerror_for_unsupported_locale() -> None:

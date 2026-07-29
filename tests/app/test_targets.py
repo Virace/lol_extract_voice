@@ -17,7 +17,7 @@ from lol_audio_unpack.app.targets import (
 )
 
 
-def _champion(champion_id: int, alias: str, wad_root: str) -> dict:
+def _make_champion(champion_id: int, alias: str, wad_root: str) -> dict:
     return {
         "id": champion_id,
         "alias": alias,
@@ -26,7 +26,7 @@ def _champion(champion_id: int, alias: str, wad_root: str) -> dict:
     }
 
 
-def _map(map_id: int) -> dict:
+def _make_map(map_id: int) -> dict:
     return {
         "id": map_id,
         "name": f"Map {map_id}",
@@ -35,10 +35,10 @@ def _map(map_id: int) -> dict:
 
 def _build_reader() -> SimpleNamespace:
     champions = [
-        _champion(1, "Annie", "Game/DATA/FINAL/Champions/Annie.wad.client"),
-        _champion(66600, "Ruby_Urgot", "Game/DATA/FINAL/Champions/Ruby_Urgot.wad.client"),
+        _make_champion(1, "Annie", "Game/DATA/FINAL/Champions/Annie.wad.client"),
+        _make_champion(66600, "Ruby_Urgot", "Game/DATA/FINAL/Champions/Ruby_Urgot.wad.client"),
     ]
-    maps = [_map(11), _map(12)]
+    maps = [_make_map(11), _make_map(12)]
     return SimpleNamespace(
         get_champions=lambda: champions,
         get_maps=lambda: maps,
@@ -76,8 +76,8 @@ def test_iter_entity_refs_uses_default_visible_champions_and_all_maps() -> None:
 
 def test_default_visible_champion_policy_uses_stable_markers() -> None:
     """默认可见英雄策略应由 targets 模块直接维护。"""
-    hidden = _champion(66600, "Ruby_Urgot", "Game/DATA/FINAL/Champions/Ruby_Urgot.wad.client")
-    visible = _champion(1, "Annie", "Game/DATA/FINAL/Champions/Annie.wad.client")
+    hidden = _make_champion(66600, "Ruby_Urgot", "Game/DATA/FINAL/Champions/Ruby_Urgot.wad.client")
+    visible = _make_champion(1, "Annie", "Game/DATA/FINAL/Champions/Annie.wad.client")
     reader = _build_reader()
 
     assert get_default_hidden_champion_markers(hidden) == ("alias:ruby", "wad:ruby", "id:666")

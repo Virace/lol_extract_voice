@@ -613,8 +613,10 @@ build = [
 dev = [
     { name = "memory-profiler" },
     { name = "pytest" },
-    { name = "pytest-qt" },
     { name = "ruff" },
+]
+gui-test = [
+    { name = "pytest-qt" },
 ]
 
 [package.metadata]
@@ -635,9 +637,9 @@ build = [{ name = "pyinstaller", specifier = ">=6.20.0" }]
 dev = [
     { name = "memory-profiler", specifier = ">=0.61.0" },
     { name = "pytest", specifier = ">=9.0.3" },
-    { name = "pytest-qt", specifier = ">=4.5.0" },
     { name = "ruff", specifier = ">=0.15.16" },
 ]
+gui-test = [{ name = "pytest-qt", specifier = ">=4.5.0" }]
 
 [[package]]
 name = "lxml"

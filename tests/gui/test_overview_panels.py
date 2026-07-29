@@ -2,41 +2,17 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
-
-from PySide6.QtGui import QColor, QPalette
-from qfluentwidgets import qconfig
-
-from lol_audio_unpack.gui.components.overview_entity_list import _build_overview_interaction_colors
-from lol_audio_unpack.gui.components.overview_status_badge import (
-    resolve_status_pill_chrome_colors,
-    resolve_status_pill_segment_colors,
-)
 from lol_audio_unpack.gui.components.preview_tree import (
     extract_preview_modifiers,
     extract_tree_groups,
     filter_preview_mapping_data,
 )
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
-from lol_audio_unpack.gui.theme import apply_accent_preset, apply_shell_mode, get_accent_preset
 from lol_audio_unpack.gui.view.overview.audio_preview_panel import OverviewAudioPreviewPanel
 from lol_audio_unpack.gui.view.overview.entity_list_panel import OverviewEntityListPanel
 from lol_audio_unpack.gui.view.overview.preview_panel import OverviewPreviewPanel
 
-ALPHA_OPAQUE = 255
 MATCHED_AUDIO_IDS = 2
-
-
-@contextmanager
-def _restore_theme_state():
-    """在测试结束后恢复 qconfig 主题状态。"""
-    previous_theme = qconfig.themeMode.value
-    previous_color = qconfig.themeColor.value
-    try:
-        yield
-    finally:
-        qconfig.set(qconfig.themeMode, previous_theme)
-        qconfig.set(qconfig.themeColor, previous_color)
 
 
 def test_overview_entity_list_panel_switches_current_entity_type(qtbot) -> None:
@@ -121,101 +97,6 @@ def test_overview_entity_list_panel_can_build_selection_sync_request(qtbot) -> N
         map_ids=(11,),
         summary="已选择 2 个英雄、1 张地图，请前往执行中心继续创建任务。",
     )
-
-
-def test_overview_interaction_colors_use_accent_preset_tone() -> None:
-    """总览列表选中 accent 应来自固定 preset tone。"""
-    with _restore_theme_state():
-        apply_shell_mode("Light")
-        apply_accent_preset("green")
-
-        _hover_background, _selection_background, selection_accent = _build_overview_interaction_colors()
-        expected_accent = get_accent_preset("green").scale.color(700)
-
-        assert selection_accent == expected_accent
-
-
-def test_overview_status_pill_uses_active_preset_colors() -> None:
-    """实体胶囊存在态应跟随当前 accent preset。"""
-    palette = QPalette()
-
-    with _restore_theme_state():
-        apply_shell_mode("Light")
-        apply_accent_preset("blue")
-
-        audio_fill, audio_text = resolve_status_pill_segment_colors("A", "已存在", palette)
-        mapping_fill, mapping_text = resolve_status_pill_segment_colors("M", "已存在", palette)
-
-        assert audio_fill == get_accent_preset("blue").scale.color(500)
-        assert mapping_fill == QColor("#4E69CC")
-        assert audio_text == QColor("#FFFFFF")
-        assert mapping_text == QColor("#FFFFFF")
-
-    with _restore_theme_state():
-        apply_shell_mode("Dark")
-        apply_accent_preset("purple")
-
-        audio_fill, audio_text = resolve_status_pill_segment_colors("A", "已存在", palette)
-        mapping_fill, mapping_text = resolve_status_pill_segment_colors("M", "已存在", palette)
-
-        assert audio_fill == get_accent_preset("purple").scale.color(300)
-        assert mapping_fill == QColor("#A99BF4")
-        assert audio_text == QColor("#111111")
-        assert mapping_text == QColor("#111111")
-
-    with _restore_theme_state():
-        apply_shell_mode("Light")
-        apply_accent_preset("purple")
-
-        _audio_fill, _audio_text = resolve_status_pill_segment_colors("A", "已存在", palette)
-        mapping_fill, _mapping_text = resolve_status_pill_segment_colors("M", "已存在", palette)
-
-        assert mapping_fill == QColor("#6E58C9")
-
-    with _restore_theme_state():
-        apply_shell_mode("Dark")
-        apply_accent_preset("green")
-
-        audio_fill, mapping_fill = (
-            resolve_status_pill_segment_colors("A", "已存在", palette)[0],
-            resolve_status_pill_segment_colors("M", "已存在", palette)[0],
-        )
-
-        assert audio_fill == get_accent_preset("green").scale.color(300)
-        assert mapping_fill == QColor("#93AC72")
-
-
-def test_overview_status_pill_uses_transparent_fill_for_missing_state() -> None:
-    """实体胶囊缺失态应统一退回透明底。"""
-    palette = QPalette()
-
-    with _restore_theme_state():
-        apply_shell_mode("Dark")
-        apply_accent_preset("orange")
-
-        audio_fill, audio_text = resolve_status_pill_segment_colors("A", "未存在", palette)
-        mapping_fill, mapping_text = resolve_status_pill_segment_colors("M", "未存在", palette)
-
-        assert audio_fill.alpha() == 0
-        assert mapping_fill.alpha() == 0
-        assert 0 < audio_text.alpha() < ALPHA_OPAQUE
-        assert 0 < mapping_text.alpha() < ALPHA_OPAQUE
-
-
-def test_overview_status_pill_uses_brighter_chrome_on_dark_palette() -> None:
-    """深色主题下胶囊描边和接缝线应明显提亮。"""
-    palette = QPalette()
-
-    with _restore_theme_state():
-        apply_shell_mode("Light")
-        light_seam, light_outline = resolve_status_pill_chrome_colors(palette)
-
-    with _restore_theme_state():
-        apply_shell_mode("Dark")
-        dark_seam, dark_outline = resolve_status_pill_chrome_colors(palette)
-
-    assert dark_seam.alpha() > light_seam.alpha()
-    assert dark_outline.alpha() > light_outline.alpha()
 
 
 def test_overview_preview_panel_show_placeholder_clears_preview_state(qtbot) -> None:

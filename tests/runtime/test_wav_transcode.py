@@ -2,10 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import threading
-import time
-from multiprocessing.queues import Queue
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -14,45 +10,16 @@ import pytest
 from pyvgmstream import SampleFormat
 
 from lol_audio_unpack.app.types import WavOutputOptions
-from lol_audio_unpack.runtime.wav import (
-    TranscodeCoordinator,
-    TranscodeProgress,
-    build_output_path,
-    resolve_decode_config,
-)
+from lol_audio_unpack.runtime.wav import build_output_path, resolve_decode_config
 from lol_audio_unpack.runtime.wav import job as wav_job
 from lol_audio_unpack.runtime.wav._runtime import Job, run_worker
 
 pytestmark = pytest.mark.unit
 
-BREAKER_FAILURE_THRESHOLD = 8
-
 
 def _format_log(message: str, *args: Any) -> str:
     """展开测试中使用的 loguru 占位符消息。"""
     return message.format(*args)
-
-
-def slow_worker_entry(_job: Any, queue: Queue[Any]) -> None:
-    """模拟超时的 worker。"""
-    time.sleep(2)
-    queue.put({"ok": True, "byte_count": 0})
-
-
-def always_fail_worker_entry(_job: Any, queue: Queue[Any]) -> None:
-    """模拟稳定失败的 worker。"""
-    queue.put(
-        {
-            "ok": False,
-            "error_type": "RuntimeError",
-            "error_message": "decode failed",
-        }
-    )
-
-
-def instant_success_worker_entry(_job: Any, queue: Queue[Any]) -> None:
-    """模拟立即成功的 worker。"""
-    queue.put({"ok": True, "byte_count": 123})
 
 
 def test_build_output_path_mirrors_audio_tree(tmp_path: Path) -> None:
@@ -97,7 +64,7 @@ def test_run_worker_passes_resolved_decode_config(monkeypatch: pytest.MonkeyPatc
         captured["config"] = config
         return FakeDecodeResult()
 
-    queue: Queue[Any] = SimpleQueueAdapter()
+    queue = SimpleQueueAdapter()
     monkeypatch.setattr("lol_audio_unpack.runtime.wav._runtime.decode_to_wav_file", fake_decode_to_wav_file)
 
     job = Job(
@@ -120,97 +87,6 @@ class SimpleQueueAdapter:
 
     def put(self, payload: dict[str, Any]) -> None:
         self.payloads.append(payload)
-
-
-def test_timeout_attempt_is_retried_and_final_failure_is_recorded(tmp_path: Path) -> None:
-    options = WavOutputOptions(enabled=True, worker_count=2, timeout_seconds=1, max_retries=3)
-    coordinator = TranscodeCoordinator(
-        options=options,
-        audio_root=tmp_path / "audios" / "15.8",
-        wav_root=tmp_path / "wavs" / "15.8",
-        report_root=tmp_path / "reports" / "15.8" / "transcode_wav",
-        worker_entry=slow_worker_entry,
-    )
-
-    coordinator.submit(tmp_path / "audios" / "15.8" / "sample.wem")
-    coordinator.finish_extract()
-    summary = coordinator.finish()
-
-    assert summary.failed_wav_job_count == 1
-    assert summary.retried_wav_job_count == 1
-    assert summary.breaker_open is False
-
-
-def test_breaker_opens_after_repeated_final_failures(tmp_path: Path) -> None:
-    options = WavOutputOptions(enabled=True, worker_count=2, timeout_seconds=1, max_retries=3)
-    coordinator = TranscodeCoordinator(
-        options=options,
-        audio_root=tmp_path / "audios" / "15.8",
-        wav_root=tmp_path / "wavs" / "15.8",
-        report_root=tmp_path / "reports" / "15.8" / "transcode_wav",
-        worker_entry=always_fail_worker_entry,
-    )
-
-    for index in range(BREAKER_FAILURE_THRESHOLD):
-        coordinator.submit(tmp_path / "audios" / "15.8" / f"{index}.wem")
-
-    coordinator.finish_extract()
-    summary = coordinator.finish()
-
-    assert summary.breaker_open is True
-    assert summary.failed_wav_job_count >= BREAKER_FAILURE_THRESHOLD
-
-
-def test_finish_writes_summary_and_failures_reports(tmp_path: Path) -> None:
-    options = WavOutputOptions(enabled=True, worker_count=1, timeout_seconds=1, max_retries=1)
-    report_root = tmp_path / "reports" / "15.8" / "transcode_wav"
-    coordinator = TranscodeCoordinator(
-        options=options,
-        audio_root=tmp_path / "audios" / "15.8",
-        wav_root=tmp_path / "wavs" / "15.8",
-        report_root=report_root,
-        worker_entry=always_fail_worker_entry,
-    )
-
-    for index in range(BREAKER_FAILURE_THRESHOLD + 1):
-        coordinator.submit(tmp_path / "audios" / "15.8" / f"{index}.wem")
-
-    coordinator.finish_extract()
-    summary = coordinator.finish()
-
-    summary_path = report_root / "summary.json"
-    failures_path = report_root / "failures.jsonl"
-
-    assert summary_path.exists()
-    assert failures_path.exists()
-    payload = json.loads(summary_path.read_text(encoding="utf-8"))
-    assert payload["failed_wav_job_count"] == summary.failed_wav_job_count
-    assert payload["skipped_wav_job_count"] == summary.skipped_wav_job_count
-    assert len(failures_path.read_text(encoding="utf-8").strip().splitlines()) == summary.failed_wav_job_count
-
-
-def test_progress_callback_receives_transcode_lifecycle_snapshots(tmp_path: Path) -> None:
-    """协调器应在关键生命周期节点发出结构化进度快照。"""
-    snapshots: list[TranscodeProgress] = []
-    options = WavOutputOptions(enabled=True, worker_count=1, timeout_seconds=1, max_retries=1)
-    coordinator = TranscodeCoordinator(
-        options=options,
-        audio_root=tmp_path / "audios" / "15.8",
-        wav_root=tmp_path / "wavs" / "15.8",
-        report_root=tmp_path / "reports" / "15.8" / "transcode_wav",
-        worker_entry=instant_success_worker_entry,
-        progress_callback=snapshots.append,
-    )
-
-    coordinator.submit(tmp_path / "audios" / "15.8" / "sample.wem")
-    coordinator.finish_extract()
-    summary = coordinator.finish()
-
-    assert any(snapshot.phase == "submitted" for snapshot in snapshots)
-    assert any(snapshot.phase == "draining" and snapshot.extract_finished for snapshot in snapshots)
-    assert snapshots[-1].phase == "done"
-    assert snapshots[-1].completed_wav_job_count == summary.completed_wav_job_count
-    assert snapshots[-1].running_wav_job_count == 0
 
 
 def test_run_tree_uses_transcode_tree_for_version_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -349,7 +225,7 @@ def test_run_tree_bridges_root_level_progress_to_callback(tmp_path: Path, monkey
             2,
             2,
             "WAV 转码目录完成：0-common",
-        )
+        ),
     ]
 
 

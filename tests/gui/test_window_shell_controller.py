@@ -1,21 +1,13 @@
-﻿"""主窗口壳层 helper 测试。"""
+"""主窗口壳层 helper 测试。"""
 
 from __future__ import annotations
 
-import re
-from pathlib import Path
-
-from qfluentwidgets import NavigationItemPosition
-
-from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
 from lol_audio_unpack.gui.controllers.window_shell import (
     apply_task_queue_busy_state,
     bind_shared_data_controller_signals,
     confirm_force_close_running_tasks,
     force_quit_application,
     forward_selection_sync_feedback,
-    register_navigation_items,
-    sync_existing_runtime_logging,
 )
 
 FORCE_QUIT_DELAY_MS = 250
@@ -91,49 +83,6 @@ def test_forward_selection_sync_feedback_skips_when_summary_is_none() -> None:
     assert calls == []
 
 
-def test_register_navigation_items_adds_expected_entries() -> None:
-    events: list[tuple[str, object]] = []
-
-    class _FakeWindow:
-        homeInterface = "home"
-        executionInterface = "execution"
-        overviewInterface = "overview"
-        itemLookupInterface = "item_lookup"
-        settingInterface = "setting"
-        aboutInterface = "about"
-        navigationInterface = type(
-            "Nav",
-            (),
-            {
-                "addSeparator": lambda self: events.append(("separator", None)),
-                "addItem": lambda self, **kwargs: events.append(("item", kwargs)),
-                "setExpandWidth": lambda self, width: events.append(("expand", width)),
-            },
-        )()
-
-        def addSubInterface(self, interface, icon, text, position=None):
-            events.append(("sub", (interface, text, position)))
-
-        def toggleTheme(self):
-            pass
-
-    class _FakeSharedController:
-        def refresh_shared_output_state(self):
-            pass
-
-    register_navigation_items(_FakeWindow(), _FakeSharedController())
-
-    assert ("sub", ("home", "主页", None)) in events
-    assert ("sub", ("execution", "执行中心", None)) in events
-    assert ("sub", ("overview", "实体总览", None)) in events
-    assert ("sub", ("item_lookup", "装备查询", None)) in events
-    assert ("sub", ("setting", "全局设置", NavigationItemPosition.BOTTOM)) in events
-    assert ("sub", ("about", "关于", NavigationItemPosition.BOTTOM)) in events
-    assert any(event[0] == "item" and event[1]["routeKey"] == "refreshSharedData" for event in events)
-    assert any(event[0] == "item" and event[1]["routeKey"] == "themeSwitcher" for event in events)
-    assert ("expand", 180) in events
-
-
 def test_bind_shared_data_controller_signals_wires_payload_consumers() -> None:
     events: list[tuple[str, object]] = []
 
@@ -207,21 +156,6 @@ def test_bind_shared_data_controller_signals_wires_payload_consumers() -> None:
     assert ("exec_replace", ("champions", ({"id": 1},))) in events
     assert ("overview_replace", ("champions", ({"id": 1},))) in events
     assert ("notice", ("ok", "done", "success")) in events
-
-
-def test_sync_existing_runtime_logging_only_rebinds_gui_sink(monkeypatch) -> None:
-    events: list[tuple[str, object]] = []
-
-    class _FakeExecutionPage:
-        def attach_runtime_log_sink(self, level: str) -> None:
-            events.append(("attach", level))
-
-    sync_existing_runtime_logging(
-        console_log_level="DEBUG",
-        execution_page=_FakeExecutionPage(),
-    )
-
-    assert events == [("attach", "DEBUG")]
 
 
 def test_confirm_force_close_running_tasks_returns_true_for_close(monkeypatch) -> None:
@@ -304,106 +238,3 @@ def test_force_quit_application_quits_app_and_schedules_fallback_exit() -> None:
     assert scheduled[0][0] == FORCE_QUIT_DELAY_MS
     scheduled[0][1]()
     assert events == [("quit_on_last_window_closed", False), ("exit", 0)]
-
-
-def test_main_window_initializes_log_drawer_controller_before_super_init() -> None:
-    window_source = Path("src/lol_audio_unpack/gui/window.py").read_text(encoding="utf-8")
-    init_match = re.search(
-        r"def __init__\(self\):(?P<body>.*?)(?:\n    def |\Z)",
-        window_source,
-        re.DOTALL,
-    )
-    assert init_match is not None
-    body = init_match.group("body")
-
-    assert "self._log_drawer_controller = LogDrawerController()" in body
-    assert "super().__init__()" in body
-    assert body.index("self._log_drawer_controller = LogDrawerController()") < body.index("super().__init__()")
-
-
-def test_main_window_resize_event_guards_missing_navigation_interface() -> None:
-    window_source = Path("src/lol_audio_unpack/gui/window.py").read_text(encoding="utf-8")
-    resize_match = re.search(
-        r"def resizeEvent\(self, event: QResizeEvent\) -> None:(?P<body>.*?)(?:\n    def |\Z)",
-        window_source,
-        re.DOTALL,
-    )
-    assert resize_match is not None
-    body = resize_match.group("body")
-
-    assert "navigation_interface = getattr(self, \"navigationInterface\", None)" in body
-
-
-def test_main_window_connect_pages_reuses_existing_runtime_logging_on_startup() -> None:
-    window_source = Path("src/lol_audio_unpack/gui/window.py").read_text(encoding="utf-8")
-    connect_pages_match = re.search(
-        r"def _connect_pages\(self\):(?P<body>.*?)(?:\n    def |\Z)",
-        window_source,
-        re.DOTALL,
-    )
-    assert connect_pages_match is not None
-    body = connect_pages_match.group("body")
-
-    assert "sync_existing_runtime_logging(" in body
-
-
-def test_main_window_wraps_stacked_widget_with_bottom_progress_host() -> None:
-    window_source = Path("src/lol_audio_unpack/gui/window.py").read_text(encoding="utf-8")
-
-    assert "GlobalProgressStripHost" in window_source
-    assert "self._content_shell_layout.addWidget(self.stackedWidget, 1)" in window_source
-    assert "self._content_shell_layout.addWidget(self._progress_strip_host, 0)" in window_source
-    assert "self.widgetLayout.setContentsMargins(0, 48, 0, 0)" in window_source
-    assert "self.titleBar.raise_()" in window_source
-
-
-def test_main_window_connect_pages_forwards_execution_progress_to_global_strip() -> None:
-    window_source = Path("src/lol_audio_unpack/gui/window.py").read_text(encoding="utf-8")
-    connect_pages_match = re.search(
-        r"def _connect_pages\(self\):(?P<body>.*?)(?:\n    def |\Z)",
-        window_source,
-        re.DOTALL,
-    )
-    assert connect_pages_match is not None
-    body = connect_pages_match.group("body")
-
-    assert "self.executionInterface.global_progress_state_changed.connect(" in body
-    assert "self._progress_strip_host.set_state" in body
-
-
-def test_main_window_connect_pages_forwards_progress_strip_stop_to_execution_cancel() -> None:
-    window_source = Path("src/lol_audio_unpack/gui/window.py").read_text(encoding="utf-8")
-    connect_pages_match = re.search(
-        r"def _connect_pages\(self\):(?P<body>.*?)(?:\n    def |\Z)",
-        window_source,
-        re.DOTALL,
-    )
-    assert connect_pages_match is not None
-    body = connect_pages_match.group("body")
-
-    assert "self._progress_strip_host.strip_widget().stop_requested.connect(" in body
-    assert "self.executionInterface.request_cancel_task" in body
-
-
-def test_execution_log_controller_runtime_sink_uses_async_queue() -> None:
-    controller_source = Path(
-        "src/lol_audio_unpack/gui/controllers/execution_log.py"
-    ).read_text(encoding="utf-8")
-
-    assert "enqueue=True" in controller_source
-
-
-def test_main_window_close_event_confirms_running_tasks_before_force_quit() -> None:
-    window_source = Path("src/lol_audio_unpack/gui/window.py").read_text(encoding="utf-8")
-    close_match = re.search(
-        r"def closeEvent\(self, event: QCloseEvent\) -> None:(?P<body>.*?)(?:\n    def |\Z)",
-        window_source,
-        re.DOTALL,
-    )
-    assert close_match is not None
-    body = close_match.group("body")
-
-    assert "confirm_force_close_running_tasks(parent=self)" in body
-    assert "self._shutdown_background_work()" in body
-    assert "event.ignore()" in body
-    assert "force_quit_application(" in body

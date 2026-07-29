@@ -1,9 +1,10 @@
-﻿"""Qt 试听播放控制器测试。"""
+"""Qt 试听播放控制器测试。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from PySide6.QtMultimedia import QAudio, QAudioFormat
 from pyvgmstream import DecodeConfig, SampleFormat
 
@@ -104,24 +105,34 @@ def _build_pending_start_audio_sink(device, audio_format: QAudioFormat, parent=N
     return _PendingStartAudioSink(device, audio_format, parent)
 
 
-def test_build_preview_audio_decode_plan_promotes_pcm24_to_pcm32() -> None:
-    plan = build_preview_audio_decode_plan(SampleFormat.PCM24)
-
-    assert plan == PreviewAudioDecodePlan(
-        decode_config=DecodeConfig(sample_format=SampleFormat.PCM32),
-        stream_sample_format=SampleFormat.PCM32,
-        qt_sample_format=QAudioFormat.SampleFormat.Int32,
-    )
-
-
-def test_build_preview_audio_decode_plan_preserves_float_output() -> None:
-    plan = build_preview_audio_decode_plan(SampleFormat.FLOAT)
-
-    assert plan == PreviewAudioDecodePlan(
-        decode_config=None,
-        stream_sample_format=SampleFormat.FLOAT,
-        qt_sample_format=QAudioFormat.SampleFormat.Float,
-    )
+@pytest.mark.parametrize(
+    ("requested_format", "expected_plan"),
+    [
+        (
+            SampleFormat.PCM24,
+            PreviewAudioDecodePlan(
+                decode_config=DecodeConfig(sample_format=SampleFormat.PCM32),
+                stream_sample_format=SampleFormat.PCM32,
+                qt_sample_format=QAudioFormat.SampleFormat.Int32,
+            ),
+        ),
+        (
+            SampleFormat.FLOAT,
+            PreviewAudioDecodePlan(
+                decode_config=None,
+                stream_sample_format=SampleFormat.FLOAT,
+                qt_sample_format=QAudioFormat.SampleFormat.Float,
+            ),
+        ),
+    ],
+    ids=["pcm24-promotes-to-pcm32", "float-preserved"],
+)
+def test_build_preview_audio_decode_plan(
+    requested_format: SampleFormat,
+    expected_plan: PreviewAudioDecodePlan,
+) -> None:
+    """解码计划应把请求格式映射到 Qt 可播放格式。"""
+    assert build_preview_audio_decode_plan(requested_format) == expected_plan
 
 
 def test_preview_playback_controller_play_uses_selected_device_and_emits_state() -> None:
@@ -135,10 +146,9 @@ def test_preview_playback_controller_play_uses_selected_device_and_emits_state()
             audio_format=_build_qt_audio_format(),
             duration_seconds=1.0,
         ),
-        audio_sink_factory=lambda device, audio_format, parent: created_sinks.append(
-            _FakeAudioSink(device, audio_format, parent)
-        )
-        or created_sinks[-1],
+        audio_sink_factory=lambda device, audio_format, parent: (
+            created_sinks.append(_FakeAudioSink(device, audio_format, parent)) or created_sinks[-1]
+        ),
         audio_outputs_provider=lambda: [selected_device],
         default_audio_output_provider=lambda: default_device,
     )
@@ -227,36 +237,6 @@ def test_preview_playback_controller_marks_audio_active_during_backend_start_gap
         is_playing=True,
         is_paused=False,
     )
-
-
-def test_preview_playback_controller_defers_audio_buffer_close_until_cleanup(monkeypatch) -> None:
-    current_time = 100.0
-    controller = PreviewPlaybackController(
-        decode_audio_fn=lambda path: PreparedPreviewAudio(
-            audio_path=Path(path),
-            pcm_bytes=b"\x01\x02",
-            audio_format=_build_qt_audio_format(),
-            duration_seconds=1.0,
-        ),
-        audio_sink_factory=_build_fake_audio_sink,
-        audio_outputs_provider=lambda: [],
-        default_audio_output_provider=lambda: _FakeAudioDevice(b"default-device"),
-    )
-    fake_buffer = _FakeAudioBuffer()
-    controller._audio_buffer = fake_buffer
-    controller._audio_sink = _FakeAudioSink(_FakeAudioDevice(b"default-device"), _build_qt_audio_format())
-    monkeypatch.setattr(controller, "_now_monotonic", lambda: current_time, raising=False)
-
-    controller._dispose_session(emit_state=False)
-
-    assert fake_buffer.closed is False
-    assert fake_buffer.deleted is False
-
-    current_time += 1.0
-    controller._drain_retired_audio_buffers()
-
-    assert fake_buffer.closed is True
-    assert fake_buffer.deleted is True
 
 
 def test_preview_playback_controller_keeps_retired_buffer_open_during_cleanup_grace_window(

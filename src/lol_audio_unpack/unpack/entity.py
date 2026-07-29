@@ -113,10 +113,10 @@ def unpack_entity(  # noqa: PLR0913
         logger.info(f"解包 {entity_data.entity_name} (ID:{entity_data.entity_id})")
         logger.debug("阶段 1: 收集所有需要解包的音频文件路径...")
 
-        vo_paths_to_extract = set()
-        vo_path_to_sub_info_map: dict[str, dict[str, Any]] = {}
-        other_paths_to_extract = set()
-        other_path_to_sub_info_map: dict[str, dict[str, Any]] = {}
+        vo_paths = set()
+        vo_info_by_path: dict[str, dict[str, Any]] = {}
+        other_paths = set()
+        other_info_by_path: dict[str, dict[str, Any]] = {}
 
         stats.total_sub_entities = len(entity_data.sub_entities)
 
@@ -136,7 +136,7 @@ def unpack_entity(  # noqa: PLR0913
                 if audio_type in exclude_types:
                     continue
 
-                sub_info_with_type = {
+                audio_info = {
                     "id": sub_id_int,
                     "name": sub_name,
                     "type": audio_type,
@@ -146,78 +146,78 @@ def unpack_entity(  # noqa: PLR0913
                 if audio_type == AUDIO_TYPE_VO:
                     for bank in banks_list:
                         for path in bank:
-                            vo_paths_to_extract.add(path)
-                            vo_path_to_sub_info_map[path] = sub_info_with_type
+                            vo_paths.add(path)
+                            vo_info_by_path[path] = audio_info
                 else:
                     for bank in banks_list:
                         for path in bank:
-                            other_paths_to_extract.add(path)
-                            other_path_to_sub_info_map[path] = sub_info_with_type
+                            other_paths.add(path)
+                            other_info_by_path[path] = audio_info
 
-        stats.vo_paths_count = len(vo_paths_to_extract)
-        stats.sfx_music_paths_count = len(other_paths_to_extract)
+        stats.vo_paths_count = len(vo_paths)
+        stats.sfx_music_paths_count = len(other_paths)
 
-        if not vo_paths_to_extract and not other_paths_to_extract:
+        if not vo_paths and not other_paths:
             logger.warning(
                 f"{entity_data.entity_type} '{entity_data.entity_name}' 未找到任何需要解包的音频文件 (检查排除类型配置)。"
             )
             return
 
         logger.debug("阶段 2: 开始批量解包WAD文件...")
-        path_to_raw_data_map: dict[str, bytes] = {}
+        raw_by_path: dict[str, bytes] = {}
 
         lang_wad_path = entity_data.get_wad_path("VO", ctx=ctx)
-        if lang_wad_path and vo_paths_to_extract:
-            vo_path_list = list(vo_paths_to_extract)
+        if lang_wad_path and vo_paths:
+            vo_path_list = list(vo_paths)
             try:
                 logger.debug(f"正在从 {lang_wad_path.name} 解包 {len(vo_path_list)} 个VO文件...")
                 wad_obj = _get_wad_instance(lang_wad_path, wad_cache=wad_cache, cache_lock=cache_lock)
                 file_raws = wad_obj.extract(vo_path_list, raw=True)
-                path_to_raw_data_map.update(zip(vo_path_list, file_raws, strict=False))
+                raw_by_path.update(zip(vo_path_list, file_raws, strict=False))
                 stats.set_wad_info("VO", lang_wad_path, len(vo_path_list), len(file_raws))
             except Exception as e:
                 logger.opt(exception=bool(getattr(ctx.config, "dev_mode", False))).error(
                     f"解包语言WAD文件 '{lang_wad_path.name}' 时出错: {e}"
                 )
                 stats.set_wad_info("VO", lang_wad_path, len(vo_path_list), 0, str(e))
-        elif vo_paths_to_extract:
+        elif vo_paths:
             logger.warning("语言WAD文件不存在，跳过VO解包。")
-            stats.set_wad_info("VO", None, len(vo_paths_to_extract), 0, "WAD文件不存在")
+            stats.set_wad_info("VO", None, len(vo_paths), 0, "WAD文件不存在")
 
         root_wad_path = entity_data.get_wad_path("SFX", ctx=ctx)
-        if root_wad_path and other_paths_to_extract:
-            other_path_list = list(other_paths_to_extract)
+        if root_wad_path and other_paths:
+            other_path_list = list(other_paths)
             try:
                 logger.debug(f"正在从 {root_wad_path.name} 解包 {len(other_path_list)} 个SFX/Music文件...")
                 wad_obj = _get_wad_instance(root_wad_path, wad_cache=wad_cache, cache_lock=cache_lock)
                 file_raws = wad_obj.extract(other_path_list, raw=True)
-                path_to_raw_data_map.update(zip(other_path_list, file_raws, strict=False))
+                raw_by_path.update(zip(other_path_list, file_raws, strict=False))
                 stats.set_wad_info("ROOT", root_wad_path, len(other_path_list), len(file_raws))
             except Exception as e:
                 logger.opt(exception=bool(getattr(ctx.config, "dev_mode", False))).error(
                     f"解包根WAD文件 '{root_wad_path.name}' 时出错: {e}"
                 )
                 stats.set_wad_info("ROOT", root_wad_path, len(other_path_list), 0, str(e))
-        elif other_paths_to_extract:
+        elif other_paths:
             logger.warning("根WAD文件不存在，跳过SFX/Music解包。")
-            stats.set_wad_info("ROOT", None, len(other_paths_to_extract), 0, "WAD文件不存在")
+            stats.set_wad_info("ROOT", None, len(other_paths), 0, "WAD文件不存在")
 
         logger.debug("阶段 3: 组装并处理最终数据...")
         # WAD 提取后只拿到“路径 -> 原始字节”，这里再把结果重新挂回对应子实体，
         # 后续输出目录和统计才能继续沿用统一的 sub-entity 语义。
-        path_to_sub_info_map = {**vo_path_to_sub_info_map, **other_path_to_sub_info_map}
-        unpacked_audio_data: dict[int, dict[str, Any]] = {}
+        info_by_path = {**vo_info_by_path, **other_info_by_path}
+        audio_by_sub_id: dict[int, dict[str, Any]] = {}
 
-        for path, raw_data in path_to_raw_data_map.items():
-            sub_info = path_to_sub_info_map.get(path)
+        for path, raw_data in raw_by_path.items():
+            sub_info = info_by_path.get(path)
             if not sub_info:
                 continue
 
             sub_id = sub_info["id"]
-            if sub_id not in unpacked_audio_data:
-                unpacked_audio_data[sub_id] = {"name": sub_info["name"], "files": []}
+            if sub_id not in audio_by_sub_id:
+                audio_by_sub_id[sub_id] = {"name": sub_info["name"], "files": []}
 
-            unpacked_audio_data[sub_id]["files"].append(
+            audio_by_sub_id[sub_id]["files"].append(
                 {
                     "suffix": Path(path).suffix,
                     "raw": raw_data,
@@ -226,11 +226,11 @@ def unpack_entity(  # noqa: PLR0913
                 }
             )
 
-        total_assembled_files = sum(len(sub_data["files"]) for sub_data in unpacked_audio_data.values())
-        stats.record_assembly_stats(len(unpacked_audio_data), total_assembled_files)
-        logger.debug(f"音频文件解包完成，共 {len(unpacked_audio_data)} 个子实体")
+        total_assembled_files = sum(len(sub_data["files"]) for sub_data in audio_by_sub_id.values())
+        stats.record_assembly_stats(len(audio_by_sub_id), total_assembled_files)
+        logger.debug(f"音频文件解包完成，共 {len(audio_by_sub_id)} 个子实体")
 
-        for sub_id, sub_data in unpacked_audio_data.items():
+        for sub_id, sub_data in audio_by_sub_id.items():
             sub_name = sub_data["name"]
             files = sub_data["files"]
             sub_id_str = str(sub_id)

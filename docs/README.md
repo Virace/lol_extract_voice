@@ -66,10 +66,10 @@ Remote 模式的当前主线：
 
 核心口径：
 
-- `--mode mock` 用于轻量自检
-- `--mode local_game` 用于本地客户端小样本真实测试
-- `mapping` 通常比 `extract` 更重
-- 地图 `mapping` 往往会比英雄链路更慢
+- `--mode single_vo` 测量单英雄 VO 更新与解包
+- `--mode full_extract` 测量全量更新与解包
+- `--runner cli|api|both` 用于比较两种项目入口
+- benchmark 只记录性能，不替代正确性或系统测试
 
 详细参数、示例命令、输出结构与历史性能参考见：
 

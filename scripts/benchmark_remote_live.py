@@ -37,7 +37,7 @@ DEFAULT_MAP_ID = 11
 DEFAULT_LIVE_REGION = "EUW"
 DEFAULT_GAME_REGION = "zh_CN"
 DEFAULT_MATCH_MODE = VersionMatchMode.IGNORE_REVISION
-EXPECTED_CHAMPION_BENCHMARK_COUNT = 3
+REQUIRED_CHAMPION_COUNT = 3
 
 
 @dataclass(frozen=True)
@@ -127,13 +127,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--report",
         type=Path,
-        default=Path("benchmarks/remote_live/latest.json"),
+        default=Path(".temp/benchmarks/remote_live/latest.json"),
         help="最终 JSON 报告路径",
     )
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path(".cache/remote_live_benchmark"),
+        default=Path(".temp/benchmarks/remote_live/output"),
         help="benchmark 运行输出根目录",
     )
     parser.add_argument(
@@ -248,7 +248,7 @@ def _ensure_wwiser_ready(config: RemoteBenchmarkConfig) -> Path:
             raise FileNotFoundError(f"指定的 wwiser 路径不存在: {config.wwiser_path}")
         return config.wwiser_path
 
-    default_path = config.repo_root / ".cache" / "tools" / "wwiser" / "wwiser.pyz"
+    default_path = config.repo_root / ".temp" / "tools" / "wwiser" / "wwiser.pyz"
     default_path.parent.mkdir(parents=True, exist_ok=True)
     if default_path.exists():
         return default_path
@@ -830,11 +830,8 @@ def build_config(args: argparse.Namespace, repo_root: Path) -> RemoteBenchmarkCo
     champion_ids = parse_id_csv(args.champion_ids)
     if len(champion_ids) == 0:
         raise ValueError("至少需要提供一个英雄 ID。")
-    if not args.skip_map_scenario and len(champion_ids) != EXPECTED_CHAMPION_BENCHMARK_COUNT:
-        raise ValueError(
-            "当前 benchmark 约定需要 "
-            f"{EXPECTED_CHAMPION_BENCHMARK_COUNT} 个英雄，实际收到 {len(champion_ids)} 个。"
-        )
+    if not args.skip_map_scenario and len(champion_ids) != REQUIRED_CHAMPION_COUNT:
+        raise ValueError(f"当前 benchmark 约定需要 {REQUIRED_CHAMPION_COUNT} 个英雄，实际收到 {len(champion_ids)} 个。")
     if args.max_workers <= 0:
         raise ValueError("max-workers 必须大于 0。")
     if args.sampling_interval <= 0:
@@ -895,6 +892,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
-
-

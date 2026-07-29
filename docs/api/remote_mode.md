@@ -182,7 +182,7 @@ preparer = RemotePreparer(ctx=ctx)
 
 ## 7. 验证与测试
 
-真实远端 live 下载测试统一使用 `remote_live` marker。
+真实远端 live 下载测试位于显式系统测试目录，并附带 `remote_live` marker。
 
 默认全量测试已排除：
 
@@ -193,5 +193,5 @@ uv run pytest -q
 显式运行远端长测：
 
 ```bash
-uv run pytest -q -m remote_live
+uv run pytest tests/system/test_remote_snapshot.py -q -s
 ```

@@ -60,20 +60,14 @@
   - `BinInputResult`
   - `GameWadResult`
 - `lol_audio_unpack.runtime.wav`
-  - `JobSpec`
-  - `JobHandle`
-  - `ManifestRecorder`
   - `TranscodeCoordinator`
+  - `TranscodePaths`
   - `TranscodeProgress`
   - `TranscodeSummary`
-  - `build_job_spec`
-  - `build_recorder`
-  - `launch_detached`
-  - `launch_job`
-  - `parse_job_spec`
-  - `run_job`
   - `build_output_path`
+  - `build_transcode_paths`
   - `resolve_decode_config`
+  - `run_tree`
   - `run_worker`
 - `lol_audio_unpack.manager`
   - `DataUpdater`

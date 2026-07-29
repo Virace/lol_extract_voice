@@ -87,9 +87,8 @@ class EntityRowsPayload:
 
 @dataclass(frozen=True, slots=True)
 class QueueProgressUpdate:
-    """执行中心进度面板更新载荷。"""
+    """执行中心全局进度更新载荷。"""
 
-    status_text: str | None = None
     note_text: str | None = None
     progress_current: int | None = None
     progress_total: int | None = None
