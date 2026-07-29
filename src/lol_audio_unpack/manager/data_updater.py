@@ -352,8 +352,8 @@ class DataUpdater:
             return
 
         final_champions = {}
-        champion_skin_bin_count = 0
-        champion_chroma_bin_count = 0
+        skin_bin_count = 0
+        chroma_bin_count = 0
 
         logger.info("合并英雄数据并装配 bin 元数据...")
 
@@ -402,7 +402,7 @@ class DataUpdater:
                     "skinNames": skin_names,
                     "binPath": f"data/characters/{alias}/skins/skin{skin_id_num}.bin",
                 }
-                champion_skin_bin_count += 1
+                skin_bin_count += 1
 
                 processed_chromas = []
                 for chroma_idx, chroma_detail in enumerate(skin_detail.get("chromas", [])):
@@ -422,7 +422,7 @@ class DataUpdater:
                             "binPath": f"data/characters/{alias}/skins/skin{chroma_id_num}.bin",
                         }
                     )
-                    champion_chroma_bin_count += 1
+                    chroma_bin_count += 1
 
                 if processed_chromas:
                     skin_data["chromas"] = processed_chromas
@@ -446,8 +446,8 @@ class DataUpdater:
 
         logger.debug(
             f"英雄 bin 元数据装配完成，共 {len(final_champions)} 个英雄，"
-            f"{champion_skin_bin_count} 个皮肤 binPath，"
-            f"{champion_chroma_bin_count} 个炫彩 binPath"
+            f"{skin_bin_count} 个皮肤 binPath，"
+            f"{chroma_bin_count} 个炫彩 binPath"
         )
 
         # 记录英雄处理完成统计
@@ -458,9 +458,7 @@ class DataUpdater:
         if "default" in maps_by_lang:
             final_maps = {}
             map_bin_count = 0
-            map_id_to_index_per_lang = {
-                lang: {m["id"]: i for i, m in enumerate(maps)} for lang, maps in maps_by_lang.items()
-            }
+            map_index_by_lang = {lang: {m["id"]: i for i, m in enumerate(maps)} for lang, maps in maps_by_lang.items()}
 
             # 使用 lazy 求值记录详细的地图统计信息
             logger.opt(lazy=True).debug(
@@ -478,8 +476,8 @@ class DataUpdater:
 
                 names = {}
                 for lang, maps in maps_by_lang.items():
-                    if map_id in map_id_to_index_per_lang.get(lang, {}):
-                        idx = map_id_to_index_per_lang[lang][map_id]
+                    if map_id in map_index_by_lang.get(lang, {}):
+                        idx = map_index_by_lang[lang][map_id]
                         names[lang] = self._normalize_text(maps[idx]["name"])
 
                 map_data = {"id": map_id, "mapStringId": map_string_id, "names": names}
@@ -583,7 +581,9 @@ class DataUpdater:
 
                         for region_name in region_candidates:
                             for category in LOCALIZED_BP_VO_CATEGORIES:
-                                bp_vo_hashes.append(self._build_rcp_v1_path(region_name, f"{category}/{champion_id}.ogg"))
+                                bp_vo_hashes.append(
+                                    self._build_rcp_v1_path(region_name, f"{category}/{champion_id}.ogg")
+                                )
 
                         for category in DEFAULT_BP_VO_CATEGORIES:
                             bp_vo_hashes.append(self._build_rcp_v1_path("default", f"{category}/{champion_id}.ogg"))

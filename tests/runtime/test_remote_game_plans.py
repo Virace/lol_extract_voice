@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from lol_audio_unpack.runtime.remote.game import build_bin_plan, build_extract_plan
 
 
-def _champion(champion_id: int, alias: str, wad_root: str) -> dict:
+def _make_champion(champion_id: int, alias: str, wad_root: str) -> dict:
     return {
         "id": champion_id,
         "alias": alias,
@@ -25,7 +25,7 @@ def _champion(champion_id: int, alias: str, wad_root: str) -> dict:
     }
 
 
-def _map(map_id: int) -> dict:
+def _make_map(map_id: int) -> dict:
     return {
         "id": map_id,
         "wad": {
@@ -38,12 +38,12 @@ def _map(map_id: int) -> dict:
 
 def _build_reader() -> SimpleNamespace:
     champions = {
-        1: _champion(1, "Annie", "Game/DATA/FINAL/Champions/Annie.wad.client"),
-        66600: _champion(66600, "Ruby_Urgot", "Game/DATA/FINAL/Champions/Ruby_Urgot.wad.client"),
+        1: _make_champion(1, "Annie", "Game/DATA/FINAL/Champions/Annie.wad.client"),
+        66600: _make_champion(66600, "Ruby_Urgot", "Game/DATA/FINAL/Champions/Ruby_Urgot.wad.client"),
     }
     maps = {
-        11: _map(11),
-        12: _map(12),
+        11: _make_map(11),
+        12: _make_map(12),
     }
     return SimpleNamespace(
         ctx=SimpleNamespace(

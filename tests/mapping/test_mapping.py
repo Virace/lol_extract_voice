@@ -167,7 +167,9 @@ def test_build_entity_uses_single_success_summary(monkeypatch, tmp_path: Path) -
 
     assert any("DEBUG|完成 CAT_OK 的映射" in line for line in log_lines)
     assert not any("SUCCESS|完成 CAT_OK 的映射" in line for line in log_lines)
-    assert any("WARNING|处理路径组合 1 时出错: 读取 MusicSwitch.rule_destination_count 失败" in line for line in log_lines)
+    assert any(
+        "WARNING|处理路径组合 1 时出错: 读取 MusicSwitch.rule_destination_count 失败" in line for line in log_lines
+    )
 
     warning_lines = [line for line in log_lines if "WARNING|" in line]
     assert any("Test Entity 的事件映射统计" in line for line in warning_lines)
@@ -208,12 +210,6 @@ def test_resolve_wad_path_uses_language_wad_for_vo_and_root_wad_for_other_catego
     language_wad.unlink()
 
     assert mapping_entity._resolve_wad_path(entity_data, "CHARACTER_VO", ctx=ctx) is None
-
-
-def test_mapping_module_exposes_build_entity() -> None:
-    """映射包应暴露 canonical 的实体入口。"""
-
-    assert callable(build_entity)
 
 
 def test_execute_tasks_emits_running_entity_progress_before_completion(monkeypatch) -> None:

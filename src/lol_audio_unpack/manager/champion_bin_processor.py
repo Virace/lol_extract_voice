@@ -110,7 +110,7 @@ class ChampionBinProcessor:
             logger.trace(f"英雄 {champion_id} ({alias}) 的数据已是最新，跳过处理")
             return
 
-        path_to_skin_id_map: dict[str, str] = {}
+        skin_id_by_path: dict[str, str] = {}
         skins_data = champion_data.get("skins", [])
         sorted_skins_data = sorted(skins_data, key=lambda s: int(s["id"]))
 
@@ -121,16 +121,16 @@ class ChampionBinProcessor:
                 base_skin_id = skin_id_str
 
             if bin_path := skin.get("binPath"):
-                path_to_skin_id_map[bin_path] = skin_id_str
+                skin_id_by_path[bin_path] = skin_id_str
             for chroma in skin.get("chromas", []):
                 chroma_id_str = str(chroma["id"])
                 if bin_path := chroma.get("binPath"):
-                    path_to_skin_id_map[bin_path] = chroma_id_str
+                    skin_id_by_path[bin_path] = chroma_id_str
 
-        if not path_to_skin_id_map:
+        if not skin_id_by_path:
             return
 
-        bin_paths = list(path_to_skin_id_map.keys())
+        bin_paths = list(skin_id_by_path)
         root_wad_path = champion_data.get("wad", {}).get("root")
         full_wad_path = self.game_path / root_wad_path if root_wad_path else None
         local_required_dir = Path("data") / "characters" / alias_raw
@@ -153,8 +153,8 @@ class ChampionBinProcessor:
             logger.opt(exception=True).error(f"处理英雄 {alias} 的WAD文件时出错")
             return
 
-        skin_ids_sorted = sorted(path_to_skin_id_map.values(), key=int)
-        path_to_id_reversed = {v: k for k, v in path_to_skin_id_map.items()}
+        sorted_skin_ids = sorted(skin_id_by_path.values(), key=int)
+        path_by_skin_id = {skin_id: path for path, skin_id in skin_id_by_path.items()}
 
         # 初始化英雄的banks和events数据
         champion_banks_data = self.bin_source._create_base_data(
@@ -162,10 +162,10 @@ class ChampionBinProcessor:
         )
 
         champion_skin_events = {}
-        bank_path_to_owner_map: dict[tuple, str] = {}
+        owner_by_fingerprint: dict[tuple, str] = {}
 
-        for skin_id in skin_ids_sorted:
-            path = path_to_id_reversed[skin_id]
+        for skin_id in sorted_skin_ids:
+            path = path_by_skin_id[skin_id]
             if not (bin_raw := raw_data_map.get(path)):
                 continue
 
@@ -176,16 +176,16 @@ class ChampionBinProcessor:
                 for group in bin_file.data:
                     for event_data in group.bank_units:
                         if event_data.bank_path:
-                            bank_path_fingerprint = tuple(sorted(event_data.bank_path))
+                            bank_fingerprint = tuple(sorted(event_data.bank_path))
                             category = event_data.category
 
-                            if owner_id := bank_path_to_owner_map.get(bank_path_fingerprint):
+                            if owner_id := owner_by_fingerprint.get(bank_fingerprint):
                                 if skin_id != owner_id and "_Base_" not in category:
                                     if skin_id not in champion_banks_data["skinAudioMappings"]:
                                         champion_banks_data["skinAudioMappings"][skin_id] = {}
                                     champion_banks_data["skinAudioMappings"][skin_id][category] = owner_id
                             else:
-                                bank_path_to_owner_map[bank_path_fingerprint] = skin_id
+                                owner_by_fingerprint[bank_fingerprint] = skin_id
                                 if skin_id not in champion_banks_data["skins"]:
                                     champion_banks_data["skins"][skin_id] = {}
                                 if category not in champion_banks_data["skins"][skin_id]:
@@ -234,7 +234,7 @@ class ChampionBinProcessor:
         if bin_file.theme_music:
             skin_events["theme_music"] = bin_file.theme_music
 
-        all_events_by_category = {}
+        events_by_category = {}
         for group in bin_file.data:
             if group.music:
                 skin_events["music"] = group.music.to_dict()
@@ -243,17 +243,17 @@ class ChampionBinProcessor:
                     continue
                 if event_data.events:
                     category = event_data.category
-                    if category not in all_events_by_category:
-                        all_events_by_category[category] = []
+                    if category not in events_by_category:
+                        events_by_category[category] = []
                     event_strings = [e.string for e in event_data.events]
                     # 添加到category，稍后统一去重
-                    all_events_by_category[category].extend(event_strings)
+                    events_by_category[category].extend(event_strings)
 
-        if all_events_by_category:
+        if events_by_category:
             # 对每个category的事件列表进行去重
-            for category, events_list in all_events_by_category.items():
-                all_events_by_category[category] = list(dict.fromkeys(events_list))  # 保持顺序的去重
-            skin_events["events"] = all_events_by_category
+            for category, events_list in events_by_category.items():
+                events_by_category[category] = list(dict.fromkeys(events_list))  # 保持顺序的去重
+            skin_events["events"] = events_by_category
 
         return skin_events if skin_events else None
 

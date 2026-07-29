@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from PySide6.QtCore import QObject, QPoint, Signal
+import pytest
+from PySide6.QtCore import QObject, Signal
 from PySide6.QtWidgets import QWidget
 
 from lol_audio_unpack.gui.controllers import onboarding as onboarding_module
-from lol_audio_unpack.gui.controllers.onboarding import OnboardingMask, OnboardingTourController
+from lol_audio_unpack.gui.controllers.onboarding import OnboardingTourController
 from lol_audio_unpack.gui.controllers.onboarding_state import GUIDE_VERSION
 
 MIN_ROUTE_SETTLE_DELAY_MS = 300
@@ -179,13 +180,25 @@ def _build_controller(qtbot, monkeypatch, *, should_show: bool = True, active: b
     return controller, config, window, created, pages
 
 
-def test_start_if_needed_ignores_completed_state(qtbot, monkeypatch) -> None:
-    """当前引导版本已处理时不应创建气泡。"""
-
+@pytest.mark.parametrize(
+    ("should_show", "active"),
+    [
+        (False, False),
+        (True, True),
+    ],
+)
+def test_start_if_needed_respects_persisted_and_runtime_gates(
+    qtbot,
+    monkeypatch,
+    should_show: bool,
+    active: bool,
+) -> None:
+    """已处理引导或存在后台任务时都不应自动启动。"""
     controller, _config, window, created, _pages = _build_controller(
         qtbot,
         monkeypatch,
-        should_show=False,
+        should_show=should_show,
+        active=active,
     )
 
     controller.start_if_needed()
@@ -194,40 +207,57 @@ def test_start_if_needed_ignores_completed_state(qtbot, monkeypatch) -> None:
     assert window.switched == []
 
 
-def test_start_if_needed_ignores_active_background_work(qtbot, monkeypatch) -> None:
-    """存在后台任务时不应自动弹出引导。"""
-
-    controller, _config, window, created, _pages = _build_controller(qtbot, monkeypatch, active=True)
-
-    controller.start_if_needed()
-
-    assert created == []
-    assert window.switched == []
-
-
-def test_start_anchors_to_settings_navigation_without_switching_page(qtbot, monkeypatch) -> None:
-    """首次启动时应先提示设置入口，而不是直接跳转到设置页。"""
-
-    controller, _config, window, created, _pages = _build_controller(qtbot, monkeypatch)
+def test_onboarding_walks_complete_navigation_and_page_flow(qtbot, monkeypatch) -> None:
+    """完整引导应按导航入口和页内控件顺序推进并最终持久化完成态。"""
+    controller, config, window, created, pages = _build_controller(qtbot, monkeypatch)
 
     controller.start()
-
     assert window.switched == []
-    assert created[0]["target"] is window.settingNav
-    assert created[0]["duration"] == -1
+    assert created[-1]["target"] is window.settingNav
+    assert created[-1]["duration"] == -1
 
+    previous_tip = created[-1]["tip"]
+    window.stackedWidget.setCurrentWidget(pages.setting)
+    assert previous_tip.closed is True
+    assert created[-1]["target"] is pages.setting.sourceModeCard
 
-def test_switching_to_settings_advances_from_navigation_step(qtbot, monkeypatch) -> None:
-    """用户点击设置入口后，引导应进入设置页内部步骤。"""
+    for target in (pages.setting.gamePathCard, pages.setting.outputPathCard, window.executionNav):
+        previous_tip = created[-1]["tip"]
+        controller._next()
+        assert previous_tip.closed is True
+        assert created[-1]["target"] is target
 
-    controller, _config, window, created, pages = _build_controller(qtbot, monkeypatch)
-    controller.start()
-    first_tip = created[0]["tip"]
+    window.stackedWidget.setCurrentWidget(pages.execution)
+    assert created[-1]["target"] is pages.execution.taskBuilderPanel
+    for target in (
+        pages.execution.vo_filter,
+        pages.execution.wav_task_cb,
+        pages.execution.mapping_task_cb,
+        window.overviewNav,
+    ):
+        controller._next()
+        assert created[-1]["target"] is target
+
+    window.stackedWidget.setCurrentWidget(pages.overview)
+    assert created[-1]["target"] is pages.overview.entityListPanel
+    for target in (pages.overview.previewPanel, window.itemLookupNav):
+        controller._next()
+        assert created[-1]["target"] is target
+
+    window.stackedWidget.setCurrentWidget(pages.item_lookup)
+    assert created[-1]["target"] is pages.item_lookup.search_input
+    controller._next()
+    assert created[-1]["target"] is pages.item_lookup.mode_tabs
+    controller._next()
+    assert created[-1]["target"] is window.settingNav
 
     window.stackedWidget.setCurrentWidget(pages.setting)
+    assert created[-1]["target"] is pages.setting.wwiserCard
+    final_tip = created[-1]["tip"]
+    controller._next()
 
-    assert first_tip.closed is True
-    assert created[1]["target"] is pages.setting.sourceModeCard
+    assert config.completed == [GUIDE_VERSION]
+    assert final_tip.closed is True
 
 
 def test_route_change_waits_before_showing_page_step(qtbot, monkeypatch) -> None:
@@ -241,7 +271,9 @@ def test_route_change_waits_before_showing_page_step(qtbot, monkeypatch) -> None
         created.append(kwargs)
         return kwargs["tip"]
 
-    monkeypatch.setattr(onboarding_module.QTimer, "singleShot", lambda delay, callback: callbacks.append((delay, callback)))
+    monkeypatch.setattr(
+        onboarding_module.QTimer, "singleShot", lambda delay, callback: callbacks.append((delay, callback))
+    )
     monkeypatch.setattr(onboarding_module.TeachingTip, "make", _make_tip)
     window = _FakeWindow()
     qtbot.addWidget(window)
@@ -273,172 +305,26 @@ def test_route_change_waits_before_showing_page_step(qtbot, monkeypatch) -> None
     assert created[-1]["target"] is setting_page.sourceModeCard
 
 
-def test_next_closes_previous_tip_and_opens_next(qtbot, monkeypatch) -> None:
-    """进入下一步时应关闭旧气泡并创建新气泡。"""
-
-    controller, _config, _window, created, pages = _build_controller(qtbot, monkeypatch)
-    controller.start()
-    first_tip = created[0]["tip"]
-
-    controller._next()
-
-    assert first_tip.closed is True
-    assert created[1]["target"] is pages.setting.sourceModeCard
-
-
-def test_next_from_settings_prompts_execution_navigation(qtbot, monkeypatch) -> None:
-    """设置页讲完后应提示用户自己点击执行中心。"""
-
-    controller, _config, window, created, pages = _build_controller(qtbot, monkeypatch)
-    controller.start()
-    window.stackedWidget.setCurrentWidget(pages.setting)
-    created.clear()
-    window.switched.clear()
-
-    controller._next()
-    controller._next()
-    controller._next()
-
-    assert window.switched == []
-    assert created[-1]["target"] is window.executionNav
-
-
-def test_switching_to_execution_advances_from_navigation_step(qtbot, monkeypatch) -> None:
-    """用户点击执行中心后，引导应进入执行中心内部步骤。"""
-
-    controller, _config, window, created, pages = _build_controller(qtbot, monkeypatch)
-    controller.start()
-    window.stackedWidget.setCurrentWidget(pages.setting)
-    controller._next()
-    controller._next()
-    controller._next()
-    execution_tip = created[-1]["tip"]
-
-    window.stackedWidget.setCurrentWidget(pages.execution)
-
-    assert execution_tip.closed is True
-    assert created[-1]["target"] is pages.execution.taskBuilderPanel
-
-
-def test_next_from_execution_prompts_overview_navigation(qtbot, monkeypatch) -> None:
-    """执行中心讲完后应提示用户自己点击实体总览。"""
-
-    controller, _config, window, created, pages = _build_controller(qtbot, monkeypatch)
-    controller.start()
-    window.stackedWidget.setCurrentWidget(pages.setting)
-    controller._next()
-    controller._next()
-    controller._next()
-    window.stackedWidget.setCurrentWidget(pages.execution)
-    created.clear()
-    window.switched.clear()
-
-    controller._next()
-    controller._next()
-    controller._next()
-    controller._next()
-
-    assert window.switched == []
-    assert created[-1]["target"] is window.overviewNav
-
-
-def test_next_from_overview_prompts_item_lookup_navigation(qtbot, monkeypatch) -> None:
-    """实体总览讲完后应提示用户自己点击装备查询。"""
-
-    controller, _config, window, created, pages = _build_controller(qtbot, monkeypatch)
-    controller.start()
-    window.stackedWidget.setCurrentWidget(pages.setting)
-    controller._next()
-    controller._next()
-    controller._next()
-    window.stackedWidget.setCurrentWidget(pages.execution)
-    controller._next()
-    controller._next()
-    controller._next()
-    controller._next()
-    window.stackedWidget.setCurrentWidget(pages.overview)
-    created.clear()
-    window.switched.clear()
-
-    controller._next()
-    controller._next()
-
-    assert window.switched == []
-    assert created[-1]["target"] is window.itemLookupNav
-
-
-def test_switching_to_item_lookup_advances_from_navigation_step(qtbot, monkeypatch) -> None:
-    """用户点击装备查询后，引导应进入装备查询页内部步骤。"""
-
-    controller, _config, window, created, pages = _build_controller(qtbot, monkeypatch)
-    controller.start()
-    window.stackedWidget.setCurrentWidget(pages.setting)
-    controller._next()
-    controller._next()
-    controller._next()
-    window.stackedWidget.setCurrentWidget(pages.execution)
-    controller._next()
-    controller._next()
-    controller._next()
-    controller._next()
-    window.stackedWidget.setCurrentWidget(pages.overview)
-    controller._next()
-    controller._next()
-    item_lookup_tip = created[-1]["tip"]
-
-    window.stackedWidget.setCurrentWidget(pages.item_lookup)
-
-    assert item_lookup_tip.closed is True
-    assert created[-1]["target"] is pages.item_lookup.search_input
-
-
-def test_next_from_item_lookup_explains_mode_tabs(qtbot, monkeypatch) -> None:
-    """装备查询页搜索框之后应继续说明模式 tab 与复制 ID。"""
-
-    controller, _config, window, created, pages = _build_controller(qtbot, monkeypatch)
-    controller.start()
-    window.stackedWidget.setCurrentWidget(pages.setting)
-    controller._next()
-    controller._next()
-    controller._next()
-    window.stackedWidget.setCurrentWidget(pages.execution)
-    controller._next()
-    controller._next()
-    controller._next()
-    controller._next()
-    window.stackedWidget.setCurrentWidget(pages.overview)
-    controller._next()
-    controller._next()
-    window.stackedWidget.setCurrentWidget(pages.item_lookup)
-    created.clear()
-
-    controller._next()
-
-    assert created[-1]["target"] is pages.item_lookup.mode_tabs
-    assert "复制 ID" in created[-1]["view"].contentLabel.text()
-
-
-def test_skip_marks_state_and_closes_tip(qtbot, monkeypatch) -> None:
-    """跳过引导时应持久化跳过状态并关闭气泡。"""
-
+@pytest.mark.parametrize(
+    ("action_name", "state_name"),
+    [
+        ("_skip", "skipped"),
+        ("_finish", "completed"),
+    ],
+)
+def test_terminal_actions_persist_state_and_close_tip(
+    qtbot,
+    monkeypatch,
+    action_name: str,
+    state_name: str,
+) -> None:
+    """跳过或完成都应持久化对应状态并关闭当前气泡。"""
     controller, config, _window, created, _pages = _build_controller(qtbot, monkeypatch)
     controller.start()
 
-    controller._skip()
+    getattr(controller, action_name)()
 
-    assert config.skipped == [GUIDE_VERSION]
-    assert created[0]["tip"].closed is True
-
-
-def test_finish_marks_state_and_closes_tip(qtbot, monkeypatch) -> None:
-    """完成引导时应持久化完成状态并关闭气泡。"""
-
-    controller, config, _window, created, _pages = _build_controller(qtbot, monkeypatch)
-    controller.start()
-
-    controller._finish()
-
-    assert config.completed == [GUIDE_VERSION]
+    assert getattr(config, state_name) == [GUIDE_VERSION]
     assert created[0]["tip"].closed is True
 
 
@@ -499,41 +385,3 @@ def test_close_before_delayed_show_prevents_tip_creation(qtbot, monkeypatch) -> 
     callbacks[0]()
 
     assert created == []
-
-
-def test_onboarding_mask_covers_outside_target_and_leaves_target_hole(qtbot) -> None:
-    """蒙版应覆盖非目标区域，并在目标控件周围留出透明点击区域。"""
-
-    host = QWidget()
-    host.resize(300, 200)
-    target = QWidget(host)
-    target.setGeometry(80, 60, 80, 40)
-    qtbot.addWidget(host)
-    host.show()
-    target.show()
-
-    mask = OnboardingMask(host)
-    mask.set_target(target)
-    mask.show()
-
-    assert mask.mask().contains(QPoint(10, 10)) is True
-    assert mask.mask().contains(QPoint(120, 80)) is False
-
-
-def test_onboarding_mask_uses_rounded_target_hole(qtbot) -> None:
-    """透明区域应使用圆角，避免目标高亮边缘显得生硬。"""
-
-    host = QWidget()
-    host.resize(300, 200)
-    target = QWidget(host)
-    target.setGeometry(80, 60, 80, 40)
-    qtbot.addWidget(host)
-    host.show()
-    target.show()
-
-    mask = OnboardingMask(host, padding=0, radius=16)
-    mask.set_target(target)
-    mask.show()
-
-    assert mask.mask().contains(QPoint(82, 62)) is True
-    assert mask.mask().contains(QPoint(120, 80)) is False

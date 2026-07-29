@@ -15,7 +15,7 @@ from lol_audio_unpack.app.targets import (
 from lol_audio_unpack.model import generate_champion_tasks
 
 
-def _champion(champion_id: int, alias: str, wad_root: str, *, name: str = "") -> dict:
+def _make_champion(champion_id: int, alias: str, wad_root: str, *, name: str = "") -> dict:
     return {
         "id": champion_id,
         "alias": alias,
@@ -51,7 +51,7 @@ def _build_ctx(tmp_path: Path):
 
 
 def test_hidden_champion_markers_use_alias_wad_and_id() -> None:
-    champion = _champion(
+    champion = _make_champion(
         66600,
         "Ruby_Urgot",
         "Game/DATA/FINAL/Champions/Ruby_Wukong.wad.client",
@@ -64,9 +64,9 @@ def test_hidden_champion_markers_use_alias_wad_and_id() -> None:
 
 def test_filter_default_visible_champions_hides_ruby_series() -> None:
     champions = [
-        _champion(1, "Annie", "Game/DATA/FINAL/Champions/Annie.wad.client"),
-        _champion(66600, "Ruby_Urgot", "Game/DATA/FINAL/Champions/Ruby_Urgot.wad.client"),
-        _champion(666123, "TestAlias", "Game/DATA/FINAL/Champions/Garen.wad.client"),
+        _make_champion(1, "Annie", "Game/DATA/FINAL/Champions/Annie.wad.client"),
+        _make_champion(66600, "Ruby_Urgot", "Game/DATA/FINAL/Champions/Ruby_Urgot.wad.client"),
+        _make_champion(666123, "TestAlias", "Game/DATA/FINAL/Champions/Garen.wad.client"),
     ]
 
     visible = filter_default_visible_champions(champions)
@@ -76,8 +76,8 @@ def test_filter_default_visible_champions_hides_ruby_series() -> None:
 
 def test_generate_champion_tasks_skips_hidden_by_default_but_allows_explicit_ids() -> None:
     champions = [
-        _champion(1, "Annie", "Game/DATA/FINAL/Champions/Annie.wad.client"),
-        _champion(66600, "Ruby_Urgot", "Game/DATA/FINAL/Champions/Ruby_Urgot.wad.client"),
+        _make_champion(1, "Annie", "Game/DATA/FINAL/Champions/Annie.wad.client"),
+        _make_champion(66600, "Ruby_Urgot", "Game/DATA/FINAL/Champions/Ruby_Urgot.wad.client"),
     ]
     reader = SimpleNamespace(get_champions=lambda: champions)
 
@@ -97,8 +97,8 @@ def test_resolve_champion_ids_keeps_hidden_alias_available_when_explicit(
 
     fake_reader = SimpleNamespace(
         get_champions=lambda: [
-            _champion(1, "Annie", "Game/DATA/FINAL/Champions/Annie.wad.client"),
-            _champion(66600, "Ruby_Urgot", "Game/DATA/FINAL/Champions/Ruby_Urgot.wad.client"),
+            _make_champion(1, "Annie", "Game/DATA/FINAL/Champions/Annie.wad.client"),
+            _make_champion(66600, "Ruby_Urgot", "Game/DATA/FINAL/Champions/Ruby_Urgot.wad.client"),
         ]
     )
 

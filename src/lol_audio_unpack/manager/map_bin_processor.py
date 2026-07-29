@@ -209,7 +209,7 @@ class MapBinProcessor:
         if bin_file.theme_music:
             map_events["theme_music"] = bin_file.theme_music
 
-        all_events_by_category = {}
+        events_by_category = {}
         for group in bin_file.data:
             if group.music:
                 map_events["music"] = group.music.to_dict()
@@ -219,17 +219,17 @@ class MapBinProcessor:
 
                 category = event_data.category
                 event_strings = [e.string for e in event_data.events]
-                unique_events_in_group = list(dict.fromkeys(event_strings))  # 保持顺序的去重
+                unique_events = list(dict.fromkeys(event_strings))  # 保持顺序的去重
 
                 removed_events: list[str] = []
                 if common_event_sources:
                     filtered_events: list[str] = []
-                    for event_name in unique_events_in_group:
+                    for event_name in unique_events:
                         if event_name in common_event_sources:
                             removed_events.append(event_name)
                         else:
                             filtered_events.append(event_name)
-                    unique_events_in_group = filtered_events
+                    unique_events = filtered_events
 
                 if removed_events:
                     category_entry = dedup_by_category.setdefault(category, {"events": set(), "sources": set()})
@@ -237,10 +237,10 @@ class MapBinProcessor:
                     for event_name in removed_events:
                         category_entry["sources"].update(common_event_sources.get(event_name, set()))
 
-                if unique_events_in_group:
-                    if category not in all_events_by_category:
-                        all_events_by_category[category] = []
-                    all_events_by_category[category].extend(unique_events_in_group)
+                if unique_events:
+                    if category not in events_by_category:
+                        events_by_category[category] = []
+                    events_by_category[category].extend(unique_events)
 
         dedup_summary = None
         if dedup_by_category:
@@ -256,12 +256,12 @@ class MapBinProcessor:
                 }
             dedup_summary = {
                 "total_removed": total_removed,
-                "remaining_event_count": sum(len(events) for events in all_events_by_category.values()),
+                "remaining_event_count": sum(len(events) for events in events_by_category.values()),
                 "categories": categories,
             }
 
-        if all_events_by_category:
-            map_events["events"] = all_events_by_category
+        if events_by_category:
+            map_events["events"] = events_by_category
 
         return map_events if map_events else None, dedup_summary
 
