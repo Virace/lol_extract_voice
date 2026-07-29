@@ -9,6 +9,7 @@ from loguru import logger
 from riotmanifest import DownloadError
 
 import lol_audio_unpack.app.facade as m_facade
+import lol_audio_unpack.app.remote_workflow as m_remote_workflow
 import lol_audio_unpack.runtime.remote.preparer as m_remote
 from lol_audio_unpack.app import create_app_context
 from lol_audio_unpack.app.facade import LolAudioUnpackApp
@@ -873,7 +874,7 @@ def test_facade_run_workflow_logs_completion_summary(
     app.extract = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
     app.cleanup_remote_artifacts = lambda: None  # type: ignore[method-assign]
     monkeypatch.setattr(
-        m_facade,
+        m_remote_workflow,
         "logger",
         SimpleNamespace(
             info=lambda message, *args: info_messages.append(_format_log(message, *args)),
