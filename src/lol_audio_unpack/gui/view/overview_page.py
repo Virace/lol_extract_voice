@@ -1,4 +1,4 @@
-﻿"""实体总览页面，负责展示实体状态并预留右侧资源预览区。"""
+"""实体总览页面，负责展示实体状态并预留右侧资源预览区。"""
 
 from __future__ import annotations
 
@@ -75,6 +75,7 @@ from lol_audio_unpack.gui.controllers.overview_preview import AudioPreviewToggle
 from lol_audio_unpack.gui.controllers.preview_playback import PreviewPlaybackState
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 from lol_audio_unpack.gui.service.preview_export import resolve_wav_path, transcode_wav
+from lol_audio_unpack.gui.theme import get_accent_text_color_pair
 from lol_audio_unpack.gui.view.overview.audio_preview_panel import OverviewAudioPreviewPanel
 from lol_audio_unpack.gui.view.overview.entity_list_panel import OverviewEntityListPanel
 from lol_audio_unpack.gui.view.overview.preview_panel import (
@@ -148,12 +149,8 @@ class OverviewPage(QWidget):
         self._audio_preview_placeholder = DEFAULT_PREVIEW_PLACEHOLDER_TEXT
         self._build_ui()
         self._preview_playback_controller = PreviewPlaybackController(parent=self)
-        self._preview_playback_controller.playback_state_changed.connect(
-            self._apply_audio_preview_playback_state
-        )
-        self._preview_playback_controller.playback_error.connect(
-            self._show_audio_preview_playback_error
-        )
+        self._preview_playback_controller.playback_state_changed.connect(self._apply_audio_preview_playback_state)
+        self._preview_playback_controller.playback_error.connect(self._show_audio_preview_playback_error)
         self._setup_connections()
         self.destroyed.connect(self._disconnect_theme_refresh_listeners)
         self.destroyed.connect(self._preview_playback_controller.shutdown)
@@ -174,9 +171,7 @@ class OverviewPage(QWidget):
         """注入 GUI 配置。"""
         self.gui_config = cfg
         fallback_enabled = bool(getattr(cfg, "smooth_scroll_enabled", False))
-        self.set_smooth_scroll_enabled(
-            bool(getattr(cfg, "widget_smooth_scroll_enabled", fallback_enabled))
-        )
+        self.set_smooth_scroll_enabled(bool(getattr(cfg, "widget_smooth_scroll_enabled", fallback_enabled)))
         self.set_preview_audio_volume(
             int(getattr(cfg, "preview_audio_volume_percent", DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT))
         )
@@ -259,7 +254,7 @@ class OverviewPage(QWidget):
         self.audio_preview_tree.audio_id_toggle_requested.connect(self._on_audio_preview_toggle_requested)
         self.audio_preview_tree.audio_context_menu_requested.connect(self._show_audio_menu)
         qconfig.themeChanged.connect(self._refresh_theme_styles)
-        qconfig.themeColorChanged.connect(self._refresh_entity_list_theme)
+        qconfig.themeColorChanged.connect(self._refresh_theme_styles)
 
         for entity_type, list_widget in self._entity_lists.items():
             selection_model = list_widget.selectionModel()
@@ -276,7 +271,7 @@ class OverviewPage(QWidget):
         """断开实体总览页注册的全局主题监听。"""
         for signal, callback in (
             (qconfig.themeChanged, self._refresh_theme_styles),
-            (qconfig.themeColorChanged, self._refresh_entity_list_theme),
+            (qconfig.themeColorChanged, self._refresh_theme_styles),
         ):
             try:
                 signal.disconnect(callback)
@@ -302,6 +297,8 @@ class OverviewPage(QWidget):
 
     def _refresh_theme_styles(self, *_args: object) -> None:
         """统一刷新总览页当前主题相关样式。"""
+        accent_light, accent_dark = get_accent_text_color_pair()
+        self.subtitle_label.setTextColor(accent_light, accent_dark)
         self._refresh_entity_list_theme()
         self._refresh_panel_shell_theme()
 
@@ -578,11 +575,7 @@ class OverviewPage(QWidget):
     def _audio_menu_wem_path(self, audio_id: str) -> Path | None:
         """解析右键菜单目标音频的 WEM 路径。"""
         loader = self._ensure_loader()
-        if (
-            loader is None
-            or self._current_preview_entity_type is None
-            or self._current_preview_entity_id is None
-        ):
+        if loader is None or self._current_preview_entity_type is None or self._current_preview_entity_id is None:
             return None
         return loader.resolve_audio_file_path(
             self._current_preview_entity_type,

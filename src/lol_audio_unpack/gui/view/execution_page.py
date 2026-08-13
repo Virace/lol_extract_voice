@@ -6,9 +6,8 @@ from typing import Any
 
 from loguru import logger
 from PySide6.QtCore import Signal
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QWidget
-from qfluentwidgets import CaptionLabel, InfoBarPosition, SmoothScrollArea, SubtitleLabel
+from PySide6.QtWidgets import QMessageBox, QSizePolicy, QVBoxLayout, QWidget
+from qfluentwidgets import CaptionLabel, InfoBarPosition, SmoothScrollArea, SubtitleLabel, qconfig
 
 from lol_audio_unpack.gui.common import (
     GUI_LOG_FORMAT,
@@ -31,14 +30,12 @@ from lol_audio_unpack.gui.controllers import (
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest, SharedDataLoadingState
 from lol_audio_unpack.gui.controllers.entity_data_store import EntityDataStore
 from lol_audio_unpack.gui.task_models import ExecutionTaskResult, QueuedExecutionTask
+from lol_audio_unpack.gui.theme import get_accent_text_color_pair
 from lol_audio_unpack.gui.view.execution.progress_state import build_global_progress_strip_state
 from lol_audio_unpack.gui.view.execution.selection_conflict_dialog import (
     ask_selection_conflict_resolution,
 )
 from lol_audio_unpack.gui.view.execution.task_creation_card import TaskCreationCard
-
-FLUENT_CONTENT_TEXT_LIGHT = QColor(96, 96, 96)
-FLUENT_CONTENT_TEXT_DARK = QColor(206, 206, 206)
 
 
 class ExecutionPage(SmoothScrollArea):
@@ -78,6 +75,10 @@ class ExecutionPage(SmoothScrollArea):
         self._log_controller.log_lines_appended.connect(self.log_lines_appended.emit)
         self.destroyed.connect(self._log_controller.detach_runtime_log_sink)
         self._build_ui()
+        qconfig.themeChanged.connect(self._refresh_theme_styles)
+        qconfig.themeColorChanged.connect(self._refresh_theme_styles)
+        self.destroyed.connect(self._disconnect_theme_signals)
+        self._refresh_theme_styles()
         self._queue_controller = ExecutionQueueController(
             build_task_item_tooltip=self._build_task_item_tooltip,
             single_task_mode=True,
@@ -91,18 +92,15 @@ class ExecutionPage(SmoothScrollArea):
         apply_page_content_margins(self.expandLayout)
         self.expandLayout.setSpacing(16)
 
-        header_widget = QWidget(self.view)
-        header_layout = QVBoxLayout(header_widget)
+        header_layout = QVBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(4)
-        title_label = SubtitleLabel("执行中心", header_widget)
-        self.subtitle_label = CaptionLabel("在这里补充自定义参数并创建任务。", header_widget)
+        title_label = SubtitleLabel("执行中心", self.view)
+        self.subtitle_label = CaptionLabel("在这里补充自定义参数并创建任务。", self.view)
         self.subtitle_label.setWordWrap(True)
-        self.subtitle_label.setTextColor(FLUENT_CONTENT_TEXT_LIGHT, FLUENT_CONTENT_TEXT_DARK)
         header_layout.addWidget(title_label)
         header_layout.addWidget(self.subtitle_label)
-        header_widget.resize(header_widget.width(), header_widget.sizeHint().height())
-        self.expandLayout.addWidget(header_widget)
+        self.expandLayout.addLayout(header_layout)
 
         self.taskBuilderPanel = TaskCreationCard(self.view)
         self.advancedPanel = self.taskBuilderPanel
@@ -118,11 +116,31 @@ class ExecutionPage(SmoothScrollArea):
         self.wav_task_cb = self.taskBuilderPanel.wav_task_cb
         self.mapping_task_cb = self.taskBuilderPanel.mapping_task_cb
         self.create_task_btn = self.taskBuilderPanel.create_task_btn
-        self.expandLayout.addWidget(self.taskBuilderPanel)
+        self.taskActionCard = self.taskBuilderPanel.create_action_card(self.view)
+        self.expandLayout.addWidget(self.taskBuilderPanel, 0)
+        self.expandLayout.addWidget(self.taskActionCard, 0)
+        self.expandLayout.addStretch(1)
 
         self.bottom_spacing_widget = QWidget(self.view)
         self.bottom_spacing_widget.setFixedHeight(20)
-        self.expandLayout.addWidget(self.bottom_spacing_widget)
+        self.bottom_spacing_widget.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.expandLayout.addWidget(self.bottom_spacing_widget, 0)
+
+    def _refresh_theme_styles(self, *_args: object) -> None:
+        """刷新页面引导副标题的强调色。"""
+        light, dark = get_accent_text_color_pair()
+        self.subtitle_label.setTextColor(light, dark)
+
+    def _disconnect_theme_signals(self, *_args: object) -> None:
+        """释放页面持有的全局主题信号连接。"""
+        for signal in (qconfig.themeChanged, qconfig.themeColorChanged):
+            try:
+                signal.disconnect(self._refresh_theme_styles)
+            except (RuntimeError, TypeError):
+                pass
 
     def _setup_connections(self) -> None:
         self._queue_controller.task_running_changed.connect(self._set_task_running_state)
