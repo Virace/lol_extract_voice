@@ -1,0 +1,5 @@
+schema = 1
+
+[standards]
+python-project = 1
+testing-project = 1

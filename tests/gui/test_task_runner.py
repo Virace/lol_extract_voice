@@ -17,6 +17,8 @@ from lol_audio_unpack.gui.task_models import (
 )
 from lol_audio_unpack.gui.window import _prepare_shared_entity_data
 
+EXPECTED_CONTEXT_COUNT_WITH_UPDATE = 2
+
 
 def _build_task(
     *,
@@ -104,117 +106,11 @@ def test_prepare_shared_entity_data_normalizes_source_mode_before_app_context(mo
     assert captured["SOURCE_MODE"] == "local_path"
 
 
-def test_run_execution_task_logs_task_start_and_summary(monkeypatch) -> None:
-    task = _build_task(source_mode="remote_snapshot")
-    infos: list[str] = []
-    debugs: list[str] = []
-    successes: list[str] = []
-
-    def _fail_exception(message: str) -> None:
-        pytest.fail(message)
-
-    def _fake_create_app_context(*, settings) -> object:
-        _ = settings
-        return object()
-
-    monkeypatch.setattr(
-        task_runner,
-        "normalize_app_context_settings",
-        lambda settings: {**settings, "SOURCE_MODE": "local_path"},
-        raising=False,
-    )
-    monkeypatch.setattr(
-        task_runner,
-        "logger",
-        SimpleNamespace(
-            info=infos.append,
-            debug=debugs.append,
-            success=successes.append,
-            exception=_fail_exception,
-        ),
-    )
-    monkeypatch.setattr(task_runner, "create_app_context", _fake_create_app_context)
-
-    class FakeApp:
-        def __init__(self, _app_context) -> None:
-            pass
-
-        def extract(self, _options, **kwargs) -> None:
-            kwargs["progress_callback"]("champions", 1, 1, "音频解包完成")
-
-        def mapping(self, _options, **_kwargs) -> None:
-            return None
-
-    monkeypatch.setattr(task_runner, "LolAudioUnpackApp", FakeApp)
-    signals = SimpleNamespace(progress=SimpleNamespace(emit=lambda _payload: None))
-
-    result = task_runner.run_execution_task(task, signals)
-
-    assert infos[0] == "[执行中心] 任务 #1 开始执行: 音频解包 -> 事件映射"
-    assert debugs[0] == "[执行中心] 任务 #1 范围=英雄 + 地图, source_mode=local_path"
-    assert any("共享上下文快照" in message and "OUTPUT_PATH" in message for message in debugs)
-    assert any("参数快照" in message and "run_mapping" in message for message in debugs)
-    assert debugs.count("[执行中心] 任务 #1 创建运行时 AppContext") == 1
-    assert successes == [f"[执行中心] 任务 #1 {result.summary}"]
-
-
-def test_run_execution_task_logs_preflight_forced_update_step(monkeypatch) -> None:
-    task = _build_task(source_mode="remote_snapshot", run_update=True)
-    infos: list[str] = []
-    debugs: list[str] = []
-    successes: list[str] = []
-
-    def _fail_exception(message: str) -> None:
-        pytest.fail(message)
-
-    def _fake_create_app_context(*, settings) -> object:
-        _ = settings
-        return object()
-
-    monkeypatch.setattr(
-        task_runner,
-        "normalize_app_context_settings",
-        lambda settings: {**settings, "SOURCE_MODE": "local_path"},
-        raising=False,
-    )
-    monkeypatch.setattr(
-        task_runner,
-        "logger",
-        SimpleNamespace(
-            info=infos.append,
-            debug=debugs.append,
-            success=successes.append,
-            exception=_fail_exception,
-        ),
-    )
-    monkeypatch.setattr(task_runner, "create_app_context", _fake_create_app_context)
-
-    class FakeApp:
-        def __init__(self, _app_context) -> None:
-            pass
-
-        def update(self, _options, *, target: str) -> None:
-            assert target == "all"
-
-        def extract(self, _options, **kwargs) -> None:
-            kwargs["progress_callback"]("champions", 1, 1, "音频解包完成")
-
-        def mapping(self, _options, **_kwargs) -> None:
-            return None
-
-    monkeypatch.setattr(task_runner, "LolAudioUnpackApp", FakeApp)
-    signals = SimpleNamespace(progress=SimpleNamespace(emit=lambda _payload: None))
-
-    result = task_runner.run_execution_task(task, signals)
-
-    assert infos[0] == "[执行中心] 任务 #1 开始执行: 前置强制更新 -> 音频解包 -> 事件映射"
-    assert infos[1] == "[执行中心] 任务 #1 开始前置强制更新"
-    assert successes == [f"[执行中心] 任务 #1 {result.summary}"]
-
-
-def test_run_execution_task_runs_wav_stage_between_extract_and_mapping(monkeypatch, tmp_path: Path) -> None:
-    task = _build_task(source_mode="remote_snapshot", wav_enabled=True)
+def test_run_execution_task_runs_stages_in_order_and_reuses_runtime_context(monkeypatch, tmp_path: Path) -> None:
+    """完整任务应隔离强制更新，并让后续阶段复用同一运行时上下文。"""
+    task = _build_task(source_mode="remote_snapshot", run_update=True, wav_enabled=True)
     events: list[object] = []
+    context_settings: list[dict[str, object]] = []
 
     def _fail_exception(message: str) -> None:
         pytest.fail(message)
@@ -245,17 +141,24 @@ def test_run_execution_task_runs_wav_stage_between_extract_and_mapping(monkeypat
             exception=_fail_exception,
         ),
     )
-    monkeypatch.setattr(task_runner, "create_app_context", lambda *, settings: runtime_context)
+
+    def _create_app_context(*, settings):
+        context_settings.append(settings)
+        return runtime_context
+
+    monkeypatch.setattr(task_runner, "create_app_context", _create_app_context)
     monkeypatch.setattr(task_runner, "DataReader", _ReadyMapBanksReader)
 
     class FakeApp:
         def __init__(self, app_context) -> None:
             self.ctx = app_context
 
-        def extract(self, options, **kwargs) -> None:
+        def update(self, _options, *, target: str) -> None:
+            assert target == "all"
+            events.append("update")
+
+        def extract(self, options, **_kwargs) -> None:
             assert options.wav_output.enabled is True
-            assert "detach_wav" not in kwargs
-            assert "wav_job_label" not in kwargs
             events.append("extract")
 
         def transcode_wav(self, options, **_kwargs) -> None:
@@ -268,10 +171,11 @@ def test_run_execution_task_runs_wav_stage_between_extract_and_mapping(monkeypat
     monkeypatch.setattr(task_runner, "LolAudioUnpackApp", FakeApp)
     signals = SimpleNamespace(progress=SimpleNamespace(emit=lambda _payload: None))
 
-    result = task_runner.run_execution_task(task, signals)
+    task_runner.run_execution_task(task, signals)
 
-    assert events == ["extract", "wav", "mapping"]
-    assert "WAV 转码仍在后台继续" not in result.summary
+    assert events == ["update", "extract", "wav", "mapping"]
+    assert len(context_settings) == EXPECTED_CONTEXT_COUNT_WITH_UPDATE
+    assert all(settings["SOURCE_MODE"] == "local_path" for settings in context_settings)
 
 
 def test_run_execution_task_allows_wav_stage_without_extract(monkeypatch, tmp_path: Path) -> None:

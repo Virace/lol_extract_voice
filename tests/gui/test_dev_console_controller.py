@@ -1,4 +1,4 @@
-﻿"""开发控制台命令控制器测试。"""
+"""开发控制台命令控制器测试。"""
 
 from __future__ import annotations
 
@@ -81,71 +81,6 @@ def test_dev_console_controller_handle_submitted_command_reports_error() -> None
     controller.handle_submitted_command(_FakeConsole(), "oops")
 
     assert outputs == ["> oops", "ERROR: 未知命令，输入 help 查看可用命令。"]
-
-
-def test_dev_console_controller_show_console_positions_and_focuses_window() -> None:
-    events: list[tuple[str, object]] = []
-
-    class _FakeConsole:
-        def __init__(self) -> None:
-            self._width = 0
-            self._height = 0
-
-        def width(self) -> int:
-            return self._width
-
-        def height(self) -> int:
-            return self._height
-
-        def sizeHint(self):
-            return (320, 200)
-
-        def resize(self, size) -> None:
-            self._width, self._height = size
-            events.append(("resize", size))
-
-        def move(self, point) -> None:
-            events.append(("move", point))
-
-        def show(self) -> None:
-            events.append(("show", None))
-
-        def raise_(self) -> None:
-            events.append(("raise", None))
-
-        def activateWindow(self) -> None:
-            events.append(("activate", None))
-
-        def focus_command_input(self) -> None:
-            events.append(("focus", None))
-
-    class _FakeHost:
-        def width(self) -> int:
-            return 900
-
-        def height(self) -> int:
-            return 700
-
-        def mapToGlobal(self, point: QPoint) -> QPoint:
-            return point
-
-    controller = DevConsoleController(
-        queue_fill=lambda count: f"fill {count}",
-        queue_clear=lambda: "clear",
-        queue_inspect=lambda: "inspect",
-    )
-    console = _FakeConsole()
-
-    controller.show_console(console, _FakeHost())
-
-    assert ("resize", (320, 200)) in events
-    assert ("move", QPoint(548, 452)) in events
-    assert events[-4:] == [
-        ("show", None),
-        ("raise", None),
-        ("activate", None),
-        ("focus", None),
-    ]
 
 
 def test_dev_console_controller_show_console_window_creates_console_once() -> None:

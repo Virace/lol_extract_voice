@@ -9,6 +9,7 @@ from loguru import logger
 from riotmanifest import DownloadError
 
 import lol_audio_unpack.app.facade as m_facade
+import lol_audio_unpack.app.remote_workflow as m_remote_workflow
 import lol_audio_unpack.runtime.remote.preparer as m_remote
 from lol_audio_unpack.app import create_app_context
 from lol_audio_unpack.app.facade import LolAudioUnpackApp
@@ -349,6 +350,7 @@ def test_remote_snapshot_preparer_extracts_bin_inputs_for_bin_updater(
         {
             "get_champions": lambda self: [
                 {
+                    "id": 1,
                     "alias": "Annie",
                     "wad": {"root": "Game/DATA/FINAL/Champions/Annie.wad.client"},
                     "skins": [
@@ -363,12 +365,13 @@ def test_remote_snapshot_preparer_extracts_bin_inputs_for_bin_updater(
             ],
             "get_maps": lambda self: [
                 {
+                    "id": 11,
                     "wad": {"root": "Game/DATA/FINAL/Maps/Shipping/Map11/Map11.wad.client"},
                     "binPath": "data/maps/shipping/map11/map11.bin",
                 }
             ],
-            "get_champion": lambda self, _id: {},
-            "get_map": lambda self, _id: {},
+            "get_champion": lambda self, _id: self.get_champions()[0],
+            "get_map": lambda self, _id: self.get_maps()[0],
         },
     )()
 
@@ -723,6 +726,9 @@ def test_facade_transcode_wav_uses_selected_entity_audio_dirs(monkeypatch: pytes
     app._build_entity_data = lambda reader, **kwargs: SimpleNamespace(  # type: ignore[method-assign]
         entity_type=kwargs["entity_type"],
         entity_id=str(kwargs["entity_id"]),
+        entity_name="测试实体",
+        entity_alias="test",
+        entity_title=None,
     )
     app._resolve_audio_paths = lambda entity_data: {  # type: ignore[method-assign]
         ("champion", "103"): (champion_dir,),
@@ -731,7 +737,9 @@ def test_facade_transcode_wav_uses_selected_entity_audio_dirs(monkeypatch: pytes
     monkeypatch.setattr(
         m_facade,
         "run_tree",
-        lambda **kwargs: calls.update(kwargs) or {"status": "success", "processed_file_count": 0, "failed_file_count": 0},
+        lambda **kwargs: (
+            calls.update(kwargs) or {"status": "success", "processed_file_count": 0, "failed_file_count": 0}
+        ),
     )
 
     app.transcode_wav(
@@ -743,7 +751,9 @@ def test_facade_transcode_wav_uses_selected_entity_audio_dirs(monkeypatch: pytes
     )
 
     assert calls["version"] == "16.5"
-    assert calls["audio_roots"] == (champion_dir, map_dir)
+    audio_targets = calls["audio_targets"]
+    assert tuple(target.root_path for target in audio_targets) == (champion_dir, map_dir)
+    assert "audio_roots" not in calls
 
 
 def test_facade_build_work_items_merges_extract_and_mapping_targets(
@@ -866,7 +876,7 @@ def test_facade_run_workflow_logs_completion_summary(
     app.extract = lambda *_args, **_kwargs: None  # type: ignore[method-assign]
     app.cleanup_remote_artifacts = lambda: None  # type: ignore[method-assign]
     monkeypatch.setattr(
-        m_facade,
+        m_remote_workflow,
         "logger",
         SimpleNamespace(
             info=lambda message, *args: info_messages.append(_format_log(message, *args)),
@@ -1190,13 +1200,19 @@ def test_remote_snapshot_preparer_cleanup_artifacts_supports_dry_run(
     reader = SimpleNamespace(
         get_champions=lambda: [
             {
+                "id": 1,
                 "alias": "Annie",
                 "wad": {"root": "Game/DATA/FINAL/Champions/Annie.wad.client"},
                 "skins": [{"id": 1000, "binPath": "data/characters/Annie/skins/skin0.bin"}],
             }
         ],
         get_maps=lambda: [],
-        get_champion=lambda _id: {},
+        get_champion=lambda _id: {
+            "id": 1,
+            "alias": "Annie",
+            "wad": {"root": "Game/DATA/FINAL/Champions/Annie.wad.client"},
+            "skins": [{"id": 1000, "binPath": "data/characters/Annie/skins/skin0.bin"}],
+        },
         get_map=lambda _id: {},
         ctx=ctx,
     )

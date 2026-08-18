@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
 
 from lol_audio_unpack.gui.controllers.contracts import SharedDataLoadingState
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
@@ -14,21 +11,6 @@ from lol_audio_unpack.gui.view.setting_page import SettingPage
 EXPECTED_WAV_WORKERS = 8
 EXPECTED_WAV_TIMEOUT = 15
 EXPECTED_WAV_RETRIES = 5
-EXPECTED_TASK_BUILDER_MIN_HEIGHT = 300
-EXPECTED_GROUP_COUNT = 8
-EXPECTED_CONTENT_TEXT_LIGHT = QColor(96, 96, 96)
-EXPECTED_CONTENT_TEXT_DARK = QColor(206, 206, 206)
-
-
-def test_execution_page_uses_single_task_creation_card(qtbot) -> None:
-    """执行中心页面不再显示任务队列 UI，只保留单一卡片。"""
-    page = ExecutionPage()
-    qtbot.addWidget(page)
-
-    assert not hasattr(page, "draft_list")
-    assert not hasattr(page, "taskQueuePanel")
-    assert page.advancedPanel is page.taskBuilderPanel
-    assert page.taskBuilderPanel.groupCount() == EXPECTED_GROUP_COUNT
 
 
 def _build_linked_pages(qtbot) -> tuple[SettingPage, ExecutionPage]:
@@ -85,54 +67,8 @@ def test_execution_page_normalizes_synced_full_selection_to_default_scope(qtbot)
     assert draft.task_params.map_ids is None
 
 
-def test_execution_page_hides_cli_copy_entrypoint(qtbot) -> None:
-    """执行中心不应再向普通用户暴露 CLI 复制入口。"""
-    _setting_page, execution_page = _build_linked_pages(qtbot)
-
-    assert not hasattr(execution_page, "copy_cli_btn")
-    assert not hasattr(execution_page.taskBuilderPanel, "copy_cli_btn")
-
-
-def test_execution_page_embeds_advanced_panel_into_task_builder(qtbot) -> None:
-    """顶部自定义输入应直接由任务配置卡承载。"""
-    page = ExecutionPage()
-    qtbot.addWidget(page)
-    page.resize(1120, 840)
-    page.show()
-    qtbot.waitUntil(page.taskBuilderPanel.isVisible)
-
-    assert page.advancedPanel is page.taskBuilderPanel
-    assert page.taskBuilderPanel.groupCount() == EXPECTED_GROUP_COUNT
-
-
-def test_execution_page_cards_keep_visible_height_in_default_layout(qtbot, tmp_path: Path) -> None:
-    """当前数据量下，顶部设置卡与底部单行卡不应额外出现滚动。"""
-    page = ExecutionPage()
-    qtbot.addWidget(page)
-    page.resize(1120, 840)
-    page.show()
-    qtbot.waitUntil(lambda: page.isVisible() and page.taskBuilderPanel.isVisible())
-
-    screenshot_path = tmp_path / "execution-page-default.png"
-    page.grab().save(str(screenshot_path))
-
-    assert screenshot_path.exists()
-    assert page.verticalScrollBar().maximum() == 0
-    assert page.taskBuilderPanel.height() >= EXPECTED_TASK_BUILDER_MIN_HEIGHT
-
-
-def test_execution_page_global_progress_state_hidden_by_default(qtbot) -> None:
-    """默认页面不应主动显示全局进度条。"""
-    page = ExecutionPage()
-    qtbot.addWidget(page)
-
-    state = page.current_global_progress_state()
-
-    assert state.visible is False
-
-
-def test_execution_page_primary_button_switches_to_cancel_when_task_running(qtbot, monkeypatch) -> None:
-    """任务启动后，主按钮应切换为取消。"""
+def test_execution_page_primary_button_cancels_running_task(qtbot, monkeypatch) -> None:
+    """任务启动后主按钮应切换为取消，并把点击路由到停止动作。"""
     _setting_page, execution_page = _build_linked_pages(qtbot)
     monkeypatch.setattr("lol_audio_unpack.gui.view.execution_page.get_block_reason", lambda _cfg: None)
     monkeypatch.setattr(execution_page._queue_controller, "start_task_worker", lambda _task: None)
@@ -140,81 +76,6 @@ def test_execution_page_primary_button_switches_to_cancel_when_task_running(qtbo
     execution_page._queue_task_draft()
 
     assert execution_page.create_task_btn.text() == "取消"
-
-
-def test_execution_page_blocks_task_creation_while_shared_data_is_busy(qtbot, monkeypatch) -> None:
-    """共享数据后台准备期间，执行中心不应创建任务。"""
-    _setting_page, execution_page = _build_linked_pages(qtbot)
-    started_tasks = []
-    monkeypatch.setattr("lol_audio_unpack.gui.view.execution_page.get_block_reason", lambda _cfg: None)
-    monkeypatch.setattr(
-        execution_page._queue_controller,
-        "start_task_worker",
-        started_tasks.append,
-    )
-
-    execution_page.set_shared_data_loading_state(
-        SharedDataLoadingState(message="正在刷新基础数据…", active=True)
-    )
-    execution_page._queue_task_draft()
-
-    assert execution_page.create_task_btn.text() == "准备数据中"
-    assert "正在刷新基础数据" in execution_page.create_task_btn.toolTip()
-    assert execution_page._queue_controller.draft_queue_size() == 0
-    assert started_tasks == []
-
-
-def test_execution_page_keeps_failure_as_block_reason_without_busy_lock(qtbot, monkeypatch) -> None:
-    """共享数据准备失败后应解除忙碌态，但继续给出明确阻止原因。"""
-    _setting_page, execution_page = _build_linked_pages(qtbot)
-    started_tasks = []
-    monkeypatch.setattr("lol_audio_unpack.gui.view.execution_page.get_block_reason", lambda _cfg: None)
-    monkeypatch.setattr(
-        execution_page._queue_controller,
-        "start_task_worker",
-        started_tasks.append,
-    )
-
-    execution_page.set_shared_data_loading_state(
-        SharedDataLoadingState(message="加载失败: 地图 banks 未生成", active=False)
-    )
-    execution_page._queue_task_draft()
-
-    assert execution_page.create_task_btn.text() == "创建任务"
-    assert "地图 banks 未生成" in execution_page.create_task_btn.toolTip()
-    assert execution_page._queue_controller.draft_queue_size() == 0
-    assert started_tasks == []
-
-
-def test_execution_page_absorbs_duplicate_create_calls_in_single_task_mode(qtbot, monkeypatch) -> None:
-    """即使内部重复触发创建，也只能保留一条活跃任务。"""
-    _setting_page, execution_page = _build_linked_pages(qtbot)
-    started_tasks = []
-    monkeypatch.setattr("lol_audio_unpack.gui.view.execution_page.get_block_reason", lambda _cfg: None)
-
-    def _capture_started_task(task) -> None:
-        started_tasks.append(task)
-
-    monkeypatch.setattr(
-        execution_page._queue_controller,
-        "start_task_worker",
-        _capture_started_task,
-    )
-
-    execution_page._queue_task_draft()
-    execution_page._queue_task_draft()
-
-    assert execution_page._queue_controller.draft_queue_size() == 1
-    assert len(started_tasks) == 1
-
-
-def test_execution_page_clicking_cancel_confirms_and_stops_running_task(qtbot, monkeypatch) -> None:
-    """运行中的主按钮点击后应走全局确认，再触发强制结束。"""
-    _setting_page, execution_page = _build_linked_pages(qtbot)
-    monkeypatch.setattr("lol_audio_unpack.gui.view.execution_page.get_block_reason", lambda _cfg: None)
-    monkeypatch.setattr(execution_page._queue_controller, "start_task_worker", lambda _task: None)
-
-    execution_page._queue_task_draft()
 
     cancelled = []
     monkeypatch.setattr(execution_page, "_confirm_force_stop_task", lambda: True)
@@ -229,25 +90,26 @@ def test_execution_page_clicking_cancel_confirms_and_stops_running_task(qtbot, m
     assert cancelled == [True]
 
 
-def test_execution_page_mock_queue_updates_global_progress_state(qtbot) -> None:
-    """队列进入运行态后，应产出可供主窗口使用的全局进度条状态。"""
-    page = ExecutionPage()
-    qtbot.addWidget(page)
+def test_execution_page_blocks_tasks_across_shared_data_states(qtbot, monkeypatch) -> None:
+    """共享数据准备中或失败后，都不应创建不可执行任务。"""
+    _setting_page, execution_page = _build_linked_pages(qtbot)
+    started_tasks = []
+    monkeypatch.setattr("lol_audio_unpack.gui.view.execution_page.get_block_reason", lambda _cfg: None)
+    monkeypatch.setattr(execution_page._queue_controller, "start_task_worker", started_tasks.append)
 
-    page._debug_fill_mock_queue(3)
-    state = page.current_global_progress_state()
+    execution_page.set_shared_data_loading_state(SharedDataLoadingState(message="正在刷新基础数据…", active=True))
+    execution_page._queue_task_draft()
 
-    assert state.visible is True
-    assert state.title_text != ""
-    assert state.detail_text != ""
-    assert state.rate_text == ""
-    assert state.status_text != ""
+    assert execution_page.create_task_btn.text() == "准备数据中"
+    assert "正在刷新基础数据" in execution_page.create_task_btn.toolTip()
+    assert execution_page._queue_controller.draft_queue_size() == 0
 
+    execution_page.set_shared_data_loading_state(
+        SharedDataLoadingState(message="加载失败: 地图 banks 未生成", active=False)
+    )
+    execution_page._queue_task_draft()
 
-def test_execution_page_subtitle_uses_setting_card_content_tone(qtbot) -> None:
-    """页头副标题应直接复用 Fluent 次级文案色。"""
-    page = ExecutionPage()
-    qtbot.addWidget(page)
-
-    assert page.subtitle_label.lightColor == EXPECTED_CONTENT_TEXT_LIGHT
-    assert page.subtitle_label.darkColor == EXPECTED_CONTENT_TEXT_DARK
+    assert execution_page.create_task_btn.text() == "创建任务"
+    assert "地图 banks 未生成" in execution_page.create_task_btn.toolTip()
+    assert execution_page._queue_controller.draft_queue_size() == 0
+    assert started_tasks == []

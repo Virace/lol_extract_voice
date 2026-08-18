@@ -44,7 +44,7 @@ def _build_entity() -> AudioEntityData:
     )
 
 
-def _entity_folder(entity: AudioEntityData) -> str:
+def _format_entity_folder(entity: AudioEntityData) -> str:
     return format_entity_folder_name(
         entity.entity_id,
         entity.entity_alias,
@@ -57,7 +57,7 @@ def test_resolve_audio_paths_returns_existing_grouped_type_dirs(tmp_path: Path) 
     ctx = _build_ctx(tmp_path, group_by_type=True, include_types=("VO", "SFX", "MUSIC"))
     entity = _build_entity()
     version = "15.7"
-    entity_folder = _entity_folder(entity)
+    entity_folder = _format_entity_folder(entity)
 
     vo_dir = ctx.paths.audio_path / version / "VO" / "champions" / entity_folder
     sfx_dir = ctx.paths.audio_path / version / "SFX" / "champions" / entity_folder
@@ -71,7 +71,7 @@ def test_resolve_audio_paths_grouped_type_includes_lobby_dir_when_present(tmp_pa
     ctx = _build_ctx(tmp_path, group_by_type=True, include_types=("VO", "SFX", "MUSIC"))
     entity = _build_entity()
     version = "15.7"
-    entity_folder = _entity_folder(entity)
+    entity_folder = _format_entity_folder(entity)
 
     vo_dir = ctx.paths.audio_path / version / "VO" / "champions" / entity_folder
     lobby_dir = ctx.paths.audio_path / version / "champions" / entity_folder / "lobby"
@@ -85,7 +85,7 @@ def test_resolve_audio_paths_returns_flat_entity_dir_when_not_grouped(tmp_path: 
     ctx = _build_ctx(tmp_path, group_by_type=False)
     entity = _build_entity()
     version = "15.7"
-    entity_folder = _entity_folder(entity)
+    entity_folder = _format_entity_folder(entity)
 
     entity_dir = ctx.paths.audio_path / version / "champions" / entity_folder
     entity_dir.mkdir(parents=True)

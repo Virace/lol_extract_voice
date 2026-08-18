@@ -1,4 +1,4 @@
-﻿"""执行中心页面，承接任务创建、队列执行与日志同步。"""
+"""执行中心页面，承接任务创建、队列执行与日志同步。"""
 
 from __future__ import annotations
 
@@ -6,9 +6,8 @@ from typing import Any
 
 from loguru import logger
 from PySide6.QtCore import Signal
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QMessageBox, QVBoxLayout, QWidget
-from qfluentwidgets import CaptionLabel, InfoBarPosition, SmoothScrollArea, SubtitleLabel
+from PySide6.QtWidgets import QMessageBox, QSizePolicy, QVBoxLayout, QWidget
+from qfluentwidgets import CaptionLabel, InfoBarPosition, SmoothScrollArea, SubtitleLabel, qconfig
 
 from lol_audio_unpack.gui.common import (
     GUI_LOG_FORMAT,
@@ -31,17 +30,12 @@ from lol_audio_unpack.gui.controllers import (
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest, SharedDataLoadingState
 from lol_audio_unpack.gui.controllers.entity_data_store import EntityDataStore
 from lol_audio_unpack.gui.task_models import ExecutionTaskResult, QueuedExecutionTask
-from lol_audio_unpack.gui.view.execution.progress_state import (
-    build_global_progress_strip_state,
-    build_progress_display_state,
-)
+from lol_audio_unpack.gui.theme import get_accent_text_color_pair
+from lol_audio_unpack.gui.view.execution.progress_state import build_global_progress_strip_state
 from lol_audio_unpack.gui.view.execution.selection_conflict_dialog import (
     ask_selection_conflict_resolution,
 )
 from lol_audio_unpack.gui.view.execution.task_creation_card import TaskCreationCard
-
-FLUENT_CONTENT_TEXT_LIGHT = QColor(96, 96, 96)
-FLUENT_CONTENT_TEXT_DARK = QColor(206, 206, 206)
 
 
 class ExecutionPage(SmoothScrollArea):
@@ -81,6 +75,10 @@ class ExecutionPage(SmoothScrollArea):
         self._log_controller.log_lines_appended.connect(self.log_lines_appended.emit)
         self.destroyed.connect(self._log_controller.detach_runtime_log_sink)
         self._build_ui()
+        qconfig.themeChanged.connect(self._refresh_theme_styles)
+        qconfig.themeColorChanged.connect(self._refresh_theme_styles)
+        self.destroyed.connect(self._disconnect_theme_signals)
+        self._refresh_theme_styles()
         self._queue_controller = ExecutionQueueController(
             build_task_item_tooltip=self._build_task_item_tooltip,
             single_task_mode=True,
@@ -94,18 +92,15 @@ class ExecutionPage(SmoothScrollArea):
         apply_page_content_margins(self.expandLayout)
         self.expandLayout.setSpacing(16)
 
-        header_widget = QWidget(self.view)
-        header_layout = QVBoxLayout(header_widget)
+        header_layout = QVBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(4)
-        title_label = SubtitleLabel("执行中心", header_widget)
-        self.subtitle_label = CaptionLabel("在这里补充自定义参数并创建任务。", header_widget)
+        title_label = SubtitleLabel("执行中心", self.view)
+        self.subtitle_label = CaptionLabel("在这里补充自定义参数并创建任务。", self.view)
         self.subtitle_label.setWordWrap(True)
-        self.subtitle_label.setTextColor(FLUENT_CONTENT_TEXT_LIGHT, FLUENT_CONTENT_TEXT_DARK)
         header_layout.addWidget(title_label)
         header_layout.addWidget(self.subtitle_label)
-        header_widget.resize(header_widget.width(), header_widget.sizeHint().height())
-        self.expandLayout.addWidget(header_widget)
+        self.expandLayout.addLayout(header_layout)
 
         self.taskBuilderPanel = TaskCreationCard(self.view)
         self.advancedPanel = self.taskBuilderPanel
@@ -121,26 +116,43 @@ class ExecutionPage(SmoothScrollArea):
         self.wav_task_cb = self.taskBuilderPanel.wav_task_cb
         self.mapping_task_cb = self.taskBuilderPanel.mapping_task_cb
         self.create_task_btn = self.taskBuilderPanel.create_task_btn
-        self.expandLayout.addWidget(self.taskBuilderPanel)
+        self.taskActionCard = self.taskBuilderPanel.create_action_card(self.view)
+        self.expandLayout.addWidget(self.taskBuilderPanel, 0)
+        self.expandLayout.addWidget(self.taskActionCard, 0)
+        self.expandLayout.addStretch(1)
 
         self.bottom_spacing_widget = QWidget(self.view)
         self.bottom_spacing_widget.setFixedHeight(20)
-        self.expandLayout.addWidget(self.bottom_spacing_widget)
+        self.bottom_spacing_widget.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Fixed,
+        )
+        self.expandLayout.addWidget(self.bottom_spacing_widget, 0)
+
+    def _refresh_theme_styles(self, *_args: object) -> None:
+        """刷新页面引导副标题的强调色。"""
+        light, dark = get_accent_text_color_pair()
+        self.subtitle_label.setTextColor(light, dark)
+
+    def _disconnect_theme_signals(self, *_args: object) -> None:
+        """释放页面持有的全局主题信号连接。"""
+        for signal in (qconfig.themeChanged, qconfig.themeColorChanged):
+            try:
+                signal.disconnect(self._refresh_theme_styles)
+            except (RuntimeError, TypeError):
+                pass
 
     def _setup_connections(self) -> None:
         self._queue_controller.task_running_changed.connect(self._set_task_running_state)
         self._queue_controller.task_queue_busy_changed.connect(self._set_task_queue_busy_state)
         self._queue_controller.progress_display_requested.connect(
             lambda update: self._refresh_progress_panel(
-                status_text=update.status_text,
                 note_text=update.note_text,
                 progress_current=update.progress_current,
                 progress_total=update.progress_total,
             )
         )
-        self._queue_controller.log_requested.connect(
-            lambda event: self._log_gui_event(event.level, event.message)
-        )
+        self._queue_controller.log_requested.connect(lambda event: self._log_gui_event(event.level, event.message))
         self._queue_controller.output_state_refresh_requested.connect(self.output_state_refresh_requested.emit)
         self._queue_controller.feedback_requested.connect(
             lambda notice: show_feedback_infobar(
@@ -191,9 +203,7 @@ class ExecutionPage(SmoothScrollArea):
         else:
             self._shared_data_busy_message = ""
             self._shared_data_block_reason = (
-                f"共享数据暂不可用：{message}"
-                if message and message != "实体数据已就绪"
-                else ""
+                f"共享数据暂不可用：{message}" if message and message != "实体数据已就绪" else ""
             )
         self._sync_primary_action_button()
 
@@ -315,32 +325,19 @@ class ExecutionPage(SmoothScrollArea):
     def _refresh_progress_panel(
         self,
         *,
-        status_text: str | None = None,
         note_text: str | None = None,
         progress_current: int | None = None,
         progress_total: int | None = None,
     ) -> None:
         """刷新主窗口底部全局进度条状态。"""
-        draft_count = self._queue_controller.draft_queue_size()
         counts = self._queue_controller.queue_status_counts()
         running_task = self._queue_controller.find_running_task()
-        display_state = build_progress_display_state(
-            draft_count=draft_count,
+        next_global_progress_state = build_global_progress_strip_state(
             counts=counts,
             running_task=running_task,
-            status_text=status_text,
             note_text=note_text,
             progress_current=progress_current,
             progress_total=progress_total,
-        )
-        next_global_progress_state = build_global_progress_strip_state(
-            draft_count=draft_count,
-            counts=counts,
-            running_task=running_task,
-            status_text=display_state.status_text,
-            note_text=display_state.note_text,
-            progress_current=display_state.progress_value,
-            progress_total=display_state.progress_total,
         )
         if next_global_progress_state == self._current_global_progress_state:
             return
@@ -359,9 +356,7 @@ class ExecutionPage(SmoothScrollArea):
             return
         if self._shared_data_busy_message:
             self.create_task_btn.setText("准备数据中")
-            self.create_task_btn.setToolTip(
-                f"后台数据准备中：{self._shared_data_busy_message} 完成后才能创建任务。"
-            )
+            self.create_task_btn.setToolTip(f"后台数据准备中：{self._shared_data_busy_message} 完成后才能创建任务。")
             return
         self.create_task_btn.setText("创建任务")
         self.create_task_btn.setToolTip(self._shared_data_block_reason)
@@ -388,9 +383,7 @@ class ExecutionPage(SmoothScrollArea):
         dialog.setWindowTitle("结束当前任务")
         dialog.setText("当前任务仍在执行。")
         dialog.setInformativeText("确认后会强制结束当前任务，未完成的执行过程会立即停止。")
-        dialog.setStandardButtons(
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel
-        )
+        dialog.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
         dialog.button(QMessageBox.StandardButton.Yes).setText("结束任务")
         dialog.button(QMessageBox.StandardButton.Cancel).setText("取消")

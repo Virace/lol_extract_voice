@@ -1,4 +1,6 @@
-﻿from __future__ import annotations
+"""首页环境引导、状态概览与常用路径入口。"""
+
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional
@@ -9,19 +11,11 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
-    CardWidget,
-    FlowLayout,
-    IconWidget,
     IndeterminateProgressBar,
-    InfoBar,
-    InfoBarPosition,
-    PrimaryPushButton,
-    ProgressBar,
-    PushButton,
     SmoothScrollArea,
     StrongBodyLabel,
-    SubtitleLabel,
     TitleLabel,
+    qconfig,
 )
 from qfluentwidgets import FluentIcon as FIF
 
@@ -34,11 +28,12 @@ from lol_audio_unpack.gui.controllers import (
     HomeStatusController,
     HomeStatusDisplayState,
 )
+from lol_audio_unpack.gui.theme import get_accent_text_color_pair
 from lol_audio_unpack.gui.view.home.widgets import (
-    ClickableCard,
     CompactStatusCard,
     ExecutionEntryCard,
     QuickOpenRow,
+    StatusLine,
 )
 from lol_audio_unpack.utils.runtime_paths import (
     detect_runtime_paths,
@@ -55,14 +50,12 @@ from lol_audio_unpack.utils.runtime_paths import (
 # HomePage
 # ---------------------------------------------------------------------------
 
-class HomePage(SmoothScrollArea):
-    """Home page showing an overview dashboard with clickable folder cards.
 
-    On show, a background worker reads the game version and checks whether
-    a matching audio cache exists under the configured output directory.
-    """
+class HomePage(SmoothScrollArea):
+    """展示运行环境、版本产物和常用路径入口的首页。"""
 
     navigate_to_execution_requested = Signal()
+    navigate_to_overview_requested = Signal()
 
     def __init__(self, cfg: GuiConfig, parent=None):
         super().__init__(parent=parent)
@@ -80,6 +73,10 @@ class HomePage(SmoothScrollArea):
 
         self._build_ui()
         self._sync_from_config()
+        qconfig.themeChanged.connect(self._refresh_theme_styles)
+        qconfig.themeColorChanged.connect(self._refresh_theme_styles)
+        self.destroyed.connect(self._disconnect_theme_signals)
+        self._refresh_theme_styles()
 
     def showEvent(self, event: QShowEvent) -> None:
         """在页面首次显示后再启动首页状态检查。"""
@@ -113,21 +110,20 @@ class HomePage(SmoothScrollArea):
         root_layout.addWidget(self.title_label)
 
         desc = BodyLabel(
-            "该工具用于提取《英雄联盟》客户端中的原始音频资源，输出 `.wem` 文件，"
-            "这包含了英雄与地图相关的可用资源。",
+            "该工具用于提取《英雄联盟》客户端中的原始音频资源，输出 `.wem` 文件，这包含了英雄与地图相关的可用资源。",
             self,
         )
         desc.setWordWrap(True)
         root_layout.addWidget(desc)
 
         # ── Loading (indeterminate until worker finishes) ───────────────
-        self._loading_widget = QWidget(self)
+        self._loading_widget = QWidget(self.view)
         loading_layout = QVBoxLayout(self._loading_widget)
         loading_layout.setContentsMargins(0, 0, 0, 0)
         loading_layout.setSpacing(6)
-        self.loading_label = CaptionLabel("正在读取游戏版本…", self)
-        self.progress_bar = IndeterminateProgressBar(self)
-        loading_layout.addWidget(self.loading_label)
+        self.environment_status = StatusLine("正在准备运行环境…", self._loading_widget)
+        self.progress_bar = IndeterminateProgressBar(self._loading_widget)
+        loading_layout.addWidget(self.environment_status)
         loading_layout.addWidget(self.progress_bar)
         root_layout.addWidget(self._loading_widget)
 
@@ -140,14 +136,16 @@ class HomePage(SmoothScrollArea):
         self.version_card.setJumpEnabled(False)
         self.version_card.setDetailText("当前游戏客户端版本。")
 
-        self.cache_card = CompactStatusCard(FIF.SYNC, "资源状态", "检查中…", self.top_status_widget)
-        self.cache_card.setJumpEnabled(False)
-        self.cache_card.setDetailText("当前缓存资源状态。")
+        self.entity_data_card = CompactStatusCard(FIF.DOCUMENT, "实体数据", "准备中…", self.top_status_widget)
+        self.entity_data_card.setJumpEnabled(False)
+        self.entity_data_card.setDetailText("正在读取英雄和地图信息。")
+        self.entity_data_card.set_status_role("info")
 
         self.execution_center_card = ExecutionEntryCard(self.top_status_widget)
         self.execution_center_card.requested.connect(self.navigate_to_execution_requested.emit)
+        self.execution_center_card.overview_requested.connect(self.navigate_to_overview_requested.emit)
 
-        for card in (self.version_card, self.cache_card, self.execution_center_card):
+        for card in (self.version_card, self.entity_data_card, self.execution_center_card):
             card.setMinimumHeight(116)
             self.top_status_layout.addWidget(card, 1)
 
@@ -222,18 +220,14 @@ class HomePage(SmoothScrollArea):
             self.output_dir_card.setPath(cfg.output_path)
         else:
             self.output_dir_card.setPath(str(get_default_output_root(runtime_paths)))
-            self.output_dir_card.setDisplayText(
-                self._default_relative_display_path(get_default_output_relative_path())
-            )
+            self.output_dir_card.setDisplayText(self._default_relative_display_path(get_default_output_relative_path()))
         self.output_dir_card.setJumpEnabled(True)
 
         if cfg.wwiser_path:
             self.wwiser_card.setPath(cfg.wwiser_path)
         else:
             self.wwiser_card.setPath(str(get_default_wwiser_path(runtime_paths)))
-            self.wwiser_card.setDisplayText(
-                self._default_relative_display_path(get_default_wwiser_relative_path())
-            )
+            self.wwiser_card.setDisplayText(self._default_relative_display_path(get_default_wwiser_relative_path()))
         self.wwiser_card.setJumpEnabled(True)
         if cfg.vgmstream_path:
             self.vgmstream_card.setPath(cfg.vgmstream_path)
@@ -272,9 +266,11 @@ class HomePage(SmoothScrollArea):
         self._current_version = state.current_version
         self.version_card.setDisplayText(state.version_text)
         self.version_card.setJumpEnabled(state.version_jump_enabled)
-        self.cache_card.setPath(state.cache_path)
-        self.cache_card.setDisplayText(state.cache_text)
-        self.cache_card.setJumpEnabled(state.cache_jump_enabled)
+        self.version_card.setDetailText(state.version_detail)
+        self.version_card.set_status_role(state.version_role)
+        self.execution_center_card.setDisplayText(state.cache_text)
+        self.execution_center_card.setDetailText(state.cache_detail)
+        self.execution_center_card.set_status_role(state.cache_role)
 
     def set_loading_state(self, message: str, *, active: bool) -> None:
         """更新首页顶部的加载状态条。
@@ -283,12 +279,52 @@ class HomePage(SmoothScrollArea):
             message: 当前要展示的状态文案。
             active: 是否处于活跃加载阶段。
         """
-        self._loading_widget.setVisible(True)
-        self.loading_label.setText(message)
         if active:
+            self.environment_status.set_status(message, role="info")
+            self.entity_data_card.setDisplayText("准备中…")
+            self.entity_data_card.setDetailText("正在读取英雄和地图信息。")
+            self.entity_data_card.set_status_role("info")
+            self.progress_bar.setVisible(True)
             self.progress_bar.start()
-        else:
-            self.progress_bar.stop()
+            return
+
+        self.progress_bar.stop()
+        self.progress_bar.setVisible(False)
+        if message == "实体数据已就绪":
+            self.environment_status.set_status("运行环境已就绪", role="success")
+            self.entity_data_card.setDisplayText("已就绪")
+            self.entity_data_card.setDetailText("可浏览全部英雄与地图信息。")
+            self.entity_data_card.set_status_role("success")
+            return
+
+        if "失败" in message:
+            self.environment_status.set_status("运行环境准备失败", role="critical")
+            self.entity_data_card.setDisplayText("加载失败")
+            self.entity_data_card.setDetailText("请检查设置与日志后重试。")
+            self.entity_data_card.set_status_role("critical")
+            return
+
+        self.environment_status.set_status(message or "运行环境暂不可用", role="caution")
+        self.entity_data_card.setDisplayText("等待配置")
+        self.entity_data_card.setDetailText("完成必要设置后会自动加载。")
+        self.entity_data_card.set_status_role("caution")
+
+    def _refresh_theme_styles(self, *_args: object) -> None:
+        """刷新首页的强调色引导文字与状态语义色。"""
+        light, dark = get_accent_text_color_pair()
+        self.entry_desc_label.setTextColor(light, dark)
+        self.environment_status.refresh_theme()
+        self.version_card.refresh_theme()
+        self.entity_data_card.refresh_theme()
+        self.execution_center_card.refresh_theme()
+
+    def _disconnect_theme_signals(self, *_args: object) -> None:
+        """释放首页持有的全局主题信号连接。"""
+        for signal in (qconfig.themeChanged, qconfig.themeColorChanged):
+            try:
+                signal.disconnect(self._refresh_theme_styles)
+            except (RuntimeError, TypeError):
+                pass
 
     # ------------------------------------------------------------------
     # Public update helpers (called by MainWindow on settings change)
@@ -311,9 +347,7 @@ class HomePage(SmoothScrollArea):
         else:
             runtime_paths = self._runtime_paths()
             self.output_dir_card.setPath(str(get_default_output_root(runtime_paths)))
-            self.output_dir_card.setDisplayText(
-                self._default_relative_display_path(get_default_output_relative_path())
-            )
+            self.output_dir_card.setDisplayText(self._default_relative_display_path(get_default_output_relative_path()))
         # Re-check cache with new output path
         if self._current_version:
             self._start_home_status_check()
@@ -325,9 +359,7 @@ class HomePage(SmoothScrollArea):
 
         runtime_paths = self._runtime_paths()
         self.wwiser_card.setPath(str(get_default_wwiser_path(runtime_paths)))
-        self.wwiser_card.setDisplayText(
-            self._default_relative_display_path(get_default_wwiser_relative_path())
-        )
+        self.wwiser_card.setDisplayText(self._default_relative_display_path(get_default_wwiser_relative_path()))
 
     def update_vgmstream(self, path: str) -> None:
         if path:
@@ -336,9 +368,7 @@ class HomePage(SmoothScrollArea):
 
         runtime_paths = self._runtime_paths()
         self.vgmstream_card.setPath(str(get_default_vgmstream_path(runtime_paths)))
-        self.vgmstream_card.setDisplayText(
-            self._default_relative_display_path(get_default_vgmstream_relative_path())
-        )
+        self.vgmstream_card.setDisplayText(self._default_relative_display_path(get_default_vgmstream_relative_path()))
 
     # Legacy compat
     def update_dir_status(self, has_dir: bool, version: str | None = None) -> None:

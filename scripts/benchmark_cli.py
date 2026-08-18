@@ -252,7 +252,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("benchmarks/latest.json"),
+        default=Path(".temp/benchmarks/latest.json"),
         help="基准结果输出路径（JSON）",
     )
     parser.add_argument(
@@ -276,7 +276,7 @@ def parse_args() -> argparse.Namespace:
         "--prepare-update",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="是否在解包前执行 --update（默认开启）",
+        help="是否在解包前执行 update 动作（默认开启）",
     )
     parser.add_argument(
         "--skip-events",
@@ -523,7 +523,7 @@ def pick_single_vo_champion_id(manifest_data: dict[str, Any], preferred_id: str 
     raise ValueError("当前 manifest 不包含任何英雄数据，无法执行 single_vo")
 
 
-def build_cli_base_command(ctx: BenchmarkContext) -> list[str]:
+def build_base_command(ctx: BenchmarkContext) -> list[str]:
     """构建 CLI 基础命令前缀。
 
     约定：
@@ -535,7 +535,7 @@ def build_cli_base_command(ctx: BenchmarkContext) -> list[str]:
     return [ctx.uv_entry, "run", "python", "-m", "lol_audio_unpack"]
 
 
-def append_optional_bool_flag(cmd: list[str], flag: str, value: bool | None) -> None:
+def append_bool_flag(cmd: list[str], flag: str, value: bool | None) -> None:
     """按值追加 bool 可选参数。"""
     if value is None:
         return
@@ -551,10 +551,10 @@ def build_update_command(
     with_bp_vo: bool | None,
 ) -> list[str]:
     """构建更新命令。"""
-    cmd = build_cli_base_command(ctx)
+    cmd = build_base_command(ctx)
     cmd.extend(
         [
-            "--update",
+            "update",
             "--max-workers",
             str(ctx.workers),
             "--log-level",
@@ -567,7 +567,7 @@ def build_update_command(
     )
     if skip_events:
         cmd.append("--skip-events")
-    append_optional_bool_flag(cmd, "--with-bp-vo", with_bp_vo)
+    append_bool_flag(cmd, "--with-bp-vo", with_bp_vo)
     return cmd
 
 
@@ -581,10 +581,11 @@ def build_single_vo_command(  # noqa: PLR0913
     with_bp_vo: bool | None,
 ) -> list[str]:
     """构建 single_vo 解包命令。"""
-    cmd = build_cli_base_command(ctx)
+    cmd = build_base_command(ctx)
     cmd.extend(
         [
-            "--extract-champions",
+            "extract",
+            "--champions",
             champion_id,
             "--max-workers",
             str(ctx.workers),
@@ -598,7 +599,7 @@ def build_single_vo_command(  # noqa: PLR0913
             exclude_type,
         ]
     )
-    append_optional_bool_flag(cmd, "--with-bp-vo", with_bp_vo)
+    append_bool_flag(cmd, "--with-bp-vo", with_bp_vo)
     return cmd
 
 
@@ -611,10 +612,10 @@ def build_full_extract_command(
     with_bp_vo: bool | None,
 ) -> list[str]:
     """构建全量解包命令。"""
-    cmd = build_cli_base_command(ctx)
+    cmd = build_base_command(ctx)
     cmd.extend(
         [
-            "--extract",
+            "extract",
             "--max-workers",
             str(ctx.workers),
             "--log-level",
@@ -627,7 +628,7 @@ def build_full_extract_command(
             exclude_type,
         ]
     )
-    append_optional_bool_flag(cmd, "--with-bp-vo", with_bp_vo)
+    append_bool_flag(cmd, "--with-bp-vo", with_bp_vo)
     return cmd
 
 
@@ -761,7 +762,7 @@ def run_full_extract_api(  # noqa: PLR0913
     app.extract(options)
 
 
-def execute_single_vo_scenario(
+def run_single_vo_scenario(
     ctx: BenchmarkContext,
     args: argparse.Namespace,
     *,
@@ -885,7 +886,7 @@ def execute_single_vo_scenario(
     )
 
 
-def execute_full_extract_scenario(
+def run_full_extract_scenario(
     ctx: BenchmarkContext,
     args: argparse.Namespace,
     *,
@@ -993,7 +994,7 @@ def execute_full_extract_scenario(
     )
 
 
-def execute_runner(  # noqa: PLR0913
+def run_for_runner(  # noqa: PLR0913
     args: argparse.Namespace,
     *,
     runner: str,
@@ -1017,7 +1018,7 @@ def execute_runner(  # noqa: PLR0913
 
     base_run_dir = output_path / "benchmark_runs" / f"{ctx.run_id}_{runner}"
     if args.mode in {"single_vo", "both"}:
-        execute_single_vo_scenario(
+        run_single_vo_scenario(
             ctx,
             args,
             game_path=game_path,
@@ -1026,7 +1027,7 @@ def execute_runner(  # noqa: PLR0913
         )
 
     if args.mode in {"full_extract", "both"}:
-        execute_full_extract_scenario(
+        run_full_extract_scenario(
             ctx,
             args,
             game_path=game_path,
@@ -1074,7 +1075,7 @@ def main() -> int:
         output_path.mkdir(parents=True, exist_ok=True)
         runners = [args.runner] if args.runner != "both" else ["cli", "api"]
         for runner in runners:
-            execute_runner(
+            run_for_runner(
                 args,
                 runner=runner,
                 game_path=game_path,
@@ -1110,6 +1111,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-
-
-

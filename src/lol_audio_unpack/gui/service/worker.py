@@ -9,17 +9,7 @@ if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
 
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
-
-
-def _is_expected_shared_data_control_flow_error(error: Exception | str) -> bool:
-    """判断共享数据加载异常是否属于预期的自动准备分支。"""
-    normalized = str(error)
-    return (
-        "请先运行更新程序" in normalized
-        or "请立即运行数据更新程序" in normalized
-        or "核心数据文件" in normalized
-        or "数据版本与游戏版本严重不匹配" in normalized
-    )
+from lol_audio_unpack.manager.errors import is_shared_data_not_ready
 
 
 class DataLoadWorker(QThread):
@@ -43,10 +33,8 @@ class DataLoadWorker(QThread):
             self.finished.emit(data)
             logger.debug(f"finished 信号已发送: {self.entity_type}")
         except Exception as e:
-            if _is_expected_shared_data_control_flow_error(e):
+            if is_shared_data_not_ready(e):
                 logger.info(f"{self.entity_type} 共享实体数据暂不可用，交由后续流程决定是否自动准备: {e}")
             else:
                 logger.opt(exception=True).error(f"{self.entity_type} 实体扫描失败: {e}")
             self.error.emit(str(e))
-
-

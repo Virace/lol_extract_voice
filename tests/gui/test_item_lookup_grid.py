@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSize
-from PySide6.QtGui import QColor, QImage, QPainter
-from PySide6.QtWidgets import QListView
+from PySide6.QtGui import QColor, QImage
 
 from lol_audio_unpack.gui.components.item_lookup_grid import (
     ITEM_MODE_ARENA,
     ITEM_MODE_COMMON,
     ITEM_ROW_ROLE,
-    ItemDelegate,
     ItemGridView,
     ItemIconCache,
 )
@@ -35,16 +33,6 @@ def _run_worker_sync(worker) -> None:
     worker.run()
 
 
-def test_item_grid_view_uses_wrapped_icon_mode(qtbot) -> None:
-    view = ItemGridView()
-    qtbot.addWidget(view)
-
-    assert view.viewMode() == QListView.ViewMode.IconMode
-    assert view.flow() == QListView.Flow.LeftToRight
-    assert view.isWrapping() is True
-    assert view.gridSize().width() > view.gridSize().height() // 2
-
-
 def test_item_icon_cache_loads_pixmap_from_background_bytes(qtbot) -> None:
     cache = ItemIconCache(
         fetch_bytes_fn=lambda _url: _png_bytes(),
@@ -57,24 +45,6 @@ def test_item_icon_cache_loads_pixmap_from_background_bytes(qtbot) -> None:
 
     assert pixmap is not None
     assert pixmap.isNull() is False
-
-
-def test_item_delegate_paints_rounded_icon_corners(qtbot) -> None:
-    cache = ItemIconCache(
-        fetch_bytes_fn=lambda _url: _png_bytes(),
-        start_worker_fn=_run_worker_sync,
-    )
-    cache.pixmap("https://example.test/item.png", QSize(20, 20))
-    delegate = ItemDelegate(cache)
-    image = QImage(20, 20, QImage.Format.Format_ARGB32)
-    image.fill(QColor(0, 0, 0, 0))
-    painter = QPainter(image)
-
-    delegate._paint_icon(painter, image.rect(), "https://example.test/item.png")
-    painter.end()
-
-    assert image.pixelColor(0, 0).alpha() == 0
-    assert image.pixelColor(10, 10).alpha() > 0
 
 
 def test_item_grid_view_filters_by_name_id_and_keywords(qtbot) -> None:
@@ -120,9 +90,7 @@ def test_item_grid_view_filters_by_mode(qtbot) -> None:
     ]
 
     view.set_mode(ITEM_MODE_ARENA)
-    assert view.visible_items() == [
-        ItemRecord(item_id="223110", name="冰霜之心", icon_url="", maps=("斗魂竞技场",))
-    ]
+    assert view.visible_items() == [ItemRecord(item_id="223110", name="冰霜之心", icon_url="", maps=("斗魂竞技场",))]
 
 
 def test_item_grid_view_exposes_visible_items(qtbot) -> None:

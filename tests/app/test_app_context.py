@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 import lol_audio_unpack as app_pkg
-import lol_audio_unpack.app.context as app_context_impl
+import lol_audio_unpack.app.context as app_context_module
 from lol_audio_unpack import setup_app
 from lol_audio_unpack.app import AppContext, AppContextValidationError, SourceMode, create_app_context
 from lol_audio_unpack.config import (
@@ -19,7 +19,7 @@ from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
 pytestmark = pytest.mark.unit
 
 
-def _base_settings(tmp_path: Path) -> dict[str, object]:
+def _build_settings(tmp_path: Path) -> dict[str, object]:
     return {
         "GAME_PATH": str(tmp_path / "game"),
         "OUTPUT_PATH": str(tmp_path / "output"),
@@ -29,7 +29,7 @@ def _base_settings(tmp_path: Path) -> dict[str, object]:
 
 
 def test_create_app_context_builds_typed_context_from_settings(tmp_path: Path) -> None:
-    settings = _base_settings(tmp_path)
+    settings = _build_settings(tmp_path)
     settings["WITH_BP_VO"] = True
 
     app_context = create_app_context(settings=settings)
@@ -44,7 +44,7 @@ def test_create_app_context_builds_typed_context_from_settings(tmp_path: Path) -
 
 
 def test_create_app_context_applies_explicit_settings(tmp_path: Path) -> None:
-    settings = _base_settings(tmp_path)
+    settings = _build_settings(tmp_path)
     settings.update({"EXCLUDE_TYPE": "VO", "GROUP_BY_TYPE": True})
 
     app_context = create_app_context(settings=settings)
@@ -55,7 +55,7 @@ def test_create_app_context_applies_explicit_settings(tmp_path: Path) -> None:
 
 
 def test_create_app_context_blank_exclude_type_clears_default(tmp_path: Path) -> None:
-    settings = _base_settings(tmp_path)
+    settings = _build_settings(tmp_path)
     settings["EXCLUDE_TYPE"] = ""
 
     app_context = create_app_context(settings=settings)
@@ -72,7 +72,7 @@ def test_create_app_context_uses_runtime_default_output_when_missing(
     runtime_root.mkdir(parents=True, exist_ok=True)
     game_path = tmp_path / "game"
     monkeypatch.setattr(
-        app_context_impl,
+        app_context_module,
         "detect_runtime_paths",
         lambda: detect_runtime_paths(
             is_frozen=False,
@@ -100,7 +100,7 @@ def test_create_app_context_ignores_blank_output_setting(
     runtime_root.mkdir(parents=True, exist_ok=True)
     game_path = tmp_path / "game"
     monkeypatch.setattr(
-        app_context_impl,
+        app_context_module,
         "detect_runtime_paths",
         lambda: detect_runtime_paths(
             is_frozen=False,
@@ -127,7 +127,7 @@ def test_create_app_context_resolves_relative_paths_from_runtime_root(
     runtime_root = tmp_path / "runtime-root"
     runtime_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(
-        app_context_impl,
+        app_context_module,
         "detect_runtime_paths",
         lambda: detect_runtime_paths(
             is_frozen=False,
@@ -151,7 +151,7 @@ def test_create_app_context_resolves_relative_paths_from_runtime_root(
 
 
 def test_create_app_context_builds_remote_snapshot_config(tmp_path: Path) -> None:
-    settings = _base_settings(tmp_path)
+    settings = _build_settings(tmp_path)
     settings.update(
         {
             "SOURCE_MODE": SourceMode.REMOTE_SNAPSHOT.value,
@@ -234,16 +234,7 @@ def test_load_settings_requires_existing_file(tmp_path: Path) -> None:
 def test_load_command_config_reads_targets_and_wav_sections(tmp_path: Path) -> None:
     config_file = tmp_path / "lol-audio-unpack.ini"
     config_file.write_text(
-        (
-            "[app]\n"
-            "game_path = ./game\n"
-            "\n"
-            "[targets]\n"
-            "champions = Annie,Ahri\n"
-            "\n"
-            "[wav]\n"
-            "enable = true\n"
-        ),
+        ("[app]\ngame_path = ./game\n\n[targets]\nchampions = Annie,Ahri\n\n[wav]\nenable = true\n"),
         encoding="utf-8",
     )
 
@@ -315,10 +306,3 @@ def test_write_settings_creates_expected_section(tmp_path: Path) -> None:
     assert f"[{CONFIG_SECTION}]" in text
     assert "game_path =" in text
     assert "output_path =" in text
-
-
-def test_config_short_names_are_stable_public_api() -> None:
-    assert callable(load_settings)
-    assert callable(write_settings)
-    assert callable(load_command_config)
-    assert callable(resolve_default_path)

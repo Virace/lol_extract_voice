@@ -294,7 +294,7 @@ def _run_subprocess(command: list[str], *, cwd: Path | None = None) -> subproces
     return completed
 
 
-def _decode_only_one_file(job: tuple[str, str]) -> int:
+def _decode_job(job: tuple[str, str]) -> int:
     """读取全部帧但不落盘，用于 decode-only 场景。"""
 
     path_text, format_mode = job
@@ -425,12 +425,12 @@ def _bench_py_decode_only(paths: list[Path], workers: int, input_bytes: int, for
     started = time.perf_counter()
     jobs = [(str(path), format_spec.mode) for path in paths]
     if workers == 1:
-        output_bytes = sum(_decode_only_one_file(job) for job in jobs)
+        output_bytes = sum(_decode_job(job) for job in jobs)
     else:
         with ProcessPoolExecutor(max_workers=workers) as executor:
             output_bytes = sum(
                 executor.map(
-                    _decode_only_one_file,
+                    _decode_job,
                     jobs,
                     chunksize=DEFAULT_DISPATCH_CHUNKSIZE,
                 )
@@ -491,7 +491,7 @@ def _bench_py_transcode(
 def _warm_up(cli_path: Path, sample_file: Path, format_spec: FormatSpec) -> None:
     """预热 DLL 与基本解码路径。"""
 
-    _decode_only_one_file((str(sample_file), format_spec.mode))
+    _decode_job((str(sample_file), format_spec.mode))
     _run_subprocess([str(cli_path), "-O", "-i", *format_spec.cli_args, str(sample_file)])
 
 

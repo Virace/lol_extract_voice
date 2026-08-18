@@ -1,4 +1,4 @@
-﻿"""应用主窗口与页面装配逻辑。"""
+"""应用主窗口与页面装配逻辑。"""
 
 from __future__ import annotations
 
@@ -392,6 +392,7 @@ class MainWindow(FluentWindow):
         si.wwiser_path_changed.connect(hi.update_wwiser)
         si.vgmstream_path_changed.connect(hi.update_vgmstream)
         hi.navigate_to_execution_requested.connect(lambda: self.switchTo(self.executionInterface))
+        hi.navigate_to_overview_requested.connect(lambda: self.switchTo(self.overviewInterface))
 
         # 注入配置到各业务页面
         self.executionInterface.set_gui_config(cfg)
@@ -421,15 +422,15 @@ class MainWindow(FluentWindow):
                 shared_data_controller=self._shared_data_controller,
             )
         )
-        self._progress_strip_host.strip_widget().stop_requested.connect(
-            self.executionInterface.request_cancel_task
-        )
+        self._progress_strip_host.strip_widget().stop_requested.connect(self.executionInterface.request_cancel_task)
         self.executionInterface.log_lines_appended.connect(self._log_drawer_controller.append_log_lines)
         self._progress_strip_host.set_state(
             self.executionInterface.current_global_progress_state(),
             animate=False,
         )
-        self.settingInterface.shared_context_input_changed.connect(self._shared_data_controller.on_context_input_changed)
+        self.settingInterface.shared_context_input_changed.connect(
+            self._shared_data_controller.on_context_input_changed
+        )
         self.settingInterface.smooth_scroll_changed.connect(
             lambda page_enabled, widget_enabled: apply_smooth_scroll_settings(
                 setting_page=self.settingInterface,
@@ -485,10 +486,7 @@ class MainWindow(FluentWindow):
         return bool(
             (home_page is not None and home_page.has_active_background_check())
             or (execution_page is not None and execution_page.has_active_background_task())
-            or (
-                shared_controller is not None
-                and shared_controller.has_active_background_work()
-            )
+            or (shared_controller is not None and shared_controller.has_active_background_work())
         )
 
     def _shutdown_background_work(self) -> None:

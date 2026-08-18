@@ -16,11 +16,36 @@ from qfluentwidgets import (
     PushButton,
     StrongBodyLabel,
     SubtitleLabel,
+    isDarkTheme,
 )
-from qfluentwidgets import FluentIcon as FIF
+from qfluentwidgets import (
+    FluentIcon as FIF,
+)
 
 from lol_audio_unpack.gui.common import format_default_relative_path
+from lol_audio_unpack.gui.theme import SemanticColorRole, get_semantic_text_color_pair
 from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths, resolve_runtime_path
+
+_STATUS_ICONS = {
+    "accent": FIF.INFO,
+    "info": FIF.INFO,
+    "success": FIF.ACCEPT,
+    "neutral": FIF.INFO,
+    "caution": FIF.QUESTION,
+    "critical": FIF.CANCEL,
+}
+
+
+def _apply_status_role(
+    *,
+    icon_widget: IconWidget,
+    label: BodyLabel | CaptionLabel,
+    role: SemanticColorRole,
+) -> None:
+    """把统一语义色应用到状态图标和文字。"""
+    light, dark = get_semantic_text_color_pair(role)
+    label.setTextColor(light, dark)
+    icon_widget.setIcon(_STATUS_ICONS[role].icon(color=dark if isDarkTheme() else light))
 
 
 class ElidedLabel(CaptionLabel):
@@ -41,9 +66,7 @@ class ElidedLabel(CaptionLabel):
 
     def _elide_text(self):
         metrics = self.fontMetrics()
-        elided = metrics.elidedText(
-            self._full_text, Qt.TextElideMode.ElideRight, self.width() - 2
-        )
+        elided = metrics.elidedText(self._full_text, Qt.TextElideMode.ElideRight, self.width() - 2)
         super().setText(elided)
 
 
@@ -99,9 +122,7 @@ class ClickableCard(CardWidget):
         self.headerLayout.addWidget(self.iconWidget)
         self.headerLayout.addStretch(1)
         self.headerLayout.addWidget(self.linkIcon)
-        self.headerLayout.setAlignment(
-            self.linkIcon, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight
-        )
+        self.headerLayout.setAlignment(self.linkIcon, Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignRight)
 
         self.titleLabel = SubtitleLabel(title, self)
 
@@ -137,11 +158,7 @@ class ClickableCard(CardWidget):
         """设置当前卡片是否允许跳转。"""
         self._jump_enabled = bool(is_enabled)
         self.linkIcon.setVisible(self._jump_enabled)
-        self.setCursor(
-            Qt.CursorShape.PointingHandCursor
-            if self._jump_enabled
-            else Qt.CursorShape.ArrowCursor
-        )
+        self.setCursor(Qt.CursorShape.PointingHandCursor if self._jump_enabled else Qt.CursorShape.ArrowCursor)
 
     def mouseReleaseEvent(self, e):
         super().mouseReleaseEvent(e)
@@ -171,6 +188,7 @@ class CompactStatusCard(CardWidget):
         super().__init__(parent)
         self._raw_path: str = ""
         self._jump_enabled = False
+        self._status_role: SemanticColorRole = "neutral"
 
         self.vBoxLayout = QVBoxLayout(self)
         self.vBoxLayout.setContentsMargins(18, 18, 18, 18)
@@ -202,6 +220,7 @@ class CompactStatusCard(CardWidget):
         self.vBoxLayout.addWidget(self.detailLabel)
         self.vBoxLayout.addStretch(1)
         self.setCursor(Qt.CursorShape.ArrowCursor)
+        self.set_status_role("neutral")
 
     def setPath(self, path: str) -> None:
         """设置当前状态卡关联的跳转路径。"""
@@ -216,6 +235,15 @@ class CompactStatusCard(CardWidget):
         self.detailLabel.setVisible(bool(text))
         self.detailLabel.setText(text)
 
+    def set_status_role(self, role: SemanticColorRole) -> None:
+        """设置主状态文字与图标的语义角色。"""
+        self._status_role = role
+        _apply_status_role(icon_widget=self.iconWidget, label=self.valueLabel, role=role)
+
+    def refresh_theme(self) -> None:
+        """在深浅主题或强调色变化后刷新语义色。"""
+        self.set_status_role(self._status_role)
+
     def isJumpEnabled(self) -> bool:
         """返回当前状态卡是否允许跳转。"""
         return self._jump_enabled
@@ -224,9 +252,7 @@ class CompactStatusCard(CardWidget):
         """设置状态卡是否允许跳转。"""
         self._jump_enabled = bool(is_enabled)
         self.linkIcon.setVisible(self._jump_enabled)
-        self.setCursor(
-            Qt.CursorShape.PointingHandCursor if self._jump_enabled else Qt.CursorShape.ArrowCursor
-        )
+        self.setCursor(Qt.CursorShape.PointingHandCursor if self._jump_enabled else Qt.CursorShape.ArrowCursor)
 
     def mouseReleaseEvent(self, event):
         """处理状态卡点击跳转。"""
@@ -249,29 +275,100 @@ class CompactStatusCard(CardWidget):
         )
 
 
+class StatusLine(QWidget):
+    """以图标、颜色和简短文案展示首页环境状态。"""
+
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        """初始化状态行。
+
+        Args:
+            text: 初始状态文案。
+            parent: 父级控件。
+        """
+        super().__init__(parent)
+        self._status_role: SemanticColorRole = "info"
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+        self.statusIcon = IconWidget(FIF.INFO, self)
+        self.statusIcon.setFixedSize(16, 16)
+        self.statusLabel = CaptionLabel(text, self)
+        self.statusLabel.setWordWrap(True)
+        layout.addWidget(self.statusIcon, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addWidget(self.statusLabel, 1)
+        self.set_status(text, role="info")
+
+    def set_status(self, text: str, *, role: SemanticColorRole) -> None:
+        """更新状态文案和语义角色。"""
+        self._status_role = role
+        self.statusLabel.setText(text)
+        _apply_status_role(icon_widget=self.statusIcon, label=self.statusLabel, role=role)
+
+    def refresh_theme(self) -> None:
+        """在深浅主题或强调色变化后刷新语义色。"""
+        self.set_status(self.statusLabel.text(), role=self._status_role)
+
+
 class ExecutionEntryCard(CardWidget):
-    """首页顶部的执行中心入口卡。"""
+    """首页顶部的当前版本产物状态与操作入口。"""
 
     requested = Signal()
+    overview_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.vBoxLayout = QVBoxLayout(self)
         self.vBoxLayout.setContentsMargins(18, 18, 18, 18)
-        self.vBoxLayout.setSpacing(8)
+        self.vBoxLayout.setSpacing(6)
+        self._status_role: SemanticColorRole = "neutral"
 
-        self.titleCaption = CaptionLabel("下一步", self)
-        self.titleLabel = StrongBodyLabel("前往执行中心", self)
-        self.detailLabel = CaptionLabel("去执行中心创建任务、查看进度。", self)
+        self.headerLayout = QHBoxLayout()
+        self.headerLayout.setContentsMargins(0, 0, 0, 0)
+        self.statusIcon = IconWidget(FIF.DOWNLOAD, self)
+        self.statusIcon.setFixedSize(18, 18)
+        self.titleCaption = CaptionLabel("当前版本产物", self)
+        self.headerLayout.addWidget(self.statusIcon)
+        self.headerLayout.addWidget(self.titleCaption)
+        self.headerLayout.addStretch(1)
+
+        self.titleLabel = StrongBodyLabel("检查中…", self)
+        self.detailLabel = CaptionLabel("正在检查当前版本的音频产物。", self)
         self.detailLabel.setWordWrap(True)
         self.action_button = PrimaryPushButton("进入执行中心", self)
+        self.overview_button = PushButton("查看总览", self)
         self.action_button.clicked.connect(self.requested.emit)
+        self.overview_button.clicked.connect(self.overview_requested.emit)
 
-        self.vBoxLayout.addWidget(self.titleCaption)
+        action_layout = QHBoxLayout()
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action_layout.setSpacing(8)
+        action_layout.addWidget(self.action_button)
+        action_layout.addWidget(self.overview_button)
+        action_layout.addStretch(1)
+
+        self.vBoxLayout.addLayout(self.headerLayout)
         self.vBoxLayout.addWidget(self.titleLabel)
         self.vBoxLayout.addWidget(self.detailLabel)
         self.vBoxLayout.addStretch(1)
-        self.vBoxLayout.addWidget(self.action_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        self.vBoxLayout.addLayout(action_layout)
+        self.set_status_role("neutral")
+
+    def setDisplayText(self, text: str) -> None:
+        """设置当前版本产物的主状态文案。"""
+        self.titleLabel.setText(text)
+
+    def setDetailText(self, text: str) -> None:
+        """设置当前版本产物的补充说明。"""
+        self.detailLabel.setText(text)
+
+    def set_status_role(self, role: SemanticColorRole) -> None:
+        """设置当前版本产物的语义角色。"""
+        self._status_role = role
+        _apply_status_role(icon_widget=self.statusIcon, label=self.titleLabel, role=role)
+
+    def refresh_theme(self) -> None:
+        """在深浅主题或强调色变化后刷新语义色。"""
+        self.set_status_role(self._status_role)
 
 
 class QuickOpenRow(CardWidget):

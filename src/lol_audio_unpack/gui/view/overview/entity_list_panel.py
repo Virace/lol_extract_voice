@@ -3,12 +3,86 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QItemSelectionModel, QModelIndex, QSignalBlocker, Qt
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QStackedWidget, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, PrimaryPushButton, PushButton, SearchLineEdit, SegmentedWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
+from qfluentwidgets import (
+    BodyLabel,
+    CaptionLabel,
+    PrimaryPushButton,
+    PushButton,
+    SearchLineEdit,
+    SegmentedWidget,
+    isDarkTheme,
+    qconfig,
+)
 
 from lol_audio_unpack.gui.common.font_compat import apply_line_edit_safe_font
+from lol_audio_unpack.gui.common.styles import resolve_fluent_entity_badge_colors
 from lol_audio_unpack.gui.components.overview_entity_list import OVERVIEW_ROW_ROLE, OverviewEntityListView
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
+
+
+class OverviewStatusLegend(QWidget):
+    """解释实体列表中 A 音频与 M 映射状态的轻量图例。"""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        """初始化状态图例。"""
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(5)
+        self.audio_badge = QLabel("A", self)
+        self.mapping_badge = QLabel("M", self)
+        self.audio_label = CaptionLabel("音频", self)
+        self.mapping_label = CaptionLabel("映射", self)
+        for badge in (self.audio_badge, self.mapping_badge):
+            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            badge.setFixedSize(22, 22)
+            badge_font = badge.font()
+            badge_font.setPixelSize(14)
+            badge_font.setWeight(badge_font.Weight.Medium)
+            badge.setFont(badge_font)
+        layout.addWidget(self.audio_badge)
+        layout.addWidget(self.audio_label)
+        layout.addSpacing(3)
+        layout.addWidget(self.mapping_badge)
+        layout.addWidget(self.mapping_label)
+        self.setToolTip("A 表示音频产物，M 表示事件映射产物。")
+        qconfig.themeChanged.connect(self.refresh_theme)
+        qconfig.themeColorChanged.connect(self.refresh_theme)
+        self.destroyed.connect(self._disconnect_theme_signals)
+        self.refresh_theme()
+
+    def refresh_theme(self, *_args: object) -> None:
+        """刷新 A/M 胶囊的深浅主题与强调色。"""
+        for badge, kind in (
+            (self.audio_badge, "audio"),
+            (self.mapping_badge, "mapping"),
+        ):
+            background, foreground = resolve_fluent_entity_badge_colors(
+                kind,
+                "已存在",
+                self.palette(),
+            )
+            badge.setStyleSheet(
+                "QLabel {"
+                f"background-color: {background.name()};"
+                f"color: {foreground.name()};"
+                "border-radius: 11px;"
+                "margin: 0;"
+                "padding: 0 0 1px 0;"
+                "}"
+            )
+        secondary = "#B3B3B3" if isDarkTheme() else "#616161"
+        for label in (self.audio_label, self.mapping_label):
+            label.setStyleSheet(f"color: {secondary};")
+
+    def _disconnect_theme_signals(self, *_args: object) -> None:
+        """释放图例持有的全局主题信号连接。"""
+        for signal in (qconfig.themeChanged, qconfig.themeColorChanged):
+            try:
+                signal.disconnect(self.refresh_theme)
+            except (RuntimeError, TypeError):
+                pass
 
 
 class OverviewEntityListPanel(QWidget):
@@ -38,8 +112,16 @@ class OverviewEntityListPanel(QWidget):
         apply_line_edit_safe_font(self.search_input)
         layout.addWidget(self.search_input)
 
-        self.selection_status_label = BodyLabel("已选 0 个英雄，0 张地图。", self)
-        layout.addWidget(self.selection_status_label)
+        status_row = QWidget(self)
+        status_layout = QHBoxLayout(status_row)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(8)
+        self.selection_status_label = BodyLabel("已选 0 个英雄，0 张地图。", status_row)
+        self.status_legend = OverviewStatusLegend(status_row)
+        status_layout.addWidget(self.selection_status_label)
+        status_layout.addStretch(1)
+        status_layout.addWidget(self.status_legend)
+        layout.addWidget(status_row)
 
         self.list_stack = QStackedWidget(self)
         for entity_type in ("champions", "maps"):
