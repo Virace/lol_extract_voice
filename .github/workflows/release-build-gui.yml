@@ -16,7 +16,7 @@ jobs:
       is_prerelease: ${{ steps.main_gate.outputs.is_prerelease }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.3
         with:
           fetch-depth: 0
 
@@ -45,20 +45,20 @@ jobs:
   build-gui-release:
     needs: verify-tag-target
     if: needs.verify-tag-target.outputs.on_main == 'true'
-    runs-on: windows-latest
+    runs-on: windows-2025
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v6.0.3
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v6.2.0
         with:
           python-version: '3.13'
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.2.0
 
       - name: Build GUI package
         shell: pwsh
@@ -109,7 +109,7 @@ jobs:
 
       - name: Publish GitHub release with custom notes
         if: steps.notes.outputs.use_custom == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3.0.0
         with:
           name: ${{ github.ref_name }}
           files: |
@@ -121,7 +121,7 @@ jobs:
 
       - name: Publish GitHub release with generated notes
         if: steps.notes.outputs.use_custom != 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3.0.0
         with:
           name: ${{ github.ref_name }}
           files: |

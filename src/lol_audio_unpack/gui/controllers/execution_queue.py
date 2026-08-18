@@ -44,15 +44,9 @@ def _build_output_state_refresh_request(
 
     task_params = task.draft.task_params
     champion_ids = (
-        tuple(str(entity_id) for entity_id in task_params.champion_ids)
-        if task_params.champion_ids is not None
-        else ()
+        tuple(str(entity_id) for entity_id in task_params.champion_ids) if task_params.champion_ids is not None else ()
     )
-    map_ids = (
-        tuple(str(entity_id) for entity_id in task_params.map_ids)
-        if task_params.map_ids is not None
-        else ()
-    )
+    map_ids = tuple(str(entity_id) for entity_id in task_params.map_ids) if task_params.map_ids is not None else ()
 
     if not champion_ids and not map_ids:
         return OutputStateRefreshRequest(requires_full_refresh=True)
@@ -146,14 +140,11 @@ class ExecutionQueueController(QObject):
         if started_task is None:
             self.progress_display_requested.emit(
                 QueueProgressUpdate(
-                    status_text="状态：任务已创建。",
                     note_text="0% · 当前任务等待启动。",
                     progress_current=0,
                     progress_total=1,
                 )
             )
-        elif self._active_task_id is not None:
-            self.progress_display_requested.emit(QueueProgressUpdate(status_text="状态：任务已创建。"))
         else:
             self.progress_display_requested.emit(QueueProgressUpdate())
 
@@ -196,7 +187,6 @@ class ExecutionQueueController(QObject):
             )
             self.progress_display_requested.emit(
                 QueueProgressUpdate(
-                    status_text="状态：任务启动中。",
                     note_text="当前进度：准备中 · 等待后台线程启动。",
                     progress_current=0,
                     progress_total=1,
@@ -212,12 +202,8 @@ class ExecutionQueueController(QObject):
         """为指定任务创建后台 worker 并提交到线程池。"""
         worker = ExecutionProcessWorker(task, parent=self)
         worker.signals.started.connect(lambda task_id=task.task_id: self.on_task_started(task_id))
-        worker.signals.progress.connect(
-            lambda progress, task_id=task.task_id: self.on_task_progress(task_id, progress)
-        )
-        worker.signals.finished.connect(
-            lambda result, task_id=task.task_id: self.on_task_finished(task_id, result)
-        )
+        worker.signals.progress.connect(lambda progress, task_id=task.task_id: self.on_task_progress(task_id, progress))
+        worker.signals.finished.connect(lambda result, task_id=task.task_id: self.on_task_finished(task_id, result))
         worker.signals.failed.connect(lambda error, task_id=task.task_id: self.on_task_failed(task_id, error))
         self._active_worker = worker
         worker.start()
@@ -232,7 +218,6 @@ class ExecutionQueueController(QObject):
         logger.info(f"[队列] 任务 #{task_id} 已开始执行")
         self.progress_display_requested.emit(
             QueueProgressUpdate(
-                status_text="状态：任务执行中。",
                 note_text=f"当前进度：准备中 · {task.progress_message or '后台任务已开始执行。'}",
                 progress_current=0,
                 progress_total=1,
@@ -272,9 +257,7 @@ class ExecutionQueueController(QObject):
             content = f"{content} 正在继续音频转码。"
         elif task.draft.task_params.run_mapping:
             content = f"{content} 正在继续事件映射。"
-        self.feedback_requested.emit(
-            GuiNotice(title=f"{stage_label}已结束", content=content, level="info")
-        )
+        self.feedback_requested.emit(GuiNotice(title=f"{stage_label}已结束", content=content, level="info"))
 
     def on_task_finished(self, task_id: int, result: object) -> None:
         """处理后台任务成功完成后的状态收敛。"""
@@ -406,7 +389,6 @@ class ExecutionQueueController(QObject):
         if task.status == TASK_STATUS_COMPLETED:
             self.progress_display_requested.emit(
                 QueueProgressUpdate(
-                    status_text="状态：最近任务已完成。",
                     note_text=f"100% · {task.result_summary or task_result.summary}",
                     progress_current=1,
                     progress_total=1,
@@ -415,7 +397,6 @@ class ExecutionQueueController(QObject):
         else:
             self.progress_display_requested.emit(
                 QueueProgressUpdate(
-                    status_text="状态：最近任务执行失败。",
                     note_text=f"当前进度：{task.progress_current}/{task.progress_total} · {task.error_message or task_result.summary}",
                     progress_current=task.progress_current,
                     progress_total=task.progress_total,

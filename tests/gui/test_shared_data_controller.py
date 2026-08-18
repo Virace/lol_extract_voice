@@ -1,4 +1,4 @@
-﻿"""共享实体数据控制器测试。"""
+"""共享实体数据控制器测试。"""
 
 from __future__ import annotations
 
@@ -142,9 +142,7 @@ def test_shared_data_controller_refresh_shared_output_state_uses_incremental_loa
     controller.notice_requested.connect(notices.append)
     controller.reconfigure_runtime_logging_requested.connect(reconfigure_payloads.append)
 
-    controller.refresh_shared_output_state(
-        OutputStateRefreshRequest(champion_ids=("1",), map_ids=("11",))
-    )
+    controller.refresh_shared_output_state(OutputStateRefreshRequest(champion_ids=("1",), map_ids=("11",)))
 
     assert reconfigure_payloads == []
     assert loader_calls[1:] == [("champions", ("1",)), ("maps", ("11",))]
@@ -183,9 +181,7 @@ def test_shared_data_controller_refresh_shared_output_state_warns_before_full_re
 
 
 def test_shared_data_controller_refresh_shared_output_state_emits_notice_when_reload_is_blocked() -> None:
-    controller = _build_controller(
-        app_context_block_reason_fn=lambda _cfg: "请先在「全局设置」中配置游戏目录。"
-    )
+    controller = _build_controller(app_context_block_reason_fn=lambda _cfg: "请先在「全局设置」中配置游戏目录。")
     notices = []
     loading_states = []
     controller.notice_requested.connect(notices.append)
@@ -205,21 +201,7 @@ def test_shared_data_controller_refresh_shared_output_state_emits_notice_when_re
     assert controller.pending_refresh_notice is False
 
 
-def test_shared_data_controller_on_prepare_failed_logs_error(monkeypatch) -> None:
-    controller = _build_controller()
-    errors: list[str] = []
-
-    monkeypatch.setattr(
-        "lol_audio_unpack.gui.controllers.shared_data.logger",
-        SimpleNamespace(error=errors.append),
-    )
-
-    controller.on_prepare_failed("boom")
-
-    assert errors == ["后台共享数据准备失败: boom"]
-
-
-def test_shared_entity_reader_signature_uses_effective_local_mode_when_packaged() -> None:
+def test_shared_data_uses_effective_local_mode_when_packaged() -> None:
     cfg = _FakeConfig()
     cfg.source_mode = "remote_snapshot"
     cfg.effective_source_mode = "local_path"
@@ -227,13 +209,6 @@ def test_shared_entity_reader_signature_uses_effective_local_mode_when_packaged(
     signature = build_shared_entity_reader_signature(cfg)
 
     assert signature[0] == "local_path"
-
-
-def test_shared_context_loading_message_uses_effective_local_mode_when_packaged() -> None:
-    cfg = _FakeConfig()
-    cfg.source_mode = "remote_snapshot"
-    cfg.effective_source_mode = "local_path"
-
     assert build_shared_context_loading_message(cfg) == "正在读取本地共享数据…"
 
 

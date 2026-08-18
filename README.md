@@ -34,6 +34,7 @@
 
 - [docs/README.md](./docs/README.md)
 - [docs/API.md](./docs/API.md)
+- [PROJECT_STANDARD.md](./PROJECT_STANDARD.md)（开发、命名与测试门禁）
 
 ## 当前代码结构
 

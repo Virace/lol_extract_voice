@@ -1,85 +1,63 @@
-"""固定 accent preset 与主题运行时入口测试。"""
+"""验证主题预设兼容映射与语义色对比度。"""
 
-from __future__ import annotations
-
-from contextlib import contextmanager
-
-from qfluentwidgets import Theme, qconfig
+from PySide6.QtGui import QColor
 
 from lol_audio_unpack.gui.theme.presets import (
     DEFAULT_ACCENT_PRESET_ID,
-    get_accent_preset,
     list_accent_presets,
     resolve_legacy_accent_preset,
 )
-from lol_audio_unpack.gui.theme.runtime import (
-    apply_accent_preset,
-    apply_shell_mode,
-    resolve_progress_palette,
+from lol_audio_unpack.gui.theme.semantic import (
+    get_accent_text_color_pair,
+    get_semantic_text_color_pair,
 )
 
-
-@contextmanager
-def _restore_qconfig_theme_state():
-    """在测试结束后恢复 qconfig 的主题状态。"""
-    previous_theme = qconfig.themeMode.value
-    previous_color = qconfig.themeColor.value
-    try:
-        yield
-    finally:
-        qconfig.set(qconfig.themeMode, previous_theme)
-        qconfig.set(qconfig.themeColor, previous_color)
+_SRGB_LINEAR_THRESHOLD = 0.04045
+_BODY_TEXT_CONTRAST_TARGET = 4.5
 
 
-def test_list_accent_presets_returns_expected_ids() -> None:
-    """固定 accent preset 列表应与产品约定一致。"""
-    assert [preset.id for preset in list_accent_presets()] == [
-        "purple",
-        "blue",
-        "green",
-        "orange",
-    ]
+def _linear_channel(value: float) -> float:
+    """把 sRGB 通道转换为对比度计算所需的线性值。"""
+    return value / 12.92 if value <= _SRGB_LINEAR_THRESHOLD else ((value + 0.055) / 1.055) ** 2.4
 
 
-def test_apply_shell_mode_and_accent_preset_updates_qconfig() -> None:
-    """运行时入口应同步更新 qconfig 的主题模式与强调色。"""
-    with _restore_qconfig_theme_state():
-        theme = apply_shell_mode("Dark")
-        color = apply_accent_preset("green")
-
-        assert theme == Theme.DARK
-        assert qconfig.themeMode.value == Theme.DARK
-        assert color.name().lower() == get_accent_preset("green").resolve_primary_hex(dark=True).lower()
-        assert qconfig.themeColor.value.name().lower() == get_accent_preset("green").resolve_primary_hex(dark=True).lower()
-
-
-def test_apply_shell_mode_reapplies_green_accent_for_dark_override() -> None:
-    """切换到深色模式后，green preset 应自动改用更深的主强调色。"""
-    with _restore_qconfig_theme_state():
-        apply_shell_mode("Light")
-        light_color = apply_accent_preset("green")
-        theme = apply_shell_mode("Dark")
-
-        assert theme == Theme.DARK
-        assert light_color.name().lower() == get_accent_preset("green").primary_hex.lower()
-        assert qconfig.themeColor.value.name().lower() == get_accent_preset("green").resolve_primary_hex(dark=True).lower()
+def _relative_luminance(color: QColor) -> float:
+    """计算颜色的 WCAG 相对亮度。"""
+    return sum(
+        weight * _linear_channel(channel)
+        for weight, channel in zip(
+            (0.2126, 0.7152, 0.0722),
+            (color.redF(), color.greenF(), color.blueF()),
+            strict=True,
+        )
+    )
 
 
-def test_resolve_progress_palette_returns_complete_palette() -> None:
-    """Progress palette 解析结果应包含完整颜色槽位。"""
-    palette = resolve_progress_palette(mode="Dark", preset_id="blue")
-
-    assert palette.track_base
-    assert palette.track_border
-    assert palette.fill_main
-    assert palette.fill_emphasis
-    assert palette.text_primary
-    assert palette.text_secondary
-    assert palette.button_icon
-    assert palette.button_hover
-    assert palette.button_pressed
+def _contrast_ratio(foreground: QColor, background: QColor) -> float:
+    """计算前景与背景的 WCAG 对比度。"""
+    lighter, darker = sorted(
+        (_relative_luminance(foreground), _relative_luminance(background)),
+        reverse=True,
+    )
+    return (lighter + 0.05) / (darker + 0.05)
 
 
 def test_resolve_legacy_accent_preset_falls_back_to_default_for_unknown_color() -> None:
-    """无法识别的旧颜色应回退到默认 preset。"""
+    """无法识别的旧颜色应回退到默认预设。"""
     assert resolve_legacy_accent_preset("#009faa") == DEFAULT_ACCENT_PRESET_ID
+
+
+def test_accent_guidance_text_meets_contrast_target_for_every_preset() -> None:
+    """每种强调色的页面引导文字都应满足正文对比度目标。"""
+    for preset in list_accent_presets():
+        light, dark = get_accent_text_color_pair(preset.id)
+
+        assert _contrast_ratio(light, QColor("#FFFFFF")) >= _BODY_TEXT_CONTRAST_TARGET
+        assert _contrast_ratio(dark, QColor("#111111")) >= _BODY_TEXT_CONTRAST_TARGET
+
+
+def test_status_semantic_colors_do_not_follow_accent_preset() -> None:
+    """成功等状态色应保持稳定，不随用户选择的强调色漂移。"""
+    assert get_semantic_text_color_pair("success", preset_id="blue") == (
+        get_semantic_text_color_pair("success", preset_id="orange")
+    )

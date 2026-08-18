@@ -1,4 +1,11 @@
-"""WAV 转码协调器与报告写出。"""
+"""WAV 转码协调器与报告写出。
+
+注意：本模块的 ``TranscodeCoordinator`` / ``TranscodeProgress``，以及 ``_runtime`` 中仅
+供其使用的 ``run_worker`` / ``_run_attempt`` / ``Job`` 等，是一套"提取期流式逐文件转码"
+的实现，当前生产链路（``app.facade.transcode_wav`` → ``runtime.wav.job.run_tree`` 批量
+转码）并未接线使用。暂予保留以备后续可能启用，请勿误认为现役链路；若确认长期不用，再
+单独清理。
+"""
 
 from __future__ import annotations
 
@@ -54,6 +61,7 @@ class TranscodeProgress:
     breaker_reason: str | None
 
 
+# 暂未接线：当前生产转码走 job.run_tree 批量引擎，此协调器为预留实现（见模块 docstring）。
 class TranscodeCoordinator:
     """协调 WAV 转码生命周期。"""
 

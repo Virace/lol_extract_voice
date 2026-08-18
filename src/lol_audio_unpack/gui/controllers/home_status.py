@@ -5,11 +5,14 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from PySide6.QtCore import QObject, QThreadPool, Signal
 
 from lol_audio_unpack.app.game_version import get_game_version
 from lol_audio_unpack.gui.workers import TaskWorker
+
+HomeStatusRole = Literal["info", "success", "neutral", "caution", "critical"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +35,10 @@ class HomeStatusDisplayState:
     cache_text: str
     cache_path: str
     cache_jump_enabled: bool
+    version_detail: str
+    version_role: HomeStatusRole
+    cache_detail: str
+    cache_role: HomeStatusRole
 
 
 def check_audio_cache(output_path: Path, major_minor: str) -> tuple[bool, str]:
@@ -122,13 +129,18 @@ class HomeStatusController(QObject):
     ) -> HomeStatusDisplayState:
         """把后台检查结果转换为首页卡片展示状态。"""
         if result.version_error:
+            is_missing_game_path = result.version_error == "游戏目录未设置"
             return HomeStatusDisplayState(
                 current_version="",
-                version_text=result.version_error,
+                version_text="等待配置" if is_missing_game_path else "读取失败",
                 version_jump_enabled=False,
-                cache_text="无法获取版本",
+                cache_text="尚未检查",
                 cache_path="",
                 cache_jump_enabled=False,
+                version_detail=("选择游戏目录后自动读取版本。" if is_missing_game_path else "请检查游戏目录是否完整。"),
+                version_role="caution" if is_missing_game_path else "critical",
+                cache_detail="读取游戏版本后检查当前版本产物。",
+                cache_role="neutral",
             )
 
         if result.cache_found:
@@ -139,15 +151,23 @@ class HomeStatusController(QObject):
                 cache_text=f"已找到 {result.version}",
                 cache_path=result.cache_path,
                 cache_jump_enabled=True,
+                version_detail="当前游戏客户端版本。",
+                version_role="info",
+                cache_detail="已发现当前版本的音频产物。",
+                cache_role="success",
             )
 
         return HomeStatusDisplayState(
             current_version=result.version,
             version_text=result.version,
             version_jump_enabled=False,
-            cache_text=f"无 {result.version} 缓存",
+            cache_text="尚未解包",
             cache_path=str(output_path / "audios"),
             cache_jump_enabled=True,
+            version_detail="当前游戏客户端版本。",
+            version_role="info",
+            cache_detail=f"当前版本 {result.version} 尚无音频产物。",
+            cache_role="neutral",
         )
 
     def build_failure_state(self) -> HomeStatusDisplayState:
@@ -159,6 +179,10 @@ class HomeStatusController(QObject):
             cache_text="检查失败",
             cache_path="",
             cache_jump_enabled=False,
+            version_detail="请检查游戏目录是否完整。",
+            version_role="critical",
+            cache_detail="暂时无法判断当前版本产物状态。",
+            cache_role="critical",
         )
 
     def start_check(self, *, game_path: Path | None, output_path: Path) -> None:

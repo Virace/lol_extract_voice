@@ -1,4 +1,4 @@
-﻿"""首页状态控制器测试。"""
+"""首页状态控制器测试。"""
 
 from __future__ import annotations
 
@@ -43,6 +43,10 @@ def test_home_status_controller_builds_display_state_for_cached_version() -> Non
         cache_text="已找到 16.5",
         cache_path="output/audios/16.5.2",
         cache_jump_enabled=True,
+        version_detail="当前游戏客户端版本。",
+        version_role="info",
+        cache_detail="已发现当前版本的音频产物。",
+        cache_role="success",
     )
 
 
@@ -61,6 +65,10 @@ def test_home_status_controller_builds_failure_display_state() -> None:
         cache_text="检查失败",
         cache_path="",
         cache_jump_enabled=False,
+        version_detail="请检查游戏目录是否完整。",
+        version_role="critical",
+        cache_detail="暂时无法判断当前版本产物状态。",
+        cache_role="critical",
     )
 
 
@@ -81,8 +89,43 @@ def test_home_status_controller_start_check_emits_display_state_ready(qtbot, tmp
             cache_text="已找到 16.5",
             cache_path="output/audios/16.5.2",
             cache_jump_enabled=True,
+            version_detail="当前游戏客户端版本。",
+            version_role="info",
+            cache_detail="已发现当前版本的音频产物。",
+            cache_role="success",
         )
     ]
+
+
+def test_home_status_controller_builds_guidance_for_missing_game_path() -> None:
+    """未配置目录时应提供行动指引，不直接暴露内部异常文本。"""
+    controller = HomeStatusController(
+        get_game_version_fn=lambda _path: "16.5",
+        cache_check_fn=lambda _output, _version: (False, ""),
+    )
+    result = controller.run_check(game_path=None, output_path=Path("output"))
+
+    state = controller.build_display_state(result=result, output_path=Path("output"))
+
+    assert state.version_text == "等待配置"
+    assert state.version_role == "caution"
+    assert state.cache_text == "尚未检查"
+    assert state.cache_role == "neutral"
+
+
+def test_home_status_controller_builds_neutral_state_for_missing_outputs() -> None:
+    """版本有效但没有产物时应表达为空态，而不是错误态。"""
+    controller = HomeStatusController(
+        get_game_version_fn=lambda _path: "16.5",
+        cache_check_fn=lambda _output, _version: (False, ""),
+    )
+    result = controller.run_check(game_path=Path("Game"), output_path=Path("output"))
+
+    state = controller.build_display_state(result=result, output_path=Path("output"))
+
+    assert state.cache_text == "尚未解包"
+    assert state.cache_detail == "当前版本 16.5 尚无音频产物。"
+    assert state.cache_role == "neutral"
 
 
 def test_home_status_controller_shutdown_clears_active_worker() -> None:

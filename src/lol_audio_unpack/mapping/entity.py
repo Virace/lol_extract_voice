@@ -275,7 +275,7 @@ def _log_entity_summary(
     logger.success(summary_message)
 
 
-@logger.catch
+@logger.catch(reraise=True)
 @performance_monitor(level="DEBUG")
 def build_entity(  # noqa: PLR0913
     entity_data: AudioEntityData,
@@ -526,7 +526,10 @@ def build_champion(  # noqa: PLR0913
         ctx: 运行时上下文。
 
     Returns:
-        dict[str, Any]: 英雄映射结果；失败时返回空字典。
+        dict[str, Any]: 英雄映射结果。
+
+    Raises:
+        ValueError: 实体数据无效时抛出，由上层 batch 统一记录并计入失败计数。
     """
 
     try:
@@ -546,8 +549,9 @@ def build_champion(  # noqa: PLR0913
             ctx=ctx,
         )
     except ValueError as exc:
+        # 显式记录后向上抛出，让 batch 统一计入失败计数，避免失败被静默吞掉返回空字典。
         logger.error(str(exc))
-        return {}
+        raise
 
 
 def build_map(  # noqa: PLR0913
@@ -570,7 +574,10 @@ def build_map(  # noqa: PLR0913
         ctx: 运行时上下文。
 
     Returns:
-        dict[str, Any]: 地图映射结果；失败时返回空字典。
+        dict[str, Any]: 地图映射结果。
+
+    Raises:
+        ValueError: 实体数据无效时抛出，由上层 batch 统一记录并计入失败计数。
     """
 
     try:
@@ -590,5 +597,6 @@ def build_map(  # noqa: PLR0913
             ctx=ctx,
         )
     except ValueError as exc:
+        # 显式记录后向上抛出，让 batch 统一计入失败计数，避免失败被静默吞掉返回空字典。
         logger.error(str(exc))
-        return {}
+        raise

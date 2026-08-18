@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from lol_audio_unpack.gui.controllers.game_path_resolver import resolve_game_path
 
 
@@ -26,83 +28,29 @@ def _write_game_root(root: Path, *, version: str = "16.11.1234") -> Path:
     return root
 
 
-def test_resolves_real_game_root(tmp_path: Path) -> None:
-    """选择真实客户端根目录时应直接识别。"""
-
+@pytest.mark.parametrize(
+    "selected_path",
+    [
+        Path(),
+        Path("Game"),
+        Path("LeagueClient"),
+        Path("LeagueClient/Plugins/rcp-be-lol-game-data"),
+        Path("Game/DATA/FINAL/Champions"),
+        Path("Game/DATA/FINAL/Maps/Shipping"),
+        Path("Game/League of Legends.exe"),
+    ],
+    ids=["root", "game", "league-client", "lcu-plugin", "champions", "maps", "binary"],
+)
+def test_resolves_supported_game_paths(tmp_path: Path, selected_path: Path) -> None:
+    """受支持的客户端入口都应归一到同一游戏根目录。"""
     root = _write_game_root(tmp_path / "英雄联盟")
 
-    result = resolve_game_path(root)
+    result = resolve_game_path(root / selected_path)
 
     assert result.resolved is True
     assert result.root == root
     assert result.version == "16.11"
     assert result.reason == "resolved"
-
-
-def test_resolves_game_subdirectory(tmp_path: Path) -> None:
-    """选择 Game 目录时应回推到客户端根目录。"""
-
-    root = _write_game_root(tmp_path / "英雄联盟")
-
-    result = resolve_game_path(root / "Game")
-
-    assert result.resolved is True
-    assert result.root == root
-
-
-def test_resolves_league_client_subdirectory(tmp_path: Path) -> None:
-    """选择 LeagueClient 目录时应回推到客户端根目录。"""
-
-    root = _write_game_root(tmp_path / "英雄联盟")
-
-    result = resolve_game_path(root / "LeagueClient")
-
-    assert result.resolved is True
-    assert result.root == root
-
-
-def test_resolves_lcu_plugin_directory(tmp_path: Path) -> None:
-    """选择 LCU 插件目录时应回推到客户端根目录。"""
-
-    root = _write_game_root(tmp_path / "英雄联盟")
-
-    result = resolve_game_path(root / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data")
-
-    assert result.resolved is True
-    assert result.root == root
-
-
-def test_resolves_champions_resource_directory(tmp_path: Path) -> None:
-    """选择英雄资源目录时应回推到客户端根目录。"""
-
-    root = _write_game_root(tmp_path / "英雄联盟")
-
-    result = resolve_game_path(root / "Game" / "DATA" / "FINAL" / "Champions")
-
-    assert result.resolved is True
-    assert result.root == root
-
-
-def test_resolves_maps_shipping_directory(tmp_path: Path) -> None:
-    """选择地图资源目录时应回推到客户端根目录。"""
-
-    root = _write_game_root(tmp_path / "英雄联盟")
-
-    result = resolve_game_path(root / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping")
-
-    assert result.resolved is True
-    assert result.root == root
-
-
-def test_resolves_game_binary_file_path(tmp_path: Path) -> None:
-    """直接传入游戏二进制文件路径时应支持后续入口复用。"""
-
-    root = _write_game_root(tmp_path / "英雄联盟")
-
-    result = resolve_game_path(root / "Game" / "League of Legends.exe")
-
-    assert result.resolved is True
-    assert result.root == root
 
 
 def test_rejects_loose_binary_marker_without_metadata(tmp_path: Path) -> None:

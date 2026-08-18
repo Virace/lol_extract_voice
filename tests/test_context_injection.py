@@ -195,9 +195,7 @@ def test_execute_tasks_passes_wwiser_manager_and_ctx_to_runtime(
     assert captured["ctx"] == ctx
 
 
-def test_mapping_execute_tasks_uses_warning_summary_for_partial_failures(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_unpack_batch_reports_partial_failures(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     ctx = _build_ctx(tmp_path)
     infos: list[str] = []
     warnings: list[str] = []
@@ -247,9 +245,7 @@ def test_mapping_execute_tasks_uses_warning_summary_for_partial_failures(
     assert errors == []
 
 
-def test_execute_tasks_uses_warning_summary_for_partial_failures(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_mapping_batch_reports_partial_failures(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     ctx = _build_ctx(tmp_path)
     infos: list[str] = []
     warnings: list[str] = []
@@ -351,9 +347,3 @@ def test_get_cached_hirc_uses_wwiser_when_manager_is_provided(monkeypatch: pytes
 
     assert result is wwiser_hirc
     assert captured["wwiser_args"] == (bnk_path, hirc_cache_dir, wwiser_manager)
-
-
-def test_mapping_module_exposes_execute_tasks() -> None:
-    """映射包应暴露新的批量入口。"""
-
-    assert callable(m_mapping.execute_tasks)

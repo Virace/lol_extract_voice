@@ -246,10 +246,18 @@ def _parse_command_value(
     """按字段定义解析命令配置值。"""
     if ini_key not in section:
         return _MISSING
-    if value_kind == "bool":
-        return section.getboolean(ini_key)
-    if value_kind == "int":
-        return section.getint(ini_key)
+    try:
+        if value_kind == "bool":
+            return section.getboolean(ini_key)
+        if value_kind == "int":
+            return section.getint(ini_key)
+    except ValueError as exc:
+        # 配置文件写了非法的布尔/整数值（如 max_workers = abc）时给出定向中文提示，
+        # 而不是把 configparser 的原始 ValueError 冒泡到顶层呈现为生硬英文报错。
+        raw_value = section.get(ini_key, fallback="")
+        raise ValueError(
+            f"配置项 [{section.name}] {ini_key} 的值无效: {raw_value!r}（期望 {value_kind} 类型）"
+        ) from exc
 
     value = section.get(ini_key, fallback="").strip()
     return None if not value else value
@@ -274,6 +282,7 @@ def load_command_config(
             continue
         values[field.attr] = value
     return values
+
 
 __all__ = [
     "CONFIG_SECTION",

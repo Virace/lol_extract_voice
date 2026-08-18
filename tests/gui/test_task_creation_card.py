@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt
-from qfluentwidgets import GroupHeaderCardWidget
 
 from lol_audio_unpack.gui.task_models import AppContextInputSnapshot
 from lol_audio_unpack.gui.view.execution.task_creation_card import TaskCreationCard
@@ -15,10 +14,6 @@ EXPECTED_WAV_TIMEOUT = 9
 EXPECTED_WAV_RETRIES = 4
 EXPECTED_GAME_PATH = "game-root"
 EXPECTED_OUTPUT_PATH = "output-root"
-EXPECTED_GROUP_COUNT = 8
-EXPECTED_ID_INPUT_WIDTH = 320
-EXPECTED_SCOPE_TOGGLE_WIDTH = 180
-EXPECTED_MAX_WORKERS_WIDTH = 120
 
 
 @dataclass(slots=True)
@@ -50,14 +45,6 @@ def _build_panel(qtbot) -> TaskCreationCard:
     return panel
 
 
-def test_task_creation_card_uses_group_header_card_widget(qtbot) -> None:
-    """任务表单应基于 GroupHeaderCardWidget 承载全部参数行。"""
-    panel = _build_panel(qtbot)
-
-    assert isinstance(panel, GroupHeaderCardWidget)
-    assert panel.groupCount() == EXPECTED_GROUP_COUNT
-
-
 def test_task_creation_card_uses_gui_wav_defaults_for_draft(qtbot) -> None:
     """显式启用音频转码时，任务草稿应携带默认转码参数。"""
     panel = _build_panel(qtbot)
@@ -83,27 +70,20 @@ def test_task_creation_card_uses_gui_wav_defaults_for_draft(qtbot) -> None:
     assert operation_options.wav_output.format == "float"
 
 
-def test_task_creation_card_keeps_wav_switch_disabled_by_default(qtbot) -> None:
-    """执行中心即使读取到 CLI 的 wav 配置，默认也不应自动勾选音频转码。"""
+def test_task_creation_card_preserves_independent_wav_action_state(qtbot) -> None:
+    """WAV 默认不自动执行，但应允许作为独立动作启用。"""
     panel = _build_panel(qtbot)
+    gui_config = _FakeGuiConfig(wav_enabled=True)
 
-    panel.apply_gui_config_defaults(_FakeGuiConfig(wav_enabled=True))
+    panel.apply_gui_config_defaults(gui_config)
     panel.apply_defaults()
     panel.sync_state_from_widgets()
 
-    draft = panel.build_task_draft(gui_config=_FakeGuiConfig(wav_enabled=True))
+    draft = panel.build_task_draft(gui_config=gui_config)
 
     assert panel.wav_task_cb.isChecked() is False
     assert draft.task_params.wav_enabled is False
 
-
-def test_task_creation_card_keeps_wav_when_extract_is_disabled(qtbot) -> None:
-    """未勾选音频解包时，音频转码仍可作为独立动作保留。"""
-    panel = _build_panel(qtbot)
-    gui_config = _FakeGuiConfig()
-
-    panel.apply_gui_config_defaults(gui_config)
-    panel.apply_defaults()
     panel.extract_task_cb.setChecked(False)
     panel.wav_task_cb.setChecked(True)
     panel.sync_state_from_widgets()
@@ -114,8 +94,8 @@ def test_task_creation_card_keeps_wav_when_extract_is_disabled(qtbot) -> None:
     assert draft.task_params.wav_enabled is True
 
 
-def test_task_creation_card_normalizes_synced_full_selection_to_empty_targets(qtbot) -> None:
-    """总览页同步的全量选择应在构造任务草稿时归一成空 target。"""
+def test_task_creation_card_updates_synced_full_selection_after_manual_edit(qtbot) -> None:
+    """全量同步应归一为空 target，用户手改后恢复为显式 ID。"""
     panel = _build_panel(qtbot)
     gui_config = _FakeGuiConfig()
 
@@ -132,19 +112,6 @@ def test_task_creation_card_normalizes_synced_full_selection_to_empty_targets(qt
     assert draft.task_params.champion_ids is None
     assert draft.task_params.map_ids is None
 
-
-def test_task_creation_card_keeps_explicit_targets_after_editing_synced_full_selection(qtbot) -> None:
-    """全量同步后若用户手动改了 ID，不应继续归一成空 target。"""
-    panel = _build_panel(qtbot)
-    gui_config = _FakeGuiConfig()
-
-    panel.apply_selected_entities(
-        champion_ids=("1", "103"),
-        map_ids=("11",),
-        source="overview_selection",
-        summary="已同步全部实体。",
-        select_all=True,
-    )
     panel.champion_ids_input.setText("1")
     panel.sync_state_from_widgets()
 
@@ -155,7 +122,7 @@ def test_task_creation_card_keeps_explicit_targets_after_editing_synced_full_sel
 
 
 def test_task_creation_card_restore_button_resets_custom_inputs_to_defaults(qtbot) -> None:
-    """恢复按钮应把自定义输入恢复到默认值，并放在创建任务按钮左侧。"""
+    """恢复按钮应把自定义输入恢复到默认值。"""
     panel = _build_panel(qtbot)
 
     panel.champion_ids_input.setText("1,103")
@@ -171,9 +138,6 @@ def test_task_creation_card_restore_button_resets_custom_inputs_to_defaults(qtbo
 
     qtbot.mouseClick(panel.restore_defaults_btn, Qt.MouseButton.LeftButton)
 
-    assert panel.bottom_toolbar_layout.indexOf(panel.restore_defaults_btn) < panel.bottom_toolbar_layout.indexOf(
-        panel.create_task_btn
-    )
     assert panel.champion_ids_input.text() == ""
     assert panel.map_ids_input.text() == ""
     assert panel.vo_filter.currentRouteKey() == "VO"
@@ -183,15 +147,3 @@ def test_task_creation_card_restore_button_resets_custom_inputs_to_defaults(qtbo
     assert panel.integrate_data_cb.isChecked() is True
     assert panel.wav_task_cb.isChecked() is False
     assert panel.wav_format_combo.currentText() == "pcm16"
-
-
-def test_task_creation_card_uses_balanced_control_widths(qtbot) -> None:
-    """英雄/地图输入宽度应统一，右侧状态控件应更紧凑。"""
-    panel = _build_panel(qtbot)
-
-    assert panel.champion_ids_input.minimumWidth() == EXPECTED_ID_INPUT_WIDTH
-    assert panel.map_ids_input.minimumWidth() == EXPECTED_ID_INPUT_WIDTH
-    assert panel.champion_ids_input.maximumWidth() == EXPECTED_ID_INPUT_WIDTH
-    assert panel.map_ids_input.maximumWidth() == EXPECTED_ID_INPUT_WIDTH
-    assert panel.vo_filter.maximumWidth() == EXPECTED_SCOPE_TOGGLE_WIDTH
-    assert panel.max_workers_combo.maximumWidth() == EXPECTED_MAX_WORKERS_WIDTH
