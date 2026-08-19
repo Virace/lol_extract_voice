@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from lol_audio_unpack.app.targets import build_tasks
 
-from .entity import AudioEntityData
+from .entity import AudioBank, AudioEntityData
 
 if TYPE_CHECKING:
     from lol_audio_unpack.manager.data_reader import DataReader
@@ -61,6 +61,7 @@ def generate_map_tasks(
 
 __all__ = [
     "AudioEntityData",
+    "AudioBank",
     "generate_champion_tasks",
     "generate_map_tasks",
 ]

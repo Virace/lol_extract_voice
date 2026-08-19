@@ -16,12 +16,13 @@ from lol_audio_unpack.app.path_layout import (
     get_output_dir_name,
 )
 from lol_audio_unpack.manager import DataReader
-from lol_audio_unpack.model import AudioEntityData
-from lol_audio_unpack.runtime.wad import get_wad
+from lol_audio_unpack.model import AudioBank, AudioEntityData
+from lol_audio_unpack.model.binding import SUCCESS_STATUSES
+from lol_audio_unpack.runtime.wad import get_wad, resolve_bound_wad
 from lol_audio_unpack.utils.logging import performance_monitor
 
 from .bp_vo import attach_bp_vo
-from .stats import FileProcessResult, ProcessingStatsContext
+from .stats import EntityUnpackStats, FileProcessResult, ProcessingStatsContext
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
@@ -68,6 +69,244 @@ def _get_wad_instance(
     return get_wad(wad_path, cache=wad_cache, lock=cache_lock)
 
 
+def _record_bound_result(
+    stats: EntityUnpackStats,
+    bank: AudioBank,
+    *,
+    outcome: str,
+    error: str | None = None,
+) -> None:
+    """把一个 binding 的消费结论写入实体级诊断。"""
+    binding = bank.binding
+    stats.record_binding_result(
+        sub_id=bank.sub_id,
+        audio_type=bank.audio_type,
+        category=binding.category,
+        path=binding.normalized_path,
+        wad=binding.wad,
+        entry_hash=binding.entry_hash,
+        status=binding.status.value,
+        outcome=outcome,
+        error=error,
+    )
+
+
+def _persist_bound_container(  # noqa: PLR0913, PLR0917
+    raw_data: bytes,
+    bank: AudioBank,
+    entity_data: AudioEntityData,
+    audio_path: Path,
+    stats: EntityUnpackStats,
+    persisted_paths: set[Path],
+    *,
+    ctx: AppContext,
+    persisted_wem_callback: Callable[[Path], None] | None,
+) -> bool:
+    """解析一个精确 binding 容器，并将 WEM 回挂到其逻辑子实体。"""
+    sub_info = entity_data.get_sub_entity_info(bank.sub_id)
+    if sub_info is None:
+        _record_bound_result(stats, bank, outcome="failed", error="子实体信息不完整")
+        return False
+
+    sub_id = sub_info["id"]
+    sub_name = sub_info["name"]
+    output_path = generate_output_path(entity_data, bank.sub_id, bank.audio_type, audio_path, ctx=ctx)
+    output_path.mkdir(parents=True, exist_ok=True)
+    source_path = bank.binding.normalized_path
+
+    if not raw_data:
+        stats.record_file_result(
+            sub_id,
+            sub_name,
+            bank.audio_type,
+            FileProcessResult.EMPTY_CONTAINER,
+            source_path=source_path,
+        )
+        _record_bound_result(stats, bank, outcome="failed", error="容器为空")
+        return False
+
+    try:
+        if bank.binding.kind == "BNK":
+            files = BNK(raw_data).extract_files()
+
+            def get_name(file: Any) -> str:
+                """返回 BNK 内 WEM 的原始 ID 文件名。"""
+                return f"{file.id}.wem"
+
+        elif bank.binding.kind == "WPK":
+            files = WPK(raw_data).extract_files()
+
+            def get_name(file: Any) -> str:
+                """返回 WPK 内保留的 WEM 文件名。"""
+                return file.filename
+
+        else:
+            stats.record_file_result(
+                sub_id,
+                sub_name,
+                bank.audio_type,
+                FileProcessResult.UNKNOWN_TYPE,
+                error_info={"path": source_path, "error": f"未知文件类型: {bank.binding.kind}", "type": "UNKNOWN"},
+            )
+            _record_bound_result(stats, bank, outcome="failed", error=f"未知文件类型: {bank.binding.kind}")
+            return False
+
+        has_content = False
+        for file in files:
+            if not getattr(file, "data", True):
+                stats.record_file_result(sub_id, sub_name, bank.audio_type, FileProcessResult.EMPTY_SUBFILE)
+                continue
+
+            has_content = True
+            destination_path = output_path / get_name(file)
+            if destination_path not in persisted_paths:
+                _persist_wem(file, destination_path, persisted_wem_callback=persisted_wem_callback)
+                persisted_paths.add(destination_path)
+            stats.record_file_result(sub_id, sub_name, bank.audio_type, FileProcessResult.SUCCESS)
+
+        if not has_content:
+            _record_bound_result(stats, bank, outcome="failed", error="容器内没有可写入的 WEM")
+            return False
+    except Exception as exc:  # noqa: BLE001
+        container_type = bank.binding.kind or Path(source_path).suffix.removeprefix(".").upper()
+        logger.warning(f"处理{container_type}文件失败: {exc} | 文件路径: {source_path}")
+        stats.record_file_result(
+            sub_id,
+            sub_name,
+            bank.audio_type,
+            FileProcessResult.PARSE_ERROR,
+            error_info={"path": source_path, "error": str(exc), "type": container_type},
+        )
+        _record_bound_result(stats, bank, outcome="failed", error=str(exc))
+        return False
+
+    _record_bound_result(stats, bank, outcome="success")
+    return True
+
+
+def _unpack_bound_entity(  # noqa: PLR0913, PLR0917
+    entity_data: AudioEntityData,
+    audio_path: Path,
+    exclude_types: list[str],
+    stats: EntityUnpackStats,
+    wad_cache: dict[Path, WAD] | None,
+    cache_lock: threading.Lock | None,
+    *,
+    ctx: AppContext,
+    persisted_wem_callback: Callable[[Path], None] | None,
+) -> None:
+    """仅按 local v2 成功 binding 的物理 WAD 与 entry 提取音频。"""
+    stats.total_sub_entities = len(entity_data.sub_entities)
+    requested: dict[str, dict[tuple[str, str], AudioBank]] = {}
+    active_banks: list[AudioBank] = []
+
+    for bank in entity_data.resource_banks:
+        binding = bank.binding
+        if bank.audio_type in exclude_types:
+            continue
+        if binding.status not in SUCCESS_STATUSES:
+            _record_bound_result(stats, bank, outcome="unresolved", error=binding.diagnostic)
+            continue
+        if not binding.wad:
+            _record_bound_result(stats, bank, outcome="failed", error="成功 binding 缺少 WAD identity")
+            continue
+
+        active_banks.append(bank)
+        key = (binding.wad, binding.entry_hash)
+        requested.setdefault(binding.wad, {}).setdefault(key, bank)
+
+    stats.processed_sub_entities = len({bank.sub_id for bank in active_banks})
+    stats.vo_paths_count = sum(bank.audio_type == AUDIO_TYPE_VO for bank in active_banks)
+    stats.sfx_music_paths_count = len(active_banks) - stats.vo_paths_count
+    raw_by_key: dict[tuple[str, str], bytes] = {}
+    raw_errors: dict[tuple[str, str], str] = {}
+
+    for wad_identity, unique_banks in requested.items():
+        try:
+            wad_path = resolve_bound_wad(ctx.game_path, wad_identity)
+        except ValueError as exc:
+            error = str(exc)
+            keys = tuple(unique_banks)
+            stats.record_binding_wad(wad_identity, requested=len(keys), extracted=0, error=error)
+            raw_errors.update(dict.fromkeys(keys, error))
+            logger.warning(error)
+            continue
+        keys = tuple(unique_banks)
+        if not wad_path.is_file():
+            error = "WAD文件不存在"
+            stats.record_binding_wad(wad_identity, requested=len(keys), extracted=0, error=error)
+            raw_errors.update(dict.fromkeys(keys, error))
+            logger.warning(f"WAD文件不存在，跳过 {len(keys)} 个 binding: {wad_path}")
+            continue
+
+        try:
+            wad_obj = _get_wad_instance(wad_path, wad_cache=wad_cache, cache_lock=cache_lock)
+            paths = [unique_banks[key].binding.path for key in keys]
+            raws = wad_obj.extract(paths, raw=True)
+            for key, raw in zip(keys, raws, strict=False):
+                if raw is None:
+                    raw_errors[key] = "WAD未返回目标 entry"
+                else:
+                    raw_by_key[key] = raw
+            stats.record_binding_wad(
+                wad_identity,
+                requested=len(keys),
+                extracted=sum(key in raw_by_key for key in keys),
+            )
+        except Exception as exc:  # noqa: BLE001
+            error = str(exc)
+            raw_errors.update(dict.fromkeys(keys, error))
+            stats.record_binding_wad(wad_identity, requested=len(keys), extracted=0, error=error)
+            logger.opt(exception=bool(getattr(ctx.config, "dev_mode", False))).warning(
+                f"按 binding 解包 WAD '{wad_path.name}' 时出错: {exc}"
+            )
+
+    persisted_paths: set[Path] = set()
+    for bank in active_banks:
+        binding = bank.binding
+        key = (binding.wad or "", binding.entry_hash)
+        raw_data = raw_by_key.get(key)
+        if raw_data is None:
+            _record_bound_result(stats, bank, outcome="failed", error=raw_errors.get(key, "未提取到 WAD entry"))
+            continue
+        _persist_bound_container(
+            raw_data,
+            bank,
+            entity_data,
+            audio_path,
+            stats,
+            persisted_paths,
+            ctx=ctx,
+            persisted_wem_callback=persisted_wem_callback,
+        )
+
+    stats.record_assembly_stats(len({bank.sub_id for bank in active_banks}), len(raw_by_key))
+    diagnostics = entity_data.binding_diagnostics
+    source_completeness = "partial" if diagnostics is not None and diagnostics.unresolved_bins else "complete"
+    stats.set_binding_completeness(source_completeness)
+
+
+def _finish_unpack_stats(
+    entity_data: AudioEntityData, reader: DataReader, stats: EntityUnpackStats, *, ctx: AppContext
+) -> None:
+    """输出 binding 分支的实体摘要，并写入与旧格式兼容的报告。"""
+    summary = stats.get_simple_summary()
+    if stats.overall_result.value == "success":
+        logger.success(summary)
+    elif stats.overall_result.value == "warning":
+        logger.warning(summary)
+    else:
+        logger.error(summary)
+
+    try:
+        report_filename = f"_{entity_data.entity_id}_metadata.yaml"
+        report_path = ctx.report_path / reader.version / get_output_dir_name(entity_data.entity_type) / report_filename
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        stats.save_concise_report_to_yaml(report_path)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"保存报告文件失败: {exc}")
+
+
 @logger.catch(reraise=True)
 @performance_monitor(level="DEBUG")
 def unpack_entity(  # noqa: PLR0913
@@ -109,6 +348,22 @@ def unpack_entity(  # noqa: PLR0913
         include_types,
         exclude_types,
     )
+    if entity_data.binding_diagnostics is not None:
+        with stats_context as stats:
+            logger.info(f"按 resource binding 解包 {entity_data.entity_name} (ID:{entity_data.entity_id})")
+            _unpack_bound_entity(
+                entity_data,
+                audio_path,
+                exclude_types,
+                stats,
+                wad_cache,
+                cache_lock,
+                ctx=ctx,
+                persisted_wem_callback=persisted_wem_callback,
+            )
+        _finish_unpack_stats(entity_data, reader, stats, ctx=ctx)
+        return
+
     with stats_context as stats:
         logger.info(f"解包 {entity_data.entity_name} (ID:{entity_data.entity_id})")
         logger.debug("阶段 1: 收集所有需要解包的音频文件路径...")

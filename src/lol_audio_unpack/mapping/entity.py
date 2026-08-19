@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from hashlib import sha256
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from league_tools import AudioEventMapper, WwiserManager
 from loguru import logger
 
+from lol_audio_unpack.app.artifacts import AudioRef, enumerate_audio_refs
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.manager.files import write_data
 from lol_audio_unpack.manager.utils import build_metadata_payload
-from lol_audio_unpack.model import AudioEntityData
+from lol_audio_unpack.model import AudioBank, AudioEntityData
+from lol_audio_unpack.model.binding import SUCCESS_STATUSES, normalize_logical_path
+from lol_audio_unpack.runtime.wad import resolve_bound_wad
 from lol_audio_unpack.utils.logging import performance_monitor
 
 from . import session as mapping_session
@@ -53,6 +57,7 @@ def _build_mapping_result(entity_data: AudioEntityData, reader: DataReader) -> t
     """
 
     base_data = build_metadata_payload(reader.version, reader.get_languages())
+    base_data["mappingDiagnostics"] = {}
     if entity_data.entity_type == "champion":
         base_data["championId"] = entity_data.entity_id
         base_data["alias"] = entity_data.entity_alias
@@ -64,6 +69,276 @@ def _build_mapping_result(entity_data: AudioEntityData, reader: DataReader) -> t
         base_data["map"] = {}
         return base_data, "map"
     raise ValueError(f"未知的实体类型: {entity_data.entity_type}")
+
+
+def _category_item(sub_id: str, category: str, **extra: str) -> dict[str, str]:
+    """构造带逻辑子实体归属的 mapping 诊断分类项。"""
+    return {"subEntity": sub_id, "category": category, **extra}
+
+
+def _wad_namespace(wad_identity: str) -> str:
+    """返回物理 WAD identity 的完整 SHA-256 缓存命名空间。"""
+    return sha256(wad_identity.encode("utf-8")).hexdigest()
+
+
+def _audio_ref_index(refs: tuple[AudioRef, ...]) -> dict[tuple[str, str, str], tuple[AudioRef, ...]]:
+    """按子实体、类型和 WEM ID 建立保留同 ID 多路径的索引。"""
+    index: dict[tuple[str, str, str], list[AudioRef]] = {}
+    for ref in refs:
+        if ref.sub_entity is None or ref.audio_type is None:
+            continue
+        index.setdefault((ref.sub_entity, ref.audio_type, ref.wem_id), []).append(ref)
+    return {key: tuple(sorted(items, key=lambda item: item.relative_path)) for key, items in index.items()}
+
+
+def _resolve_bank_cache_path(bank_dir: Path, logical_path: str) -> Path:
+    """把 bank 逻辑路径约束到当前 WAD cache namespace。"""
+    normalized = normalize_logical_path(logical_path)
+    parts = PurePosixPath(normalized).parts
+    if not parts or ".." in parts or ":" in parts[0]:
+        raise ValueError(f"bank 逻辑路径无效或可能逃逸 cache 根: {logical_path}")
+
+    cache_root = bank_dir.resolve()
+    cache_path = cache_root.joinpath(*parts).resolve()
+    try:
+        cache_path.relative_to(cache_root)
+    except ValueError as exc:
+        raise ValueError(f"bank 逻辑路径解析后越出 cache 根: {logical_path}") from exc
+    return cache_path
+
+
+def _build_bound_category_mapping(  # noqa: PLR0913
+    bank: AudioBank,
+    event_list: list[str],
+    version_cache_dir: Path,
+    wwiser_manager: WwiserManager | None,
+    runtime_cache: mapping_session.RuntimeCache | None,
+    *,
+    ctx: AppContext,
+) -> tuple[Any | None, str | None]:
+    """按单条 local v2 binding 提取 events BNK 并构建映射。"""
+    binding = bank.binding
+    if not binding.wad:
+        return None, "成功 binding 缺少 WAD identity"
+
+    try:
+        wad_path = resolve_bound_wad(ctx.game_path, binding.wad)
+    except ValueError as exc:
+        return None, str(exc)
+    if not wad_path.is_file():
+        return None, "WAD文件不存在"
+
+    namespace = _wad_namespace(binding.wad)
+    bank_dir = version_cache_dir / "banks" / namespace
+    hirc_dir = version_cache_dir / "hirc" / namespace
+    bank_dir.mkdir(parents=True, exist_ok=True)
+    hirc_dir.mkdir(parents=True, exist_ok=True)
+    extract_key = (binding.wad, binding.normalized_path)
+
+    try:
+        bnk_path = _resolve_bank_cache_path(bank_dir, binding.normalized_path)
+        wad_obj = mapping_session._get_wad(wad_path, runtime_cache=runtime_cache)
+
+        def extract_bnk() -> None:
+            """读取目标 entry，并只向已校验的 cache path 写入原始 BNK。"""
+            raws = wad_obj.extract([binding.path], raw=True)
+            raw = raws[0] if raws else None
+            if raw is None:
+                raise FileNotFoundError(f"WAD未返回目标BNK entry: {binding.normalized_path}")
+            bnk_path.parent.mkdir(parents=True, exist_ok=True)
+            bnk_path.write_bytes(raw)
+
+        mapping_session._extract_bnk_once(extract_key, extract_bnk, runtime_cache)
+
+        if not bnk_path.exists():
+            return None, "提取的BNK文件不存在"
+
+        hirc = mapping_session._get_cached_hirc(
+            bnk_path=bnk_path,
+            hirc_cache_dir=hirc_dir,
+            wwiser_manager=wwiser_manager,
+            runtime_cache=runtime_cache,
+            wad_identity=binding.wad,
+            normalized_bank_path=normalize_logical_path(binding.normalized_path),
+        )
+        return AudioEventMapper(event_list, hirc).build_mapping(), None
+    except Exception as exc:  # noqa: BLE001
+        logger.opt(exception=bool(getattr(ctx.config, "dev_mode", False))).warning(
+            f"处理 binding {binding.normalized_path} 时出错: {exc}"
+        )
+        return None, str(exc)
+
+
+def _build_bound_entity(  # noqa: PLR0913, PLR0917
+    entity_data: AudioEntityData,
+    reader: DataReader,
+    wwiser_manager: WwiserManager | None,
+    integrate_data: bool,
+    runtime_cache: mapping_session.RuntimeCache | None,
+    *,
+    ctx: AppContext,
+) -> dict[str, Any]:
+    """按 local v2 events bindings 构建 mapping 与覆盖诊断。"""
+    version_cache_dir, version_hash_dir = _ensure_version_dirs(reader, ctx=ctx)
+    mapping_result, mapping_data_key = _build_mapping_result(entity_data, reader)
+    entity_group = "champions" if entity_data.entity_type == "champion" else "maps"
+    mapping_save_dir = version_hash_dir / entity_group
+    mapping_save_dir.mkdir(parents=True, exist_ok=True)
+
+    refs = enumerate_audio_refs(ctx, entity_data, reader.version)
+    refs_by_key = _audio_ref_index(refs)
+    mapped_paths: set[str] = set()
+    missing_events: list[dict[str, str]] = []
+    unresolved: list[dict[str, str]] = []
+    unresolved_keys: set[tuple[str, str]] = set()
+    errors: list[dict[str, str]] = []
+    banks_by_category: dict[tuple[str, str], list[AudioBank]] = {}
+    event_banks: dict[tuple[str, str], list[AudioBank]] = {}
+
+    for bank in entity_data.resource_banks:
+        binding = bank.binding
+        key = (bank.sub_id, binding.category)
+        if binding.status not in SUCCESS_STATUSES:
+            unresolved.append(_category_item(bank.sub_id, binding.category, status=binding.status.value))
+            unresolved_keys.add(key)
+            continue
+        banks_by_category.setdefault(key, []).append(bank)
+        if binding.normalized_path.endswith("_events.bnk"):
+            event_banks.setdefault(key, []).append(bank)
+
+    events = entity_data.events or {}
+    mapped_event_count = 0
+    errored_event_count = 0
+    skipped_event_count = 0
+    successful_categories = 0
+    processable_banks = 0
+    failed_banks = 0
+
+    category_keys = set(banks_by_category)
+    category_keys.update(
+        (str(sub_id), category) for sub_id, sub_events in events.items() for category in sub_events.get("events", {})
+    )
+
+    for key in sorted(category_keys):
+        sub_id, category = key
+        event_list = events.get(sub_id, {}).get("events", {}).get(category, [])
+        category_banks = banks_by_category.get(key, [])
+        if not category_banks:
+            if key not in unresolved_keys:
+                unresolved.append(_category_item(sub_id, category, status="missing"))
+                unresolved_keys.add(key)
+            continue
+        if not event_list:
+            missing_events.append(_category_item(sub_id, category))
+            continue
+
+        category_event_banks = event_banks.get(key, [])
+        if not category_event_banks:
+            unresolved.append(_category_item(sub_id, category, status="missing_events_bank"))
+            continue
+
+        category_mapping = None
+        category_failed = False
+        for bank in category_event_banks:
+            processable_banks += 1
+            current_mapping, error = _build_bound_category_mapping(
+                bank,
+                event_list,
+                version_cache_dir,
+                wwiser_manager,
+                runtime_cache,
+                ctx=ctx,
+            )
+            if error is not None:
+                failed_banks += 1
+                category_failed = True
+                continue
+            if current_mapping is None:
+                continue
+            if category_mapping is None:
+                category_mapping = current_mapping
+            else:
+                category_mapping.merge_with(current_mapping)
+
+        if category_failed:
+            errors.append(_category_item(sub_id, category))
+
+        if category_mapping is None or not category_mapping.forward_mapping:
+            skipped_event_count += len(event_list)
+            continue
+
+        successful_categories += 1
+        mapped_event_count += len(category_mapping.forward_mapping)
+        skipped_event_count += max(len(event_list) - len(category_mapping.forward_mapping), 0)
+        sub_result = mapping_result[mapping_data_key].setdefault(sub_id, {"events": {}})
+        sub_result["events"][category] = category_mapping.forward_mapping
+
+        audio_paths: dict[str, list[str]] = {}
+        audio_type = category_event_banks[0].audio_type
+        for event_name, wem_ids in category_mapping.forward_mapping.items():
+            paths = sorted(
+                {
+                    ref.relative_path
+                    for wem_id in wem_ids
+                    for ref in refs_by_key.get((sub_id, audio_type, str(wem_id)), ())
+                }
+            )
+            if paths:
+                audio_paths[event_name] = paths
+                mapped_paths.update(paths)
+        if audio_paths:
+            sub_result.setdefault("audioPaths", {})[category] = audio_paths
+
+    # 缺少 events 不是 extract 失败；它只是 mapping 的可观察 partial 状态。
+    if not entity_data.events:
+        logger.warning(f"{entity_data.entity_name} 缺少 events 数据，仅写入 mapping 诊断")
+
+    total_wem_count = len(refs)
+    unmapped_wem_count = total_wem_count - len(mapped_paths)
+    source_failed = (
+        entity_data.binding_diagnostics is not None and entity_data.binding_diagnostics.completeness.value == "failed"
+    )
+    if successful_categories == 0 and (source_failed or (processable_banks > 0 and failed_banks == processable_banks)):
+        completeness = "failed"
+    elif missing_events or unresolved or errors or unmapped_wem_count:
+        completeness = "partial"
+    else:
+        completeness = "complete"
+
+    mapping_result["mappingDiagnostics"] = {
+        "completeness": completeness,
+        "mappedWemCount": len(mapped_paths),
+        "totalWemCount": total_wem_count,
+        "unmappedWemCount": unmapped_wem_count,
+        "missingEventCategories": missing_events,
+        "unresolvedBankCategories": unresolved,
+        "errorCategories": errors,
+    }
+    errored_event_count += sum(
+        len(events.get(item["subEntity"], {}).get("events", {}).get(item["category"], [])) for item in errors
+    )
+
+    if integrate_data:
+        integrated_result = integrate_entity(entity_data, reader, mapping_result)
+        _write_integrated_result(entity_data, integrated_result, version_hash_dir, ctx=ctx)
+        _log_entity_summary(
+            entity_data.entity_name,
+            mapped_count=mapped_event_count,
+            errored_count=errored_event_count,
+            skipped_count=skipped_event_count,
+            integrate_data=True,
+        )
+        return integrated_result
+
+    _write_mapping_result(mapping_result, mapping_data_key, mapping_save_dir, entity_data, ctx=ctx)
+    _log_entity_summary(
+        entity_data.entity_name,
+        mapped_count=mapped_event_count,
+        errored_count=errored_event_count,
+        skipped_count=skipped_event_count,
+        integrate_data=False,
+    )
+    return mapping_result
 
 
 def _resolve_wad_path(entity_data: AudioEntityData, category: str, *, ctx: AppContext) -> Path | None:
@@ -201,7 +476,9 @@ def _write_integrated_result(
     """
 
     data_key = "skins" if entity_data.entity_type == "champion" else "map"
-    if not integrated_result or not integrated_result.get("data", {}).get(data_key):
+    if not integrated_result or (
+        not integrated_result.get("data", {}).get(data_key) and not integrated_result.get("mappingDiagnostics")
+    ):
         return
 
     entity_group = "champions" if entity_data.entity_type == "champion" else "maps"
@@ -234,7 +511,7 @@ def _write_mapping_result(
     if "languages" in metadata:
         del metadata["languages"]
 
-    if mapping_result[mapping_data_key]:
+    if mapping_result[mapping_data_key] or mapping_result.get("mappingDiagnostics"):
         mapping_file_base = mapping_save_dir / entity_data.entity_id
         write_data(mapping_result, mapping_file_base, dev_mode=ctx.config.dev_mode)
         logger.debug(f"映射结果已保存: {mapping_file_base}")
@@ -303,11 +580,21 @@ def build_entity(  # noqa: PLR0913
         ValueError: 实体没有可用 events 数据时抛出。
     """
 
-    if not entity_data.events:
+    if not entity_data.events and entity_data.binding_diagnostics is None:
         raise ValueError(f"{entity_data.entity_name} 缺少事件数据，请使用 include_events=True 创建实体数据")
 
     logger.info(f"构建 {entity_data.entity_name} (ID:{entity_data.entity_id}) 的事件映射")
     manager = mapping_session._create_wwiser_manager(ctx) if wwiser_manager is None else wwiser_manager
+    if entity_data.binding_diagnostics is not None:
+        return _build_bound_entity(
+            entity_data,
+            reader,
+            manager,
+            integrate_data,
+            runtime_cache,
+            ctx=ctx,
+        )
+
     version_cache_dir, version_hash_dir = _ensure_version_dirs(reader, ctx=ctx)
     mapping_result, mapping_data_key = _build_mapping_result(entity_data, reader)
     entity_group = "champions" if entity_data.entity_type == "champion" else "maps"
@@ -423,11 +710,13 @@ def integrate_entity(
         banks_data = reader.get_map_banks(int(entity_data.entity_id))
         data_key = "map"
 
-    if not entity_info or not banks_data:
+    if not entity_info or (not banks_data and entity_data.binding_diagnostics is None):
         logger.warning(f"无法获取 {entity_data.entity_name} 的完整数据信息")
         return {}
 
     integrated_data = {"metadata": mapping_result.get("metadata", {}), "data": {}}
+    if diagnostics := mapping_result.get("mappingDiagnostics"):
+        integrated_data["mappingDiagnostics"] = diagnostics
     wad_info = {"root": entity_data.wad_root}
     if entity_data.wad_language:
         wad_info["language"] = entity_data.wad_language
@@ -486,12 +775,16 @@ def integrate_entity(
             else banks_data.get("banks", {})
         )
         sub_mapping = mapping_data.get(sub_id, {}).get("events", {})
+        sub_audio_paths = mapping_data.get(sub_id, {}).get("audioPaths", {})
 
         for category in sub_mapping.keys():
             banks_paths = sub_banks.get(category, [])
             mapping_events = sub_mapping.get(category, {})
             if banks_paths and mapping_events:
                 integrated_item["events"][category] = {"banks": banks_paths, "mapping": mapping_events}
+
+        if sub_audio_paths:
+            integrated_item["audioPaths"] = sub_audio_paths
 
         if integrated_item["events"]:
             processed_items.append(integrated_item)

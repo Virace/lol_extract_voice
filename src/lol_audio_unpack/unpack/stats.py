@@ -118,6 +118,9 @@ class EntityUnpackStats:
     # === 阶段2: WAD解包统计 ===
     vo_wad_info: WadExtractionInfo = field(default_factory=WadExtractionInfo)
     root_wad_info: WadExtractionInfo = field(default_factory=WadExtractionInfo)
+    binding_completeness: str | None = None
+    binding_details: list[dict[str, Any]] = field(default_factory=list)
+    binding_wads: list[dict[str, Any]] = field(default_factory=list)
 
     # === 阶段3: 数据组装统计 ===
     assembled_sub_entities: int = 0
@@ -258,6 +261,69 @@ class EntityUnpackStats:
         self.assembled_sub_entities = assembled_entities
         self.total_assembled_files = total_files
 
+    def record_binding_result(  # noqa: PLR0913
+        self,
+        *,
+        sub_id: str,
+        audio_type: str,
+        category: str,
+        path: str,
+        wad: str | None,
+        entry_hash: str,
+        status: str,
+        outcome: str,
+        error: str | None = None,
+    ) -> None:
+        """记录逐条 binding 的消费结果，不持久化本机绝对 WAD 路径。"""
+        detail: dict[str, Any] = {
+            "subEntity": sub_id,
+            "audioType": audio_type,
+            "category": category,
+            "path": path,
+            "wad": wad,
+            "entryHash": entry_hash,
+            "status": status,
+            "outcome": outcome,
+        }
+        if error:
+            detail["error"] = error
+        self.binding_details.append(detail)
+
+    def record_binding_wad(
+        self,
+        wad: str,
+        *,
+        requested: int,
+        extracted: int,
+        error: str | None = None,
+    ) -> None:
+        """记录一个物理 WAD 的 binding 提取诊断。"""
+        detail: dict[str, Any] = {
+            "wad": wad,
+            "requested": requested,
+            "extracted": extracted,
+            "success": error is None,
+        }
+        if error:
+            detail["error"] = error
+        self.binding_wads.append(detail)
+
+    def set_binding_completeness(self, source_completeness: str) -> None:
+        """从 binding 结果与 P1 解析诊断派生实体完整度。"""
+        processable = [
+            detail for detail in self.binding_details if detail["status"] in {"resolved", "ambiguous_identical"}
+        ]
+        successful = [detail for detail in processable if detail["outcome"] == "success"]
+        has_failure = any(detail["outcome"] in {"failed", "unresolved"} for detail in self.binding_details)
+
+        if not processable or not successful:
+            self.binding_completeness = "failed"
+            return
+        if source_completeness != "complete" or has_failure:
+            self.binding_completeness = "partial"
+            return
+        self.binding_completeness = "complete"
+
     def _calculate_overall_result(self) -> None:
         """计算整体处理结果"""
         # 计算总计数
@@ -266,8 +332,15 @@ class EntityUnpackStats:
             self.total_failed_files += sub_stats.failed_files + sub_stats.unknown_types
             self.total_skipped_files += sub_stats.empty_containers + sub_stats.empty_subfiles
 
-        # 判断整体结果
-        if self.vo_wad_info.failed or self.root_wad_info.failed:
+        # binding 驱动阶段需要用实体级 complete/partial/failed 覆盖旧双 WAD 结论；
+        # remote/legacy 分支仍保持原有统计语义。
+        if self.binding_completeness == "failed":
+            self.overall_result = StageResult.ERROR
+        elif self.binding_completeness == "partial":
+            self.overall_result = StageResult.WARNING
+        elif self.binding_completeness == "complete":
+            self.overall_result = StageResult.SUCCESS
+        elif self.vo_wad_info.failed or self.root_wad_info.failed:
             self.overall_result = StageResult.ERROR
         elif self.total_failed_files > 0:
             if self.total_success_files > 0 or self.total_skipped_files > 0 or self.skipped_sub_entities > 0:
@@ -334,6 +407,13 @@ class EntityUnpackStats:
             },
             "sub_entities": {},
         }
+
+        if self.binding_completeness is not None:
+            report["bindingDiagnostics"] = {
+                "completeness": self.binding_completeness,
+                "bindings": self.binding_details,
+                "wads": self.binding_wads,
+            }
 
         # WAD文件信息
         if self.vo_wad_info.wad_path:

@@ -28,6 +28,9 @@
 - `extract / mapping` 通过 `LolAudioUnpackApp.run_workflow(...)` 按实体顺序执行
 - 单实体完成后会清理当前远端 WAD（除非显式关闭）
 
+remote 仍使用既有 v1 banks 投影和 root/language WAD 准备计划；它不消费 local v2
+`resource_banks`、不会构建本地 WAD index，也不会因 local artifact schema 升级改变远端资源范围。
+
 若要固定某个快照，则需要同时提供：
 
 - `REMOTE_VERSION`

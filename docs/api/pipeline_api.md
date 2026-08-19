@@ -46,8 +46,11 @@ diagnostics:
 会提示重新运行 `update`；`remote_snapshot` 继续使用既有 `.use_local_bin` 与 v1 投影，
 不会实例化本地 WAD 索引。
 
-当前 P1 兼容边界：v2 artifact 同时保留由成功 bindings 派生的旧 `skins` / `banks` 投影，
-现有 extract/mapping 尚消费该投影；切换到逐 binding 精确物理 WAD 属于后续消费者阶段。
+`AudioEntityData` 在 local v2 会把每条 `BankBinding` 投影为 `AudioBank`：它只补充
+逻辑子实体 ID 与音频类型，保留原始 binding 作为唯一物理资源事实。旧 local artifact 在
+创建解包或 mapping 实体时会明确提示重新运行 `update`；不会退回 alias、分类名或旧投影猜测
+WAD。`remote_snapshot` 仍保留 v1 root/language 投影，`resource_banks` 为空且
+`binding_diagnostics` 为 `None`，不会创建本地 WAD index。
 
 ## 1. 解包入口
 
@@ -118,10 +121,12 @@ def generate_output_path(
 
 单实体解包主线：
 
-1. 根据 `AudioEntityData` 收集 VO 与非 VO bank 路径
-2. 分别从语言 WAD / 根 WAD 提取原始 bank 数据
-3. 解析 `BNK` / `WPK` 并输出 `.wem`
-4. 记录统计信息与报告
+1. local v2 按每条成功 binding 的物理 WAD identity 与 entry 提取原始 bank；同一逻辑实体内
+   只复用相同 `(wad identity, entry hash)` 的 raw 数据，仍分别写回各自子实体和音频类型。
+2. remote v1 继续按语言 WAD / 根 WAD 的兼容投影提取。
+3. 解析 `BNK` / `WPK` 并输出原始 ID 命名的 `.wem`；同一最终相对输出路径只写入一次。
+4. 记录旧报告字段，并为 local v2 追加 `bindingDiagnostics`（逐 binding、逐 WAD 与
+   `complete` / `partial` / `failed`）；报告不写入绝对 WAD 路径。
 
 若当前工作流启用了 WAV，则由独立 `WAV 转码` stage 直接消费当前版本的 `audios/<version>` 输出树，
 再统一调用 `transcode_tree(...)` 生成镜像 WAV。
@@ -194,18 +199,21 @@ def integrate_entity(
 
 ### 2.5 当前映射语义
 
-映射阶段会遍历同时存在于 `banks` 与 `events` 的分类。
+local v2 映射只遍历成功 binding 中的 `_events.bnk`，并直接使用 binding 指向的 WAD；同一
+分类/路径位于多个 WAD 时会分别处理并合并原有 `events: category -> event -> WEM ID[]` 结构。
+remote v1 才继续按分类名选择语言 WAD / 根 WAD 的兼容分支。
 
-WAD 选择规则：
+映射输出额外包含：
 
-- 分类名包含 `VO`：优先语言 WAD
-- 其他分类：使用根 WAD
+- 子实体 sibling `audioPaths: category -> event -> relativePath[]`，仅指向实际解包的 WEM；
+  relative path 相对于当前逻辑实体输出根，使用 POSIX 分隔符，保留同 ID 的多路径。
+- 顶层 `mappingDiagnostics`：映射完整度、路径级 WEM 覆盖、缺 events、未解析 bank 与错误分类。
 
-因此：
-
-- `mapping` 通常会同时使用语言 WAD 与根 WAD
-- 它不受 `ctx.config.include_types` 的过滤约束
-- 地图映射往往会比英雄链路更重
+没有 events 不会伪造 mapping 或让已解包 WEM 失败，而是产生可观察的 `partial` 诊断。
+映射的本地 BNK/HIRC 磁盘缓存以完整 SHA-256 WAD identity namespace 隔离；运行期 key 同时
+包含 WAD identity、规范化 bank path 和 HIRC backend。写入 cache 前会校验规范化 bank path
+不能越出当前 WAD namespace；同 key 的并发提取在一次原子临界区内完成。events 中存在但没有
+对应 binding 的分类会以 `status: missing` 写入 `unresolvedBankCategories`。
 
 ## 3. 编排层入口
 
