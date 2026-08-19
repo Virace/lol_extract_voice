@@ -401,7 +401,7 @@ class SharedDataController(QObject):
             logger.info("开始增量刷新共享输出状态")
             try:
                 loader = self._entity_data_loader_cls(self.app_context)
-                if request.champion_ids or request.special_targets:
+                if request.champion_ids or request.special_targets or request.resource_pack_wads:
                     catalog = loader.load_champion_rows_by_targets(
                         champion_ids=request.champion_ids,
                         special_targets=request.special_targets,
@@ -410,7 +410,7 @@ class SharedDataController(QObject):
                         self.entity_rows_updated.emit(
                             EntityRowsPayload.from_rows("champions", catalog["champions"])
                         )
-                    if request.special_targets:
+                    if request.special_targets or request.resource_pack_wads:
                         self.entity_rows_updated.emit(
                             EntityRowsPayload.from_rows("special", catalog["special"])
                         )

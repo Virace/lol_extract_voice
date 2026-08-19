@@ -14,13 +14,13 @@ from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.model import generate_champion_tasks, generate_map_tasks
 
 from . import session as mapping_session
-from .entity import build_champion, build_map
+from .entity import build_champion, build_map, build_resource_pack
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
 
 
-EntityTask = tuple[str, int, str]
+EntityTask = tuple[str, int | str, str]
 
 
 def _summarize_tasks(tasks: list[EntityTask]) -> tuple[list[str], dict[str, int], dict[str, int]]:
@@ -35,21 +35,24 @@ def _summarize_tasks(tasks: list[EntityTask]) -> tuple[list[str], dict[str, int]
 
     champion_count = sum(1 for entity_type, _, _ in tasks if entity_type == "champion")
     map_count = sum(1 for entity_type, _, _ in tasks if entity_type == "map")
+    resource_pack_count = sum(1 for entity_type, _, _ in tasks if entity_type == "resource_pack")
 
     summary_parts: list[str] = []
     if champion_count > 0:
         summary_parts.append(f"{champion_count} 个英雄")
     if map_count > 0:
         summary_parts.append(f"{map_count} 个地图")
+    if resource_pack_count > 0:
+        summary_parts.append(f"{resource_pack_count} 个资源包")
 
-    totals_by_type = {"champion": champion_count, "map": map_count}
-    finished_by_type = {"champion": 0, "map": 0}
+    totals_by_type = {"champion": champion_count, "map": map_count, "resource_pack": resource_pack_count}
+    finished_by_type = {"champion": 0, "map": 0, "resource_pack": 0}
     return summary_parts, totals_by_type, finished_by_type
 
 
 def _build_entity(  # noqa: PLR0913, PLR0917
     entity_type: str,
-    entity_id: int,
+    entity_id: int | str,
     reader: DataReader,
     wwiser_manager: Any,
     integrate_data: bool,
@@ -85,6 +88,16 @@ def _build_entity(  # noqa: PLR0913, PLR0917
     if entity_type == "map":
         build_map(
             entity_id,
+            reader,
+            wwiser_manager,
+            integrate_data,
+            runtime_cache=runtime_cache,
+            ctx=ctx,
+        )
+        return
+    if entity_type == "resource_pack":
+        build_resource_pack(
+            str(entity_id),
             reader,
             wwiser_manager,
             integrate_data,
@@ -191,7 +204,7 @@ def execute_tasks(  # noqa: PLR0913
 
         def build_entity_with_progress(
             entity_type: str,
-            entity_id: int,
+            entity_id: int | str,
             description: str,
         ) -> None:
             if progress_lock is None:
@@ -403,6 +416,36 @@ def build_maps(  # noqa: PLR0913
 
     execute_tasks(
         generate_map_tasks(reader, map_ids),
+        reader,
+        max_workers,
+        integrate_data,
+        ctx=ctx,
+        progress_callback=progress_callback,
+    )
+
+
+def build_resource_packs(  # noqa: PLR0913
+    reader: DataReader,
+    keys: list[str],
+    max_workers: int = 4,
+    integrate_data: bool = False,
+    *,
+    ctx: AppContext,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
+) -> None:
+    """构建指定 resource-pack 的事件映射。
+
+    Args:
+        reader: 数据读取器实例。
+        keys: canonical resource-pack key 列表。
+        max_workers: 最大工作线程数。
+        integrate_data: 是否生成整合数据。
+        ctx: 运行时上下文。
+        progress_callback: 每个实体完成后的可选进度回调。
+    """
+    tasks: list[EntityTask] = [("resource_pack", key, f"资源包 {key}") for key in keys]
+    execute_tasks(
+        tasks,
         reader,
         max_workers,
         integrate_data,

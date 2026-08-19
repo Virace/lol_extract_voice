@@ -9,8 +9,10 @@ from lol_audio_unpack.app.path_layout import (
     AUDIO_TYPE_MUSIC,
     AUDIO_TYPE_SFX,
     AUDIO_TYPE_VO,
+    DIR_RESOURCE_PACKS,
     ENTITY_NAME_SEPARATOR,
     format_entity_folder_name,
+    get_entity_path_component,
     get_output_dir_name,
 )
 from lol_audio_unpack.manager.files import find_data_file
@@ -64,7 +66,7 @@ def resolve_audio_paths(
     audio_base = Path(ctx.paths.audio_path)
     entity_dir = get_output_dir_name(entity_data.entity_type)
     entity_folder = format_entity_folder_name(
-        entity_data.entity_id,
+        get_entity_path_component(entity_data.entity_type, entity_data.entity_id),
         entity_data.entity_alias,
         entity_data.entity_name,
         entity_data.entity_title,
@@ -164,7 +166,7 @@ def _resolve_audio_ref_roots(
     audio_root = Path(ctx.paths.audio_path) / version
     entity_dir = get_output_dir_name(entity_data.entity_type)
     entity_folder = format_entity_folder_name(
-        entity_data.entity_id,
+        get_entity_path_component(entity_data.entity_type, entity_data.entity_id),
         entity_data.entity_alias,
         entity_data.entity_name,
         entity_data.entity_title,
@@ -187,7 +189,7 @@ def _grouped_audio_type(entity_root: Path, version_root: Path) -> str | None:
     return relative_parts[0] if relative_parts and entity_root.name != "lobby" else None
 
 
-def _describe_audio_ref(
+def _describe_audio_ref(  # noqa: PLR0911
     entity_data: AudioEntityData,
     relative_path: Path,
     *,
@@ -213,11 +215,18 @@ def _describe_audio_ref(
         elif entity_data.entity_type == "map" and content_parts:
             audio_type = content_parts[0]
             content_parts = ()
+        elif entity_data.entity_type == "resource_pack" and content_parts:
+            audio_type = content_parts[0]
+            content_parts = ()
         else:
             return None, None
 
-    if entity_data.entity_type != "champion" or not content_parts:
-        return audio_type, str(entity_data.entity_id) if entity_data.entity_type == "map" else None
+    if entity_data.entity_type == "map":
+        return audio_type, str(entity_data.entity_id)
+    if entity_data.entity_type == "resource_pack":
+        return audio_type, str(entity_data.entity_id)
+    if not content_parts:
+        return audio_type, None
 
     folder = content_parts[0]
     sub_id, separator, _name = folder.partition(ENTITY_NAME_SEPARATOR)
@@ -276,7 +285,9 @@ def _build_mapping_bases(
     integrate_data: bool | None,
 ) -> tuple[Path, ...]:
     """构建映射文件的基础路径候选。"""
-    entity_id_text = str(entity_id)
+    entity_id_text = (
+        get_entity_path_component("resource_pack", entity_id) if entity_dir == DIR_RESOURCE_PACKS else str(entity_id)
+    )
     integrated_base = hash_root / "integrated" / entity_dir / entity_id_text
     raw_base = hash_root / entity_dir / entity_id_text
 

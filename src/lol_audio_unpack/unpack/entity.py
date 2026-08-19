@@ -13,6 +13,7 @@ from loguru import logger
 from lol_audio_unpack.app.path_layout import (
     format_entity_folder_name,
     format_sub_entity_folder_name,
+    get_entity_path_component,
     get_output_dir_name,
 )
 from lol_audio_unpack.manager import DataReader
@@ -299,7 +300,8 @@ def _finish_unpack_stats(
         logger.error(summary)
 
     try:
-        report_filename = f"_{entity_data.entity_id}_metadata.yaml"
+        component = get_entity_path_component(entity_data.entity_type, entity_data.entity_id)
+        report_filename = f"_{component}_metadata.yaml"
         report_path = ctx.report_path / reader.version / get_output_dir_name(entity_data.entity_type) / report_filename
         report_path.parent.mkdir(parents=True, exist_ok=True)
         stats.save_concise_report_to_yaml(report_path)
@@ -605,7 +607,8 @@ def unpack_entity(  # noqa: PLR0913
                 logger.debug(f"{sub_stats.name} 空容器路径: {sub_stats.empty_container_paths}")
 
     try:
-        report_filename = f"_{entity_data.entity_id}_metadata.yaml"
+        component = get_entity_path_component(entity_data.entity_type, entity_data.entity_id)
+        report_filename = f"_{component}_metadata.yaml"
         report_path = ctx.report_path / reader.version / get_output_dir_name(entity_data.entity_type) / report_filename
         report_path.parent.mkdir(parents=True, exist_ok=True)
         stats.save_concise_report_to_yaml(report_path)
@@ -626,7 +629,7 @@ def _generate_relative_path(entity_data: AudioEntityData, sub_id: str) -> Path:
     sub_name = entity_data.sub_entities[sub_id]["name"]
     entity_dir = get_output_dir_name(entity_data.entity_type)
     entity_folder = format_entity_folder_name(
-        entity_data.entity_id,
+        get_entity_path_component(entity_data.entity_type, entity_data.entity_id),
         entity_data.entity_alias,
         entity_data.entity_name,
         entity_data.entity_title,
@@ -658,7 +661,7 @@ def _build_entity_audio_roots(
     audio_root = ctx.audio_path / version
     entity_dir = get_output_dir_name(entity_data.entity_type)
     entity_folder = format_entity_folder_name(
-        entity_data.entity_id,
+        get_entity_path_component(entity_data.entity_type, entity_data.entity_id),
         entity_data.entity_alias,
         entity_data.entity_name,
         entity_data.entity_title,
@@ -672,7 +675,7 @@ def _build_entity_audio_roots(
 
 def resolve_entity_audio_roots(
     entity_type: str,
-    entity_id: int,
+    entity_id: int | str,
     reader: DataReader,
     *,
     ctx: AppContext,
@@ -681,7 +684,7 @@ def resolve_entity_audio_roots(
 
     Args:
         entity_type: 实体类型，例如 ``champion`` 或 ``map``。
-        entity_id: 实体 ID。
+        entity_id: 实体 ID 或 resource-pack key。
         reader: 数据读取器。
         ctx: 运行时上下文。
 
@@ -808,4 +811,46 @@ def unpack_map(  # noqa: PLR0913
         # 显式记录边界错误后向上抛出，交由 batch 统一计入失败计数；
         # 不在此处吞掉返回 None，否则失败会被误判为成功（见 AGENTS.project.md 日志硬规则）。
         logger.error(str(e))
+        raise
+
+
+def unpack_resource_pack(  # noqa: PLR0913
+    key: str,
+    reader: DataReader,
+    wad_cache: dict[Path, WAD] | None = None,
+    cache_lock: threading.Lock | None = None,
+    *,
+    ctx: AppContext,
+    persisted_wem_callback: Callable[[Path], None] | None = None,
+) -> None:
+    """按 resource-pack stable key 解包音频。
+
+    Args:
+        key: canonical resource-pack key。
+        reader: 已初始化的数据读取器。
+        wad_cache: 本轮解包共享 WAD 缓存。
+        cache_lock: 多线程场景下的缓存锁。
+        ctx: 运行时上下文。
+        persisted_wem_callback: WEM 落盘后的附加回调。
+
+    Raises:
+        ValueError: resource-pack artifact 或绑定无效时抛出。
+    """
+    try:
+        entity_data = AudioEntityData.from_entity(
+            "resource_pack",
+            key,
+            reader,
+            ctx=ctx,
+        )
+        unpack_entity(
+            entity_data,
+            reader,
+            wad_cache=wad_cache,
+            cache_lock=cache_lock,
+            ctx=ctx,
+            persisted_wem_callback=persisted_wem_callback,
+        )
+    except ValueError as exc:
+        logger.error(str(exc))
         raise

@@ -9,6 +9,7 @@ from PySide6.QtCore import Qt
 
 import lol_audio_unpack.gui.view.overview_page as overview_page_module
 from lol_audio_unpack.app.artifacts import AudioRef
+from lol_audio_unpack.app.resource_pack import ResourcePackWadRef
 from lol_audio_unpack.app.types import SourceMode
 from lol_audio_unpack.gui.controllers.overview_preview import (
     ALL_AUDIO_PREVIEW_MODE,
@@ -68,6 +69,37 @@ def test_overview_page_special_preview_uses_stable_state_key_and_champion_loader
             "loader": loader,
         }
     ]
+
+
+def test_overview_page_schedules_resource_pack_scan_without_calling_discovery_on_ui_thread(qtbot, monkeypatch) -> None:
+    """selected-WAD discovery 必须先交给线程池，不能在按钮处理期间执行。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    context = SimpleNamespace()
+    ref = ResourcePackWadRef("Game/DATA/FINAL/Legacy.wad.client", size=12, mtime_ns=34)
+    scheduled = []
+    app_calls = []
+    page._app_context = context
+    monkeypatch.setattr(
+        overview_page_module,
+        "QThreadPool",
+        SimpleNamespace(globalInstance=lambda: SimpleNamespace(start=scheduled.append)),
+    )
+
+    class _FakeApp:
+        def __init__(self, app_context) -> None:
+            app_calls.append(app_context)
+
+        def discover_resource_packs(self, _options):
+            return object()
+
+    monkeypatch.setattr(overview_page_module, "LolAudioUnpackApp", _FakeApp)
+
+    page._start_resource_pack_scan((ref,))
+
+    assert len(scheduled) == 1
+    assert scheduled[0] is page._resource_pack_scan_worker
+    assert app_calls == []
 
 
 def test_overview_page_remote_special_tab_shows_local_only_notice(qtbot) -> None:

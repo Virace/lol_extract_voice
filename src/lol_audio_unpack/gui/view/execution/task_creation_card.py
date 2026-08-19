@@ -28,6 +28,7 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
+from lol_audio_unpack.app.resource_pack import ResourcePackWadRef
 from lol_audio_unpack.gui.common.font_compat import apply_tool_button_safe_font
 from lol_audio_unpack.gui.common.styles import (
     build_fluent_panel_frame_theme_pair,
@@ -126,6 +127,7 @@ class _ExecutionTaskFormState:
     integrate_data: bool = True
     wav_enabled: bool = False
     wav_format: str = "pcm16"
+    resource_pack_wads: tuple[ResourcePackWadRef, ...] = ()
 
     def target_summary(self) -> str:
         """返回当前目标范围摘要。"""
@@ -482,6 +484,7 @@ class TaskCreationCard(HeaderCardWidget):
             "map_ids": (),
             "special_targets": (),
             "special_target_names": (),
+            "resource_pack_wads": (),
             "summary": "尚未从实体总览同步选择。",
             "select_all": False,
         }
@@ -551,6 +554,7 @@ class TaskCreationCard(HeaderCardWidget):
             map_ids=map_ids,
             special_targets=tuple(self._synced_selection["special_targets"]) if is_current_sync else (),
             special_target_names=tuple(self._synced_selection["special_target_names"]) if is_current_sync else (),
+            resource_pack_wads=tuple(self._synced_selection["resource_pack_wads"]) if is_current_sync else (),
             include_extract=include_extract,
             include_mapping=self.mapping_task_cb.isChecked(),
             vo_filter_key=self.vo_filter.currentRouteKey() or self._defaults.vo_filter_key,
@@ -578,6 +582,10 @@ class TaskCreationCard(HeaderCardWidget):
     def current_special_target_names(self) -> tuple[str, ...]:
         """返回当前特殊内容的本地化展示名称。"""
         return self._state.special_target_names
+
+    def current_resource_pack_wads(self) -> tuple[ResourcePackWadRef, ...]:
+        """返回当前特殊内容携带的来源 WAD 快照。"""
+        return self._state.resource_pack_wads
 
     def current_selection_source(self) -> str:
         """返回当前任务输入的来源标识。"""
@@ -635,6 +643,11 @@ class TaskCreationCard(HeaderCardWidget):
                 champion_ids=champion_ids,
                 map_ids=map_ids,
                 special_targets=special_targets,
+                resource_pack_wads=(
+                    state.resource_pack_wads
+                    if self.current_selection_source() == str(self._synced_selection["source"])
+                    else ()
+                ),
                 run_update=state.force_update,
                 run_extract=state.include_extract,
                 run_mapping=state.include_mapping,
@@ -660,6 +673,7 @@ class TaskCreationCard(HeaderCardWidget):
             map_ids=(),
             special_targets=(),
             special_target_names=(),
+            resource_pack_wads=(),
             include_extract=current_state.include_extract,
             include_mapping=current_state.include_mapping,
             vo_filter_key=defaults.vo_filter_key,
@@ -694,6 +708,7 @@ class TaskCreationCard(HeaderCardWidget):
         select_all: bool = False,
         special_targets: tuple[str, ...] = (),
         special_target_names: tuple[str, ...] = (),
+        resource_pack_wads: tuple[ResourcePackWadRef, ...] = (),
     ) -> None:
         """将实体总览选择应用到任务表单。"""
         self._synced_selection = {
@@ -702,6 +717,7 @@ class TaskCreationCard(HeaderCardWidget):
             "map_ids": map_ids,
             "special_targets": special_targets,
             "special_target_names": special_target_names,
+            "resource_pack_wads": tuple(dict.fromkeys(resource_pack_wads)),
             "summary": summary,
             "select_all": select_all,
         }

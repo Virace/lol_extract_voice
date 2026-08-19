@@ -66,7 +66,7 @@ class SubEntityStats:
     :param empty_container_paths: 空容器文件的路径列表
     """
 
-    sub_id: int
+    sub_id: int | str
     name: str
     total_files: int = 0
     success_files: int = 0
@@ -97,9 +97,9 @@ class EntityUnpackStats:
     """
 
     # === 基本信息 ===
-    entity_id: int
+    entity_id: int | str
     entity_name: str
-    entity_type: str  # "英雄" 或 "地图"
+    entity_type: str  # 英雄、地图或资源包
     game_version: str  # 游戏版本号
     language: str
     languages: list[str] = field(default_factory=list)  # 语言列表（用于元数据生成）
@@ -127,7 +127,7 @@ class EntityUnpackStats:
     total_assembled_files: int = 0
 
     # === 阶段4: 文件处理统计 ===
-    sub_entity_stats: dict[int, SubEntityStats] = field(default_factory=dict)
+    sub_entity_stats: dict[int | str, SubEntityStats] = field(default_factory=dict)
 
     # === 整体汇总 ===
     total_success_files: int = 0
@@ -191,7 +191,7 @@ class EntityUnpackStats:
         else:
             self.root_wad_info = wad_info
 
-    def get_or_create_sub_stats(self, sub_id: int, name: str) -> SubEntityStats:
+    def get_or_create_sub_stats(self, sub_id: int | str, name: str) -> SubEntityStats:
         """获取或创建子实体统计对象
 
         :param sub_id: 子实体ID
@@ -203,7 +203,7 @@ class EntityUnpackStats:
         return self.sub_entity_stats[sub_id]
 
     def record_file_result(
-        self, sub_id: int, sub_name: str, audio_type: str, result: FileProcessResult, **details
+        self, sub_id: int | str, sub_name: str, audio_type: str, result: FileProcessResult, **details
     ) -> None:
         """记录文件处理结果
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from lol_audio_unpack.app.resource_pack import ResourcePackWadRef, build_resource_pack_key
 from lol_audio_unpack.gui.controllers.execution_queue import ExecutionQueueController
 from lol_audio_unpack.gui.task_models import (
     TASK_STATUS_CANCELLED,
@@ -136,6 +137,34 @@ def test_execution_queue_controller_on_task_finished_emits_refresh_request_for_l
     assert completed_payload.status == TASK_STATUS_COMPLETED
     assert controller.active_task_id is None
     assert refresh_requests == [OutputStateRefreshRequest(champion_ids=("1", "103"))]
+
+
+def test_execution_queue_controller_keeps_resource_pack_key_and_snapshot_for_refresh(monkeypatch) -> None:
+    """任务完成后的增量刷新必须同时保留资源包 key 与来源 snapshot。"""
+    controller = _build_controller()
+    key = build_resource_pack_key("Legacy.wad.client", "MODE_LEGACY")
+    ref = ResourcePackWadRef("Game/DATA/FINAL/Legacy.wad.client", size=12, mtime_ns=34)
+    monkeypatch.setattr(controller, "start_task_worker", lambda _task: None)
+    refresh_requests = []
+    controller.output_state_refresh_requested.connect(refresh_requests.append)
+    task = controller.enqueue_task(
+        draft=ExecutionTaskDraft(
+            source="overview_selection",
+            source_summary="历史资源包",
+            task_params=ExecutionTaskParamsSnapshot(
+                special_targets=(key,),
+                resource_pack_wads=(ref,),
+            ),
+        ),
+        summary="资源包任务",
+    )
+
+    controller.on_task_finished(
+        task.task_id,
+        ExecutionTaskResult(completed_steps=("音频解包",), summary="执行完成", duration_seconds=1.2),
+    )
+
+    assert refresh_requests == [OutputStateRefreshRequest(special_targets=(key,), resource_pack_wads=(ref,))]
 
 
 def test_execution_queue_controller_single_task_mode_clears_stale_history_before_next_task(

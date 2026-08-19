@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 from qfluentwidgets import CustomStyleSheet, isDarkTheme, setCustomStyleSheet, setStyleSheet
 from qfluentwidgets.components.widgets.scroll_bar import SmoothScrollDelegate
 
-from lol_audio_unpack.app.special_content import SPECIAL_CONTENT_PROFILES
+from lol_audio_unpack.app.special_content import SPECIAL_CONTENT_GROUPS
 from lol_audio_unpack.gui.common.styles import (
     build_fluent_list_shell_theme_pair,
     resolve_fluent_neutral_surface,
@@ -184,12 +184,12 @@ class SpecialContentTreeModel(QAbstractItemModel):
             return Qt.ItemFlag.NoItemFlags
         if node.row is None:
             return Qt.ItemFlag.ItemIsEnabled
-        if not self._interactive:
+        if not self._interactive or not bool(node.row.get("selectable", True)):
             return Qt.ItemFlag.ItemIsEnabled
         return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
 
     def set_rows(self, rows: list[dict[str, Any]]) -> None:
-        """替换特殊内容行，并按固定 profile 顺序重建一层分组。"""
+        """替换特殊内容行，并按固定分组顺序重建一层分组。"""
         groups = self._build_groups(rows)
         self.beginResetModel()
         self._all_groups = groups
@@ -225,7 +225,7 @@ class SpecialContentTreeModel(QAbstractItemModel):
         return {str(row.get("key", "")) for group in self._all_groups for row in group.rows if str(row.get("key", ""))}
 
     def _build_groups(self, rows: list[dict[str, Any]]) -> list[_SpecialGroup]:
-        """按固定 profile 顺序组织给定原始行。"""
+        """按固定分组顺序组织给定原始行。"""
         rows_by_mode: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
             rows_by_mode.setdefault(str(row.get("mode_key", "")), []).append(dict(row))
@@ -238,7 +238,7 @@ class SpecialContentTreeModel(QAbstractItemModel):
                     rows_by_mode.get(profile.mode_key, []), key=lambda item: str(item.get("name", "")).casefold()
                 ),
             )
-            for profile in SPECIAL_CONTENT_PROFILES
+            for profile in SPECIAL_CONTENT_GROUPS
             if rows_by_mode.get(profile.mode_key)
         ]
 

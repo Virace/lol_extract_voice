@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from lol_audio_unpack.app.artifacts import AudioRef
+from lol_audio_unpack.app.resource_pack import build_resource_pack_key
 from lol_audio_unpack.gui.controllers.overview_preview import (
     ALL_AUDIO_PREVIEW_MODE,
     EVENT_PREVIEW_MODE,
@@ -62,6 +63,62 @@ def test_overview_preview_controller_keeps_audio_refs_when_mapping_missing() -> 
     assert result.audio_refs == (audio_ref,)
     assert result.default_preview_mode == ALL_AUDIO_PREVIEW_MODE
     assert result.mapping_notice == "Annie 尚未生成事件映射。"
+
+
+def test_resource_pack_preview_keeps_flat_audio_and_hides_stable_key_from_group_label() -> None:
+    """资源包缺 mapping 时仍可试听，存在 mapping 时首层显示 catalog 名称。"""
+    key = build_resource_pack_key("Legacy.wad.client", "MODE_LEGACY")
+    audio_ref = AudioRef(
+        relative_path="SFX/1001.wem",
+        path=Path("resource_packs/legacy/SFX/1001.wem"),
+        wem_id="1001",
+        audio_type="SFX",
+        sub_entity=key,
+    )
+    loader = SimpleNamespace(
+        load_mapping_preview=lambda *_args: (None, None, ""),
+        load_audio_refs=lambda *_args: (audio_ref,),
+        load_audio_roots=lambda *_args, **_kwargs: (Path("resource_packs/legacy"),),
+    )
+    controller = OverviewPreviewController()
+
+    result = controller.load_preview(
+        entity_type="resource_packs",
+        entity_id=key,
+        entity_name="历史资源包 · Legacy",
+        loader=loader,
+    )
+
+    assert result.default_preview_mode == ALL_AUDIO_PREVIEW_MODE
+    assert result.audio_refs == (audio_ref,)
+    assert result.group_label_map == {key: "历史资源包 · Legacy"}
+
+
+def test_normalize_integrated_resource_pack_mapping_preserves_audio_paths() -> None:
+    """资源包整合 mapping 必须保留事件到精确 WEM 路径的关联。"""
+    key = build_resource_pack_key("Legacy.wad.client", "MODE_LEGACY")
+
+    result = _normalize_integrated_mapping_data(
+        {
+            "data": {
+                "resourcePack": {
+                    "key": key,
+                    "events": {"SFX": {"banks": [], "mapping": {"evt": ["1001"]}}},
+                    "audioPaths": {"SFX": {"evt": ["SFX/1001.wem"]}},
+                }
+            }
+        },
+        entity_type="resource_packs",
+        entity_id=key,
+    )
+
+    assert result is not None
+    assert result["resourcePacks"] == {
+        key: {
+            "events": {"SFX": {"evt": ["1001"]}},
+            "audioPaths": {"SFX": {"evt": ["SFX/1001.wem"]}},
+        }
+    }
 
 
 def test_overview_preview_controller_builds_champion_group_labels() -> None:

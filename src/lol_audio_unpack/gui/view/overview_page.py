@@ -14,6 +14,7 @@ from PySide6.QtCore import (
     QPoint,
     QSignalBlocker,
     Qt,
+    QThreadPool,
     QUrl,
     Signal,
 )
@@ -54,7 +55,10 @@ from qfluentwidgets import (
 )
 
 from lol_audio_unpack.app.artifacts import AudioRef
+from lol_audio_unpack.app.facade import LolAudioUnpackApp
+from lol_audio_unpack.app.resource_pack import ResourcePackSelectionError, ResourcePackWadRef
 from lol_audio_unpack.app.special_content import is_special_content_supported
+from lol_audio_unpack.app.types import OperationOptions
 from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled
 from lol_audio_unpack.gui.common.page_style import apply_page_content_margins
 from lol_audio_unpack.gui.common.styles import build_fluent_panel_frame_theme_pair
@@ -87,6 +91,7 @@ from lol_audio_unpack.gui.view.overview.preview_panel import (
     DEFAULT_PREVIEW_PLACEHOLDER_TEXT,
     OverviewPreviewPanel,
 )
+from lol_audio_unpack.gui.workers import TaskWorker
 
 DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT = 10
 DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY = "default"
@@ -165,6 +170,7 @@ class OverviewPage(QWidget):
         }
         self._preview_audio_volume_percent = DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT
         self._preview_audio_output_device_key = DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY
+        self._resource_pack_scan_worker: TaskWorker | None = None
         self._entity_lists: dict[str, OverviewEntityListView | SpecialContentTreeView] = {}
         self._build_ui()
         self._preview_playback_controller = PreviewPlaybackController(parent=self)
@@ -218,6 +224,7 @@ class OverviewPage(QWidget):
         self._loader = None
         if app_context is None:
             self.entityListPanel.set_special_interaction_enabled(False)
+            self.entityListPanel.set_resource_pack_scan_enabled(False)
             self.entityListPanel.set_special_availability_message(None)
             self._update_catalog_subtitle()
             self._show_placeholder("当前配置尚未完成初始化，暂时无法读取预览内容。")
@@ -225,6 +232,9 @@ class OverviewPage(QWidget):
 
         special_supported = is_special_content_supported(app_context.config.source_mode)
         self.entityListPanel.set_special_interaction_enabled(special_supported)
+        self.entityListPanel.set_resource_pack_scan_enabled(
+            special_supported and self._resource_pack_scan_worker is None
+        )
         self.entityListPanel.set_special_availability_message(
             None if special_supported else "特殊内容仅支持本地客户端资源。"
         )
@@ -285,6 +295,7 @@ class OverviewPage(QWidget):
         self.previewPanel.preview_search_input.textChanged.connect(self._on_preview_search_text_changed)
         self.sync_selection_btn.clicked.connect(self._sync_selected_entities)
         self.clear_selection_btn.clicked.connect(self._clear_selected_entities)
+        self.entityListPanel.scan_resource_packs_btn.clicked.connect(self._select_resource_pack_wads)
         self.reveal_file_btn.clicked.connect(self._reveal_current_preview_target)
         self.audio_preview_tree.audio_ref_toggle_requested.connect(self._on_audio_preview_toggle_requested)
         self.audio_preview_tree.audio_context_menu_requested.connect(self._show_audio_menu)
@@ -581,6 +592,11 @@ class OverviewPage(QWidget):
                 str(row.get("key", "")): str(row.get("display_name", ""))
                 for row in self._entity_data_store.rows_for("special")
             },
+            resource_pack_wads={
+                str(row.get("key", "")): ref
+                for row in self._entity_data_store.rows_for("special")
+                if isinstance(ref := row.get("resource_pack_wad"), ResourcePackWadRef)
+            },
         )
         total_count = len(payload.champion_ids) + len(payload.map_ids) + len(payload.special_targets)
         if total_count == 0:
@@ -600,6 +616,112 @@ class OverviewPage(QWidget):
             self._current_preview_ids[entity_type] = None
             self.entityListPanel.clear_selection(entity_type)
         self._sync_current_list_view()
+
+    def _select_resource_pack_wads(self) -> None:
+        """选择 FINAL 内 WAD 并在后台启动显式资源包扫描。"""
+        if not self._special_content_supported() or self._app_context is None:
+            self.entityListPanel.set_special_catalog_notice("资源包扫描仅支持本地客户端资源。")
+            return
+
+        game_root = Path(self._app_context.config.game_path)
+        final_root = game_root / "Game" / "DATA" / "FINAL"
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "选择要扫描的历史资源包",
+            str(final_root if final_root.is_dir() else game_root),
+            "WAD 文件 (*.wad.client)",
+        )
+        if not paths:
+            self.entityListPanel.set_special_catalog_notice("尚未选择历史资源包。")
+            return
+
+        refs: list[ResourcePackWadRef] = []
+        errors: list[str] = []
+        for path in paths:
+            try:
+                refs.append(ResourcePackWadRef.from_path(game_root, Path(path)))
+            except ResourcePackSelectionError as exc:
+                errors.append(str(exc))
+        refs = list(dict.fromkeys(refs))
+        if not refs:
+            self.entityListPanel.set_special_catalog_notice(errors[0] if errors else "未选择可扫描的历史资源包。")
+            return
+
+        if errors:
+            InfoBar.warning(
+                "部分 WAD 未加入扫描",
+                errors[0],
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+            )
+        self._start_resource_pack_scan(tuple(refs))
+
+    def _start_resource_pack_scan(self, refs: tuple[ResourcePackWadRef, ...]) -> None:
+        """通过线程池运行 selected-WAD discovery，避免阻塞 UI 线程。"""
+        if self._app_context is None or self._resource_pack_scan_worker is not None:
+            return
+
+        context = self._app_context
+        self._resource_pack_scan_worker = TaskWorker(
+            lambda: LolAudioUnpackApp(context).discover_resource_packs(OperationOptions(resource_pack_wads=refs))
+        )
+        worker = self._resource_pack_scan_worker
+        worker.signals.started.connect(self._on_resource_pack_scan_started)
+        worker.signals.finished.connect(self._on_resource_pack_scan_finished)
+        worker.signals.failed.connect(self._on_resource_pack_scan_failed)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_resource_pack_scan_started(self) -> None:
+        """显示资源包扫描中的可观察状态。"""
+        self.entityListPanel.set_resource_pack_scan_enabled(False)
+        self.entityListPanel.set_special_catalog_notice("正在扫描所选历史资源包…")
+
+    def _on_resource_pack_scan_finished(self, result: object) -> None:
+        """合并最新已持久化 resource-pack 行，并展示聚合成本与状态。"""
+        self._resource_pack_scan_worker = None
+        self.entityListPanel.set_resource_pack_scan_enabled(self._special_content_supported())
+        loader = self._ensure_loader()
+        if loader is not None:
+            resource_rows = loader.load_resource_pack_rows()
+            structured_rows = [
+                row for row in self._entity_data_store.rows_for("special") if row.get("entity_type") != "resource_packs"
+            ]
+            self.set_entity_data("special", [*structured_rows, *resource_rows])
+        self.entityListPanel.set_special_catalog_notice(self._resource_pack_scan_message(result))
+
+    def _on_resource_pack_scan_failed(self, error: str) -> None:
+        """恢复扫描入口，并保留后台 discovery 的失败说明。"""
+        self._resource_pack_scan_worker = None
+        self.entityListPanel.set_resource_pack_scan_enabled(self._special_content_supported())
+        self.entityListPanel.set_special_catalog_notice(f"历史资源包扫描失败: {error}")
+
+    @staticmethod
+    def _resource_pack_scan_message(result: object) -> str:
+        """将 discovery 汇总投影为总览页可读状态。"""
+        scans = tuple(getattr(result, "scans", ()))
+        packs = tuple(getattr(result, "packs", ()))
+        status = str(getattr(result, "status", "failed"))
+        cost = getattr(result, "cost", {})
+        if not isinstance(cost, dict):
+            cost = {}
+        cost_text = (
+            f"candidate {cost.get('candidateEntries', 0)}，"
+            f"payload {cost.get('payloadReads', 0)}，"
+            f"耗时 {float(cost.get('elapsedSeconds', 0) or 0):.1f}s"
+        )
+        reasons = [str(getattr(scan, "reason", "") or "") for scan in scans]
+        if any("Map 22 declaration" in reason for reason in reasons):
+            return f"所选 WAD 的可解析声明属于 Map 22，已保持为地图实体（{cost_text}）。"
+        if any("未找到可解析的 PROP/BIN candidate" in reason for reason in reasons):
+            return f"未发现可解析 BIN（{cost_text}）。"
+        if any(str(getattr(pack, "status", "")) == "conflict" for pack in packs):
+            return f"扫描发现冲突，未覆盖已有资源包 artifact（{cost_text}）。"
+        if status == "complete" and packs:
+            return f"历史资源包扫描完成，发现 {len(packs)} 个资源包（{cost_text}）。"
+        if status == "partial":
+            return f"历史资源包扫描部分完成，发现 {len(packs)} 个资源包（{cost_text}）。"
+        reason = next((reason for reason in reasons if reason), "未发现可用资源包")
+        return f"历史资源包扫描失败: {reason}（{cost_text}）。"
 
     def _on_nav_changed(self, _key: str) -> None:
         self._update_catalog_subtitle()

@@ -52,6 +52,49 @@ diagnostics:
 WAD。`remote_snapshot` 仍保留 v1 root/language 投影，`resource_banks` 为空且
 `binding_diagnostics` 为 `None`，不会创建本地 WAD index。
 
+### 0.1 显式 resource-pack 发现 artifact
+
+本地 API 可在 `OperationOptions.resource_pack_wads` 传入由
+`ResourcePackWadRef.from_path(game_root, path)` 创建的显式选择。每个 ref 只持久化游戏根相对
+WAD identity 与 `st_size` / `st_mtime_ns`；选择和执行阶段均严格解析、确认仍在
+`Game/DATA/FINAL` 下且为 `.wad.client`。remote 模式在应用门面拒绝该能力。
+
+发现只打开 selected WAD 的 TOC，只读取 storage type 为 `0`、`1` 或 `3` 的非零 candidate。解压前
+强制单 WAD 上限：4096 个 candidate、单 entry 4 MiB 未压缩尺寸、64 MiB candidate 压缩字节。候选
+payload 必须以 `PROP` 开头才交给 BIN parser；其他 false positive 只计读取成本。bank 的物理 WAD
+仍由 P1 resolver 按已声明 hash 查询 root/current-language TOC；除既有 hash 歧义比较外，不读取未选
+WAD payload。
+
+每个成功 `BANK_UNITS.category` 生成稳定 string identity：
+
+```text
+resource_pack:<wad-component>:<namespace-component>
+```
+
+组件使用 NFKC、casefold 与 UTF-8 percent encoding；WAD 组件去除 `.wad.client`。banks 与 events
+分别写入 `manifest/<version>/banks/resource_packs/` 与
+`manifest/<version>/events/resource_packs/`，文件名对完整 key 再做 percent encoding，payload 仍保存原
+stable key。banks 的 v2 `entity.type` 固定为 `resource_pack`，`entity.id` 为完整 key；`resourcePack`
+字段保存相对 WAD identity、stat fingerprint、category 与按 logical bank path 合并的 source entry hashes。
+同 key 指向不同规范化 WAD identity 或 source fingerprint 的既有 artifact 会标记 conflict，绝不覆盖。
+Map 22 已声明的 BIN entry 会按当前 map data/v2 binding ownership 从 candidate 中排除；该判定不依赖
+WAD 文件名前缀，同一 selected WAD 中不属于 Map 22 的独立 BIN 仍可继续发现。
+
+同 selected WAD/category 的重复声明按 logical bank path 合并，events 也去重。单 candidate parse failure、
+bank unresolved 或单 pack conflict 不阻断其他 category；`ResourcePackDiscoveryResult.scans` 提供每个
+selected-WAD 的状态、payload reads、压缩/未压缩字节与失败原因。尚无可解析 BIN 或无 BANK_UNITS bank
+path 时不生成伪 pack artifact。banks/events 写入后必须回读并匹配本次 payload；任一持久化校验失败时
+该 pack 报告为 failed，不会把不可供后续 consumer 读取的结果显示为扫描成功。
+
+`DataReader.get_resource_pack_banks(...)`、
+`get_resource_pack_resource_bindings(...)` 与 `get_resource_pack_events(...)` 提供该 artifact 的稳定读取
+边界。`AudioEntityData.from_resource_pack(...)` 把每个 pack 构造为唯一 logical sub-entity，并复用
+local v2 binding consumer：extract 只读取已解析的物理 WAD/entry，mapping 复用 WAD/HIRC cache。
+音频、raw hash、integrated hash 与 report 分别隔离到 `resource_packs` group；所有文件名使用完整 key
+的 Windows-safe component，payload 内仍保留完整 key。raw mapping 使用 `resourcePacks` data key，
+integrated mapping 使用 `data.resourcePack` 的稳定结构，并保留 namespace、WAD、events、audioPaths 与
+mapping diagnostics。缺 events 或没有可映射事件时仍会写入诊断，不会否定已经 extract 的平铺 WEM。
+
 ## 1. 解包入口
 
 公开包：`lol_audio_unpack.unpack`

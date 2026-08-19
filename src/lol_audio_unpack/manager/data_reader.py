@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from lol_audio_unpack.app.game_version import resolve_game_version
+from lol_audio_unpack.app.resource_pack import parse_resource_pack_key, resource_pack_path_component
 from lol_audio_unpack.app.targets import (
     filter_default_visible_champions,
     get_default_hidden_champion_markers,
@@ -75,6 +76,8 @@ class DataReader(metaclass=Singleton):
         self.champion_events_dir: Path = self.version_manifest_path / "events" / "champions"
         self.map_banks_dir: Path = self.version_manifest_path / "banks" / "maps"
         self.map_events_dir: Path = self.version_manifest_path / "events" / "maps"
+        self.resource_pack_banks_dir: Path = self.version_manifest_path / "banks" / "resource_packs"
+        self.resource_pack_events_dir: Path = self.version_manifest_path / "events" / "resource_packs"
         self.unknown_categories_file: Path = self.version_manifest_path / "unknown-category.txt"
 
         # 简单缓存机制避免重复读取
@@ -82,6 +85,8 @@ class DataReader(metaclass=Singleton):
         self._champion_events_cache: dict[int, dict] = {}
         self._map_banks_cache: dict[int, dict] = {}
         self._map_events_cache: dict[int, dict] = {}
+        self._resource_pack_banks_cache: dict[str, dict] = {}
+        self._resource_pack_events_cache: dict[str, dict] = {}
 
         # 防御性开发：记录未知的音频分类
         self.unknown_categories: set[str] = set()
@@ -279,6 +284,105 @@ class DataReader(metaclass=Singleton):
             return None
         payload = self.get_map_banks(map_id, require_bindings=True)
         return ResourceBindings.from_payload(payload) if payload else None
+
+    @performance_monitor(level="DEBUG")
+    def get_resource_pack_banks(self, key: str, *, require_bindings: bool = False) -> dict | None:
+        """读取指定 resource-pack 的 banks artifact。
+
+        Args:
+            key: canonical ``resource_pack:...`` 稳定 key。
+            require_bindings: 为 ``True`` 时，本地模式拒绝不含 v2 bindings 的旧 artifact。
+
+        Returns:
+            resource-pack banks 字典；文件不存在或读取失败时返回 ``None``。
+        """
+        component = resource_pack_path_component(key)
+        if key in self._resource_pack_banks_cache:
+            banks_data = self._resource_pack_banks_cache[key]
+            self._validate_resource_schema(banks_data, f"资源包 {key}", require_bindings=require_bindings)
+            return banks_data
+
+        try:
+            banks_data = read_data(self.resource_pack_banks_dir / component, dev_mode=self.ctx.config.dev_mode)
+        except Exception:
+            logger.opt(exception=True).error(f"读取 resource pack banks 数据失败: key={key}")
+            return None
+
+        if banks_data:
+            self._validate_resource_schema(banks_data, f"资源包 {key}", require_bindings=require_bindings)
+            self._resource_pack_banks_cache[key] = banks_data
+        return banks_data
+
+    def get_resource_pack_resource_bindings(self, key: str) -> ResourceBindings | None:
+        """读取本地 resource-pack v2 bindings；remote 旧合同返回 ``None``。"""
+        if not self._uses_local_resource_schema():
+            return None
+        payload = self.get_resource_pack_banks(key, require_bindings=True)
+        return ResourceBindings.from_payload(payload) if payload else None
+
+    def list_resource_pack_banks(self) -> list[dict]:
+        """枚举已持久化的 resource-pack banks artifact。
+
+        本方法只读取 manifest 产物的 metadata，不会访问来源 WAD payload。
+
+        Returns:
+            按 canonical stable key 排序的有效 banks artifact 列表。
+        """
+        if not self.resource_pack_banks_dir.is_dir():
+            return []
+
+        bases = {
+            path.with_suffix("")
+            for path in self.resource_pack_banks_dir.iterdir()
+            if path.suffix.casefold() in {".json", ".msgpack", ".yml"}
+        }
+        artifacts_by_key: dict[str, dict] = {}
+        for base in sorted(bases, key=lambda item: item.name.casefold()):
+            try:
+                # 交给 read_data 选择与其它 manifest artifact 相同的格式优先级。
+                payload = read_data(base, dev_mode=self.ctx.config.dev_mode)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("忽略无法读取的 resource-pack artifact {}: {}", base.name, exc)
+                continue
+            metadata = payload.get("resourcePack") if isinstance(payload, dict) else None
+            key = metadata.get("key") if isinstance(metadata, dict) else None
+            if not isinstance(key, str):
+                continue
+            try:
+                parse_resource_pack_key(key)
+            except ValueError:
+                logger.warning("忽略 identity 无效的 resource-pack artifact: {}", base.name)
+                continue
+            if base.name != resource_pack_path_component(key):
+                logger.warning("忽略文件名与 identity 不匹配的 resource-pack artifact: {}", base.name)
+                continue
+            self._resource_pack_banks_cache[key] = payload
+            artifacts_by_key.setdefault(key, payload)
+        return [artifacts_by_key[key] for key in sorted(artifacts_by_key)]
+
+    @performance_monitor(level="DEBUG")
+    def get_resource_pack_events(self, key: str) -> dict | None:
+        """读取并缓存指定 resource-pack 的 events artifact。
+
+        Args:
+            key: canonical ``resource_pack:...`` 稳定 key。
+
+        Returns:
+            resource-pack events 字典；文件不存在或读取失败时返回 ``None``。
+        """
+        component = resource_pack_path_component(key)
+        if key in self._resource_pack_events_cache:
+            return self._resource_pack_events_cache[key]
+
+        try:
+            events_data = read_data(self.resource_pack_events_dir / component, dev_mode=self.ctx.config.dev_mode)
+        except Exception:
+            logger.opt(exception=True).error(f"读取 resource pack events 数据失败: key={key}")
+            return None
+
+        if events_data:
+            self._resource_pack_events_cache[key] = events_data
+        return events_data
 
     def _uses_local_resource_schema(self) -> bool:
         """判断当前读取上下文是否要求 local v2 resource schema。"""

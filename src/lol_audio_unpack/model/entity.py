@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from lol_audio_unpack.app.resource_pack import RESOURCE_PACK_ENTITY_TYPE, parse_resource_pack_key
 from lol_audio_unpack.app.types import SourceMode
 from lol_audio_unpack.model.binding import BankBinding, BindingDiagnostics
 from lol_audio_unpack.utils.common import sanitize_filename
@@ -35,11 +36,11 @@ class AudioEntityData:
     """统一描述可解包和可映射的音频实体。
 
     Args:
-        entity_id: 实体 ID，例如英雄 ID 或地图 ID。
+        entity_id: 实体 ID，例如英雄 ID、地图 ID 或 resource-pack key。
         entity_name: 实体名称。
         entity_alias: 实体别名。
         entity_title: 实体标题；无标题时为 ``None``。
-        entity_type: 实体类型，当前为 ``"champion"`` 或 ``"map"``。
+        entity_type: 实体类型，支持 ``"champion"``、``"map"`` 或 ``"resource_pack"``。
         sub_entities: 子实体数据，例如皮肤或地图自身。
         wad_root: 根 WAD 相对路径，用于 SFX/MUSIC。
         wad_language: 语言 WAD 相对路径，用于 VO；缺失时为 ``None``。
@@ -52,7 +53,7 @@ class AudioEntityData:
     entity_name: str
     entity_alias: str
     entity_title: str | None
-    entity_type: str  # "champion" | "map"
+    entity_type: str  # "champion" | "map" | "resource_pack"
     sub_entities: dict[str, dict[str, Any]]
     wad_root: str
     wad_language: str | None = None
@@ -73,7 +74,8 @@ class AudioEntityData:
         if not sub_entity:
             return None
 
-        return {"id": int(sub_id), "name": sub_entity["name"]}
+        sub_entity_id: int | str = sub_id if self.entity_type == RESOURCE_PACK_ENTITY_TYPE else int(sub_id)
+        return {"id": sub_entity_id, "name": sub_entity["name"]}
 
     def get_wad_path(
         self,
@@ -109,7 +111,7 @@ class AudioEntityData:
     def from_entity(
         cls,
         entity_type: str,
-        entity_id: int,
+        entity_id: int | str,
         reader: DataReader,
         include_events: bool = False,
         *,
@@ -118,7 +120,7 @@ class AudioEntityData:
         """按实体类型构建统一的音频实体。
 
         Args:
-            entity_type: 实体类型，支持 ``"champion"`` 或 ``"map"``。
+            entity_type: 实体类型，支持 ``"champion"``、``"map"`` 或 ``"resource_pack"``。
             entity_id: 实体 ID。
             reader: 数据读取器实例。
             include_events: 是否附带事件数据。
@@ -140,6 +142,13 @@ class AudioEntityData:
         if entity_type == "map":
             return cls.from_map(
                 entity_id,
+                reader,
+                include_events=include_events,
+                ctx=ctx,
+            )
+        if entity_type == RESOURCE_PACK_ENTITY_TYPE:
+            return cls.from_resource_pack(
+                str(entity_id),
                 reader,
                 include_events=include_events,
                 ctx=ctx,
@@ -323,6 +332,70 @@ class AudioEntityData:
             events=events_data,
             resource_banks=resource_banks,
             binding_diagnostics=resource_bindings.diagnostics if resource_bindings is not None else None,
+        )
+
+    @classmethod
+    def from_resource_pack(
+        cls,
+        key: str,
+        reader: DataReader,
+        include_events: bool = False,
+        *,
+        ctx: AppContext,
+    ) -> AudioEntityData:
+        """从 resource-pack v2 artifact 构建唯一逻辑子实体。
+
+        Args:
+            key: canonical ``resource_pack:...`` 稳定 key。
+            reader: 数据读取器实例。
+            include_events: 是否附带 resource-pack events。
+            ctx: 运行时上下文。
+
+        Returns:
+            带完整 string identity、绑定投影与可选事件的音频实体。
+
+        Raises:
+            ValueError: 当前不是 local v2、artifact 不完整或 metadata 与 key 不一致时抛出。
+        """
+        if not _uses_local_bindings(ctx):
+            raise ValueError("resource pack 仅支持本地 resource schema v2")
+        parse_resource_pack_key(key)
+        resource_bindings = reader.get_resource_pack_resource_bindings(key)
+        banks_data = reader.get_resource_pack_banks(key, require_bindings=True)
+        if resource_bindings is None or banks_data is None:
+            raise ValueError(f"资源包 {key} 缺少 resource schema v2，请先重新运行 update")
+        if resource_bindings.entity_type != RESOURCE_PACK_ENTITY_TYPE or resource_bindings.entity_id != key:
+            raise ValueError(f"资源包 {key} 的 binding identity 无效")
+
+        resource_pack = banks_data.get("resourcePack")
+        if not isinstance(resource_pack, dict) or resource_pack.get("key") != key:
+            raise ValueError(f"资源包 {key} 的 metadata 无效")
+        namespace = resource_pack.get("namespace")
+        wad_root = resource_pack.get("wad")
+        if not isinstance(namespace, str) or not namespace.strip() or not isinstance(wad_root, str) or not wad_root:
+            raise ValueError(f"资源包 {key} 缺少 namespace 或来源 WAD metadata")
+
+        # 资源包没有皮肤/地图层级；key 本身作为唯一逻辑子实体，物理 WAD 仍完全由 binding 决定。
+        display_name = sanitize_filename(namespace.replace("_", " "))
+        entity_alias = sanitize_filename(namespace.casefold())
+        resource_banks = _build_audio_banks(resource_bindings, reader)
+        events_data = None
+        if include_events:
+            events_payload = reader.get_resource_pack_events(key)
+            events = events_payload.get("events", {}) if events_payload else {}
+            events_data = {key: {"events": events}}
+
+        return cls(
+            entity_id=key,
+            entity_name=display_name,
+            entity_alias=entity_alias,
+            entity_title=None,
+            entity_type=RESOURCE_PACK_ENTITY_TYPE,
+            sub_entities={key: {"name": display_name, "categories": banks_data.get("banks", {})}},
+            wad_root=wad_root,
+            events=events_data,
+            resource_banks=resource_banks,
+            binding_diagnostics=resource_bindings.diagnostics,
         )
 
 

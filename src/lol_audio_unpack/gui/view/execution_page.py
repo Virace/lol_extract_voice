@@ -226,6 +226,7 @@ class ExecutionPage(SmoothScrollArea):
             map_ids = tuple(str(entity_id) for entity_id in payload.map_ids)
             special_targets = payload.special_targets
             special_target_names = payload.special_target_names
+            resource_pack_wads = payload.resource_pack_wads
             source = payload.source
             summary = payload.summary
         else:
@@ -233,11 +234,13 @@ class ExecutionPage(SmoothScrollArea):
             map_ids = tuple(str(entity_id) for entity_id in payload.get("map_ids", ()))
             special_targets = tuple(str(target) for target in payload.get("special_targets", ()))
             special_target_names = tuple(str(name) for name in payload.get("special_target_names", ()))
+            resource_pack_wads = tuple(payload.get("resource_pack_wads", ()))
             source = str(payload.get("source", "overview_selection"))
             summary = str(payload.get("summary", "未提供摘要"))
 
         current_champion_ids, current_map_ids = self.taskBuilderPanel.current_target_ids()
         current_special_targets = self.taskBuilderPanel.current_special_targets()
+        current_resource_pack_wads = self.taskBuilderPanel.current_resource_pack_wads()
         if self._selection_controller.has_conflict(
             current_champion_ids=current_champion_ids,
             current_map_ids=current_map_ids,
@@ -245,6 +248,8 @@ class ExecutionPage(SmoothScrollArea):
             incoming_map_ids=map_ids,
             current_special_targets=current_special_targets,
             incoming_special_targets=special_targets,
+            current_resource_pack_wads=current_resource_pack_wads,
+            incoming_resource_pack_wads=resource_pack_wads,
         ):
             choice = ask_selection_conflict_resolution(
                 content=self._selection_controller.build_conflict_dialog_content(
@@ -254,6 +259,8 @@ class ExecutionPage(SmoothScrollArea):
                     incoming_map_ids=map_ids,
                     current_special_targets=current_special_targets,
                     incoming_special_targets=special_targets,
+                    current_resource_pack_wads=current_resource_pack_wads,
+                    incoming_resource_pack_wads=resource_pack_wads,
                 ),
                 parent=self._feedback_parent(feedback_parent),
             )
@@ -272,6 +279,8 @@ class ExecutionPage(SmoothScrollArea):
             incoming_special_targets=special_targets,
             current_special_target_names=self.taskBuilderPanel.current_special_target_names(),
             incoming_special_target_names=special_target_names,
+            current_resource_pack_wads=current_resource_pack_wads,
+            incoming_resource_pack_wads=resource_pack_wads,
         )
         if update is None:
             self._log_gui_event("info", "[同步] 已取消从实体总览同步选择。")
@@ -292,6 +301,7 @@ class ExecutionPage(SmoothScrollArea):
             select_all=select_all,
             special_targets=update.special_targets,
             special_target_names=update.special_target_names,
+            resource_pack_wads=update.resource_pack_wads,
         )
         self._log_gui_event("info", f"[同步] {update.summary}")
         return update.summary

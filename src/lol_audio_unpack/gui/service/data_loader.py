@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
@@ -19,7 +20,15 @@ from lol_audio_unpack.app.artifacts import (
     resolve_mapping_path as resolve_artifact_mapping_path,
 )
 from lol_audio_unpack.app.path_layout import get_output_dir_name
+from lol_audio_unpack.app.resource_pack import (
+    ResourcePackSelectionError,
+    ResourcePackWadRef,
+    partition_special_targets,
+)
 from lol_audio_unpack.app.special_content import (
+    DOOM_BOTS_PROFILE,
+    HISTORICAL_RESOURCE_PACKS_PROFILE,
+    SWARM_PROFILE,
     build_special_content_item,
     is_structured_special_champion,
 )
@@ -35,7 +44,7 @@ from lol_audio_unpack.model import AudioEntityData
 if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
 
-GuiEntityType = Literal["champions", "maps"]
+GuiEntityType = Literal["champions", "maps", "resource_packs"]
 
 
 def _build_mapping_preview_base(metadata: dict[str, object] | None) -> dict[str, object]:
@@ -100,7 +109,7 @@ def _normalize_integrated_audio_paths(events_payload: object) -> dict[str, dict[
     return normalized_paths
 
 
-def _normalize_integrated_mapping_data(
+def _normalize_integrated_mapping_data(  # noqa: PLR0911
     mapping_data: dict[str, object] | None,
     *,
     entity_type: GuiEntityType,
@@ -149,6 +158,22 @@ def _normalize_integrated_mapping_data(
                 normalized_skins[skin_id] = normalized_skin
 
         normalized["skins"] = normalized_skins
+        return normalized
+
+    if entity_type == "resource_packs":
+        resource_pack = data_payload.get("resourcePack")
+        if not isinstance(resource_pack, dict):
+            return mapping_data
+        key = str(resource_pack.get("key", entity_id)).strip()
+        if not key:
+            return mapping_data
+        normalized_events = _normalize_integrated_events(resource_pack.get("events"))
+        normalized_paths = _normalize_integrated_audio_paths(resource_pack.get("audioPaths"))
+        normalized_pack: dict[str, object] = {"events": normalized_events}
+        if normalized_paths:
+            normalized_pack["audioPaths"] = normalized_paths
+        normalized["resourcePackKey"] = key
+        normalized["resourcePacks"] = {key: normalized_pack}
         return normalized
 
     map_payload = data_payload.get("map")
@@ -263,10 +288,14 @@ class EntityDataLoader:
         Returns:
             对应实体的数据对象。
         """
-        normalized_type = "champion" if entity_type == "champions" else "map"
+        normalized_type = {
+            "champions": "champion",
+            "maps": "map",
+            "resource_packs": "resource_pack",
+        }[entity_type]
         return AudioEntityData.from_entity(
             normalized_type,
-            int(entity_id),
+            entity_id if normalized_type == "resource_pack" else int(entity_id),
             self.data_reader,
             ctx=self.ctx,
         )
@@ -283,9 +312,11 @@ class EntityDataLoader:
 
     def _ensure_bank_dataset_ready(self, entity_type: GuiEntityType) -> None:
         """在按实体扫描前，先确认对应 bank 数据集根目录已经就绪。"""
-        bank_root = (
-            self.data_reader.champion_banks_dir if entity_type == "champions" else self.data_reader.map_banks_dir
-        )
+        bank_root = {
+            "champions": self.data_reader.champion_banks_dir,
+            "maps": self.data_reader.map_banks_dir,
+            "resource_packs": self.data_reader.resource_pack_banks_dir,
+        }[entity_type]
         if bank_root.is_dir():
             return
 
@@ -325,6 +356,14 @@ class EntityDataLoader:
         if not isinstance(names, dict):
             return ""
         return str(names.get(self.ctx.game_region, names.get("default", ""))).strip()
+
+    def _localized_ordinary_names(self, champions: list[dict]) -> dict[str, str]:
+        """建立普通英雄 alias 到本地化展示名的轻量索引。"""
+        return {
+            str(champion.get("alias", "")).casefold(): self._localized_champion_name(champion)
+            for champion in champions
+            if not is_structured_special_champion(champion)
+        }
 
     def _build_special_row(self, champion: dict, version: str, *, display_name: str) -> dict | None:
         """构造特殊内容行；缺少 banks 时保留可解释的未准备状态。"""
@@ -372,6 +411,169 @@ class EntityDataLoader:
             "mapping_file": mapping_file,
         }
 
+    @staticmethod
+    def _resource_pack_profile(wad: str):
+        """按来源 WAD 的已知模式命名投影 resource-pack 分组。"""
+        name = PurePosixPath(wad).name.casefold()
+        if name.startswith("ruby_"):
+            return DOOM_BOTS_PROFILE
+        if name.startswith("strawberry_"):
+            return SWARM_PROFILE
+        return HISTORICAL_RESOURCE_PACKS_PROFILE
+
+    @staticmethod
+    def _resource_pack_display_name(
+        wad: str,
+        *,
+        profile,
+        ordinary_names: Mapping[str, str] | None,
+    ) -> str:
+        """从 WAD 名恢复不含技术前缀的资源包主展示名。"""
+        wad_name = PurePosixPath(wad).name
+        wad_stem = wad_name[: -len(".wad.client")] if wad_name.casefold().endswith(".wad.client") else wad_name
+        prefix = profile.prefix
+        base_alias = (
+            wad_stem[len(prefix) :] if prefix and wad_stem.casefold().startswith(prefix.casefold()) else wad_stem
+        )
+        return (ordinary_names or {}).get(base_alias.casefold(), base_alias)
+
+    @staticmethod
+    def _resource_pack_namespace_label(namespace: str, *, profile) -> str:
+        """压缩 BIN category，保证同 WAD 的多个资源包仍可区分。"""
+        normalized = namespace.removeprefix("MODE_")
+        parts = tuple(part for part in normalized.split("_") if part)
+        if profile in {DOOM_BOTS_PROFILE, SWARM_PROFILE} and parts:
+            return parts[-1]
+        return " ".join(parts)
+
+    def _build_resource_pack_row(
+        self,
+        payload: dict,
+        version: str,
+        *,
+        ordinary_names: Mapping[str, str] | None = None,
+    ) -> dict | None:
+        """把已持久化 resource-pack artifact 投影为特殊目录行。"""
+        metadata = payload.get("resourcePack")
+        if not isinstance(metadata, dict):
+            return None
+        key = str(metadata.get("key", "")).strip()
+        wad = str(metadata.get("wad", "")).strip()
+        namespace = str(metadata.get("namespace", "")).strip()
+        if not key or not wad or not namespace:
+            return None
+
+        source = metadata.get("source")
+        wad_ref = None
+        if isinstance(source, dict):
+            try:
+                wad_ref = ResourcePackWadRef(
+                    identity=str(source.get("wad", wad)),
+                    size=int(source["size"]),
+                    mtime_ns=int(source["mtimeNs"]),
+                )
+                # artifact 可能来自更早的客户端快照；目录重载同样属于选择阶段，
+                # 必须先确认来源仍在当前 FINAL 且 stat 未变化，才能允许发送到执行中心。
+                wad_ref.resolve(Path(self.ctx.config.game_path))
+            except (KeyError, TypeError, ValueError, ResourcePackSelectionError):
+                logger.warning("资源包 {} 的 source snapshot 无效，将仅作为已发现 artifact 展示", key)
+                wad_ref = None
+
+        diagnostics = payload.get("diagnostics")
+        completeness = str(diagnostics.get("completeness", "")) if isinstance(diagnostics, dict) else ""
+        discovery = metadata.get("discovery")
+        status = str(discovery.get("status", "")).strip() if isinstance(discovery, dict) else ""
+        status = status or completeness or "unknown"
+        profile = self._resource_pack_profile(wad)
+        display_base = self._resource_pack_display_name(wad, profile=profile, ordinary_names=ordinary_names)
+        namespace_label = self._resource_pack_namespace_label(namespace, profile=profile)
+        name = f"{display_base} · {namespace_label}" if namespace_label else display_base
+        display_name = f"{profile.display_name} · {name}"
+
+        audio_status = "未准备"
+        mapping_status = "未准备"
+        mapping_file = ""
+        try:
+            entity_data = self._build_entity_data("resource_packs", key)
+            audio_status, mapping_status = check_entity_status(self.ctx, entity_data, version)
+            mapping_path = resolve_mapping_file_path(self.ctx, "resource_packs", key, version)
+            mapping_file = str(mapping_path) if mapping_path else ""
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("资源包 {} 尚未准备可用 banks，将保留在目录中: {}", key, exc)
+
+        cost_text = ""
+        if isinstance(discovery, dict):
+            candidates = discovery.get("candidateEntries")
+            reads = discovery.get("payloadReads")
+            elapsed = discovery.get("elapsedSeconds")
+            if candidates is not None or reads is not None or elapsed is not None:
+                elapsed_seconds = elapsed if isinstance(elapsed, int | float) else 0
+                cost_text = (
+                    f"\n扫描成本: candidate {candidates or 0}，payload {reads or 0}，耗时 {elapsed_seconds:.1f}s"
+                )
+        selection_notice = "\n选择快照无效，请重新选择并扫描该 WAD。" if wad_ref is None else ""
+
+        return {
+            "id": key,
+            "key": key,
+            "name": name,
+            "display_name": display_name,
+            "alias": name,
+            "source_wad": wad,
+            "namespace": namespace,
+            "mode_key": profile.mode_key,
+            "mode_display_name": profile.display_name,
+            "mode_english_name": profile.english_name,
+            "search_text": " ".join(
+                (profile.display_name, profile.english_name, display_name, wad, namespace, key)
+            ).casefold(),
+            "tooltip": (
+                f"{display_name}\n"
+                f"来源 WAD: {wad}\n"
+                f"命名空间: {namespace}\n"
+                f"状态: {status}\n"
+                f"完整度: {completeness or '未知'}\n"
+                f"资源键: {key}\n"
+                f"音频: {audio_status}\n"
+                f"映射: {mapping_status}\n"
+                f"文件: {mapping_file or '当前还没有 mapping 文件'}"
+                f"{cost_text}"
+                f"{selection_notice}"
+            ),
+            "status": status,
+            "completeness": completeness,
+            "audio": audio_status,
+            "mapping": mapping_status,
+            "entity_type": "resource_packs",
+            "mapping_file": mapping_file,
+            "resource_pack_wad": wad_ref,
+            "selectable": wad_ref is not None,
+        }
+
+    def load_resource_pack_rows(
+        self,
+        keys: tuple[str, ...] = (),
+        *,
+        ordinary_names: Mapping[str, str] | None = None,
+    ) -> list[dict]:
+        """读取已持久化 resource-pack artifact，不触碰来源 WAD payload。"""
+        if keys:
+            payloads = [
+                payload
+                for key in dict.fromkeys(keys)
+                if (payload := self.data_reader.get_resource_pack_banks(key, require_bindings=False))
+            ]
+        else:
+            list_packs = getattr(self.data_reader, "list_resource_pack_banks", None)
+            payloads = list_packs() if callable(list_packs) else []
+
+        rows = [
+            row
+            for payload in payloads
+            if (row := self._build_resource_pack_row(payload, self.data_reader.version, ordinary_names=ordinary_names))
+        ]
+        return sorted(rows, key=lambda row: (str(row["mode_key"]), str(row["name"]).casefold()))
+
     def load_champion_catalog(self) -> dict[str, list[dict]]:
         """一次读取并扫描完整英雄数据，分区返回普通与特殊目录。"""
         try:
@@ -384,11 +586,7 @@ class EntityDataLoader:
 
         ordinary_rows: list[dict] = []
         special_rows: list[dict] = []
-        ordinary_names = {
-            str(champion.get("alias", "")).casefold(): self._localized_champion_name(champion)
-            for champion in champions
-            if not is_structured_special_champion(champion)
-        }
+        ordinary_names = self._localized_ordinary_names(champions)
         for champion in champions:
             if is_structured_special_champion(champion):
                 profile_item = build_special_content_item(champion)
@@ -404,6 +602,7 @@ class EntityDataLoader:
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=True).warning(f"Error loading entity {champion.get('id', 'unknown')}: {exc}")
 
+        special_rows.extend(self.load_resource_pack_rows(ordinary_names=ordinary_names))
         return {"champions": ordinary_rows, "special": special_rows}
 
     def load_champion_rows_by_targets(
@@ -422,23 +621,32 @@ class EntityDataLoader:
             包含 ``champions`` 与 ``special`` 两个分区的增量行。
         """
         ordinary_targets = set(champion_ids)
-        special_target_keys = set(special_targets)
+        partition = partition_special_targets(special_targets)
+        special_target_keys = set(partition.champion_targets)
+        champions: list[dict] | None = None
+        ordinary_names: dict[str, str] = {}
+        if partition.resource_pack_targets:
+            try:
+                champions = self.data_reader.get_champions()
+                ordinary_names = self._localized_ordinary_names(champions)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("资源包增量刷新未能读取英雄本地化元数据，将使用 WAD 名回退: {}", exc)
+        resource_pack_rows = self.load_resource_pack_rows(
+            partition.resource_pack_targets,
+            ordinary_names=ordinary_names,
+        )
         if not ordinary_targets and not special_target_keys:
-            return {"champions": [], "special": []}
+            return {"champions": [], "special": resource_pack_rows}
 
         try:
             version = self.data_reader.version
-            champions = self.data_reader.get_champions()
+            champions = champions if champions is not None else self.data_reader.get_champions()
             self._ensure_bank_dataset_ready("champions")
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=True).warning(f"Error initializing data for champions: {exc}")
             raise
 
-        ordinary_names = {
-            str(champion.get("alias", "")).casefold(): self._localized_champion_name(champion)
-            for champion in champions
-            if not is_structured_special_champion(champion)
-        }
+        ordinary_names = self._localized_ordinary_names(champions)
         ordinary_rows: list[dict] = []
         special_rows: list[dict] = []
         for champion in champions:
@@ -460,6 +668,7 @@ class EntityDataLoader:
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=True).warning(f"Error loading entity {champion.get('id', 'unknown')}: {exc}")
 
+        special_rows.extend(resource_pack_rows)
         return {"champions": ordinary_rows, "special": special_rows}
 
     def load_entities(self, entity_type: Literal["champions", "maps"]) -> list[dict]:

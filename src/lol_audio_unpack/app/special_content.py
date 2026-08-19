@@ -72,11 +72,18 @@ LEGACY_CHAMPIONS_PROFILE = SpecialContentProfile(
     display_name="旧版英雄",
     english_name="Legacy Champions",
 )
+HISTORICAL_RESOURCE_PACKS_PROFILE = SpecialContentProfile(
+    mode_key="historical_resource_packs",
+    prefix="",
+    display_name="历史资源包",
+    english_name="Historical Resource Packs",
+)
 SPECIAL_CONTENT_PROFILES = (
     LEGACY_CHAMPIONS_PROFILE,
     DOOM_BOTS_PROFILE,
     SWARM_PROFILE,
 )
+SPECIAL_CONTENT_GROUPS = (*SPECIAL_CONTENT_PROFILES, HISTORICAL_RESOURCE_PACKS_PROFILE)
 
 
 def _normalized_wad_basename(champion: Mapping[str, Any]) -> str:
@@ -239,7 +246,9 @@ def build_special_content_item(
 
 __all__ = [
     "DOOM_BOTS_PROFILE",
+    "HISTORICAL_RESOURCE_PACKS_PROFILE",
     "LEGACY_CHAMPIONS_PROFILE",
+    "SPECIAL_CONTENT_GROUPS",
     "SPECIAL_CONTENT_PROFILES",
     "SWARM_PROFILE",
     "SpecialContentItem",

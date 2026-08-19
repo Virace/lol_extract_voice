@@ -10,6 +10,7 @@ from PySide6.QtCore import Qt
 
 import lol_audio_unpack.gui.service.data_loader as data_loader_module
 from lol_audio_unpack.app.artifacts import AudioRef
+from lol_audio_unpack.app.resource_pack import ResourcePackWadRef, build_resource_pack_key
 from lol_audio_unpack.gui.components.preview_tree import (
     extract_preview_modifiers,
     extract_tree_groups,
@@ -17,6 +18,7 @@ from lol_audio_unpack.gui.components.preview_tree import (
 )
 from lol_audio_unpack.gui.components.special_content_tree import SpecialContentTreeView
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
+from lol_audio_unpack.gui.controllers.overview_preview import OverviewPreviewController
 from lol_audio_unpack.gui.view.overview.audio_preview_panel import OverviewAudioPreviewPanel
 from lol_audio_unpack.gui.view.overview.entity_list_panel import OverviewEntityListPanel
 from lol_audio_unpack.gui.view.overview.preview_panel import OverviewPreviewPanel
@@ -292,6 +294,151 @@ def test_special_content_tree_disables_item_selection_for_remote_mode(qtbot) -> 
     assert "仅支持本地客户端资源" in tree.toolTip()
 
 
+def test_resource_pack_catalog_uses_safe_display_name_and_selectable_snapshot(monkeypatch, tmp_path: Path) -> None:
+    """资源包行使用本地化基础别名，并携带可发送的 WAD snapshot。"""
+    key = build_resource_pack_key("Ruby_Urgot.wad.client", "MODE_DOOM_BOTS_SFX")
+    wad_path = tmp_path / "Game" / "DATA" / "FINAL" / "Ruby_Urgot.wad.client"
+    wad_path.parent.mkdir(parents=True)
+    wad_path.write_bytes(b"selected wad")
+    ref = ResourcePackWadRef.from_path(tmp_path, wad_path)
+    loader = data_loader_module.EntityDataLoader.__new__(data_loader_module.EntityDataLoader)
+    loader.ctx = SimpleNamespace(config=SimpleNamespace(game_path=tmp_path), game_region="zh_CN")
+    loader.data_reader = SimpleNamespace(version="16.16")
+    monkeypatch.setattr(
+        loader,
+        "_build_entity_data",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("未准备 banks")),
+    )
+
+    row = loader._build_resource_pack_row(
+        {
+            "resourcePack": {
+                "key": key,
+                "wad": ref.identity,
+                "namespace": "MODE_DOOM_BOTS_SFX",
+                "source": {"wad": ref.identity, "size": ref.size, "mtimeNs": ref.mtime_ns},
+                "discovery": {"status": "complete", "candidateEntries": 2, "payloadReads": 1},
+            },
+            "diagnostics": {"completeness": "complete"},
+        },
+        "16.16",
+        ordinary_names={"urgot": "厄加特"},
+    )
+
+    assert row is not None
+    assert row["name"] == "厄加特 · SFX"
+    assert row["mode_key"] == "doom_bots"
+    assert row["resource_pack_wad"] == ref
+    assert row["selectable"] is True
+    assert "Ruby_Urgot" not in row["name"]
+
+
+def test_resource_pack_catalog_distinguishes_namespaces_from_the_same_wad(monkeypatch, tmp_path: Path) -> None:
+    """同一 WAD 的多个 BANK_UNITS category 必须有不同的目录主名称。"""
+    wad_path = tmp_path / "Game" / "DATA" / "FINAL" / "TFTCommon.wad.client"
+    wad_path.parent.mkdir(parents=True)
+    wad_path.write_bytes(b"selected wad")
+    ref = ResourcePackWadRef.from_path(tmp_path, wad_path)
+    loader = data_loader_module.EntityDataLoader.__new__(data_loader_module.EntityDataLoader)
+    loader.ctx = SimpleNamespace(config=SimpleNamespace(game_path=tmp_path), game_region="zh_CN")
+    loader.data_reader = SimpleNamespace(version="16.16")
+    monkeypatch.setattr(
+        loader,
+        "_build_entity_data",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("未准备 banks")),
+    )
+
+    rows = [
+        loader._build_resource_pack_row(
+            {
+                "resourcePack": {
+                    "key": build_resource_pack_key("TFTCommon.wad.client", namespace),
+                    "wad": ref.identity,
+                    "namespace": namespace,
+                    "source": {"wad": ref.identity, "size": ref.size, "mtimeNs": ref.mtime_ns},
+                }
+            },
+            "16.16",
+        )
+        for namespace in ("MODE_TFT_NPC_ELDER_DRAGON_SFX", "MODE_TFT_NPC_BARON_SFX")
+    ]
+
+    assert all(row is not None for row in rows)
+    assert rows[0]["name"] != rows[1]["name"]
+
+
+def test_stale_resource_pack_snapshot_is_not_selectable(monkeypatch, tmp_path: Path) -> None:
+    """目录重载必须拒绝来源已变化的旧快照，避免把陈旧任务发送到执行中心。"""
+    wad_path = tmp_path / "Game" / "DATA" / "FINAL" / "Legacy.wad.client"
+    wad_path.parent.mkdir(parents=True)
+    wad_path.write_bytes(b"old")
+    ref = ResourcePackWadRef.from_path(tmp_path, wad_path)
+    wad_path.write_bytes(b"new payload")
+
+    loader = data_loader_module.EntityDataLoader.__new__(data_loader_module.EntityDataLoader)
+    loader.ctx = SimpleNamespace(config=SimpleNamespace(game_path=tmp_path), game_region="zh_CN")
+    loader.data_reader = SimpleNamespace(version="16.16")
+    monkeypatch.setattr(
+        loader,
+        "_build_entity_data",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("未准备 banks")),
+    )
+
+    key = build_resource_pack_key("Legacy.wad.client", "MODE_LEGACY")
+    row = loader._build_resource_pack_row(
+        {
+            "resourcePack": {
+                "key": key,
+                "wad": ref.identity,
+                "namespace": "MODE_LEGACY",
+                "source": {"wad": ref.identity, "size": ref.size, "mtimeNs": ref.mtime_ns},
+            }
+        },
+        "16.16",
+    )
+
+    assert row is not None
+    assert row["resource_pack_wad"] is None
+    assert row["selectable"] is False
+    assert "选择快照无效" in row["tooltip"]
+
+
+def test_invalid_resource_pack_snapshot_is_not_selectable_or_synced(qtbot) -> None:
+    """旧 artifact 的无效 source snapshot 只能浏览，不能进入执行任务。"""
+    key = build_resource_pack_key("Legacy.wad.client", "MODE_LEGACY")
+    tree = SpecialContentTreeView()
+    qtbot.addWidget(tree)
+    tree.set_rows(
+        [
+            {
+                "id": key,
+                "key": key,
+                "name": "Legacy",
+                "mode_key": "historical_resource_packs",
+                "audio": "未准备",
+                "mapping": "未准备",
+                "search_text": key,
+                "selectable": False,
+            }
+        ]
+    )
+    group = tree.model().index(0, 0)
+    item = tree.model().index(0, 0, group)
+    panel = OverviewEntityListPanel()
+    qtbot.addWidget(panel)
+
+    payload = panel.build_selection_sync_request(
+        selected_champion_ids=set(),
+        selected_map_ids=set(),
+        selected_special_targets={"champion:66600", key},
+        special_target_names={"champion:66600": "末日人机 · 厄加特", key: "Legacy"},
+    )
+
+    assert not bool(item.flags() & Qt.ItemFlag.ItemIsSelectable)
+    assert payload.special_targets == ("champion:66600",)
+    assert payload.resource_pack_wads == ()
+
+
 def test_entity_data_loader_partitions_special_rows_and_keeps_unprepared_rows(monkeypatch) -> None:
     """一次冠军扫描应分区普通/特殊，并为未准备 special 保留诚实状态。"""
     loader = data_loader_module.EntityDataLoader.__new__(data_loader_module.EntityDataLoader)
@@ -390,6 +537,30 @@ def test_entity_data_loader_incremental_champion_targets_only_build_requested_ro
     assert built_rows == [("champions", "6"), ("special", "66600")]
     assert [row["id"] for row in rows["champions"]] == ["6"]
     assert [row["key"] for row in rows["special"]] == ["champion:66600"]
+
+
+def test_entity_data_loader_incremental_resource_pack_targets_skip_champion_catalog(monkeypatch) -> None:
+    """资源包完成后只读指定 artifact，且仅查询内存英雄元数据用于本地化。"""
+    key = build_resource_pack_key("Ruby_Urgot.wad.client", "MODE_DOOM_BOTS_SFX")
+    loader = data_loader_module.EntityDataLoader.__new__(data_loader_module.EntityDataLoader)
+    calls = []
+    loader.ctx = SimpleNamespace(game_region="zh_CN")
+    loader.data_reader = SimpleNamespace(
+        get_champions=lambda: [{"id": 6, "alias": "Urgot", "names": {"zh_CN": "厄加特"}}],
+    )
+    monkeypatch.setattr(
+        loader,
+        "load_resource_pack_rows",
+        lambda keys, *, ordinary_names: (
+            calls.append((keys, ordinary_names)) or [{"id": key, "key": key, "name": ordinary_names["urgot"]}]
+        ),
+    )
+    monkeypatch.setattr(loader, "_build_entity_data", lambda *_args: pytest.fail("不应扫描英雄 A/M 状态"))
+
+    rows = loader.load_champion_rows_by_targets(special_targets=(key,))
+
+    assert calls == [((key,), {"urgot": "厄加特"})]
+    assert rows == {"champions": [], "special": [{"id": key, "key": key, "name": "厄加特"}]}
 
 
 def test_entity_data_loader_propagates_shared_bank_root_missing_error(monkeypatch) -> None:
@@ -542,6 +713,36 @@ def test_filter_preview_mapping_data_keeps_full_event_when_event_name_matches() 
     assert result.matched_event_count == 1
     assert result.matched_audio_id_count == MATCHED_AUDIO_IDS
     assert events == {"Play_vo_XinZhao_Attack2DBaron": ["261984525", "520515702"]}
+
+
+def test_preview_tree_supports_resource_pack_mapping_root() -> None:
+    """资源包 event mapping 应复用现有事件树与搜索结构。"""
+    mapping_data = {
+        "resourcePacks": {"resource_pack:legacy:mode": {"events": {"MODE_LEGACY_SFX": {"Play_legacy": ["1001"]}}}}
+    }
+
+    filtered = filter_preview_mapping_data(mapping_data, "legacy")
+
+    assert extract_tree_groups(mapping_data) == mapping_data["resourcePacks"]
+    assert extract_tree_groups(filtered.mapping_data)["resource_pack:legacy:mode"]["events"] == {
+        "MODE_LEGACY_SFX": {"Play_legacy": ["1001"]}
+    }
+
+
+def test_resource_pack_preview_uses_catalog_name_for_root_label() -> None:
+    """资源包试听树不应把稳定 key 作为首层可见名称。"""
+    key = build_resource_pack_key("Legacy.wad.client", "MODE_LEGACY")
+    controller = OverviewPreviewController()
+
+    labels = controller._build_preview_group_label_map(
+        entity_type="resource_packs",
+        entity_id=key,
+        entity_name="历史资源包 · Legacy",
+        mapping_data={"resourcePacks": {key: {"events": {}}}},
+        loader=SimpleNamespace(),
+    )
+
+    assert labels == {key: "历史资源包 · Legacy"}
 
 
 def test_filter_preview_mapping_data_keeps_only_matching_audio_id_when_id_matches() -> None:

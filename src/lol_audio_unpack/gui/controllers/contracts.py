@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from lol_audio_unpack.app.resource_pack import ResourcePackWadRef
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeLoggingConfig:
@@ -104,3 +106,4 @@ class OverviewSelectionSyncRequest:
     summary: str
     special_targets: tuple[str, ...] = ()
     special_target_names: tuple[str, ...] = ()
+    resource_pack_wads: tuple[ResourcePackWadRef, ...] = ()

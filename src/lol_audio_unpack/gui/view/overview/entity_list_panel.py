@@ -17,6 +17,7 @@ from qfluentwidgets import (
     qconfig,
 )
 
+from lol_audio_unpack.app.resource_pack import ResourcePackWadRef
 from lol_audio_unpack.gui.common.font_compat import apply_line_edit_safe_font
 from lol_audio_unpack.gui.common.styles import resolve_fluent_entity_badge_colors
 from lol_audio_unpack.gui.components.overview_entity_list import OVERVIEW_ROW_ROLE, OverviewEntityListView
@@ -151,11 +152,16 @@ class OverviewEntityListPanel(QWidget):
         selection_layout.setSpacing(10)
 
         self.clear_selection_btn = PushButton("清空选择", self.selection_bar)
+        self.scan_resource_packs_btn = PushButton("添加/扫描历史资源包", self.selection_bar)
+        self.scan_resource_packs_btn.setToolTip("选择当前游戏 FINAL 目录中的 .wad.client 文件后进行有界扫描。")
+        self.scan_resource_packs_btn.setVisible(False)
+        self.scan_resource_packs_btn.setEnabled(False)
         self.sync_selection_btn = PrimaryPushButton("发送到执行中心", self.selection_bar)
         self.clear_selection_btn.setEnabled(False)
         self.sync_selection_btn.setEnabled(False)
 
         selection_layout.addStretch(1)
+        selection_layout.addWidget(self.scan_resource_packs_btn)
         selection_layout.addWidget(self.clear_selection_btn)
         selection_layout.addWidget(self.sync_selection_btn)
         layout.addWidget(self.selection_bar)
@@ -181,6 +187,7 @@ class OverviewEntityListPanel(QWidget):
         widget = self.entity_lists.get(entity_type)
         if widget is not None:
             self.list_stack.setCurrentWidget(widget)
+        self.scan_resource_packs_btn.setVisible(entity_type == "special")
         self._sync_special_availability_label()
 
     def set_selection_summary(self, text: str) -> None:
@@ -294,12 +301,21 @@ class OverviewEntityListPanel(QWidget):
         selected_map_ids: set[str],
         selected_special_targets: set[str],
         special_target_names: Mapping[str, str],
+        resource_pack_wads: Mapping[str, ResourcePackWadRef] | None = None,
     ) -> OverviewSelectionSyncRequest:
         """根据当前选择集合构造发送到执行中心的同步请求。"""
         champion_ids = tuple(int(entity_id) for entity_id in sorted(selected_champion_ids, key=int))
         map_ids = tuple(int(entity_id) for entity_id in sorted(selected_map_ids, key=int))
-        special_targets = tuple(sorted(selected_special_targets))
+        resource_pack_wads = resource_pack_wads or {}
+        special_targets = tuple(
+            target
+            for target in sorted(selected_special_targets)
+            if not target.startswith("resource_pack:") or target in resource_pack_wads
+        )
         special_names = tuple(special_target_names.get(target, "特殊内容") for target in special_targets)
+        selected_wads = tuple(
+            dict.fromkeys(resource_pack_wads[target] for target in special_targets if target in resource_pack_wads)
+        )
         special_summary = f"、{len(special_targets)} 个特殊内容" if special_targets else ""
         return OverviewSelectionSyncRequest(
             source="overview_selection",
@@ -311,7 +327,12 @@ class OverviewEntityListPanel(QWidget):
             ),
             special_targets=special_targets,
             special_target_names=special_names,
+            resource_pack_wads=selected_wads,
         )
+
+    def set_resource_pack_scan_enabled(self, enabled: bool) -> None:
+        """设置历史资源包扫描入口是否可执行。"""
+        self.scan_resource_packs_btn.setEnabled(enabled)
 
     def set_special_interaction_enabled(self, enabled: bool) -> None:
         """根据来源模式切换特殊内容目录的选择能力。"""

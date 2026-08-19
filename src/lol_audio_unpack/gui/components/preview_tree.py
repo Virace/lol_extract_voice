@@ -44,6 +44,7 @@ PREVIEW_TREE_SELECTED_BAR_MARGIN = 0
 PREVIEW_TREE_INDENTATION = 10
 PREVIEW_TREE_AUDIO_BUTTON_SIZE = 18
 PREVIEW_TREE_AUDIO_BUTTON_GAP = 6
+PREVIEW_MAPPING_ROOT_KEYS = ("skins", "map", "resourcePacks")
 
 
 def _build_branch_styles() -> str:
@@ -210,7 +211,7 @@ class _PreviewTreeNode:
 
 
 def extract_tree_groups(mapping_data: dict[str, Any] | None) -> dict[str, Any]:
-    """从英雄或地图 mapping 中提取统一的首层分组。
+    """从英雄、地图或资源包 mapping 中提取统一的首层分组。
 
     Args:
         mapping_data: 当前实体的原始 mapping 数据。
@@ -221,7 +222,7 @@ def extract_tree_groups(mapping_data: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(mapping_data, dict):
         return {}
 
-    for key in ("skins", "map"):
+    for key in PREVIEW_MAPPING_ROOT_KEYS:
         payload = mapping_data.get(key)
         if key in mapping_data and isinstance(payload, dict):
             return payload
@@ -467,7 +468,7 @@ def filter_preview_mapping_data(
             filtered_groups[str(group_id)] = group_result
 
     root_key = next(
-        (key for key in ("skins", "map") if isinstance(mapping_data, dict) and key in mapping_data),
+        (key for key in PREVIEW_MAPPING_ROOT_KEYS if isinstance(mapping_data, dict) and key in mapping_data),
         "skins",
     )
     return PreviewFilterResult(

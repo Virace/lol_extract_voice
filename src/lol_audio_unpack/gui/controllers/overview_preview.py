@@ -73,6 +73,7 @@ class OverviewPreviewController:
         group_label_map = self._build_preview_group_label_map(
             entity_type=entity_type,
             entity_id=entity_id,
+            entity_name=entity_name,
             mapping_data=mapping_data,
             loader=loader,
         )
@@ -94,10 +95,13 @@ class OverviewPreviewController:
         *,
         entity_type: str,
         entity_id: str,
+        entity_name: str,
         mapping_data: dict[str, Any] | None,
         loader: EntityDataLoader,
     ) -> dict[str, str]:
         """为试听树构造首层分组展示文案映射。"""
+        if entity_type == "resource_packs":
+            return {entity_id: entity_name}
         if entity_type != "champions":
             return {}
         if not isinstance(mapping_data, dict) or not isinstance(mapping_data.get("skins"), dict):

@@ -10,6 +10,7 @@ from league_tools import AudioEventMapper, WwiserManager
 from loguru import logger
 
 from lol_audio_unpack.app.artifacts import AudioRef, enumerate_audio_refs
+from lol_audio_unpack.app.path_layout import get_entity_path_component, get_output_dir_name
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.manager.files import write_data
 from lol_audio_unpack.manager.utils import build_metadata_payload
@@ -68,7 +69,27 @@ def _build_mapping_result(entity_data: AudioEntityData, reader: DataReader) -> t
         base_data["name"] = entity_data.entity_alias
         base_data["map"] = {}
         return base_data, "map"
+    if entity_data.entity_type == "resource_pack":
+        # raw mapping 以 plural data key 承载唯一 logical sub-entity；完整 key 仍是 payload identity。
+        base_data["resourcePackKey"] = entity_data.entity_id
+        base_data["resourcePacks"] = {}
+        return base_data, "resourcePacks"
     raise ValueError(f"未知的实体类型: {entity_data.entity_type}")
+
+
+def _entity_group(entity_type: str) -> str:
+    """返回实体的 mapping 输出分组。
+
+    Args:
+        entity_type: 当前实体类型。
+
+    Returns:
+        对应的 hash 输出目录名。
+
+    Raises:
+        ValueError: 实体类型未知时抛出。
+    """
+    return get_output_dir_name(entity_type)
 
 
 def _category_item(sub_id: str, category: str, **extra: str) -> dict[str, str]:
@@ -181,7 +202,7 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
     """按 local v2 events bindings 构建 mapping 与覆盖诊断。"""
     version_cache_dir, version_hash_dir = _ensure_version_dirs(reader, ctx=ctx)
     mapping_result, mapping_data_key = _build_mapping_result(entity_data, reader)
-    entity_group = "champions" if entity_data.entity_type == "champion" else "maps"
+    entity_group = _entity_group(entity_data.entity_type)
     mapping_save_dir = version_hash_dir / entity_group
     mapping_save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -475,16 +496,26 @@ def _write_integrated_result(
         ctx: 运行时上下文。
     """
 
-    data_key = "skins" if entity_data.entity_type == "champion" else "map"
+    if entity_data.entity_type == "champion":
+        data_key = "skins"
+    elif entity_data.entity_type == "map":
+        data_key = "map"
+    elif entity_data.entity_type == "resource_pack":
+        data_key = "resourcePack"
+    else:
+        raise ValueError(f"未知的实体类型: {entity_data.entity_type}")
     if not integrated_result or (
         not integrated_result.get("data", {}).get(data_key) and not integrated_result.get("mappingDiagnostics")
     ):
         return
 
-    entity_group = "champions" if entity_data.entity_type == "champion" else "maps"
+    entity_group = _entity_group(entity_data.entity_type)
     integration_save_dir = version_hash_dir / "integrated" / entity_group
     integration_save_dir.mkdir(parents=True, exist_ok=True)
-    integration_file_base = integration_save_dir / entity_data.entity_id
+    integration_file_base = integration_save_dir / get_entity_path_component(
+        entity_data.entity_type,
+        entity_data.entity_id,
+    )
     write_data(integrated_result, integration_file_base, dev_mode=ctx.config.dev_mode)
     logger.debug(f"整合数据已保存: {integration_file_base}")
 
@@ -512,7 +543,10 @@ def _write_mapping_result(
         del metadata["languages"]
 
     if mapping_result[mapping_data_key] or mapping_result.get("mappingDiagnostics"):
-        mapping_file_base = mapping_save_dir / entity_data.entity_id
+        mapping_file_base = mapping_save_dir / get_entity_path_component(
+            entity_data.entity_type,
+            entity_data.entity_id,
+        )
         write_data(mapping_result, mapping_file_base, dev_mode=ctx.config.dev_mode)
         logger.debug(f"映射结果已保存: {mapping_file_base}")
         return
@@ -597,7 +631,7 @@ def build_entity(  # noqa: PLR0913
 
     version_cache_dir, version_hash_dir = _ensure_version_dirs(reader, ctx=ctx)
     mapping_result, mapping_data_key = _build_mapping_result(entity_data, reader)
-    entity_group = "champions" if entity_data.entity_type == "champion" else "maps"
+    entity_group = _entity_group(entity_data.entity_type)
     mapping_save_dir = version_hash_dir / entity_group
     mapping_save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -701,16 +735,30 @@ def integrate_entity(
 
     logger.info(f"开始整合 {entity_data.entity_name} 的数据")
 
+    resource_metadata: dict[str, Any] | None = None
     if entity_data.entity_type == "champion":
         entity_info = reader.get_champion(int(entity_data.entity_id))
         banks_data = reader.get_champion_banks(int(entity_data.entity_id))
         data_key = "skins"
-    else:
+    elif entity_data.entity_type == "map":
         entity_info = reader.get_map(int(entity_data.entity_id))
         banks_data = reader.get_map_banks(int(entity_data.entity_id))
         data_key = "map"
+    elif entity_data.entity_type == "resource_pack":
+        entity_info = None
+        banks_data = reader.get_resource_pack_banks(entity_data.entity_id, require_bindings=True)
+        metadata = banks_data.get("resourcePack") if banks_data else None
+        if not isinstance(metadata, dict) or metadata.get("key") != entity_data.entity_id:
+            logger.warning(f"无法获取 {entity_data.entity_name} 的 resource-pack metadata")
+            return {}
+        resource_metadata = metadata
+        data_key = "resourcePacks"
+    else:
+        raise ValueError(f"未知的实体类型: {entity_data.entity_type}")
 
-    if not entity_info or (not banks_data and entity_data.binding_diagnostics is None):
+    if (entity_data.entity_type != "resource_pack" and not entity_info) or (
+        not banks_data and entity_data.binding_diagnostics is None
+    ):
         logger.warning(f"无法获取 {entity_data.entity_name} 的完整数据信息")
         return {}
 
@@ -735,7 +783,7 @@ def integrate_entity(
             }
         )
         sub_entities = entity_info.get("skins", [])
-    else:
+    elif entity_data.entity_type == "map":
         integrated_data["data"].update(
             {
                 "mapId": entity_data.entity_id,
@@ -748,6 +796,20 @@ def integrate_entity(
             }
         )
         sub_entities = [{"id": int(entity_data.entity_id)}]
+    elif entity_data.entity_type == "resource_pack":
+        integrated_data["data"].update(
+            {
+                "resourcePack": {
+                    "key": entity_data.entity_id,
+                    "name": entity_data.entity_name,
+                    "namespace": resource_metadata["namespace"],
+                    "wad": wad_info,
+                }
+            }
+        )
+        sub_entities = [{"id": entity_data.entity_id}]
+    else:
+        raise ValueError(f"未知的实体类型: {entity_data.entity_type}")
 
     mapping_data = mapping_result.get(data_key, {})
     processed_items = []
@@ -758,7 +820,10 @@ def integrate_entity(
             logger.debug(f"皮肤/地图 {sub_id} 没有事件数据，跳过")
             continue
 
-        integrated_item = {"id": sub_entity["id"]}
+        if entity_data.entity_type == "resource_pack":
+            integrated_item = {"key": sub_entity["id"]}
+        else:
+            integrated_item = {"id": sub_entity["id"]}
         if entity_data.entity_type == "champion":
             integrated_item.update(
                 {
@@ -769,11 +834,14 @@ def integrate_entity(
             )
         integrated_item["events"] = {}
 
-        sub_banks = (
-            banks_data.get("skins", {}).get(sub_id, {})
-            if entity_data.entity_type == "champion"
-            else banks_data.get("banks", {})
-        )
+        if entity_data.entity_type == "champion":
+            sub_banks = banks_data.get("skins", {}).get(sub_id, {})
+        elif entity_data.entity_type == "map":
+            sub_banks = banks_data.get("banks", {})
+        elif entity_data.entity_type == "resource_pack":
+            sub_banks = banks_data.get("banks", {})
+        else:
+            raise ValueError(f"未知的实体类型: {entity_data.entity_type}")
         sub_mapping = mapping_data.get(sub_id, {}).get("events", {})
         sub_audio_paths = mapping_data.get(sub_id, {}).get("audioPaths", {})
 
@@ -793,7 +861,12 @@ def integrate_entity(
     if entity_data.entity_type == "champion":
         integrated_data["data"]["skins"] = processed_items
     elif processed_items:
-        integrated_data["data"]["map"] = processed_items[0]
+        if entity_data.entity_type == "map":
+            integrated_data["data"]["map"] = processed_items[0]
+        elif entity_data.entity_type == "resource_pack":
+            integrated_data["data"]["resourcePack"].update(processed_items[0])
+        else:
+            raise ValueError(f"未知的实体类型: {entity_data.entity_type}")
 
     logger.success(f"整合完成，{entity_data.entity_name} 包含 {len(processed_items)} 个有效皮肤/地图数据")
     return integrated_data
@@ -891,5 +964,51 @@ def build_map(  # noqa: PLR0913
         )
     except ValueError as exc:
         # 显式记录后向上抛出，让 batch 统一计入失败计数，避免失败被静默吞掉返回空字典。
+        logger.error(str(exc))
+        raise
+
+
+def build_resource_pack(  # noqa: PLR0913
+    key: str,
+    reader: DataReader,
+    wwiser_manager: WwiserManager | None = None,
+    integrate_data: bool = False,
+    runtime_cache: mapping_session.RuntimeCache | None = None,
+    *,
+    ctx: AppContext,
+) -> dict[str, Any]:
+    """构建单个 resource-pack 的事件映射。
+
+    Args:
+        key: canonical resource-pack key。
+        reader: 数据读取器实例。
+        wwiser_manager: 可复用的 wwiser 管理器。
+        integrate_data: 是否输出整合数据。
+        runtime_cache: 映射流程共享缓存。
+        ctx: 运行时上下文。
+
+    Returns:
+        resource-pack 原始或整合映射结果。
+
+    Raises:
+        ValueError: resource-pack artifact 或绑定无效时抛出。
+    """
+    try:
+        entity_data = AudioEntityData.from_entity(
+            "resource_pack",
+            key,
+            reader,
+            include_events=True,
+            ctx=ctx,
+        )
+        return build_entity(
+            entity_data,
+            reader,
+            wwiser_manager,
+            integrate_data,
+            runtime_cache=runtime_cache,
+            ctx=ctx,
+        )
+    except ValueError as exc:
         logger.error(str(exc))
         raise
