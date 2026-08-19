@@ -47,7 +47,7 @@ def _summarize_tasks(tasks: list[EntityTask]) -> tuple[list[str], dict[str, int]
     return summary_parts, totals_by_type, finished_by_type
 
 
-def _build_entity(  # noqa: PLR0913
+def _build_entity(  # noqa: PLR0913, PLR0917
     entity_type: str,
     entity_id: int,
     reader: DataReader,
@@ -95,7 +95,7 @@ def _build_entity(  # noqa: PLR0913
     raise ValueError(f"未知的实体类型: {entity_type}")
 
 
-def _emit_progress(  # noqa: PLR0913
+def _emit_progress(  # noqa: PLR0913, PLR0917
     progress_callback: Callable[[str, int, int, str], None] | None,
     entity_type: str,
     finished_by_type: dict[str, int],
@@ -126,7 +126,7 @@ def _emit_progress(  # noqa: PLR0913
     )
 
 
-def _emit_running_progress(  # noqa: PLR0913
+def _emit_running_progress(  # noqa: PLR0913, PLR0917
     progress_callback: Callable[[str, int, int, str], None] | None,
     entity_type: str,
     finished_by_type: dict[str, int],
@@ -188,6 +188,7 @@ def execute_tasks(  # noqa: PLR0913
     progress_lock = threading.Lock() if max_workers > 1 else None
 
     if max_workers > 1:
+
         def build_entity_with_progress(
             entity_type: str,
             entity_id: int,
@@ -224,7 +225,10 @@ def execute_tasks(  # noqa: PLR0913
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_task = {
-                executor.submit(build_entity_with_progress, entity_type, entity_id, description): (entity_type, description)
+                executor.submit(build_entity_with_progress, entity_type, entity_id, description): (
+                    entity_type,
+                    description,
+                )
                 for entity_type, entity_id, description in tasks
             }
             completed_count = 0
@@ -405,5 +409,3 @@ def build_maps(  # noqa: PLR0913
         ctx=ctx,
         progress_callback=progress_callback,
     )
-
-

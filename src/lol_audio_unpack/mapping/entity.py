@@ -97,7 +97,7 @@ def _resolve_wad_path(entity_data: AudioEntityData, category: str, *, ctx: AppCo
     return None
 
 
-def _build_category_mapping(  # noqa: PLR0913
+def _build_category_mapping(  # noqa: PLR0913, PLR0917
     entity_data: AudioEntityData,
     category: str,
     paths_list: list[list[str]],
