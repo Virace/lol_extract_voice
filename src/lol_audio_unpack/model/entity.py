@@ -6,11 +6,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.utils.common import sanitize_filename
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
+    from lol_audio_unpack.manager.data_reader import DataReader
 
 
 @dataclass

@@ -174,6 +174,13 @@ def create_app_context(
 - `BinUpdater`
 - `DataReader`
 
+`DataReader` 的 banks 读取边界：
+
+- `get_champion_banks(id, require_bindings=False)` / `get_map_banks(id, require_bindings=False)`
+  默认兼容旧投影；local 调用方显式要求 bindings 时，v1 artifact 会提示重新 update。
+- `get_champion_resource_bindings(id)` / `get_map_resource_bindings(id)` 在 local 返回 typed
+  `ResourceBindings`；`remote_snapshot` 继续使用旧合同并返回 `None`。
+
 这些类都要求显式传入 `ctx: AppContext`。
 
 ## 4. 快速示例

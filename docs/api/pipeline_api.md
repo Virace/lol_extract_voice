@@ -1,5 +1,54 @@
 # 解包与映射 API（核心流水线）
 
+## 0. 本地 resource binding artifact
+
+`local_path` 模式的 `update` 会对 declared BIN 与其引用的 BNK/WPK 做目标 hash 查询，
+只扫描 `Game/DATA/FINAL` 下 root WAD 与当前 `game_region` 的 WAD TOC。命中位置写入
+`manifest/<version>/banks/**`，不会持久化本机绝对路径。
+
+本地 banks artifact 的资源合同版本位于顶层：
+
+```yaml
+resourceSchemaVersion: 2
+entity:
+  type: champion
+  id: "60009"
+binBindings:
+  - path: data/characters/jade_fiddlesticks/skins/skin301.bin
+    normalizedPath: data/characters/jade_fiddlesticks/skins/skin301.bin
+    wad: Game/DATA/FINAL/Champions/FiddleSticks.wad.client
+    entryHash: "0000000000000000"
+    status: resolved
+bankBindings:
+  - category: Characters/Jade_Fiddlesticks/Skins/Skin301/VO
+    path: assets/sounds/wwise2016/vo/example_audio.bnk
+    normalizedPath: assets/sounds/wwise2016/vo/example_audio.bnk
+    kind: BNK
+    wad: Game/DATA/FINAL/Champions/FiddleSticks.zh_CN.wad.client
+    entryHash: "0000000000000000"
+    sourceBin: data/characters/jade_fiddlesticks/skins/skin301.bin
+    role: localized
+    status: resolved
+diagnostics:
+  completeness: complete
+  unresolvedBins: []
+  unresolvedBanks: []
+```
+
+单条解析状态为 `resolved`、`missing`、`ambiguous_identical`、
+`ambiguous_conflict` 或 `parse_failed`。`diagnostics.completeness` 为
+`complete`、`partial` 或 `failed`。同 hash 多候选只在歧义时读取 payload；内容不同不会
+静默选择首项。
+
+`DataReader.get_champion_banks(...)` 与 `get_map_banks(...)` 默认仍可读取旧 artifact；
+需要精确 binding 的调用方传入 `require_bindings=True`，或使用
+`get_champion_resource_bindings(...)` / `get_map_resource_bindings(...)`。旧 local artifact
+会提示重新运行 `update`；`remote_snapshot` 继续使用既有 `.use_local_bin` 与 v1 投影，
+不会实例化本地 WAD 索引。
+
+当前 P1 兼容边界：v2 artifact 同时保留由成功 bindings 派生的旧 `skins` / `banks` 投影，
+现有 extract/mapping 尚消费该投影；切换到逐 binding 精确物理 WAD 属于后续消费者阶段。
+
 ## 1. 解包入口
 
 公开包：`lol_audio_unpack.unpack`

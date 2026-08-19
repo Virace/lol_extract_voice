@@ -15,8 +15,14 @@ from lol_audio_unpack.app.targets import (
     get_default_visible_champions,
     should_hide_champion_by_default,
 )
-from lol_audio_unpack.manager.errors import DataVersionMismatchError, SharedDataMissingError
+from lol_audio_unpack.app.types import SourceMode
+from lol_audio_unpack.manager.errors import (
+    DataVersionMismatchError,
+    ResourceSchemaMismatchError,
+    SharedDataMissingError,
+)
 from lol_audio_unpack.manager.files import read_data
+from lol_audio_unpack.model.binding import RESOURCE_SCHEMA_VERSION, ResourceBindings
 from lol_audio_unpack.utils.common import Singleton
 from lol_audio_unpack.utils.logging import performance_monitor
 
@@ -160,7 +166,7 @@ class DataReader(metaclass=Singleton):
         return list(languages_set)
 
     @performance_monitor(level="DEBUG")
-    def get_champion_banks(self, champion_id: int) -> dict | None:
+    def get_champion_banks(self, champion_id: int, *, require_bindings: bool = False) -> dict | None:
         """
         读取指定英雄的banks数据
 
@@ -169,7 +175,9 @@ class DataReader(metaclass=Singleton):
         :rtype: dict | None
         """
         if champion_id in self._champion_banks_cache:
-            return self._champion_banks_cache[champion_id]
+            banks_data = self._champion_banks_cache[champion_id]
+            self._validate_resource_schema(banks_data, f"英雄 {champion_id}", require_bindings=require_bindings)
+            return banks_data
 
         try:
             banks_file_base = self.champion_banks_dir / str(champion_id)
@@ -179,9 +187,17 @@ class DataReader(metaclass=Singleton):
             return None
 
         if banks_data:
+            self._validate_resource_schema(banks_data, f"英雄 {champion_id}", require_bindings=require_bindings)
             self._champion_banks_cache[champion_id] = banks_data
 
         return banks_data
+
+    def get_champion_resource_bindings(self, champion_id: int) -> ResourceBindings | None:
+        """读取本地英雄 v2 resource bindings；remote 旧合同返回 ``None``。"""
+        if not self._uses_local_resource_schema():
+            return None
+        payload = self.get_champion_banks(champion_id, require_bindings=True)
+        return ResourceBindings.from_payload(payload) if payload else None
 
     @performance_monitor(level="DEBUG")
     def write_unknown_categories(self) -> None:
@@ -231,7 +247,7 @@ class DataReader(metaclass=Singleton):
         return events_data
 
     @performance_monitor(level="DEBUG")
-    def get_map_banks(self, map_id: int) -> dict | None:
+    def get_map_banks(self, map_id: int, *, require_bindings: bool = False) -> dict | None:
         """
         读取指定地图的banks数据
 
@@ -240,7 +256,9 @@ class DataReader(metaclass=Singleton):
         :rtype: dict | None
         """
         if map_id in self._map_banks_cache:
-            return self._map_banks_cache[map_id]
+            banks_data = self._map_banks_cache[map_id]
+            self._validate_resource_schema(banks_data, f"地图 {map_id}", require_bindings=require_bindings)
+            return banks_data
 
         try:
             banks_file_base = self.map_banks_dir / str(map_id)
@@ -250,9 +268,30 @@ class DataReader(metaclass=Singleton):
             return None
 
         if banks_data:
+            self._validate_resource_schema(banks_data, f"地图 {map_id}", require_bindings=require_bindings)
             self._map_banks_cache[map_id] = banks_data
 
         return banks_data
+
+    def get_map_resource_bindings(self, map_id: int) -> ResourceBindings | None:
+        """读取本地地图 v2 resource bindings；remote 旧合同返回 ``None``。"""
+        if not self._uses_local_resource_schema():
+            return None
+        payload = self.get_map_banks(map_id, require_bindings=True)
+        return ResourceBindings.from_payload(payload) if payload else None
+
+    def _uses_local_resource_schema(self) -> bool:
+        """判断当前读取上下文是否要求 local v2 resource schema。"""
+        mode = getattr(self.ctx.config, "source_mode", SourceMode.LOCAL_PATH)
+        return mode in {SourceMode.LOCAL_PATH, SourceMode.LOCAL_PATH.value}
+
+    def _validate_resource_schema(self, data: dict, label: str, *, require_bindings: bool) -> None:
+        """在显式消费 binding 时拒绝旧 local artifact，remote 保持旧合同。"""
+        if not require_bindings or not self._uses_local_resource_schema():
+            return
+        if data.get("resourceSchemaVersion") == RESOURCE_SCHEMA_VERSION:
+            return
+        raise ResourceSchemaMismatchError(f"{label} 的 banks artifact 缺少 resource schema v2，请先重新运行 update。")
 
     @performance_monitor(level="DEBUG")
     def get_map_events(self, map_id: int) -> dict | None:

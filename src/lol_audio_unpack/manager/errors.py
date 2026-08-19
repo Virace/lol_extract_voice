@@ -17,6 +17,7 @@ SHARED_DATA_NOT_READY_MARKERS: tuple[str, ...] = (
     "请立即运行数据更新程序",
     "核心数据文件",
     "数据版本与游戏版本严重不匹配",
+    "resource schema v2",
 )
 
 
@@ -36,6 +37,10 @@ class DataVersionMismatchError(SharedDataNotReadyError, ValueError):
 
     同时继承 ``ValueError`` 以兼容既有按 ``ValueError`` 捕获/断言的调用方。
     """
+
+
+class ResourceSchemaMismatchError(SharedDataNotReadyError, ValueError):
+    """本地 banks artifact 缺少当前资源绑定合同。"""
 
 
 def is_shared_data_not_ready(error: Exception | str) -> bool:
@@ -59,6 +64,7 @@ def is_shared_data_not_ready(error: Exception | str) -> bool:
 __all__ = [
     "SHARED_DATA_NOT_READY_MARKERS",
     "DataVersionMismatchError",
+    "ResourceSchemaMismatchError",
     "SharedDataMissingError",
     "SharedDataNotReadyError",
     "is_shared_data_not_ready",

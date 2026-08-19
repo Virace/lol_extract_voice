@@ -23,8 +23,10 @@ UI 层通过异步边界交接，UI 吞吐不能阻塞解包或 mapping。
 - `app/context.py` 把设置解析为不可混淆的 `AppConfig`、`AppPaths` 与 `AppContext`。
 - `app/facade.py` 编排 DataUpdater、BinUpdater、DataReader、解包、转码和 mapping。
 - `manager/data_updater.py` 从 LCU 资源建立版本化 `data.*`。
-- `manager/bin_updater.py` 组织英雄与地图处理器，生成 banks/events。
-- `manager/data_reader.py` 读取版本化结构化数据并维护单次运行缓存。
+- `manager/bin_updater.py` 组织英雄与地图处理器，生成 banks/events；local update 同时生成 v2 resource bindings。
+- `manager/data_reader.py` 读取版本化结构化数据并维护单次运行缓存；精确 binding 消费可显式要求 v2。
+- `model/binding.py` 固定 declared BIN、bank reference、物理 WAD 与完整度诊断合同。
+- `runtime/wad_index.py` 对 FINAL root/current-language WAD 建立进程内 TOC cache，并按目标 hash 解析容器。
 - `unpack/` 读取实体资源引用，从 WAD/BNK/WPK 落盘原始 WEM 与报告。
 - `mapping/` 读取 events 与音频容器，使用 NativeHIRC 或显式 wwiser 建立 hash 映射。
 - `runtime/remote/` 准备最小远端运行树，并按工作项清理可回收资源。
@@ -36,7 +38,7 @@ UI 层通过异步边界交接，UI 吞吐不能阻塞解包或 mapping。
 CLI / GUI
   -> create_app_context
   -> DataUpdater: manifest/<version>/data.*
-  -> BinUpdater: banks/** + events/**
+  -> BinUpdater: banks/** (local resource schema v2) + events/**
   -> DataReader
   -> unpack: audios/** + reports/**
   -> wav: wavs/** + reports/**
@@ -46,16 +48,21 @@ CLI / GUI
 地图处理先使用 ID `0` 建立 Common 数据，再对目标地图去重。英雄与地图的完整二进制正确性由
 真实系统链路验证，不通过大量伪造上游对象重复证明。
 
+本地 resource binding 只持久化游戏根相对 WAD identity。resolver 先查询 root WAD TOC，
+按分类语义查询当前语言 WAD，并只在 hash 歧义时解压候选 payload。旧 `skins` / `banks`
+投影由同一组成功 bindings 派生，供尚未切换到逐 binding 消费的链路兼容使用。
+
 ## 远端数据流
 
 远端模式先解析对齐的 LCU/GAME manifest pair，下载目标实体所需的最小 LCU、BIN 与 WAD
 资源，装配 `_prepared_game/` 兼容运行树，再复用本地 manager、unpack 与 mapping。
 工作项结束后按配置清理准备产物；持久结果继续写入版本化 manifest、audios、hashes 和 reports。
+`.use_local_bin` 与 `remote_snapshot` 来源在 local resolver 之前短路，remote 暂不要求 v2 bindings。
 
 ## 输出与公共契约
 
 - `manifest/<version>/data.*`：聚合实体和版本元数据。
-- `manifest/<version>/banks/**`：音频容器路径。
+- `manifest/<version>/banks/**`：音频容器路径；local 顶层含 `resourceSchemaVersion: 2` 与逐条 bindings。
 - `manifest/<version>/events/**`：事件数据。
 - `audios/<version>/**`：原始 WEM。
 - `wavs/<version>/**`：可选 WAV。
