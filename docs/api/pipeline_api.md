@@ -52,6 +52,17 @@ diagnostics:
 WAD。`remote_snapshot` 仍保留 v1 root/language 投影，`resource_banks` 为空且
 `binding_diagnostics` 为 `None`，不会创建本地 WAD index。
 
+数据关系固定为：
+
+```text
+logical entity -> declared BIN -> BinBinding -> BANK_UNITS path
+               -> BankBinding -> physical BNK/WPK -> original WEM + exact output path
+```
+
+一个 logical entity 可以跨多个 root/current-language WAD，因此消费者必须按 binding 的
+`wad + entryHash` 处理，不能把 alias 还原为单一 WAD。地图更新仍先处理 Map 0 Common，
+再对 Map 11/22 等目标去重；只有目标地图而没有 Map 0 的系统结果不构成有效验收。
+
 ### 0.1 显式 resource-pack 发现 artifact
 
 本地 API 可在 `OperationOptions.resource_pack_wads` 传入由

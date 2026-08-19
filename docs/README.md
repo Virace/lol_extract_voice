@@ -83,6 +83,7 @@ Remote 模式的当前主线：
 
 - `--mode single_vo` 测量单英雄 VO 更新与解包
 - `--mode full_extract` 测量全量更新与解包
+- `--mode targeted` 使用显式英雄/地图 ID 比较相同客户与输出盘上的可重现范围
 - `--runner cli|api|both` 用于比较两种项目入口
 - benchmark 只记录性能，不替代正确性或系统测试
 

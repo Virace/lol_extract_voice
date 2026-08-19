@@ -21,6 +21,12 @@
 - 生产结构化数据使用 MessagePack，开发模式使用 YAML。
 - 远端模式信任 `RiotGameData.resolve_live_manifest_pair()` 提供对齐的 LCU/GAME 快照。
 - 远端模式优化峰值磁盘而非总耗时；失败时不得静默使用不对齐清单。
+- `local_path` 的 resource schema v2 以逐条 WAD/entry binding 为物理资源事实；
+  `remote_snapshot` 继续使用 v1 root/language 投影，不构建本地 WAD index。
+- 历史 resource-pack 发现只能扫描用户显式选定且位于 `Game/DATA/FINAL` 的
+  WAD；默认 update 不得扫描全部顶层 WAD，remote 不接受该能力。
+- 结构化特殊内容和 resource pack 是 local-only；拒绝它们不得改变普通英雄/地图
+  的 remote v1 范围。
 - 上游库的内部算法由上游维护；本项目只负责并验证自己的适配、编排、产物和恢复边界。
 
 ## 安全、隐私与文件系统

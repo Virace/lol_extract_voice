@@ -136,6 +136,8 @@ pack-only 选择不会回退到全量 champion/map 流程，混合选择会分�
 - `unpack_champions`
 - `unpack_map`
 - `unpack_maps`
+- `unpack_resource_pack`
+- `unpack_resource_packs`
 
 ### 3.3 `lol_audio_unpack.mapping`
 
@@ -148,6 +150,8 @@ pack-only 选择不会回退到全量 champion/map 流程，混合选择会分�
 - `build_champions`
 - `build_map`
 - `build_maps`
+- `build_resource_pack`
+- `build_resource_packs`
 - `execute_tasks`
 - `integrate_entity`
 - `describe_hirc_backend`

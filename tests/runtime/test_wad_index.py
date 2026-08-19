@@ -14,6 +14,7 @@ from lol_audio_unpack.runtime.wad_index import ResolutionRequest, WadIndex, WadT
 pytestmark = pytest.mark.unit
 
 EXPECTED_CANDIDATE_COUNT = 2
+UPDATED_WAD_COUNT = 2
 QUERY_COUNT = 8
 
 
@@ -152,7 +153,10 @@ def test_toc_cache_reuses_same_stat_key_across_threads(tmp_path: Path) -> None:
 
     assert statuses == [BindingStatus.RESOLVED] * QUERY_COUNT
     assert calls == ["Root.wad.client"]
-    assert index.snapshot_metrics()["cacheHits"] == QUERY_COUNT - 1
+    metrics = index.snapshot_metrics()
+    assert metrics["cacheHits"] == QUERY_COUNT - 1
+    assert metrics["uniqueTocLoads"] == 1
+    assert metrics["duplicatePhysicalWadLoads"] == 0
 
 
 def test_localized_preference_does_not_treat_root_payload_as_conflict(tmp_path: Path) -> None:
@@ -228,3 +232,5 @@ def test_toc_cache_invalidates_when_file_stat_changes(tmp_path: Path) -> None:
     assert first_hit is False
     assert second_hit is False
     assert calls == [len(b"first"), len(b"second-version")]
+    assert cache.unique_loads == UPDATED_WAD_COUNT
+    assert cache.duplicate_loads == 0

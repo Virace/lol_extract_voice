@@ -70,7 +70,7 @@
 关键实现：
 
 - `SettingPage.set_runtime_config_locked()`  
-  位置：[setting_page.py](/H:/Programming/Python/lol_audio_unpack/src/lol_audio_unpack/gui/view/setting_page.py#L733)
+  位置：[`setting_page.py`](../../src/lol_audio_unpack/gui/view/setting_page.py)
 
 ### 2.2 `ExecutionPage`
 
@@ -83,7 +83,7 @@
 关键实现：
 
 - `ExecutionPage.has_incomplete_tasks()`  
-  位置：[execution_page.py](/H:/Programming/Python/lol_audio_unpack/src/lol_audio_unpack/gui/view/execution_page.py#L505)
+  位置：[`execution_page.py`](../../src/lol_audio_unpack/gui/view/execution_page.py)
 
 当前约束：
 
@@ -101,11 +101,11 @@
 关键实现：
 
 - `_on_task_queue_busy_changed()`  
-  位置：[window.py](/H:/Programming/Python/lol_audio_unpack/src/lol_audio_unpack/gui/window.py#L483)
+  位置：[`window.py`](../../src/lol_audio_unpack/gui/window.py)
 - `_schedule_runtime_entity_refresh()`  
-  位置：[window.py](/H:/Programming/Python/lol_audio_unpack/src/lol_audio_unpack/gui/window.py#L570)
+  位置：[`window.py`](../../src/lol_audio_unpack/gui/window.py)
 - `_start_shared_data_prepare()`  
-  位置：[window.py](/H:/Programming/Python/lol_audio_unpack/src/lol_audio_unpack/gui/window.py#L609)
+  位置：[`window.py`](../../src/lol_audio_unpack/gui/window.py)
 
 ## 3. 当前主链
 
@@ -146,6 +146,7 @@
 4. `EntityDataLoader` 内部创建 `DataReader`
 5. `DataReader` 读取 `manifest/<version>/data.*`
 6. 读取成功后以一次完整英雄扫描分出普通英雄与结构化特殊内容，并构建英雄 / 地图 / 特殊内容目录更新 UI
+7. 只枚举已持久化的 resource-pack artifact 补充“历史资源包”分组；不在共享刷新中扫描 FINAL WAD
 
 这里的关键点是：
 
@@ -154,6 +155,11 @@
 - 特殊内容对应的银行或映射未准备好时仍保留目录项，并如实显示“未准备”；不能因为产物缺失而静默丢行
 - `remote_snapshot` 只允许浏览特殊内容目录，不能选择、同步或进入任务执行链
 - 任务完成后的增量刷新会一次读取冠军元数据，但只重建本次请求的普通英雄和特殊内容行，不会为少量 special key 重新扫描全部普通英雄状态
+- resource-pack 增量刷新仅读取请求 key 的 banks/events/audio/hash artifact；selected-WAD TOC/BIN 发现必须由显式后台扫描任务触发
+
+右侧预览与共享目录分开管理：事件视图消费 mapping，“全部音频”枚举当前实体的
+WEM 路径。当 mapping 缺失而 WEM 存在时，GUI 默认进入“全部音频”；当映射中有
+`audioPaths` 时，试听、导出和定位只使用该事件的精确路径，不回退到全局 WEM ID 猜测。
 
 ## 4. 自动补 `DataUpdater` 的条件
 

@@ -91,8 +91,11 @@ class WadTocCache:
         self._cache: dict[tuple[str, int, int, str], _WadView] = {}
         self._stat_keys: dict[tuple[str, int, int], tuple[str, int, int, str]] = {}
         self._pending: dict[tuple[str, int, int], threading.Event] = {}
+        self._loaded_stat_keys: set[tuple[str, int, int]] = set()
         self.hits = 0
         self.misses = 0
+        self.unique_loads = 0
+        self.duplicate_loads = 0
 
     def get(self, game_root: Path, path: Path) -> tuple[_WadView, bool]:
         """读取或复用一个 WAD TOC，慢解析发生在 cache 锁外。"""
@@ -111,6 +114,11 @@ class WadTocCache:
                     waiter = threading.Event()
                     self._pending[stat_key] = waiter
                     self.misses += 1
+                    if stat_key in self._loaded_stat_keys:
+                        self.duplicate_loads += 1
+                    else:
+                        self._loaded_stat_keys.add(stat_key)
+                        self.unique_loads += 1
                     break
             waiter.wait()
 
@@ -371,6 +379,8 @@ class WadIndex:
             **self.metrics,
             "cacheHits": self.cache.hits,
             "cacheMisses": self.cache.misses,
+            "uniqueTocLoads": self.cache.unique_loads,
+            "duplicatePhysicalWadLoads": self.cache.duplicate_loads,
             "indexErrors": len(self.errors),
         }
 
