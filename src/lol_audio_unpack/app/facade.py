@@ -367,9 +367,7 @@ class LolAudioUnpackApp:
                     for root in self._resolve_audio_paths(entity_data):
                         if root not in seen_roots:
                             seen_roots.add(root)
-                            resolved_targets.append(
-                                TranscodeTarget(root_path=root, display_label=display_label)
-                            )
+                            resolved_targets.append(TranscodeTarget(root_path=root, display_label=display_label))
 
             add_roots("champion", opts.champion_ids)
             add_roots("map", opts.map_ids)
