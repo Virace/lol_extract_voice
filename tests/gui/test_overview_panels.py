@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from lol_audio_unpack.app.artifacts import AudioRef
 from lol_audio_unpack.gui.components.preview_tree import (
     extract_preview_modifiers,
     extract_tree_groups,
@@ -124,6 +127,20 @@ def test_overview_preview_panel_set_preview_path_updates_text_and_tooltip(qtbot)
     assert panel.preview_path_edit.toolTip() == "mapping.msgpack"
 
 
+def test_overview_preview_panel_exposes_named_audio_preview_controls(qtbot) -> None:
+    """路径级试听控件应提供稳定的辅助功能名称。"""
+    panel = OverviewPreviewPanel(audio_summary_placeholder="这里会显示当前实体的事件分组。")
+    qtbot.addWidget(panel)
+
+    assert panel.preview_mode_pivot.accessibleName() == "预览模式切换"
+    assert panel.preview_search_input.accessibleName() == "预览搜索"
+    assert panel.preview_path_edit.accessibleName() == "预览资源路径"
+    assert panel.reveal_file_btn.accessibleName() == "打开当前预览资源位置"
+    assert panel.audio_preview_panel.audio_preview_tree.accessibleName() == "事件音频树"
+    assert panel.audio_preview_panel.audio_list.accessibleName() == "全部音频列表"
+    assert panel.text_preview.accessibleName() == "原始映射数据"
+
+
 def test_overview_audio_preview_panel_can_reset_summary(qtbot) -> None:
     panel = OverviewAudioPreviewPanel(summary_placeholder="等待事件数据。")
     qtbot.addWidget(panel)
@@ -140,11 +157,11 @@ def test_overview_audio_preview_panel_can_set_preview_data_and_playback_state(qt
 
     panel.set_preview_data(
         mapping_data={"skins": {"1000": {"events": {}}}},
-        available_audio_ids={"1001"},
+        audio_refs=(),
         group_label_map={"1000": "经典"},
         summary_text="分组 1 · 类型 0 · 事件 0",
     )
-    panel.set_playback_state("1001", progress=0.25, is_playing=False, is_paused=True)
+    panel.set_playback_state(Path("1001.wem"), progress=0.25, is_playing=False, is_paused=True)
 
     assert panel.summary_label.text() == "分组 1 · 类型 0 · 事件 0"
 
@@ -155,7 +172,7 @@ def test_overview_audio_preview_panel_expands_single_root_by_default(qtbot) -> N
 
     panel.set_preview_data(
         mapping_data={"map": {"0": {"events": {"NPC_Map0_VO": {"Play_map0_intro": ["1001"]}}}}},
-        available_audio_ids={"1001"},
+        audio_refs=(AudioRef("VO/1001.wem", Path("VO/1001.wem"), "1001", "VO", "0"),),
         group_label_map={"0": "常规"},
         summary_text="分组 1 · 类型 1 · 事件 1",
     )
@@ -176,7 +193,10 @@ def test_overview_audio_preview_panel_keeps_multiple_roots_collapsed_by_default(
                 "1001": {"events": {"XinZhao_Skin_VO": {"Play_skin_intro": ["1002"]}}},
             }
         },
-        available_audio_ids={"1001", "1002"},
+        audio_refs=(
+            AudioRef("1000/VO/1001.wem", Path("1000/VO/1001.wem"), "1001", "VO", "1000"),
+            AudioRef("1001/VO/1002.wem", Path("1001/VO/1002.wem"), "1002", "VO", "1001"),
+        ),
         group_label_map={"1000": "经典", "1001": "屠龙勇士"},
         summary_text="分组 2 · 类型 2 · 事件 2",
     )

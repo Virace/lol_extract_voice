@@ -53,13 +53,12 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
+from lol_audio_unpack.app.artifacts import AudioRef
 from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled
 from lol_audio_unpack.gui.common.page_style import apply_page_content_margins
 from lol_audio_unpack.gui.common.styles import build_fluent_panel_frame_theme_pair
 from lol_audio_unpack.gui.components.overview_entity_list import OVERVIEW_ROW_ROLE, OverviewEntityListView
 from lol_audio_unpack.gui.components.preview_tree import (
-    PreviewTreeModel,
-    PreviewTreeView,
     build_tree_summary_text,
     collect_tree_stats,
     extract_preview_modifiers,
@@ -71,7 +70,11 @@ from lol_audio_unpack.gui.controllers import (
 )
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
 from lol_audio_unpack.gui.controllers.entity_data_store import EntityDataStore
-from lol_audio_unpack.gui.controllers.overview_preview import AudioPreviewToggleResult
+from lol_audio_unpack.gui.controllers.overview_preview import (
+    ALL_AUDIO_PREVIEW_MODE,
+    EVENT_PREVIEW_MODE,
+    RAW_PREVIEW_MODE,
+)
 from lol_audio_unpack.gui.controllers.preview_playback import PreviewPlaybackState
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 from lol_audio_unpack.gui.service.preview_export import resolve_wav_path, transcode_wav
@@ -87,23 +90,24 @@ DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT = 10
 DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY = "default"
 
 
-def build_preview_path_text(mapping_path: Path | None) -> str:
+def build_preview_path_text(resource_path: Path | None) -> str:
     """构造右侧预览区域顶部路径文本。
 
     Args:
-        mapping_path: 当前选中的映射文件路径。
+        resource_path: 当前模式对应的资源路径。
 
     Returns:
-        存在映射文件时返回完整路径，否则返回空字符串。
+        存在资源路径时返回完整路径，否则返回空字符串。
     """
-    if mapping_path is None:
+    if resource_path is None:
         return ""
-    return str(mapping_path)
+    return str(resource_path)
 
 
 def create_preview_path_edit(parent: QWidget | None = None) -> LineEdit:
     """创建跟随 Fluent 主题的预览路径输入框。"""
     line_edit = LineEdit(parent)
+    line_edit.setAccessibleName("预览资源路径")
     line_edit.setReadOnly(True)
     line_edit.setClearButtonEnabled(False)
     line_edit.setPlaceholderText(DEFAULT_PREVIEW_PLACEHOLDER_TEXT)
@@ -141,12 +145,25 @@ class OverviewPage(QWidget):
         self._current_audio_preview_is_playing = False
         self._current_audio_preview_is_paused = False
         self._current_preview_mapping_data: dict[str, Any] | None = None
-        self._current_preview_available_audio_ids: set[str] = set()
         self._current_preview_group_label_map: dict[str, str] = {}
+        self._current_audio_refs: tuple[AudioRef, ...] = ()
+        self._current_audio_roots: tuple[Path, ...] = ()
+        self._selected_audio_refs: dict[str, AudioRef | None] = {
+            EVENT_PREVIEW_MODE: None,
+            ALL_AUDIO_PREVIEW_MODE: None,
+        }
+        self._current_mapping_notice: str | None = None
+        self._audio_preview_placeholder = DEFAULT_PREVIEW_PLACEHOLDER_TEXT
+        self._active_preview_mode = EVENT_PREVIEW_MODE
+        self._event_preview_summary = self._audio_preview_placeholder
+        self._all_audio_preview_summary = self._audio_preview_placeholder
+        self._preview_search_keywords = {
+            EVENT_PREVIEW_MODE: "",
+            ALL_AUDIO_PREVIEW_MODE: "",
+        }
         self._preview_audio_volume_percent = DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT
         self._preview_audio_output_device_key = DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY
         self._entity_lists: dict[str, OverviewEntityListView] = {}
-        self._audio_preview_placeholder = DEFAULT_PREVIEW_PLACEHOLDER_TEXT
         self._build_ui()
         self._preview_playback_controller = PreviewPlaybackController(parent=self)
         self._preview_playback_controller.playback_state_changed.connect(self._apply_audio_preview_playback_state)
@@ -250,9 +267,13 @@ class OverviewPage(QWidget):
         self.previewPanel.preview_search_input.textChanged.connect(self._on_preview_search_text_changed)
         self.sync_selection_btn.clicked.connect(self._sync_selected_entities)
         self.clear_selection_btn.clicked.connect(self._clear_selected_entities)
-        self.reveal_file_btn.clicked.connect(self._reveal_selected_mapping_file)
-        self.audio_preview_tree.audio_id_toggle_requested.connect(self._on_audio_preview_toggle_requested)
+        self.reveal_file_btn.clicked.connect(self._reveal_current_preview_target)
+        self.audio_preview_tree.audio_ref_toggle_requested.connect(self._on_audio_preview_toggle_requested)
         self.audio_preview_tree.audio_context_menu_requested.connect(self._show_audio_menu)
+        self.audio_preview_tree.audio_ref_selected.connect(self._on_audio_ref_selected)
+        self.audioPreviewPanel.audio_list.audio_ref_toggle_requested.connect(self._on_audio_preview_toggle_requested)
+        self.audioPreviewPanel.audio_list.audio_context_menu_requested.connect(self._show_audio_menu)
+        self.audioPreviewPanel.audio_list.audio_ref_selected.connect(self._on_audio_ref_selected)
         qconfig.themeChanged.connect(self._refresh_theme_styles)
         qconfig.themeColorChanged.connect(self._refresh_theme_styles)
 
@@ -303,10 +324,39 @@ class OverviewPage(QWidget):
         self._refresh_panel_shell_theme()
 
     def _on_preview_mode_changed(self, mode_key: str) -> None:
-        """切换右侧 Raw 与试听视图。"""
-        is_audio_mode = mode_key == "audio"
-        self.previewPanel.set_audio_mode(is_audio_mode)
-        self.previewPanel.preview_search_input.setEnabled(is_audio_mode)
+        """切换右侧事件、全部音频与原始数据视图。"""
+        previous_mode = self._active_preview_mode
+        if previous_mode in self._preview_search_keywords:
+            self._preview_search_keywords[previous_mode] = self.previewPanel.preview_search_input.text()
+        self._active_preview_mode = mode_key
+        self._apply_preview_mode(mode_key)
+
+    def _apply_preview_mode(self, mode_key: str) -> None:
+        """应用模式壳层状态，不重建另一种预览的模型或滚动位置。"""
+        self.previewPanel.set_preview_mode(mode_key)
+
+        search = self.previewPanel.preview_search_input
+        if mode_key == RAW_PREVIEW_MODE:
+            blocker = QSignalBlocker(search)
+            search.clear()
+            del blocker
+            search.setEnabled(False)
+            search.setPlaceholderText("原始数据暂不支持搜索")
+        else:
+            search.setEnabled(True)
+            search.setPlaceholderText(
+                "搜索事件、类型或音频 ID" if mode_key == EVENT_PREVIEW_MODE else "搜索 WEM ID、相对路径或音频类型"
+            )
+            keyword = self._preview_search_keywords.get(mode_key, "")
+            blocker = QSignalBlocker(search)
+            search.setText(keyword)
+            del blocker
+
+        if mode_key == EVENT_PREVIEW_MODE:
+            self.audioPreviewPanel.set_summary_text(self._event_preview_summary)
+        elif mode_key == ALL_AUDIO_PREVIEW_MODE:
+            self.audioPreviewPanel.set_summary_text(self._all_audio_preview_summary)
+        self._sync_preview_path()
 
     def _current_entity_type(self) -> str:
         return self.nav_pivot.currentRouteKey() or "champions"
@@ -366,6 +416,10 @@ class OverviewPage(QWidget):
         self.audio_preview_summary_card = self.audioPreviewPanel.summary_card
         self.audio_preview_summary_label = self.audioPreviewPanel.summary_label
         self.audio_preview_tree = self.audioPreviewPanel.audio_preview_tree
+        self.audio_list = self.audioPreviewPanel.audio_list
+        QWidget.setTabOrder(self.nav_pivot, self.search_input)
+        QWidget.setTabOrder(self.search_input, self.preview_mode_pivot)
+        QWidget.setTabOrder(self.preview_mode_pivot, self.previewPanel.preview_search_input)
 
         self.splitter.addWidget(self.entityListPanel)
         self.splitter.addWidget(self.previewPanel)
@@ -489,7 +543,11 @@ class OverviewPage(QWidget):
         self._sync_current_list_view()
 
     def _on_preview_search_text_changed(self, _text: str) -> None:
-        self._refresh_audio_preview_tree()
+        mode_key = self.preview_mode_pivot.currentRouteKey() or EVENT_PREVIEW_MODE
+        if mode_key not in self._preview_search_keywords:
+            return
+        self._preview_search_keywords[mode_key] = self.previewPanel.preview_search_input.text()
+        self._refresh_current_preview_mode()
 
     def _on_current_item_changed(self, entity_type: str, current, _previous) -> None:
         if entity_type != self._current_entity_type():
@@ -522,13 +580,21 @@ class OverviewPage(QWidget):
             return
 
         self._current_mapping_path = preview_result.mapping_path
-        self.previewPanel.set_preview_path(build_preview_path_text(preview_result.mapping_path))
-        self.preview_path_edit.setCursorPosition(0)
         self.text_preview.setPlainText(preview_result.preview_content)
         self._clear_audio_preview_request()
         self._current_preview_mapping_data = preview_result.mapping_data
-        self._current_preview_available_audio_ids = set(preview_result.available_audio_ids)
         self._current_preview_group_label_map = dict(preview_result.group_label_map)
+        self._current_audio_refs = preview_result.audio_refs
+        self._current_audio_roots = preview_result.audio_roots
+        self._selected_audio_refs = {
+            EVENT_PREVIEW_MODE: None,
+            ALL_AUDIO_PREVIEW_MODE: None,
+        }
+        self._current_mapping_notice = preview_result.mapping_notice
+        self._preview_search_keywords = {
+            EVENT_PREVIEW_MODE: "",
+            ALL_AUDIO_PREVIEW_MODE: "",
+        }
         modifiers = extract_preview_modifiers(preview_result.mapping_data)
         logger.debug(
             "[总览预览] entity_type={} entity_id={} prefixes={} suffixes={} audio_types={}",
@@ -539,18 +605,23 @@ class OverviewPage(QWidget):
             list(modifiers.audio_types),
         )
         self._refresh_audio_preview_tree()
+        self.audioPreviewPanel.set_audio_refs(self._current_audio_refs, summary_text="")
+        self._refresh_all_audio_preview()
         self.previewPanel.show_current_preview()
         self._sync_audio_preview_playback_state()
-        self.reveal_file_btn.setEnabled(True)
+        pivot_blocker = QSignalBlocker(self.preview_mode_pivot)
+        self.preview_mode_pivot.setCurrentItem(preview_result.default_preview_mode)
+        del pivot_blocker
+        self._active_preview_mode = preview_result.default_preview_mode
+        self._apply_preview_mode(preview_result.default_preview_mode)
 
-    def _on_audio_preview_toggle_requested(self, audio_id: str) -> None:
-        """响应试听树叶子行点击并触发试听播放控制。"""
+    def _on_audio_preview_toggle_requested(self, audio_ref: AudioRef) -> None:
+        """响应路径级试听项点击并触发精确 WEM 播放控制。"""
+        self._set_selected_audio_ref(audio_ref)
+        self._sync_preview_path()
         result = self._preview_controller.resolve_audio_preview_toggle(
-            requested_audio_id=audio_id,
-            current_audio_id=self._current_audio_preview_audio_id,
-            loader=self._ensure_loader(),
-            current_entity_type=self._current_preview_entity_type,
-            current_entity_id=self._current_preview_entity_id,
+            requested_audio=audio_ref,
+            current_audio_path=self._current_audio_preview_path,
         )
         if result is None:
             return
@@ -572,27 +643,31 @@ class OverviewPage(QWidget):
             audio_path=result.audio_path,
         )
 
-    def _audio_menu_wem_path(self, audio_id: str) -> Path | None:
-        """解析右键菜单目标音频的 WEM 路径。"""
-        loader = self._ensure_loader()
-        if loader is None or self._current_preview_entity_type is None or self._current_preview_entity_id is None:
-            return None
-        return loader.resolve_audio_file_path(
-            self._current_preview_entity_type,
-            self._current_preview_entity_id,
-            audio_id,
-        )
+    def _on_audio_ref_selected(self, audio_ref: AudioRef) -> None:
+        """让全部音频模式路径栏跟随用户实际选中的 WEM。"""
+        self._set_selected_audio_ref(audio_ref)
+        self._sync_preview_path()
 
-    def _show_audio_menu(self, audio_id: str, global_pos: QPoint) -> None:
-        """显示试听音频叶子项右键菜单。"""
-        wem_path = self._audio_menu_wem_path(audio_id)
-        if wem_path is None:
-            return
+    def _set_selected_audio_ref(self, audio_ref: AudioRef) -> None:
+        """按当前试听模式保存用户选中的精确路径引用。"""
+        mode_key = self.preview_mode_pivot.currentRouteKey() or self._active_preview_mode
+        if mode_key in self._selected_audio_refs:
+            self._selected_audio_refs[mode_key] = audio_ref
 
-        menu = RoundMenu(parent=self.audio_preview_tree)
+    @staticmethod
+    def _audio_menu_wem_path(audio_ref: AudioRef) -> Path:
+        """返回右键菜单目标的已验证精确 WEM 路径。"""
+        return audio_ref.path
+
+    def _show_audio_menu(self, audio_ref: AudioRef, global_pos: QPoint) -> None:
+        """显示事件树与全部音频共用的路径级操作菜单。"""
+        self._set_selected_audio_ref(audio_ref)
+        self._sync_preview_path()
+        wem_path = self._audio_menu_wem_path(audio_ref)
+        menu = RoundMenu(parent=self)
 
         save_action = Action("另存为 WAV...", menu)
-        save_action.triggered.connect(lambda: self._save_audio_wav(audio_id, wem_path))
+        save_action.triggered.connect(lambda: self._save_audio_wav(audio_ref.wem_id, wem_path))
         menu.addAction(save_action)
 
         reveal_wem_action = Action("打开 WEM 所在位置", menu)
@@ -702,9 +777,9 @@ class OverviewPage(QWidget):
         )
 
     def _sync_audio_preview_playback_state(self) -> None:
-        """把当前缓存的试听状态同步到试听树视图。"""
+        """把当前缓存的试听状态同步到两种路径级试听视图。"""
         self.audioPreviewPanel.set_playback_state(
-            self._current_audio_preview_audio_id,
+            self._current_audio_preview_path,
             progress=self._current_audio_preview_progress,
             is_playing=self._current_audio_preview_is_playing,
             is_paused=self._current_audio_preview_is_paused,
@@ -728,32 +803,67 @@ class OverviewPage(QWidget):
         self._current_preview_entity_type = None
         self._current_preview_entity_id = None
         self._current_preview_mapping_data = None
-        self._current_preview_available_audio_ids = set()
         self._current_preview_group_label_map = {}
+        self._current_audio_refs = ()
+        self._current_audio_roots = ()
+        self._selected_audio_refs = {
+            EVENT_PREVIEW_MODE: None,
+            ALL_AUDIO_PREVIEW_MODE: None,
+        }
+        self._current_mapping_notice = None
+        self._event_preview_summary = self._audio_preview_placeholder
+        self._all_audio_preview_summary = self._audio_preview_placeholder
         self.previewPanel.show_placeholder(message)
         self._clear_audio_preview_request()
         self._sync_audio_preview_playback_state()
 
     def _refresh_audio_preview_tree(self) -> None:
         """根据当前搜索状态刷新右侧事件树。"""
-        keyword = self.previewPanel.preview_search_input.text()
+        keyword = self._preview_search_keywords[EVENT_PREVIEW_MODE]
         filter_result = filter_preview_mapping_data(self._current_preview_mapping_data, keyword)
-        stats = collect_tree_stats(filter_result.mapping_data, self._current_preview_available_audio_ids)
+        stats = collect_tree_stats(filter_result.mapping_data, self._current_audio_refs)
         summary_text = build_tree_summary_text(stats)
+        if self._current_mapping_notice:
+            summary_text = f"{self._current_mapping_notice} · {summary_text}"
         if filter_result.is_active:
             summary_text = (
                 f"{summary_text} · 匹配事件 {filter_result.matched_event_count} · "
                 f"匹配 ID {filter_result.matched_audio_id_count}"
             )
+        self._event_preview_summary = summary_text
 
         self.audioPreviewPanel.set_preview_data(
             mapping_data=filter_result.mapping_data,
-            available_audio_ids=self._current_preview_available_audio_ids,
+            audio_refs=self._current_audio_refs,
             group_label_map=self._current_preview_group_label_map,
             summary_text=summary_text,
         )
         if filter_result.is_active:
             self.audio_preview_tree.expandAll()
+
+    def _refresh_all_audio_preview(self) -> None:
+        """根据当前搜索状态刷新全部音频模型与摘要。"""
+        keyword = self._preview_search_keywords[ALL_AUDIO_PREVIEW_MODE]
+        self.audioPreviewPanel.set_audio_keyword(keyword)
+        matched_count = self.audio_list.model().rowCount()
+        total_count = len(self._current_audio_refs)
+        summary_text = f"全部音频 {total_count} 个 WEM"
+        if keyword:
+            summary_text = f"{summary_text} · 匹配 {matched_count} 个"
+        if total_count == 0:
+            summary_text = "暂无已解包音频"
+        if self._current_mapping_notice:
+            summary_text = f"{self._current_mapping_notice} · {summary_text}"
+        self._all_audio_preview_summary = summary_text
+        self.audioPreviewPanel.set_summary_text(summary_text)
+
+    def _refresh_current_preview_mode(self) -> None:
+        """只刷新当前模式所需的筛选模型，避免切换时重置另一视图。"""
+        mode_key = self.preview_mode_pivot.currentRouteKey() or EVENT_PREVIEW_MODE
+        if mode_key == EVENT_PREVIEW_MODE:
+            self._refresh_audio_preview_tree()
+        elif mode_key == ALL_AUDIO_PREVIEW_MODE:
+            self._refresh_all_audio_preview()
 
     def _set_splitter_sizes_evenly(self) -> None:
         """在页面宽度已知时将左右面板收敛到更适合缩放的宽度比例。"""
@@ -770,15 +880,50 @@ class OverviewPage(QWidget):
         right_width = max(total_width - left_width, 0)
         self.splitter.setSizes([left_width, right_width])
 
-    def _reveal_selected_mapping_file(self) -> None:
-        if self._current_mapping_path is None:
+    def _resolve_preview_target(self) -> Path | None:
+        """按当前预览方式返回可安全打开的单一资源目标。"""
+        mode_key = self.preview_mode_pivot.currentRouteKey() or EVENT_PREVIEW_MODE
+        if mode_key in {EVENT_PREVIEW_MODE, RAW_PREVIEW_MODE}:
+            return self._current_mapping_path
+        selected_ref = self._selected_audio_refs[ALL_AUDIO_PREVIEW_MODE]
+        if selected_ref is not None:
+            return selected_ref.path
+        if len(self._current_audio_roots) == 1:
+            return self._current_audio_roots[0]
+        return None
+
+    def _sync_preview_path(self) -> None:
+        """按当前模式更新路径栏、打开目标与工具提示。"""
+        mode_key = self.preview_mode_pivot.currentRouteKey() or EVENT_PREVIEW_MODE
+        target_path = self._resolve_preview_target()
+        if target_path is not None:
+            self.previewPanel.set_preview_path(build_preview_path_text(target_path))
+            self.preview_path_edit.setCursorPosition(0)
+            if mode_key == ALL_AUDIO_PREVIEW_MODE:
+                self.reveal_file_btn.setToolTip("打开当前 WEM 所在位置" if target_path.is_file() else "打开音频目录")
+            else:
+                self.reveal_file_btn.setToolTip("打开映射文件位置")
+            self.reveal_file_btn.setEnabled(True)
             return
 
-        target_path = self._current_mapping_path
+        if mode_key == ALL_AUDIO_PREVIEW_MODE and self._current_audio_roots:
+            paths_text = "；".join(str(path) for path in self._current_audio_roots)
+            self.previewPanel.set_preview_path(f"多个音频目录：{paths_text}")
+            self.reveal_file_btn.setToolTip("当前实体包含多个音频目录，请先选择一条音频。")
+        else:
+            self.previewPanel.set_preview_path("")
+            self.reveal_file_btn.setToolTip("当前模式没有可打开的资源。")
+        self.reveal_file_btn.setEnabled(False)
+
+    def _reveal_current_preview_target(self) -> None:
+        """打开当前预览模式对应的精确文件或音频目录。"""
+        target_path = self._resolve_preview_target()
+        if target_path is None:
+            return
         if self._reveal_file_path(target_path):
             return
 
-        directory = target_path.parent
+        directory = target_path if target_path.is_dir() else target_path.parent
         InfoBar.warning(
             "打开目录失败",
             f"无法打开目录：{directory}",
@@ -788,6 +933,9 @@ class OverviewPage(QWidget):
 
     def _reveal_file_path(self, target_path: Path) -> bool:
         """在系统文件管理器中定位指定文件。"""
+        if target_path.is_dir():
+            return QDesktopServices.openUrl(QUrl.fromLocalFile(str(target_path)))
+
         directory = target_path.parent
         try:
             if os.name == "nt" and target_path.exists():
@@ -804,3 +952,4 @@ class OverviewPage(QWidget):
             apply_smooth_scroll_enabled(list_widget, enabled)
         apply_smooth_scroll_enabled(self.text_preview, enabled)
         apply_smooth_scroll_enabled(self.audio_preview_tree, enabled)
+        apply_smooth_scroll_enabled(self.audio_list, enabled)

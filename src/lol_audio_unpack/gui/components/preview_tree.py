@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QAbstractItemModel, QEvent, QModelIndex, QPoint, QPointF, QRect, Qt, Signal
@@ -16,6 +17,7 @@ from qfluentwidgets import (
 )
 from qfluentwidgets.components.widgets.scroll_bar import SmoothScrollDelegate
 
+from lol_audio_unpack.app.artifacts import AudioRef
 from lol_audio_unpack.gui.common.styles import (
     build_fluent_tree_shell_theme_pair,
     resolve_fluent_neutral_surface,
@@ -28,6 +30,8 @@ AUDIO_ID_ROLE = int(Qt.ItemDataRole.UserRole) + 2
 AUDIO_AVAILABLE_ROLE = int(Qt.ItemDataRole.UserRole) + 3
 NODE_PAYLOAD_ROLE = int(Qt.ItemDataRole.UserRole) + 4
 NODE_LOADED_ROLE = int(Qt.ItemDataRole.UserRole) + 5
+AUDIO_REF_ROLE = int(Qt.ItemDataRole.UserRole) + 6
+AUDIO_AMBIGUOUS_ROLE = int(Qt.ItemDataRole.UserRole) + 7
 EMPTY_MODEL_INDEX = QModelIndex()
 PREVIEW_TREE_ITEM_MIN_HEIGHT = 20
 PREVIEW_TREE_ROW_HORIZONTAL_MARGIN = 10
@@ -175,6 +179,14 @@ class PreviewSearchScope:
     keyword: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class _EventAudioResolution:
+    """描述一个事件音频 ID 的路径级可播放结果。"""
+
+    audio_refs: tuple[AudioRef, ...] = ()
+    is_ambiguous: bool = False
+
+
 @dataclass(slots=True)
 class _PreviewTreeNode:
     """树形预览中的轻量节点。"""
@@ -184,7 +196,9 @@ class _PreviewTreeNode:
     payload: Any
     parent: _PreviewTreeNode | None = None
     audio_id: str | None = None
+    audio_ref: AudioRef | None = None
     is_available: bool = False
+    is_ambiguous: bool = False
     children: list[_PreviewTreeNode] | None = None
     children_loaded: bool = False
 
@@ -214,15 +228,71 @@ def extract_tree_groups(mapping_data: dict[str, Any] | None) -> dict[str, Any]:
     return {}
 
 
+def _build_audio_ref_indexes(
+    audio_refs: tuple[AudioRef, ...],
+) -> tuple[dict[str, tuple[AudioRef, ...]], dict[str, AudioRef]]:
+    """按 WEM ID 与稳定相对路径建立音频引用索引。"""
+    refs_by_id: dict[str, list[AudioRef]] = {}
+    refs_by_path: dict[str, AudioRef] = {}
+    for ref in audio_refs:
+        refs_by_id.setdefault(ref.wem_id, []).append(ref)
+        refs_by_path[ref.relative_path] = ref
+
+    sorted_refs_by_id = {
+        audio_id: tuple(sorted(refs, key=lambda item: item.relative_path)) for audio_id, refs in refs_by_id.items()
+    }
+    return sorted_refs_by_id, refs_by_path
+
+
+def _event_audio_paths(
+    paths_by_event: object,
+    event_name: object,
+) -> tuple[bool, tuple[str, ...]]:
+    """读取事件的 mapping 路径，并区分缺失与显式空路径。"""
+    if not isinstance(paths_by_event, dict) or event_name not in paths_by_event:
+        return False, ()
+
+    raw_paths = paths_by_event[event_name]
+    if not isinstance(raw_paths, list | tuple):
+        return True, ()
+    return True, tuple(str(path).replace("\\", "/").strip("/") for path in raw_paths if str(path).strip())
+
+
+def _resolve_event_audio_refs(
+    audio_id: str,
+    *,
+    audio_paths: tuple[str, ...],
+    has_audio_paths: bool,
+    refs_by_id: dict[str, tuple[AudioRef, ...]],
+    refs_by_path: dict[str, AudioRef],
+) -> _EventAudioResolution:
+    """按事件 mapping 优先解析精确音频路径。"""
+    if has_audio_paths:
+        refs: list[AudioRef] = []
+        seen: set[str] = set()
+        for relative_path in audio_paths:
+            ref = refs_by_path.get(relative_path)
+            if ref is None or ref.wem_id != audio_id or ref.key in seen:
+                continue
+            seen.add(ref.key)
+            refs.append(ref)
+        return _EventAudioResolution(audio_refs=tuple(sorted(refs, key=lambda item: item.relative_path)))
+
+    fallback_refs = refs_by_id.get(audio_id, ())
+    if len(fallback_refs) == 1:
+        return _EventAudioResolution(audio_refs=fallback_refs)
+    return _EventAudioResolution(is_ambiguous=len(fallback_refs) > 1)
+
+
 def collect_tree_stats(
     mapping_data: dict[str, Any] | None,
-    available_audio_ids: set[str],
+    audio_refs: tuple[AudioRef, ...],
 ) -> TreeStats:
-    """统计完整预览树中的层级与可用音频 ID 数量。
+    """统计完整预览树中的层级与路径级可试听叶子数量。
 
     Args:
         mapping_data: 当前实体的原始 mapping 数据。
-        available_audio_ids: 当前实体本地已存在的 wem ID 集合。
+        audio_refs: 当前实体本地已存在的路径级 WEM 引用。
 
     Returns:
         用于右侧摘要卡的统计数据。
@@ -236,6 +306,7 @@ def collect_tree_stats(
     event_count = 0
     audio_id_count = 0
     available_audio_id_count = 0
+    refs_by_id, refs_by_path = _build_audio_ref_indexes(audio_refs)
 
     for group_payload in groups.values():
         if not isinstance(group_payload, dict):
@@ -245,25 +316,36 @@ def collect_tree_stats(
         events_payload = group_payload.get("events", {})
         if not isinstance(events_payload, dict):
             continue
+        audio_paths_payload = group_payload.get("audioPaths", {})
 
-        for event_group in events_payload.values():
+        for audio_type_name, event_group in events_payload.items():
             if not isinstance(event_group, dict):
                 continue
 
             audio_type_count += 1
-            for audio_ids in event_group.values():
+            paths_by_event = (
+                audio_paths_payload.get(audio_type_name, {}) if isinstance(audio_paths_payload, dict) else {}
+            )
+            for event_name, audio_ids in event_group.items():
                 if not isinstance(audio_ids, list | tuple):
                     continue
 
                 event_count += 1
+                has_audio_paths, audio_paths = _event_audio_paths(paths_by_event, event_name)
                 for audio_id in audio_ids:
                     audio_id_text = str(audio_id).strip()
                     if not audio_id_text:
                         continue
 
                     audio_id_count += 1
-                    if audio_id_text in available_audio_ids:
-                        available_audio_id_count += 1
+                    resolution = _resolve_event_audio_refs(
+                        audio_id_text,
+                        audio_paths=audio_paths,
+                        has_audio_paths=has_audio_paths,
+                        refs_by_id=refs_by_id,
+                        refs_by_path=refs_by_path,
+                    )
+                    available_audio_id_count += len(resolution.audio_refs)
 
     return TreeStats(
         skin_count=group_count,
@@ -312,7 +394,7 @@ def filter_preview_mapping_data(
     if not groups:
         return PreviewFilterResult(mapping_data=mapping_data, is_active=True)
 
-    filtered_groups: dict[str, dict[str, dict[str, list[str]]]] = {}
+    filtered_groups: dict[str, dict[str, object]] = {}
     matched_event_count = 0
     matched_audio_id_count = 0
 
@@ -324,7 +406,9 @@ def filter_preview_mapping_data(
         if not isinstance(events_payload, dict):
             continue
 
+        audio_paths_payload = group_payload.get("audioPaths", {})
         filtered_audio_types: dict[str, dict[str, list[str]]] = {}
+        filtered_audio_paths: dict[str, dict[str, list[str]]] = {}
         for audio_type_name, event_payload in events_payload.items():
             if not isinstance(event_payload, dict):
                 continue
@@ -333,7 +417,11 @@ def filter_preview_mapping_data(
             if modifier and not _audio_type_matches_modifier(audio_type, modifier):
                 continue
 
+            paths_by_event = (
+                audio_paths_payload.get(audio_type_name, {}) if isinstance(audio_paths_payload, dict) else {}
+            )
             filtered_events: dict[str, list[str]] = {}
+            filtered_paths: dict[str, list[str]] = {}
             for event_name, audio_ids in event_payload.items():
                 if not isinstance(audio_ids, list | tuple):
                     continue
@@ -345,6 +433,9 @@ def filter_preview_mapping_data(
 
                 if event_match:
                     filtered_events[event_label] = clean_audio_ids
+                    event_paths = paths_by_event.get(event_name, ()) if isinstance(paths_by_event, dict) else ()
+                    if isinstance(event_paths, list | tuple):
+                        filtered_paths[event_label] = [str(path).strip() for path in event_paths if str(path).strip()]
                     matched_event_count += 1
                     matched_audio_id_count += len(clean_audio_ids)
                     continue
@@ -353,14 +444,27 @@ def filter_preview_mapping_data(
                     continue
 
                 filtered_events[event_label] = matched_audio_ids
+                event_paths = paths_by_event.get(event_name, ()) if isinstance(paths_by_event, dict) else ()
+                if isinstance(event_paths, list | tuple):
+                    matched_ids = set(matched_audio_ids)
+                    filtered_paths[event_label] = [
+                        str(path).strip()
+                        for path in event_paths
+                        if str(path).strip() and Path(str(path)).stem in matched_ids
+                    ]
                 matched_event_count += 1
                 matched_audio_id_count += len(matched_audio_ids)
 
             if filtered_events:
                 filtered_audio_types[str(audio_type_name)] = filtered_events
+                if filtered_paths:
+                    filtered_audio_paths[str(audio_type_name)] = filtered_paths
 
         if filtered_audio_types:
-            filtered_groups[str(group_id)] = {"events": filtered_audio_types}
+            group_result: dict[str, object] = {"events": filtered_audio_types}
+            if filtered_audio_paths:
+                group_result["audioPaths"] = filtered_audio_paths
+            filtered_groups[str(group_id)] = group_result
 
     root_key = next(
         (key for key in ("skins", "map") if isinstance(mapping_data, dict) and key in mapping_data),
@@ -469,27 +573,29 @@ class PreviewTreeModel(QAbstractItemModel):
             parent: Qt 父对象。
         """
         super().__init__(parent)
-        self._available_audio_ids: set[str] = set()
+        self._audio_refs_by_id: dict[str, tuple[AudioRef, ...]] = {}
+        self._audio_refs_by_path: dict[str, AudioRef] = {}
         self._root_nodes: list[_PreviewTreeNode] = []
 
     def clear_preview(self) -> None:
         """清空当前预览树内容。"""
         self.beginResetModel()
-        self._available_audio_ids = set()
+        self._audio_refs_by_id = {}
+        self._audio_refs_by_path = {}
         self._root_nodes = []
         self.endResetModel()
 
     def set_preview_data(
         self,
         mapping_data: dict[str, Any] | None,
-        available_audio_ids: set[str],
+        audio_refs: tuple[AudioRef, ...],
         group_label_map: dict[str, str] | None = None,
     ) -> None:
         """替换当前预览树数据。
 
         Args:
             mapping_data: 当前实体的原始 mapping 数据。
-            available_audio_ids: 当前实体本地已存在的 wem ID 集合。
+            audio_refs: 当前实体全部已解包 WEM 的路径级稳定引用。
             group_label_map: 可选的首层分组文案映射，仅影响展示标签。
         """
         groups = extract_tree_groups(mapping_data)
@@ -503,12 +609,12 @@ class PreviewTreeModel(QAbstractItemModel):
                 _PreviewTreeNode(
                     label=display_label_map.get(str(group_id), str(group_id)),
                     kind="group",
-                    payload=group_payload.get("events", {}),
+                    payload=group_payload,
                 )
             )
 
         self.beginResetModel()
-        self._available_audio_ids = {str(audio_id) for audio_id in available_audio_ids}
+        self._audio_refs_by_id, self._audio_refs_by_path = _build_audio_ref_indexes(audio_refs)
         self._root_nodes = root_nodes
         self.endResetModel()
 
@@ -613,6 +719,10 @@ class PreviewTreeModel(QAbstractItemModel):
             value = node.audio_id
         elif role == AUDIO_AVAILABLE_ROLE:
             value = node.is_available
+        elif role == AUDIO_REF_ROLE:
+            value = node.audio_ref
+        elif role == AUDIO_AMBIGUOUS_ROLE:
+            value = node.is_ambiguous
         elif role == NODE_PAYLOAD_ROLE:
             value = node.payload
         elif role == NODE_LOADED_ROLE:
@@ -720,15 +830,23 @@ class PreviewTreeModel(QAbstractItemModel):
         if not isinstance(payload, dict):
             return []
 
+        events_payload = payload.get("events", {})
+        audio_paths_payload = payload.get("audioPaths", {})
+        if not isinstance(events_payload, dict):
+            return []
+
         children: list[_PreviewTreeNode] = []
-        for audio_type_name, event_payload in payload.items():
+        for audio_type_name, event_payload in events_payload.items():
             if not isinstance(event_payload, dict):
                 continue
+            paths_by_event = (
+                audio_paths_payload.get(audio_type_name, {}) if isinstance(audio_paths_payload, dict) else {}
+            )
             children.append(
                 _PreviewTreeNode(
                     label=str(audio_type_name),
                     kind="audio_type",
-                    payload=event_payload,
+                    payload={"events": event_payload, "audio_paths": paths_by_event},
                     parent=node,
                 )
             )
@@ -740,59 +858,122 @@ class PreviewTreeModel(QAbstractItemModel):
         if not isinstance(payload, dict):
             return []
 
+        events_payload = payload.get("events", {})
+        audio_paths_payload = payload.get("audio_paths", {})
+        if not isinstance(events_payload, dict):
+            return []
+
         children: list[_PreviewTreeNode] = []
-        for event_name, audio_ids in payload.items():
+        for event_name, audio_ids in events_payload.items():
             if not isinstance(audio_ids, list | tuple):
                 continue
+            has_audio_paths, audio_paths = _event_audio_paths(audio_paths_payload, event_name)
             children.append(
                 _PreviewTreeNode(
                     label=str(event_name),
                     kind="event",
-                    payload=[str(audio_id).strip() for audio_id in audio_ids if str(audio_id).strip()],
+                    payload={
+                        "audio_ids": [str(audio_id).strip() for audio_id in audio_ids if str(audio_id).strip()],
+                        "audio_paths": list(audio_paths),
+                        "has_audio_paths": has_audio_paths,
+                    },
                     parent=node,
                 )
             )
         return children
 
     def _build_audio_id_children(self, node: _PreviewTreeNode) -> list[_PreviewTreeNode]:
-        """构造事件节点下的音频 ID 叶子节点。"""
+        """构造事件节点下的精确音频叶子节点。
+
+        新 mapping 的 ``audioPaths`` 能把同 ID 的多条物理 WEM 精确展开；
+        旧 mapping 仅在 ID 唯一时回退，避免字典序路径造成误播。
+        """
         payload = node.payload
-        if not isinstance(payload, list | tuple):
+        if not isinstance(payload, dict):
+            return []
+
+        audio_ids = payload.get("audio_ids", ())
+        audio_paths = payload.get("audio_paths", ())
+        if not isinstance(audio_ids, list | tuple):
             return []
 
         children: list[_PreviewTreeNode] = []
-        for audio_id in payload:
+        for audio_id in audio_ids:
             audio_id_text = str(audio_id).strip()
             if not audio_id_text:
                 continue
+            resolution = _resolve_event_audio_refs(
+                audio_id_text,
+                audio_paths=tuple(audio_paths) if isinstance(audio_paths, list | tuple) else (),
+                has_audio_paths=bool(payload.get("has_audio_paths")),
+                refs_by_id=self._audio_refs_by_id,
+                refs_by_path=self._audio_refs_by_path,
+            )
+            if resolution.audio_refs:
+                children.extend(self._build_audio_ref_nodes(node, audio_id_text, resolution.audio_refs))
+                continue
+
+            has_audio_paths = bool(payload.get("has_audio_paths"))
+            if resolution.is_ambiguous:
+                label = f"{audio_id_text}（多个路径，请到全部音频选择）"
+            elif has_audio_paths:
+                label = f"{audio_id_text}（映射路径当前不可用）"
+            else:
+                label = audio_id_text
             children.append(
                 _PreviewTreeNode(
-                    label=audio_id_text,
+                    label=label,
                     kind="audio_id",
                     payload=None,
                     parent=node,
                     audio_id=audio_id_text,
-                    is_available=audio_id_text in self._available_audio_ids,
+                    is_ambiguous=resolution.is_ambiguous,
                     children=[],
                     children_loaded=True,
                 )
             )
         return children
 
+    @staticmethod
+    def _build_audio_ref_nodes(
+        parent: _PreviewTreeNode,
+        audio_id: str,
+        refs: tuple[AudioRef, ...],
+    ) -> list[_PreviewTreeNode]:
+        """为每条已验证路径创建可播放的事件树叶子。"""
+        return [
+            _PreviewTreeNode(
+                label=audio_id,
+                kind="audio_id",
+                payload=ref,
+                parent=parent,
+                audio_id=audio_id,
+                audio_ref=ref,
+                is_available=True,
+                children=[],
+                children_loaded=True,
+            )
+            for ref in refs
+        ]
+
     def _node_has_children(self, kind: str, payload: Any) -> bool:
         """判断一个节点是否还有下一层可展开内容。"""
-        if kind in {"group", "audio_type"}:
-            return isinstance(payload, dict) and bool(payload)
+        if kind == "group":
+            return isinstance(payload, dict) and isinstance(payload.get("events"), dict) and bool(payload["events"])
+        if kind == "audio_type":
+            return isinstance(payload, dict) and isinstance(payload.get("events"), dict) and bool(payload["events"])
         if kind == "event":
-            return isinstance(payload, list | tuple) and any(str(item).strip() for item in payload)
+            audio_ids = payload.get("audio_ids", ()) if isinstance(payload, dict) else ()
+            return isinstance(audio_ids, list | tuple) and any(str(item).strip() for item in audio_ids)
         return False
 
 
 class PreviewTreeView(QTreeView):
     """最基础的试听树视图。"""
 
-    audio_id_toggle_requested = Signal(str)
-    audio_context_menu_requested = Signal(str, QPoint)
+    audio_ref_toggle_requested = Signal(object)
+    audio_context_menu_requested = Signal(object, QPoint)
+    audio_ref_selected = Signal(object)
 
     def _index_depth(self, index: QModelIndex) -> int:
         """返回当前节点深度。"""
@@ -817,12 +998,7 @@ class PreviewTreeView(QTreeView):
         row_rect = self._row_rect(option)
         depth = self._index_depth(index)
         icon_span = max(PREVIEW_TREE_BRANCH_SLOT_WIDTH, PREVIEW_TREE_BRANCH_ICON_SIZE)
-        content_left = (
-            row_rect.left()
-            + depth * self.indentation()
-            + icon_span
-            + PREVIEW_TREE_TEXT_GAP
-        )
+        content_left = row_rect.left() + depth * self.indentation() + icon_span + PREVIEW_TREE_TEXT_GAP
         audio_control_rect = self._audio_control_rect(row_rect, index)
         if not audio_control_rect.isNull():
             content_left = audio_control_rect.left() + audio_control_rect.width() + PREVIEW_TREE_AUDIO_BUTTON_GAP
@@ -840,12 +1016,7 @@ class PreviewTreeView(QTreeView):
 
         depth = self._index_depth(index)
         icon_span = max(PREVIEW_TREE_BRANCH_SLOT_WIDTH, PREVIEW_TREE_BRANCH_ICON_SIZE)
-        button_left = (
-            row_rect.left()
-            + depth * self.indentation()
-            + icon_span
-            + PREVIEW_TREE_TEXT_GAP
-        )
+        button_left = row_rect.left() + depth * self.indentation() + icon_span + PREVIEW_TREE_TEXT_GAP
         button_size = max(12, min(PREVIEW_TREE_AUDIO_BUTTON_SIZE, row_rect.height() - 8))
         return QRect(
             button_left,
@@ -949,16 +1120,14 @@ class PreviewTreeView(QTreeView):
         selection_model = self.selectionModel()
         is_selected = selection_model.isSelected(index) if selection_model is not None else False
         is_hovered = index == self._hovered_index
-        audio_id = self._audio_id_for_index(index)
-        is_active_audio = audio_id is not None and audio_id == self._active_audio_id
+        audio_ref = self._audio_ref_for_index(index)
+        is_active_audio = audio_ref is not None and audio_ref.path == self._active_audio_path
         if not is_selected and not is_hovered and not is_active_audio:
             return None
 
         if is_active_audio and not is_selected and not is_hovered:
             return _build_active_row_color(is_dark=isDarkTheme())
-        return resolve_fluent_neutral_surface(
-            "emphasis_selected" if is_selected else "emphasis_hover"
-        )
+        return resolve_fluent_neutral_surface("emphasis_selected" if is_selected else "emphasis_hover")
 
     def _audio_id_for_index(self, index: QModelIndex) -> str | None:
         """返回指定索引对应的音频 ID。"""
@@ -971,6 +1140,14 @@ class PreviewTreeView(QTreeView):
         text = str(audio_id).strip()
         return text or None
 
+    def _audio_ref_for_index(self, index: QModelIndex) -> AudioRef | None:
+        """返回指定索引对应的精确 WEM 引用。"""
+        model = self.model()
+        if model is None:
+            return None
+        ref = model.data(index, AUDIO_REF_ROLE)
+        return ref if isinstance(ref, AudioRef) else None
+
     def _is_audio_leaf(self, index: QModelIndex) -> bool:
         """判断索引是否为音频 ID 叶子节点。"""
         model = self.model()
@@ -978,21 +1155,21 @@ class PreviewTreeView(QTreeView):
 
     def _is_audio_available(self, index: QModelIndex) -> bool:
         """判断索引是否为本地可试听的音频叶子节点。"""
-        model = self.model()
-        return bool(index.isValid() and model is not None and model.data(index, AUDIO_AVAILABLE_ROLE))
+        return self._audio_ref_for_index(index) is not None
 
-    def _context_audio_id_at(self, pos: QPoint) -> str | None:
-        """解析右键位置命中的可用音频 ID。"""
+    def _context_audio_ref_at(self, pos: QPoint) -> AudioRef | None:
+        """解析右键位置命中的精确可用音频引用。"""
         index = self.indexAt(pos)
         if not index.isValid():
             return None
         if not self._is_audio_leaf(index) or not self._is_audio_available(index):
             return None
-        return self._audio_id_for_index(index)
+        return self._audio_ref_for_index(index)
 
     def _playback_progress_for_index(self, index: QModelIndex) -> float:
         """返回当前行的试听进度。"""
-        if self._audio_id_for_index(index) != self._active_audio_id:
+        audio_ref = self._audio_ref_for_index(index)
+        if audio_ref is None or audio_ref.path != self._active_audio_path:
             return 0.0
         return max(0.0, min(1.0, self._active_audio_progress))
 
@@ -1032,11 +1209,10 @@ class PreviewTreeView(QTreeView):
         if button_rect.isNull():
             return
 
-        is_active_audio = self._audio_id_for_index(index) == self._active_audio_id
+        audio_ref = self._audio_ref_for_index(index)
+        is_active_audio = audio_ref is not None and audio_ref.path == self._active_audio_path
         if is_active_audio:
-            button_background, icon_color = _build_audio_control_colors(
-                is_dark=isDarkTheme()
-            )
+            button_background, icon_color = _build_audio_control_colors(is_dark=isDarkTheme())
         else:
             button_background = resolve_fluent_neutral_surface("emphasis_hover")
             button_background.setAlpha(20)
@@ -1053,8 +1229,13 @@ class PreviewTreeView(QTreeView):
         else:
             points = QPolygonF(
                 (
-                    QPointF(button_rect.left() + button_rect.width() * 0.36, button_rect.top() + button_rect.height() * 0.26),
-                    QPointF(button_rect.left() + button_rect.width() * 0.36, button_rect.bottom() - button_rect.height() * 0.26),
+                    QPointF(
+                        button_rect.left() + button_rect.width() * 0.36, button_rect.top() + button_rect.height() * 0.26
+                    ),
+                    QPointF(
+                        button_rect.left() + button_rect.width() * 0.36,
+                        button_rect.bottom() - button_rect.height() * 0.26,
+                    ),
                     QPointF(button_rect.right() - button_rect.width() * 0.24, button_rect.center().y()),
                 )
             )
@@ -1069,7 +1250,7 @@ class PreviewTreeView(QTreeView):
         """
         super().__init__(parent)
         self._hovered_index = QModelIndex()
-        self._active_audio_id: str | None = None
+        self._active_audio_path: Path | None = None
         self._active_audio_progress = 0.0
         self._active_audio_is_playing = False
         self._active_audio_is_paused = False
@@ -1087,6 +1268,15 @@ class PreviewTreeView(QTreeView):
         self.scrollDelegate = SmoothScrollDelegate(self, True)
         inject_preview_tree_style(self)
         self.expanded.connect(model.ensure_children_loaded)
+        selection_model = self.selectionModel()
+        if selection_model is not None:
+            selection_model.currentChanged.connect(self._on_current_changed)
+
+    def _on_current_changed(self, current: QModelIndex, _previous: QModelIndex) -> None:
+        """在用户选择精确事件叶子时上报其稳定音频引用。"""
+        audio_ref = self._audio_ref_for_index(current)
+        if audio_ref is not None:
+            self.audio_ref_selected.emit(audio_ref)
 
     def viewportEvent(self, event) -> bool:
         """跟踪 hover 行并触发重绘。"""
@@ -1107,20 +1297,20 @@ class PreviewTreeView(QTreeView):
             click_pos = event.position().toPoint()
             index = self._hovered_index_at_y(click_pos.y())
             button_rect = self._audio_control_rect_for_index(index)
-            audio_id = self._audio_id_for_index(index)
-            if audio_id is not None and button_rect.contains(click_pos):
-                self.audio_id_toggle_requested.emit(audio_id)
+            audio_ref = self._audio_ref_for_index(index)
+            if audio_ref is not None and button_rect.contains(click_pos):
+                self.audio_ref_toggle_requested.emit(audio_ref)
                 event.accept()
                 return
         super().mouseReleaseEvent(event)
 
     def contextMenuEvent(self, event) -> None:
         """只在右键命中可试听音频叶子项时请求页面展示菜单。"""
-        audio_id = self._context_audio_id_at(event.pos())
-        if audio_id is None:
+        audio_ref = self._context_audio_ref_at(event.pos())
+        if audio_ref is None:
             event.ignore()
             return
-        self.audio_context_menu_requested.emit(audio_id, event.globalPos())
+        self.audio_context_menu_requested.emit(audio_ref, event.globalPos())
         event.accept()
 
     def drawBranches(self, painter: QPainter, rect: QRect, index: QModelIndex) -> None:
@@ -1158,24 +1348,25 @@ class PreviewTreeView(QTreeView):
 
     def set_audio_playback_state(
         self,
-        audio_id: str | None,
+        audio_path: Path | None,
         *,
         progress: float,
         is_playing: bool,
         is_paused: bool,
     ) -> None:
         """更新当前试听叶子行的按钮状态与整行进度背景。"""
-        normalized_audio_id = str(audio_id).strip() if audio_id is not None else ""
-        self._active_audio_id = normalized_audio_id or None
+        self._active_audio_path = Path(audio_path) if audio_path is not None else None
         self._active_audio_progress = max(0.0, min(1.0, float(progress)))
-        self._active_audio_is_playing = bool(is_playing and self._active_audio_id)
-        self._active_audio_is_paused = bool(is_paused and self._active_audio_id)
+        self._active_audio_is_playing = bool(is_playing and self._active_audio_path)
+        self._active_audio_is_paused = bool(is_paused and self._active_audio_path)
         self.viewport().update()
 
 
 __all__ = [
+    "AUDIO_AMBIGUOUS_ROLE",
     "AUDIO_AVAILABLE_ROLE",
     "AUDIO_ID_ROLE",
+    "AUDIO_REF_ROLE",
     "EMPTY_MODEL_INDEX",
     "NODE_KIND_ROLE",
     "NODE_LOADED_ROLE",

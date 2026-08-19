@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from lol_audio_unpack.app.artifacts import AudioRef
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
+
+EVENT_PREVIEW_MODE = "audio"
+ALL_AUDIO_PREVIEW_MODE = "all_audio"
+RAW_PREVIEW_MODE = "raw"
 
 
 @dataclass(slots=True, frozen=True)
@@ -19,6 +24,10 @@ class OverviewPreviewLoadResult:
     preview_content: str
     available_audio_ids: set[str]
     group_label_map: dict[str, str]
+    audio_refs: tuple[AudioRef, ...] = ()
+    audio_roots: tuple[Path, ...] = ()
+    default_preview_mode: str = ALL_AUDIO_PREVIEW_MODE
+    mapping_notice: str | None = None
     placeholder_message: str | None = None
 
 
@@ -58,18 +67,9 @@ class OverviewPreviewController:
             )
 
         mapping_path, mapping_data, preview_content = loader.load_mapping_preview(entity_type, entity_id)
-        if mapping_path is None:
-            return OverviewPreviewLoadResult(
-                entity_id=entity_id,
-                mapping_path=None,
-                mapping_data=None,
-                preview_content="",
-                available_audio_ids=set(),
-                group_label_map={},
-                placeholder_message=f"{entity_name} 当前还没有映射文件。",
-            )
-
-        available_audio_ids = loader.load_available_audio_ids(entity_type, entity_id)
+        audio_refs = loader.load_audio_refs(entity_type, entity_id)
+        audio_roots = loader.load_audio_roots(entity_type, entity_id, audio_refs=audio_refs)
+        available_audio_ids = {ref.wem_id for ref in audio_refs}
         group_label_map = self._build_preview_group_label_map(
             entity_type=entity_type,
             entity_id=entity_id,
@@ -80,9 +80,13 @@ class OverviewPreviewController:
             entity_id=entity_id,
             mapping_path=mapping_path,
             mapping_data=mapping_data,
-            preview_content=preview_content or "{}",
+            preview_content=preview_content or "尚未生成事件映射。",
             available_audio_ids=available_audio_ids,
             group_label_map=group_label_map,
+            audio_refs=audio_refs,
+            audio_roots=audio_roots,
+            default_preview_mode=EVENT_PREVIEW_MODE if mapping_path is not None else ALL_AUDIO_PREVIEW_MODE,
+            mapping_notice=None if mapping_path is not None else f"{entity_name} 尚未生成事件映射。",
         )
 
     def _build_preview_group_label_map(
@@ -126,47 +130,30 @@ class OverviewPreviewController:
     def resolve_audio_preview_toggle(
         self,
         *,
-        requested_audio_id: str,
-        current_audio_id: str | None,
-        loader: EntityDataLoader | None,
-        current_entity_type: str | None,
-        current_entity_id: str | None,
+        requested_audio: AudioRef,
+        current_audio_path: Path | None,
     ) -> AudioPreviewToggleResult | None:
-        """根据当前试听状态解析下一步播放请求。"""
-        if requested_audio_id == current_audio_id:
+        """根据精确 WEM 引用解析下一步试听请求。
+
+        Args:
+            requested_audio: 用户实际点击的路径级 WEM 引用。
+            current_audio_path: 当前播放器正在管理的精确 WEM 路径。
+
+        Returns:
+            新的播放或停止状态。
+        """
+        if requested_audio.path == current_audio_path:
             return AudioPreviewToggleResult(
                 audio_id=None,
                 audio_path=None,
                 progress=0.0,
                 is_playing=False,
                 is_paused=False,
-            )
-
-        if (
-            loader is None
-            or current_entity_type is None
-            or current_entity_id is None
-        ):
-            return None
-
-        audio_path = loader.resolve_audio_file_path(
-            current_entity_type,
-            current_entity_id,
-            requested_audio_id,
-        )
-        if audio_path is None:
-            return AudioPreviewToggleResult(
-                audio_id=None,
-                audio_path=None,
-                progress=0.0,
-                is_playing=False,
-                is_paused=False,
-                warning_message=f"当前实体未定位到音频 ID {requested_audio_id} 对应的 wem 文件。",
             )
 
         return AudioPreviewToggleResult(
-            audio_id=str(requested_audio_id),
-            audio_path=audio_path,
+            audio_id=requested_audio.wem_id,
+            audio_path=requested_audio.path,
             progress=0.0,
             is_playing=False,
             is_paused=True,

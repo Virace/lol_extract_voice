@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
 from loguru import logger
 
+from lol_audio_unpack.app.artifacts import (
+    AudioRef,
+    enumerate_audio_refs,
+)
 from lol_audio_unpack.app.artifacts import (
     resolve_audio_paths as resolve_artifact_audio_paths,
 )
@@ -60,6 +64,35 @@ def _normalize_integrated_events(events_payload: object) -> dict[str, dict[str, 
     return normalized_events
 
 
+def _normalize_integrated_audio_paths(events_payload: object) -> dict[str, dict[str, list[str]]]:
+    """保留整合版事件节点中的精确 WEM 相对路径。
+
+    Args:
+        events_payload: 整合版 ``audioPaths`` 原始节点。
+
+    Returns:
+        与普通 mapping 对齐的 ``{category: {event_name: [relative_path]}}`` 结构。
+    """
+    normalized_paths: dict[str, dict[str, list[str]]] = {}
+    if not isinstance(events_payload, dict):
+        return normalized_paths
+
+    for category, event_payload in events_payload.items():
+        if not isinstance(event_payload, dict):
+            continue
+        paths_by_event: dict[str, list[str]] = {}
+        for event_name, paths in event_payload.items():
+            if not isinstance(paths, list | tuple):
+                continue
+            normalized = [str(path).strip() for path in paths if str(path).strip()]
+            if normalized:
+                paths_by_event[str(event_name)] = normalized
+        if paths_by_event:
+            normalized_paths[str(category)] = paths_by_event
+
+    return normalized_paths
+
+
 def _normalize_integrated_mapping_data(
     mapping_data: dict[str, object] | None,
     *,
@@ -92,7 +125,7 @@ def _normalize_integrated_mapping_data(
 
         normalized["championId"] = data_payload.get("championId", entity_id)
         normalized["alias"] = data_payload.get("alias", "")
-        normalized_skins: dict[str, dict[str, dict[str, list[object]]]] = {}
+        normalized_skins: dict[str, dict[str, object]] = {}
         for skin_payload in skins_payload:
             if not isinstance(skin_payload, dict):
                 continue
@@ -101,8 +134,12 @@ def _normalize_integrated_mapping_data(
                 continue
 
             normalized_events = _normalize_integrated_events(skin_payload.get("events"))
-            if normalized_events:
-                normalized_skins[skin_id] = {"events": normalized_events}
+            normalized_paths = _normalize_integrated_audio_paths(skin_payload.get("audioPaths"))
+            if normalized_events or normalized_paths:
+                normalized_skin: dict[str, object] = {"events": normalized_events}
+                if normalized_paths:
+                    normalized_skin["audioPaths"] = normalized_paths
+                normalized_skins[skin_id] = normalized_skin
 
         normalized["skins"] = normalized_skins
         return normalized
@@ -114,7 +151,11 @@ def _normalize_integrated_mapping_data(
     normalized["mapId"] = data_payload.get("mapId", entity_id)
     normalized["name"] = data_payload.get("name", "")
     normalized_events = _normalize_integrated_events(map_payload.get("events"))
-    normalized["map"] = {str(data_payload.get("mapId", entity_id)): {"events": normalized_events}}
+    normalized_map: dict[str, object] = {"events": normalized_events}
+    normalized_paths = _normalize_integrated_audio_paths(map_payload.get("audioPaths"))
+    if normalized_paths:
+        normalized_map["audioPaths"] = normalized_paths
+    normalized["map"] = {str(data_payload.get("mapId", entity_id)): normalized_map}
     return normalized
 
 
@@ -350,54 +391,50 @@ class EntityDataLoader:
         )
         return mapping_path, mapping_data, json.dumps(raw_mapping_data, ensure_ascii=False, indent=2)
 
-    def load_available_audio_ids(self, entity_type: GuiEntityType, entity_id: str) -> set[str]:
-        """加载当前实体在本地已存在的音频 ID 集合。
+    def load_audio_refs(self, entity_type: GuiEntityType, entity_id: str) -> tuple[AudioRef, ...]:
+        """加载当前实体全部已解包 WEM 的路径级稳定引用。
 
         Args:
             entity_type: 实体类型目录名。
             entity_id: 实体 ID。
 
         Returns:
-            当前实体输出目录下已存在的 ``.wem`` 文件 stem 集合。
+            按相对路径排序的 WEM 引用；同一 ID 的不同路径会保留为独立项。
         """
         entity_data = self._build_entity_data(entity_type, str(entity_id))
-        audio_paths = resolve_entity_audio_paths(self.ctx, entity_data, self.data_reader.version)
-        available_ids: set[str] = set()
+        return enumerate_audio_refs(self.ctx, entity_data, self.data_reader.version)
 
-        for audio_path in audio_paths:
-            if not audio_path.exists():
-                continue
-
-            for wem_path in audio_path.rglob("*.wem"):
-                available_ids.add(wem_path.stem)
-
-        return available_ids
-
-    def resolve_audio_file_path(self, entity_type: GuiEntityType, entity_id: str, audio_id: str) -> Path | None:
-        """解析指定音频 ID 在本地输出目录中的 wem 路径。
+    def load_audio_roots(
+        self,
+        entity_type: GuiEntityType,
+        entity_id: str,
+        *,
+        audio_refs: tuple[AudioRef, ...] = (),
+    ) -> tuple[Path, ...]:
+        """加载当前实体实际存在的音频输出目录。
 
         Args:
             entity_type: 实体类型目录名。
             entity_id: 实体 ID。
-            audio_id: 目标音频 ID。
+            audio_refs: 已枚举的路径级引用；提供时用于覆盖全部实际音频根。
 
         Returns:
-            Path | None: 若命中本地 wem 文件则返回其路径，否则返回 ``None``。
+            当前实体已存在的音频输出目录。
         """
-        audio_id_text = str(audio_id).strip()
-        if not audio_id_text:
-            return None
+        if audio_refs:
+            roots = {root for ref in audio_refs if (root := self._resolve_audio_ref_root(ref)) is not None}
+            return tuple(sorted(roots, key=lambda path: str(path).casefold()))
 
         entity_data = self._build_entity_data(entity_type, str(entity_id))
-        audio_paths = resolve_entity_audio_paths(self.ctx, entity_data, self.data_reader.version)
-        matched_paths: list[Path] = []
+        return resolve_entity_audio_paths(self.ctx, entity_data, self.data_reader.version)
 
-        for audio_path in audio_paths:
-            if not audio_path.exists():
-                continue
-
-            matched_paths.extend(sorted(audio_path.rglob(f"{audio_id_text}.wem")))
-
-        if not matched_paths:
+    def _resolve_audio_ref_root(self, ref: AudioRef) -> Path | None:
+        """从路径级引用恢复其所属的实体音频根目录。"""
+        parts = PurePosixPath(ref.relative_path).parts
+        physical_part_count = len(parts) - (1 if self.ctx.config.group_by_type else 0)
+        if physical_part_count <= 0:
             return None
-        return min(matched_paths, key=lambda path: str(path).lower())
+        try:
+            return ref.path.parents[physical_part_count - 1]
+        except IndexError:
+            return None
