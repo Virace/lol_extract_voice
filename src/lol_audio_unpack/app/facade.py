@@ -7,26 +7,36 @@ Manager 与流程函数。
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from loguru import logger
 
-from lol_audio_unpack.manager import BinUpdater, DataReader, DataUpdater
+from lol_audio_unpack.manager import (
+    BinUpdater,
+    DataReader,
+    DataUpdater,
+    ResourcePackDiscovery,
+    ResourcePackDiscoveryResult,
+)
 from lol_audio_unpack.mapping import (
     build_all,
     build_champions,
     build_maps,
+    build_resource_packs,
     describe_hirc_backend,
 )
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.runtime.remote import RemotePreparer
 from lol_audio_unpack.runtime.wav import TranscodeTarget, run_tree
-from lol_audio_unpack.unpack import unpack_all, unpack_champions, unpack_maps
+from lol_audio_unpack.unpack import unpack_all, unpack_champions, unpack_maps, unpack_resource_packs
 
 from .artifacts import resolve_audio_paths, resolve_mapping_path
 from .path_layout import get_output_dir_name
 from .remote import RemoteEntityCallbackPayload, RemoteEntityWorkItem
 from .remote_workflow import RemoteWorkflowOrchestrator
+from .resource_pack import partition_special_targets
+from .special_content import is_special_content_supported, merge_champion_ids
 from .types import AppContext, OperationOptions, SourceMode
 
 UPDATE_PREPARED_KEY = "update_data_prepared_force"
@@ -53,6 +63,31 @@ class LolAudioUnpackApp:
     def _create_reader(self) -> DataReader:
         """创建数据读取器实例。"""
         return DataReader(ctx=self.ctx)
+
+    def _resolve_operation_options(self, opts: OperationOptions) -> OperationOptions:
+        """分区 special target，避免 resource pack 进入数值英雄归约。"""
+        if opts.special_targets and not is_special_content_supported(self.ctx.config.source_mode):
+            raise ValueError("特殊内容仅支持本地客户端资源。")
+        if opts.resource_pack_wads and not is_special_content_supported(self.ctx.config.source_mode):
+            raise ValueError("资源包发现仅支持本地客户端资源。")
+        for wad_ref in opts.resource_pack_wads:
+            # 任务可能在文件选择后排队较久；所有执行入口都必须重新验证 FINAL containment 与 stat。
+            wad_ref.resolve(Path(self.ctx.config.game_path))
+        partition = partition_special_targets(opts.special_targets)
+        return replace(
+            opts,
+            champion_ids=merge_champion_ids(opts.champion_ids, partition.champion_targets),
+        )
+
+    @staticmethod
+    def _has_resource_pack_targets(opts: OperationOptions) -> bool:
+        """判断当前操作是否含 resource-pack 发现或消费范围。"""
+        return bool(opts.resource_pack_wads or LolAudioUnpackApp._resource_pack_targets(opts))
+
+    @staticmethod
+    def _resource_pack_targets(opts: OperationOptions) -> tuple[str, ...]:
+        """返回 special target 中的 canonical resource-pack key。"""
+        return partition_special_targets(opts.special_targets).resource_pack_targets
 
     def _describe_mapping_backend(self) -> str:
         """返回 mapping 流程使用的 HIRC 后端。"""
@@ -91,6 +126,24 @@ class LolAudioUnpackApp:
             DataUpdater(force_update=force_update, ctx=self.ctx).check_and_update()
             self.ctx.runtime_cache[UPDATE_PREPARED_KEY] = force_update
         return remote_preparer
+
+    def discover_resource_packs(self, opts: OperationOptions) -> ResourcePackDiscoveryResult:
+        """扫描 selected-WAD 并写入 resource-pack v2 artifact。
+
+        Args:
+            opts: 含 typed ``resource_pack_wads`` 的操作参数。
+
+        Returns:
+            各 selected-WAD 的发现状态、成本与已生成 pack rows。
+
+        Raises:
+            ValueError: remote 模式或 special target 不满足本地边界时抛出。
+        """
+        opts = self._resolve_operation_options(opts)
+        if not opts.resource_pack_wads:
+            return ResourcePackDiscoveryResult((), ())
+        reader = self._create_reader()
+        return ResourcePackDiscovery(self.ctx, reader=reader).discover(opts.resource_pack_wads, version=reader.version)
 
     def resolve_champion_ids(self, selectors: Sequence[int | str] | None) -> tuple[int, ...] | None:
         """将英雄选择器解析为稳定的英雄 ID 元组。
@@ -164,7 +217,7 @@ class LolAudioUnpackApp:
         reader: DataReader,
         *,
         entity_type: str,
-        entity_id: int,
+        entity_id: int | str,
         include_events: bool = False,
     ) -> AudioEntityData:
         """根据工作项构建实体数据。"""
@@ -180,7 +233,7 @@ class LolAudioUnpackApp:
         """解析实体解包后的实际输出目录。"""
         return resolve_audio_paths(self.ctx, entity_data, self._create_reader().version)
 
-    def _resolve_mapping_path(self, *, entity_type: str, entity_id: int, integrate_data: bool) -> Path | None:
+    def _resolve_mapping_path(self, *, entity_type: str, entity_id: int | str, integrate_data: bool) -> Path | None:
         """解析实体 mapping 的最终产物路径。"""
         return resolve_mapping_path(
             self.ctx,
@@ -237,26 +290,42 @@ class LolAudioUnpackApp:
 
     def update(self, opts: OperationOptions, *, target: str = "all") -> None:
         """执行更新流程。"""
+        opts = self._resolve_operation_options(opts)
+        resource_pack_summary = f"，资源包 WAD {len(opts.resource_pack_wads)} 个" if opts.resource_pack_wads else ""
         logger.info(
             f"开始执行更新流程：target={target}，英雄 {len(opts.champion_ids or ())} 个，"
-            f"地图 {len(opts.map_ids or ())} 个，事件处理={'开启' if opts.process_events else '关闭'}"
+            f"地图 {len(opts.map_ids or ())} 个{resource_pack_summary}，"
+            f"事件处理={'开启' if opts.process_events else '关闭'}"
         )
         remote_preparer = self.prepare_update_data(force_update=opts.force_update)
-        if remote_preparer is not None:
+        has_resource_pack_scope = self._has_resource_pack_targets(opts)
+        run_standard_update = not has_resource_pack_scope or opts.champion_ids is not None or opts.map_ids is not None
+        if remote_preparer is not None and run_standard_update:
             remote_preparer.prepare_bin_inputs(
                 reader=self._create_reader(),
                 target=target,
                 champion_ids=opts.champion_ids,
                 map_ids=opts.map_ids,
             )
-        updater = BinUpdater(force_update=opts.force_update, process_events=opts.process_events, ctx=self.ctx)
-        updater.update(
-            target=target,
-            champion_ids=self._to_str_ids(opts.champion_ids),
-            map_ids=self._to_str_ids(opts.map_ids),
-        )
+        if run_standard_update:
+            updater = BinUpdater(force_update=opts.force_update, process_events=opts.process_events, ctx=self.ctx)
+            updater.update(
+                target=target,
+                champion_ids=self._to_str_ids(opts.champion_ids),
+                map_ids=self._to_str_ids(opts.map_ids),
+            )
+        if opts.resource_pack_wads:
+            result = self.discover_resource_packs(opts)
+            logger.info(
+                "资源包发现完成：status={}，packs={}，candidate={}，payload_reads={}",
+                result.status,
+                len(result.packs),
+                result.cost["candidateEntries"],
+                result.cost["payloadReads"],
+            )
         logger.success(
-            f"更新流程完成：target={target}，英雄 {len(opts.champion_ids or ())} 个，地图 {len(opts.map_ids or ())} 个"
+            f"更新流程完成：target={target}，英雄 {len(opts.champion_ids or ())} 个，"
+            f"地图 {len(opts.map_ids or ())} 个{resource_pack_summary}"
         )
 
     def transcode_wav(
@@ -276,6 +345,9 @@ class LolAudioUnpackApp:
         Returns:
             dict[str, object]: WAV 转码汇总结果。
         """
+        opts = self._resolve_operation_options(opts)
+        if self._has_resource_pack_targets(opts):
+            raise ValueError("resource pack 当前不支持 WAV 转码；请先只执行 extract 或 mapping。")
         reader = self._create_reader()
         audio_targets: tuple[TranscodeTarget, ...] | None = None
         if opts.champion_ids is not None or opts.map_ids is not None:
@@ -332,6 +404,7 @@ class LolAudioUnpackApp:
             prepare_remote: 是否在 remote 模式下预准备所需资源。
             progress_callback: 每个实体处理结束后的可选进度回调。
         """
+        opts = self._resolve_operation_options(opts)
         reader = self._create_reader()
         remote_preparer = self._create_remote_preparer()
         if prepare_remote and remote_preparer is not None:
@@ -348,8 +421,11 @@ class LolAudioUnpackApp:
         logger.info(f"输出路径: {self.ctx.config.output_path}")
         logger.info(f"语言: {self.ctx.config.game_region}")
 
-        if opts.champion_ids is not None:
-            return unpack_champions(
+        has_explicit_champions = opts.champion_ids is not None
+        has_explicit_maps = opts.map_ids is not None
+        resource_pack_keys = self._resource_pack_targets(opts)
+        if has_explicit_champions:
+            unpack_champions(
                 reader=reader,
                 champion_ids=list(opts.champion_ids),
                 max_workers=opts.max_workers,
@@ -357,7 +433,7 @@ class LolAudioUnpackApp:
                 progress_callback=progress_callback,
                 persisted_wem_callback=persisted_wem_callback,
             )
-        if opts.map_ids is not None:
+        if has_explicit_maps:
             unpack_maps(
                 reader=reader,
                 map_ids=list(opts.map_ids),
@@ -366,6 +442,16 @@ class LolAudioUnpackApp:
                 progress_callback=progress_callback,
                 persisted_wem_callback=persisted_wem_callback,
             )
+        if resource_pack_keys:
+            unpack_resource_packs(
+                reader=reader,
+                keys=list(resource_pack_keys),
+                max_workers=opts.max_workers,
+                ctx=self.ctx,
+                progress_callback=progress_callback,
+                persisted_wem_callback=persisted_wem_callback,
+            )
+        if has_explicit_champions or has_explicit_maps or self._has_resource_pack_targets(opts):
             return
 
         unpack_all(
@@ -388,6 +474,7 @@ class LolAudioUnpackApp:
         progress_callback: Callable[[str, int, int, str], None] | None = None,
     ) -> None:
         """执行映射流程。"""
+        opts = self._resolve_operation_options(opts)
         backend_label = self._describe_mapping_backend()
         reader = self._create_reader()
         remote_preparer = self._create_remote_preparer()
@@ -405,7 +492,10 @@ class LolAudioUnpackApp:
         logger.info(f"HIRC 后端: {backend_label}")
         logger.info(f"语言: {self.ctx.config.game_region}")
 
-        if opts.champion_ids is not None:
+        has_explicit_champions = opts.champion_ids is not None
+        has_explicit_maps = opts.map_ids is not None
+        resource_pack_keys = self._resource_pack_targets(opts)
+        if has_explicit_champions:
             build_champions(
                 reader=reader,
                 champion_ids=list(opts.champion_ids),
@@ -414,8 +504,7 @@ class LolAudioUnpackApp:
                 ctx=self.ctx,
                 progress_callback=progress_callback,
             )
-            return
-        if opts.map_ids is not None:
+        if has_explicit_maps:
             build_maps(
                 reader=reader,
                 map_ids=list(opts.map_ids),
@@ -424,6 +513,16 @@ class LolAudioUnpackApp:
                 ctx=self.ctx,
                 progress_callback=progress_callback,
             )
+        if resource_pack_keys:
+            build_resource_packs(
+                reader=reader,
+                keys=list(resource_pack_keys),
+                max_workers=opts.max_workers,
+                integrate_data=opts.integrate_data,
+                ctx=self.ctx,
+                progress_callback=progress_callback,
+            )
+        if has_explicit_champions or has_explicit_maps or self._has_resource_pack_targets(opts):
             return
 
         build_all(

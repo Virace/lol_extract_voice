@@ -5,9 +5,11 @@ import pytest
 from loguru import logger
 
 from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
-from lol_audio_unpack.model import AudioEntityData
+from lol_audio_unpack.model import AudioBank, AudioEntityData
+from lol_audio_unpack.model import binding as resource_binding
 from lol_audio_unpack.unpack import bp_vo as unpack_bp_vo
 from lol_audio_unpack.unpack import entity as unpack_entity
+from lol_audio_unpack.utils.common import load_yaml
 from lol_audio_unpack.utils.path_constants import format_entity_folder_name
 
 pytestmark = pytest.mark.unit
@@ -283,3 +285,136 @@ def test_unpack_entity_uses_warning_summary_for_partial_parse_failures(tmp_path,
     assert any("WARNING|处理BNK文件失败: bnk boom | 文件路径: assets/test_audio.bnk" in line for line in log_lines)
     assert any("WARNING|⚠️ 安妮 解包完成 - 成功 1 个文件" in line and "失败 1" in line for line in log_lines)
     assert not any("ERROR|❌ 安妮 解包失败" in line for line in log_lines)
+
+
+def test_unpack_entity_uses_each_local_binding_wad_and_reports_partial_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """相同逻辑路径位于不同 WAD 时应分别提取并保留逻辑输出。"""
+    version = "16.16"
+    game_root = tmp_path / "game"
+    output_root = tmp_path / "output"
+    for name in ("alpha.wad.client", "beta.wad.client"):
+        path = game_root / "Game" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(name.encode())
+
+    ctx = AppContext(
+        config=AppConfig(game_path=game_root, output_path=output_root, game_region="zh_CN"),
+        paths=AppPaths(
+            audio_path=output_root / "audios",
+            wav_path=output_root / "wavs",
+            temp_path=output_root / "temps",
+            log_path=output_root / "logs",
+            cache_path=output_root / "cache",
+            hash_path=output_root / "hashes",
+            report_path=output_root / "reports",
+            manifest_path=output_root / "manifest",
+            local_version_file=output_root / "game_version",
+            game_champion_path=game_root / "Game" / "DATA" / "FINAL" / "Champions",
+            game_maps_path=game_root / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping",
+            game_lcu_path=game_root / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data",
+        ),
+    )
+    bindings = (
+        resource_binding.BankBinding(
+            category="CHARACTER_VO",
+            path="assets/shared_audio.bnk",
+            normalized_path="",
+            kind="BNK",
+            wad="Game/alpha.wad.client",
+            entry_hash="0000000000000001",
+            source_bin="data/alpha.bin",
+            role=resource_binding.BindingRole.LOCALIZED,
+            status=resource_binding.BindingStatus.RESOLVED,
+            sub_entity="1000",
+        ),
+        resource_binding.BankBinding(
+            category="CHARACTER_VO",
+            path="assets/shared_audio.bnk",
+            normalized_path="",
+            kind="BNK",
+            wad="Game/beta.wad.client",
+            entry_hash="0000000000000002",
+            source_bin="data/beta.bin",
+            role=resource_binding.BindingRole.LOCALIZED,
+            status=resource_binding.BindingStatus.RESOLVED,
+            sub_entity="1001",
+        ),
+        resource_binding.BankBinding(
+            category="CHARACTER_VO",
+            path="assets/missing_audio.bnk",
+            normalized_path="",
+            kind="BNK",
+            wad=None,
+            entry_hash="0000000000000003",
+            source_bin="data/missing.bin",
+            role=None,
+            status=resource_binding.BindingStatus.MISSING,
+            sub_entity="1001",
+        ),
+    )
+    entity_data = AudioEntityData(
+        entity_id="1",
+        entity_name="安妮",
+        entity_alias="annie",
+        entity_title="黑暗之女",
+        entity_type="champion",
+        sub_entities={
+            "1000": {"name": "基础皮肤", "categories": {}},
+            "1001": {"name": "哥特萝莉", "categories": {}},
+        },
+        wad_root="Game/root.wad.client",
+        resource_banks=tuple(
+            AudioBank(sub_id=binding.sub_entity or "", audio_type="VO", binding=binding) for binding in bindings
+        ),
+        binding_diagnostics=resource_binding.BindingDiagnostics(completeness=resource_binding.Completeness.PARTIAL),
+    )
+    extracted: list[tuple[str, tuple[str, ...]]] = []
+
+    class _FakeWad:
+        def __init__(self, path: Path) -> None:
+            self.path = path
+
+        def extract(self, paths: list[str], raw: bool = True) -> list[bytes]:
+            assert raw is True
+            extracted.append((self.path.name, tuple(paths)))
+            return [self.path.stem.encode() for _path in paths]
+
+    class _FakeFile:
+        data = b"wem"
+
+        def __init__(self, wem_id: int) -> None:
+            self.id = wem_id
+
+        def save_file(self, path: Path) -> None:
+            path.write_bytes(str(self.id).encode())
+
+    class _FakeBNK:
+        def __init__(self, raw: bytes) -> None:
+            self.raw = raw
+
+        def extract_files(self) -> list[_FakeFile]:
+            return [_FakeFile(101 if self.raw.startswith(b"alpha") else 102)]
+
+    callbacks: list[Path] = []
+    monkeypatch.setattr(unpack_entity, "_get_wad_instance", lambda path, **_kwargs: _FakeWad(path))
+    monkeypatch.setattr(unpack_entity, "BNK", _FakeBNK)
+
+    unpack_entity.unpack_entity(
+        entity_data,
+        SimpleNamespace(version=version),
+        ctx=ctx,
+        persisted_wem_callback=callbacks.append,
+    )
+
+    assert extracted == [
+        ("alpha.wad.client", ("assets/shared_audio.bnk",)),
+        ("beta.wad.client", ("assets/shared_audio.bnk",)),
+    ]
+    assert {path.name for path in callbacks} == {"101.wem", "102.wem"}
+    report = load_yaml(ctx.report_path / version / "champions" / "_1_metadata.yaml")
+    diagnostics = report["report"]["bindingDiagnostics"]
+    assert diagnostics["completeness"] == "partial"
+    assert all(not Path(item["wad"]).is_absolute() for item in diagnostics["wads"])

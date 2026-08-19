@@ -43,11 +43,11 @@
 
 ### 1.3 共享实体数据
 
-指 GUI 与后端共用的“英雄 / 地图实体索引信息”。
+指 GUI 与后端共用的“英雄 / 地图 / 特殊内容实体索引信息”。
 
 当前它主要服务于：
 
-- 实体总览左侧列表
+- 实体总览左侧目录（英雄、地图、特殊内容）
 - 执行中心目标摘要
 - 选择同步后的任务输入基线
 
@@ -70,7 +70,7 @@
 关键实现：
 
 - `SettingPage.set_runtime_config_locked()`  
-  位置：[setting_page.py](/H:/Programming/Python/lol_audio_unpack/src/lol_audio_unpack/gui/view/setting_page.py#L733)
+  位置：[`setting_page.py`](../../src/lol_audio_unpack/gui/view/setting_page.py)
 
 ### 2.2 `ExecutionPage`
 
@@ -83,7 +83,7 @@
 关键实现：
 
 - `ExecutionPage.has_incomplete_tasks()`  
-  位置：[execution_page.py](/H:/Programming/Python/lol_audio_unpack/src/lol_audio_unpack/gui/view/execution_page.py#L505)
+  位置：[`execution_page.py`](../../src/lol_audio_unpack/gui/view/execution_page.py)
 
 当前约束：
 
@@ -101,11 +101,11 @@
 关键实现：
 
 - `_on_task_queue_busy_changed()`  
-  位置：[window.py](/H:/Programming/Python/lol_audio_unpack/src/lol_audio_unpack/gui/window.py#L483)
+  位置：[`window.py`](../../src/lol_audio_unpack/gui/window.py)
 - `_schedule_runtime_entity_refresh()`  
-  位置：[window.py](/H:/Programming/Python/lol_audio_unpack/src/lol_audio_unpack/gui/window.py#L570)
+  位置：[`window.py`](../../src/lol_audio_unpack/gui/window.py)
 - `_start_shared_data_prepare()`  
-  位置：[window.py](/H:/Programming/Python/lol_audio_unpack/src/lol_audio_unpack/gui/window.py#L609)
+  位置：[`window.py`](../../src/lol_audio_unpack/gui/window.py)
 
 ## 3. 当前主链
 
@@ -145,12 +145,27 @@
 3. `DataLoadWorker` 中创建 `EntityDataLoader`
 4. `EntityDataLoader` 内部创建 `DataReader`
 5. `DataReader` 读取 `manifest/<version>/data.*`
-6. 读取成功后构建英雄 / 地图实体列表并更新 UI
+6. 读取成功后以一次完整英雄扫描分出普通英雄与结构化特殊内容，并构建英雄 / 地图 / 特殊内容目录更新 UI
+7. 只枚举已持久化的 resource-pack artifact 补充“历史资源包”分组；不在共享刷新中扫描 FINAL WAD
 
 这里的关键点是：
 
 - `DataReader` 负责判断“当前输出目录里是否已经有可读共享数据”
 - GUI 不会在每次刷新时都先跑一遍更新
+- 特殊内容对应的银行或映射未准备好时仍保留目录项，并如实显示“未准备”；不能因为产物缺失而静默丢行
+- `remote_snapshot` 只允许浏览特殊内容目录，不能选择、同步或进入任务执行链
+- 任务完成后的增量刷新会一次读取冠军元数据，但只重建本次请求的普通英雄和特殊内容行，不会为少量 special key 重新扫描全部普通英雄状态
+- resource-pack 增量刷新仅读取请求 key 的 banks/events/audio/hash artifact；selected-WAD TOC/BIN 发现必须由显式后台扫描任务触发
+
+右侧预览与共享目录分开管理：事件视图消费 mapping，“全部音频”枚举当前实体的
+WEM 路径。当 mapping 缺失而 WEM 存在时，GUI 默认进入“全部音频”；当映射中有
+`audioPaths` 时，试听、导出和定位只使用该事件的精确路径，不回退到全局 WEM ID 猜测。
+事件预览不会为此提前递归枚举实体的全部 WEM；首次打开“全部音频”才启动后台加载，
+摘要区显示加载状态，完成后把路径级引用一次交给分批布局模型。同一实体内往返切换
+以及离开总览页后返回时，复用已经加载的事件树、全部音频模型与路径缓存，不重复读取
+预览、重置模型或扫描输出目录。索引过程在独立的单线程低优先级
+线程池执行，摘要区显示已处理数、总数和百分比；离开总览页后 worker 可继续完成缓存，
+但不会更新隐藏页或构建大列表，返回后才应用结果。
 
 ## 4. 自动补 `DataUpdater` 的条件
 

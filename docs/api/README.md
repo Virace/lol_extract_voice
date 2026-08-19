@@ -25,6 +25,7 @@
   - `manager/data_reader.py`
 - 共享模型
   - `model/entity.py`
+  - `model/binding.py`
 - 解包
   - `unpack/entity.py`
   - `unpack/batch.py`
@@ -35,6 +36,7 @@
   - `mapping/batch.py`
   - `mapping/session.py`
 - 运行时支持
+  - `runtime/wad_index.py`
   - `runtime/remote/preparer.py`
   - `runtime/wav/job.py`
   - `runtime/wav/transcode.py`
@@ -65,7 +67,7 @@
 ## 3. 输出目录约定
 
 - `manifest/<version>/data.*`：基础聚合数据（英雄/地图元信息）
-- `manifest/<version>/banks/**`：分类后的 bank 路径数据
+- `manifest/<version>/banks/**`：分类后的 bank 路径及 local v2 resource bindings；物理 WAD 只保存游戏根相对路径
 - `manifest/<version>/events/**`：事件数据
 - `manifest/<version>/bin_input/**`：remote 模式为 `BinUpdater` 准备的稀疏 BIN 输入
 - `audios/<version>/...`：解包出的 `.wem`
@@ -83,6 +85,10 @@
 - 非开发模式：优先写 `.msgpack`
 
 `manager.utils.read_data(...)` 会按优先级自动寻找可读文件。
+
+`local_path` 的 banks 文件顶层使用 `resourceSchemaVersion: 2`。仅比较
+`metadata.gameVersion` 不能证明旧 artifact 具备资源绑定；本地 update 会重建旧 schema。
+`remote_snapshot` 暂时保留 v1 投影合同。
 
 ## 5. 延伸文档
 

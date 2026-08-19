@@ -11,8 +11,17 @@ from typing import TYPE_CHECKING, Any
 from league_tools.formats import BIN
 from loguru import logger
 
-from lol_audio_unpack.manager.bin_source import BinSource
+from lol_audio_unpack.manager.bin_source import BinBatch, BinSource
 from lol_audio_unpack.manager.files import needs_update, write_data
+from lol_audio_unpack.model.binding import (
+    RESOURCE_SCHEMA_VERSION,
+    SUCCESS_STATUSES,
+    BankBinding,
+    BankReference,
+    Completeness,
+    ResourceBindings,
+    build_diagnostics,
+)
 from lol_audio_unpack.utils.logging import performance_monitor
 
 if TYPE_CHECKING:
@@ -104,9 +113,22 @@ class ChampionBinProcessor:
         banks_file_base = self.champion_banks_dir / champion_id
         events_file_base = self.champion_events_dir / champion_id
 
-        if not needs_update(
-            banks_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()
-        ) and not needs_update(events_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()):
+        resource_v2 = getattr(self.bin_source, "_uses_resource_v2", lambda: False)()
+        resource_schema = RESOURCE_SCHEMA_VERSION if resource_v2 else None
+        banks_need_update = needs_update(
+            banks_file_base,
+            self.version,
+            self.force_update,
+            dev_mode=self._is_dev_mode(),
+            resource_schema=resource_schema,
+        )
+        events_need_update = needs_update(
+            events_file_base,
+            self.version,
+            self.force_update,
+            dev_mode=self._is_dev_mode(),
+        )
+        if not banks_need_update and not events_need_update:
             logger.trace(f"英雄 {champion_id} ({alias}) 的数据已是最新，跳过处理")
             return
 
@@ -131,21 +153,15 @@ class ChampionBinProcessor:
             return
 
         bin_paths = list(skin_id_by_path)
-        root_wad_path = champion_data.get("wad", {}).get("root")
-        full_wad_path = self.game_path / root_wad_path if root_wad_path else None
         local_required_dir = Path("data") / "characters" / alias_raw
         try:
             logger.trace(f"从 {alias} 提取 {len(bin_paths)} 个BIN文件")
-            bin_raws = self.bin_source._extract_bin_raws(
-                wad_path=full_wad_path,
-                bin_paths=bin_paths,
-                entity_label=f"英雄 {champion_id} ({alias})",
+            batch = self._read_bin_batch(
+                champion_data,
+                bin_paths,
+                f"英雄 {champion_id} ({alias})",
                 local_required_dir=local_required_dir,
             )
-            if not bin_raws or not bin_raws[0]:
-                logger.warning(f"英雄 {champion_id} ({alias}) 的首个BIN缺失或为空，跳过处理")
-                return
-            raw_data_map = dict(zip(bin_paths, bin_raws, strict=False))
         except (FileNotFoundError, ValueError):
             logger.opt(exception=True).error(f"处理英雄 {alias} 的本地BIN时出错")
             return
@@ -156,70 +172,166 @@ class ChampionBinProcessor:
         sorted_skin_ids = sorted(skin_id_by_path.values(), key=int)
         path_by_skin_id = {skin_id: path for path, skin_id in skin_id_by_path.items()}
 
-        # 初始化英雄的banks和events数据
-        champion_banks_data = self.bin_source._create_base_data(
-            champion_id, "champion", alias=alias, skinAudioMappings={}, skins={}
-        )
-
         champion_skin_events = {}
-        owner_by_fingerprint: dict[tuple, str] = {}
+        references: list[BankReference] = []
 
         for skin_id in sorted_skin_ids:
             path = path_by_skin_id[skin_id]
-            if not (bin_raw := raw_data_map.get(path)):
+            if not (bin_raw := batch.raws.get(path)):
                 continue
 
             try:
                 bin_file = BIN(bin_raw)
-                is_new_skin_entry = True
-
-                for group in bin_file.data:
-                    for event_data in group.bank_units:
-                        if event_data.bank_path:
-                            bank_fingerprint = tuple(sorted(event_data.bank_path))
-                            category = event_data.category
-
-                            if owner_id := owner_by_fingerprint.get(bank_fingerprint):
-                                if skin_id != owner_id and "_Base_" not in category:
-                                    if skin_id not in champion_banks_data["skinAudioMappings"]:
-                                        champion_banks_data["skinAudioMappings"][skin_id] = {}
-                                    champion_banks_data["skinAudioMappings"][skin_id][category] = owner_id
-                            else:
-                                owner_by_fingerprint[bank_fingerprint] = skin_id
-                                if skin_id not in champion_banks_data["skins"]:
-                                    champion_banks_data["skins"][skin_id] = {}
-                                if category not in champion_banks_data["skins"][skin_id]:
-                                    champion_banks_data["skins"][skin_id][category] = []
-                                champion_banks_data["skins"][skin_id][category].append(event_data.bank_path)
-
-                                if is_new_skin_entry and self.process_events:
-                                    if skin_events := self._extract_skin_events(bin_file, base_skin_id, skin_id):
-                                        champion_skin_events[skin_id] = skin_events
-                                    is_new_skin_entry = False
+                references.extend(self._collect_bank_references(bin_file, path, skin_id))
+                if self.process_events and (skin_events := self._extract_skin_events(bin_file, base_skin_id, skin_id)):
+                    champion_skin_events[skin_id] = skin_events
 
             except Exception:
+                batch.mark_parse_failed(path, "BIN 内容解析失败")
                 logger.opt(exception=True).error(f"解析皮肤BIN失败: {path}")
                 if self._is_dev_mode():
                     raise
 
-        # 优化映射关系
+        bank_bindings = self.bin_source._resolve_bank_bindings(references) if batch.resource_v2 else []
+        legacy_groups = self._binding_groups(bank_bindings) if batch.resource_v2 else self._reference_groups(references)
+        if not batch.resource_v2 and not references:
+            return
+        champion_banks_data = self.bin_source._create_base_data(
+            champion_id,
+            "champion",
+            alias=alias,
+            **self._build_legacy_projection(legacy_groups),
+        )
+
+        if batch.resource_v2:
+            index_metrics, index_errors = self.bin_source._resource_index_diagnostics()
+            diagnostics = build_diagnostics(
+                batch.bindings,
+                bank_bindings,
+                index=index_metrics,
+                index_errors=index_errors,
+            )
+            resource = ResourceBindings(
+                entity_type="champion",
+                entity_id=champion_id,
+                bin_bindings=tuple(batch.bindings),
+                bank_bindings=tuple(bank_bindings),
+                diagnostics=diagnostics,
+            )
+            champion_banks_data.update(resource.to_payload())
+            self._log_binding_summary(f"英雄 {champion_id} ({alias})", diagnostics.completeness, diagnostics.to_dict())
         self._optimize_champion_mappings(champion_banks_data)
 
         # 写入banks数据
-        if needs_update(banks_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode()):
+        if banks_need_update:
             write_data(champion_banks_data, banks_file_base, dev_mode=self._is_dev_mode())
 
         # 写入events数据
-        if champion_skin_events and needs_update(
-            events_file_base,
-            self.version,
-            self.force_update,
-            dev_mode=self._is_dev_mode(),
-        ):
+        if champion_skin_events and events_need_update:
             final_event_data = self.bin_source._create_base_data(
                 champion_id, "champion", alias=alias, skins=champion_skin_events
             )
             write_data(final_event_data, events_file_base, dev_mode=self._is_dev_mode())
+
+    def _read_bin_batch(
+        self,
+        champion_data: ChampionData,
+        bin_paths: list[str],
+        entity_label: str,
+        *,
+        local_required_dir: Path,
+    ) -> BinBatch:
+        """读取 declared BIN，并兼容只提供旧测试边界的调用方。"""
+        if hasattr(self.bin_source, "_resolve_bin_resources"):
+            return self.bin_source._resolve_bin_resources(
+                bin_paths,
+                entity_label,
+                local_required_dir=local_required_dir,
+            )
+
+        root_wad_path = champion_data.get("wad", {}).get("root")
+        wad_path = self.game_path / root_wad_path if root_wad_path else None
+        values = self.bin_source._extract_bin_raws(
+            wad_path=wad_path,
+            bin_paths=bin_paths,
+            entity_label=entity_label,
+            local_required_dir=local_required_dir,
+        )
+        raws = {path: raw for path, raw in zip(bin_paths, values, strict=False) if raw is not None}
+        return BinBatch(raws=raws, bindings=[], resource_v2=False)
+
+    @staticmethod
+    def _collect_bank_references(bin_file: BIN, source_bin: str, skin_id: str) -> list[BankReference]:
+        """从一个皮肤 BIN 收集带分组与皮肤归属的 bank 声明。"""
+        references: list[BankReference] = []
+        group_index = 0
+        for group in bin_file.data:
+            for event_data in group.bank_units:
+                if not event_data.bank_path:
+                    continue
+                references.extend(
+                    BankReference(
+                        category=event_data.category,
+                        path=path,
+                        source_bin=source_bin,
+                        sub_entity=skin_id,
+                        group=group_index,
+                    )
+                    for path in event_data.bank_path
+                )
+                group_index += 1
+        return references
+
+    @staticmethod
+    def _reference_groups(references: list[BankReference]) -> list[tuple[str, str, list[str]]]:
+        """把 remote 旧合同的声明恢复为皮肤/category/path group。"""
+        groups: dict[tuple[str, str, str, int | None], list[str]] = {}
+        for reference in references:
+            key = (reference.sub_entity or "", reference.category, reference.source_bin, reference.group)
+            groups.setdefault(key, []).append(reference.path)
+        return [(skin_id, category, paths) for (skin_id, category, _source, _group), paths in groups.items()]
+
+    @staticmethod
+    def _binding_groups(bindings: list[BankBinding]) -> list[tuple[str, str, list[str]]]:
+        """只从成功 bank bindings 派生 local v2 旧消费者投影。"""
+        groups: dict[tuple[str, str, str, int | None], list[str]] = {}
+        for binding in bindings:
+            if binding.status not in SUCCESS_STATUSES:
+                continue
+            key = (binding.sub_entity or "", binding.category, binding.source_bin, binding.group)
+            groups.setdefault(key, []).append(binding.path)
+        return [(skin_id, category, paths) for (skin_id, category, _source, _group), paths in groups.items()]
+
+    @staticmethod
+    def _build_legacy_projection(groups: list[tuple[str, str, list[str]]]) -> dict[str, dict]:
+        """按既有共享皮肤语义，从一组 binding groups 派生旧投影。"""
+        projection: dict[str, dict] = {"skinAudioMappings": {}, "skins": {}}
+        owner_by_fingerprint: dict[tuple[str, ...], str] = {}
+        for skin_id, category, paths in groups:
+            fingerprint = tuple(sorted(paths))
+            if owner_id := owner_by_fingerprint.get(fingerprint):
+                if skin_id != owner_id and "_Base_" not in category:
+                    projection["skinAudioMappings"].setdefault(skin_id, {})[category] = owner_id
+                continue
+
+            owner_by_fingerprint[fingerprint] = skin_id
+            projection["skins"].setdefault(skin_id, {}).setdefault(category, []).append(paths)
+        return projection
+
+    @staticmethod
+    def _log_binding_summary(label: str, completeness: Completeness, diagnostics: dict) -> None:
+        """为 partial/failed binding artifact 输出可观察摘要。"""
+        if completeness is Completeness.COMPLETE:
+            return
+        message = (
+            f"{label} 资源绑定结果为 {completeness.value}: "
+            f"unresolved BIN={len(diagnostics['unresolvedBins'])}, "
+            f"unresolved bank={len(diagnostics['unresolvedBanks'])}"
+        )
+        if completeness is Completeness.FAILED:
+            logger.error(message)
+        else:
+            logger.warning(message)
 
     def _extract_skin_events(self, bin_file: BIN, base_skin_id: str | None, current_skin_id: str) -> dict | None:
         """

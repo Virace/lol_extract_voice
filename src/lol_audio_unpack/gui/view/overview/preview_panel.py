@@ -23,6 +23,11 @@ from qfluentwidgets import (
 
 from lol_audio_unpack.gui.common.font_compat import apply_line_edit_safe_font, apply_tool_button_safe_font
 from lol_audio_unpack.gui.common.styles import get_fluent_frame_stroke_pair, get_fluent_text_primary_pair
+from lol_audio_unpack.gui.controllers.overview_preview import (
+    ALL_AUDIO_PREVIEW_MODE,
+    EVENT_PREVIEW_MODE,
+    RAW_PREVIEW_MODE,
+)
 from lol_audio_unpack.gui.view.overview.audio_preview_panel import OverviewAudioPreviewPanel
 
 DEFAULT_PREVIEW_PLACEHOLDER_TEXT = "请选择左侧实体。"
@@ -68,6 +73,7 @@ def build_raw_preview_theme_pair() -> tuple[str, str]:
 def create_preview_path_edit(parent: QWidget | None = None) -> LineEdit:
     """创建跟随 Fluent 主题的预览路径输入框。"""
     line_edit = LineEdit(parent)
+    line_edit.setAccessibleName("预览资源路径")
     line_edit.setReadOnly(True)
     line_edit.setClearButtonEnabled(False)
     line_edit.setPlaceholderText(DEFAULT_PREVIEW_PLACEHOLDER_TEXT)
@@ -78,6 +84,7 @@ def create_preview_path_edit(parent: QWidget | None = None) -> LineEdit:
 def create_preview_search_input(parent: QWidget | None = None) -> SearchLineEdit:
     """创建用于当前预览内容的搜索框。"""
     line_edit = SearchLineEdit(parent)
+    line_edit.setAccessibleName("预览搜索")
     line_edit.setPlaceholderText("搜索当前事件或原始数据")
     apply_line_edit_safe_font(line_edit)
     return line_edit
@@ -99,9 +106,11 @@ class OverviewPreviewPanel(QWidget):
         layout.setSpacing(8)
 
         self.preview_mode_pivot = SegmentedWidget(self)
-        self.preview_mode_pivot.addItem("audio", "事件")
-        self.preview_mode_pivot.addItem("raw", "原始数据")
-        self.preview_mode_pivot.setCurrentItem("audio")
+        self.preview_mode_pivot.setAccessibleName("预览模式切换")
+        self.preview_mode_pivot.addItem(EVENT_PREVIEW_MODE, "事件")
+        self.preview_mode_pivot.addItem(ALL_AUDIO_PREVIEW_MODE, "全部音频")
+        self.preview_mode_pivot.addItem(RAW_PREVIEW_MODE, "原始数据")
+        self.preview_mode_pivot.setCurrentItem(EVENT_PREVIEW_MODE)
         layout.addWidget(self.preview_mode_pivot)
 
         self.preview_search_input = create_preview_search_input(self)
@@ -110,6 +119,7 @@ class OverviewPreviewPanel(QWidget):
         header_layout = QHBoxLayout()
         self.preview_path_edit = create_preview_path_edit(self)
         self.reveal_file_btn = TransparentToolButton(FIF.LINK, self)
+        self.reveal_file_btn.setAccessibleName("打开当前预览资源位置")
         self.reveal_file_btn.setToolTip("打开文件所在位置")
         self.reveal_file_btn.setFixedSize(32, 32)
         apply_tool_button_safe_font(self.reveal_file_btn)
@@ -130,6 +140,7 @@ class OverviewPreviewPanel(QWidget):
         self.preview_stack.addWidget(self.placeholder_panel)
 
         self.text_preview = QPlainTextEdit(self)
+        self.text_preview.setAccessibleName("原始映射数据")
         self.text_preview.setReadOnly(True)
         self.text_preview.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self.text_preview.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
@@ -155,21 +166,41 @@ class OverviewPreviewPanel(QWidget):
         self.preview_stack.setCurrentWidget(self.placeholder_panel)
         self.audio_preview_panel.set_summary_visible(False)
         layout.addWidget(self.preview_stack, 1)
+        QWidget.setTabOrder(self.preview_mode_pivot, self.preview_search_input)
+        QWidget.setTabOrder(self.preview_search_input, self.preview_path_edit)
+        QWidget.setTabOrder(self.preview_path_edit, self.reveal_file_btn)
+        QWidget.setTabOrder(self.reveal_file_btn, self.audio_preview_panel.audio_preview_tree)
+        QWidget.setTabOrder(self.audio_preview_panel.audio_preview_tree, self.audio_preview_panel.audio_list)
+        QWidget.setTabOrder(self.audio_preview_panel.audio_list, self.text_preview)
         self._is_placeholder_visible = True
 
     def set_audio_mode(self, is_audio_mode: bool) -> None:
-        """切换当前显示的预览模式。
+        """兼容旧调用方切换事件与原始数据模式。
 
         Args:
             is_audio_mode: 为 ``True`` 时显示事件树，否则显示原始文本。
+        """
+        self.set_preview_mode(EVENT_PREVIEW_MODE if is_audio_mode else RAW_PREVIEW_MODE)
+
+    def set_preview_mode(self, mode_key: str) -> None:
+        """按三种资源预览方式切换当前内容。
+
+        Args:
+            mode_key: 事件、全部音频或原始数据的稳定模式键。
         """
         if self._is_placeholder_visible:
             self.audio_preview_panel.set_summary_visible(False)
             self.preview_stack.setCurrentWidget(self.placeholder_panel)
             return
 
-        self.preview_stack.setCurrentWidget(self.audio_preview_panel if is_audio_mode else self.text_preview)
-        self.audio_preview_panel.set_summary_visible(is_audio_mode)
+        if mode_key == RAW_PREVIEW_MODE:
+            self.preview_stack.setCurrentWidget(self.text_preview)
+            self.audio_preview_panel.set_summary_visible(False)
+            return
+
+        self.audio_preview_panel.set_preview_mode(mode_key)
+        self.preview_stack.setCurrentWidget(self.audio_preview_panel)
+        self.audio_preview_panel.set_summary_visible(True)
 
     def set_preview_path(self, text: str) -> None:
         """同步右上角映射路径显示。
@@ -198,7 +229,7 @@ class OverviewPreviewPanel(QWidget):
     def show_current_preview(self) -> None:
         """按当前选中的 tab 展示预览内容。"""
         self._is_placeholder_visible = False
-        self.set_audio_mode((self.preview_mode_pivot.currentRouteKey() or "audio") == "audio")
+        self.set_preview_mode(self.preview_mode_pivot.currentRouteKey() or EVENT_PREVIEW_MODE)
 
     def refresh_theme(self) -> None:
         """刷新 raw 文本预览的主题样式。"""

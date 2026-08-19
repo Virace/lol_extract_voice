@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,9 +14,47 @@ from league_tools.formats import BIN, WAD
 from loguru import logger
 
 from lol_audio_unpack.manager.utils import build_metadata_payload
+from lol_audio_unpack.model.binding import (
+    SUCCESS_STATUSES,
+    BankBinding,
+    BankReference,
+    BinBinding,
+    BindingRole,
+    BindingStatus,
+)
+from lol_audio_unpack.runtime.wad_index import ResolutionRequest, WadIndex, WadTocCache
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
+
+
+_WAD_TOC_CACHE_KEY = "local_wad_toc_cache"
+
+
+@dataclass
+class BinBatch:
+    """一次 declared BIN 批量读取结果。"""
+
+    raws: dict[str, bytes]
+    bindings: list[BinBinding]
+    resource_v2: bool
+
+    def mark_parse_failed(self, path: str, diagnostic: str) -> None:
+        """把指定 BIN 的成功解析结果改记为内容解析失败。"""
+        self.bindings = [
+            replace(binding, status=BindingStatus.PARSE_FAILED, diagnostic=diagnostic)
+            if binding.path == path and binding.status in SUCCESS_STATUSES
+            else binding
+            for binding in self.bindings
+        ]
+
+
+@dataclass
+class LoadedBin:
+    """单个 BIN 对象及其批量资源诊断。"""
+
+    bin_file: BIN | None
+    batch: BinBatch
 
 
 class BinSource:
@@ -50,6 +89,7 @@ class BinSource:
         self.local_bin_input_dir = local_bin_input_dir
         self.use_local_bin_flag_file = use_local_bin_flag_file
         self.languages: list[str] = languages if languages is not None else []
+        self._wad_index: WadIndex | None = None
 
     def _is_dev_mode(self) -> bool:
         """返回当前运行是否为开发模式。"""
@@ -62,6 +102,12 @@ class BinSource:
         :returns: 启用返回 True，否则返回 False。
         """
         return self.use_local_bin_flag_file.exists()
+
+    def _uses_resource_v2(self) -> bool:
+        """判断当前来源是否允许创建 local resource schema v2。"""
+        mode = getattr(self.ctx.config, "source_mode", "local_path")
+        mode_value = getattr(mode, "value", mode)
+        return mode_value != "remote_snapshot" and not self._is_local_bin_mode_enabled()
 
     def _build_local_bin_path(self, bin_path: str) -> Path:
         """
@@ -151,6 +197,134 @@ class BinSource:
         logger.trace(f"{entity_label} 使用本地BIN目录读取: {self.local_bin_input_dir}")
         return bin_raws
 
+    def _get_wad_index(self) -> WadIndex:
+        """延迟创建并在当前运行中共享本地 WAD TOC cache。"""
+        if index := getattr(self, "_wad_index", None):
+            return index
+
+        cache = self.ctx.runtime_cache.get(_WAD_TOC_CACHE_KEY)
+        if cache is None:
+            cache = WadTocCache()
+            self.ctx.runtime_cache[_WAD_TOC_CACHE_KEY] = cache
+        self._wad_index = WadIndex(self.game_path, self.ctx.config.game_region, cache=cache)
+        return self._wad_index
+
+    def _resolve_bin_resources(
+        self,
+        bin_paths: list[str],
+        entity_label: str,
+        *,
+        local_required_dir: Path | None = None,
+    ) -> BinBatch:
+        """按 source contract 读取 declared BIN 并生成 local v2 bindings。
+
+        `.use_local_bin` 代表 remote snapshot 已准备好的旧合同，必须在构造本地索引前
+        短路。普通本地客户端则统一从 FINAL TOC 解析真实物理 WAD。
+        """
+        if not bin_paths:
+            return BinBatch(raws={}, bindings=[], resource_v2=self._uses_resource_v2())
+
+        if self._is_local_bin_mode_enabled():
+            raw_values = self._extract_bin_raws(
+                wad_path=None,
+                bin_paths=bin_paths,
+                entity_label=entity_label,
+                local_required_dir=local_required_dir,
+            )
+            raws = {path: raw for path, raw in zip(bin_paths, raw_values, strict=False) if raw is not None}
+            return BinBatch(raws=raws, bindings=[], resource_v2=False)
+
+        if not self._uses_resource_v2():
+            logger.warning(f"{entity_label} 的 remote BIN 输入尚未准备完成，跳过本地 WAD resolver")
+            return BinBatch(raws={}, bindings=[], resource_v2=False)
+
+        resolutions = self._get_wad_index().resolve_many(
+            [ResolutionRequest(path, preferred_role=BindingRole.ROOT) for path in bin_paths],
+            load_payload=True,
+        )
+        bindings = [
+            BinBinding(
+                path=result.path,
+                normalized_path=result.normalized_path,
+                wad=result.wad,
+                entry_hash=result.entry_hash,
+                status=result.status,
+                role=result.role,
+                candidates=result.candidates if len(result.candidates) > 1 else (),
+                diagnostic=result.diagnostic,
+            )
+            for result in resolutions
+        ]
+        raws = {
+            result.path: result.payload
+            for result in resolutions
+            if result.status in SUCCESS_STATUSES and result.payload is not None
+        }
+        return BinBatch(raws=raws, bindings=bindings, resource_v2=True)
+
+    def _resolve_bank_bindings(self, references: list[BankReference]) -> list[BankBinding]:
+        """把已解析 BIN 中的 bank 声明批量解析为物理 WAD bindings。"""
+        if not references or not self._uses_resource_v2():
+            return []
+
+        results = self._get_wad_index().resolve_many(
+            [ResolutionRequest(reference.path, reference.preferred_role) for reference in references]
+        )
+        return [
+            BankBinding(
+                category=reference.category,
+                path=reference.path,
+                normalized_path=result.normalized_path,
+                kind="",
+                wad=result.wad,
+                entry_hash=result.entry_hash,
+                source_bin=reference.source_bin,
+                role=result.role,
+                status=result.status,
+                sub_entity=reference.sub_entity,
+                group=reference.group,
+                candidates=result.candidates if len(result.candidates) > 1 else (),
+                diagnostic=result.diagnostic,
+            )
+            for reference, result in zip(references, results, strict=True)
+        ]
+
+    def _resource_index_diagnostics(self) -> tuple[dict, list[str]]:
+        """返回当前实体可写入 artifact 的累计索引指标与错误。"""
+        index = getattr(self, "_wad_index", None)
+        if index is None:
+            return {}, []
+        return index.snapshot_metrics(), list(index.errors)
+
+    def _load_map_bin_resource(self, map_id: str, map_data: dict) -> LoadedBin:
+        """加载地图 BIN，并保留 v2 binding 或 remote 旧合同诊断。"""
+        bin_path = map_data.get("binPath")
+        if not bin_path:
+            return LoadedBin(None, BinBatch({}, [], self._uses_resource_v2()))
+
+        local_required_dir = Path(bin_path).parent
+        batch = BinBatch({}, [], self._uses_resource_v2())
+        try:
+            batch = self._resolve_bin_resources(
+                [bin_path],
+                f"地图 {map_id}",
+                local_required_dir=local_required_dir,
+            )
+            if not (bin_raw := batch.raws.get(bin_path)):
+                return LoadedBin(None, batch)
+            try:
+                return LoadedBin(BIN(bin_raw), batch)
+            except Exception:
+                batch.mark_parse_failed(bin_path, "BIN 内容解析失败")
+                raise
+        except (FileNotFoundError, ValueError):
+            logger.opt(exception=True).error(f"提取或解析地图 {map_id} 的本地BIN文件时出错")
+        except Exception:
+            logger.opt(exception=True).error(f"提取或解析地图 {map_id} 的BIN文件时出错")
+            if self._is_dev_mode():
+                raise
+        return LoadedBin(None, batch)
+
     def _load_map_bin_file(self, map_id: str, map_data: dict) -> BIN | None:
         """
         统一加载地图 BIN 文件，兼容 WAD 与本地 BIN 模式。
@@ -159,34 +333,7 @@ class BinSource:
         :param map_data: 地图数据字典。
         :returns: BIN 对象；失败时返回 None。
         """
-        bin_path = map_data.get("binPath")
-        if not bin_path:
-            return None
-
-        wad_root = map_data.get("wad", {}).get("root")
-        wad_path = self.game_path / wad_root if wad_root else None
-        local_required_dir = Path(bin_path).parent
-
-        try:
-            bin_raws = self._extract_bin_raws(
-                wad_path=wad_path,
-                bin_paths=[bin_path],
-                entity_label=f"地图 {map_id}",
-                local_required_dir=local_required_dir,
-            )
-            if not bin_raws:
-                return None
-            bin_raw = bin_raws[0]
-            if not bin_raw:
-                return None
-            return BIN(bin_raw)
-        except (FileNotFoundError, ValueError):
-            logger.opt(exception=True).error(f"提取或解析地图 {map_id} 的本地BIN文件时出错")
-        except Exception:
-            logger.opt(exception=True).error(f"提取或解析地图 {map_id} 的BIN文件时出错")
-            if self._is_dev_mode():
-                raise
-        return None
+        return self._load_map_bin_resource(map_id, map_data).bin_file
 
     def _create_base_data(self, entity_id: str, entity_type: str, **extra_fields) -> dict:
         """

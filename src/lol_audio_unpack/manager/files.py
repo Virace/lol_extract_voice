@@ -132,7 +132,14 @@ def write_data(data: dict, base_path: Path, *, dev_mode: bool) -> None:
         logger.opt(exception=True).error(f"写入文件失败: {path}, 错误: {exc}")
 
 
-def needs_update(base_path: Path, current_version: str, force_update: bool, *, dev_mode: bool) -> bool:
+def needs_update(
+    base_path: Path,
+    current_version: str,
+    force_update: bool,
+    *,
+    dev_mode: bool,
+    resource_schema: int | None = None,
+) -> bool:
     """检查目标文件是否需要更新。
 
     Args:
@@ -140,6 +147,7 @@ def needs_update(base_path: Path, current_version: str, force_update: bool, *, d
         current_version: 当前游戏版本。
         force_update: 是否强制更新。
         dev_mode: 是否启用开发模式。
+        resource_schema: 本地派生产物要求的 resource schema；为空时不检查。
 
     Returns:
         若需要更新则返回 ``True``。
@@ -152,18 +160,19 @@ def needs_update(base_path: Path, current_version: str, force_update: bool, *, d
         return True
 
     data = read_data(base_path, dev_mode=dev_mode)
-    if not data:
-        return True
-
-    data_version = data.get("metadata", {}).get("gameVersion")
+    data_version = data.get("metadata", {}).get("gameVersion") if data else None
     if not data_version:
         return True
 
-    if data_version == current_version:
-        logger.debug(f"文件已是最新版本 ({current_version})，跳过更新: {base_path.name}")
-        return False
+    if resource_schema is not None and data.get("resourceSchemaVersion") != resource_schema:
+        logger.debug(f"资源 schema 已过期，需要重新生成: {base_path.name}")
+        return True
 
-    return True
+    if data_version != current_version:
+        return True
+
+    logger.debug(f"文件已是最新版本 ({current_version})，跳过更新: {base_path.name}")
+    return False
 
 
 __all__ = [

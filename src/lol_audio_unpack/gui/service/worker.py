@@ -15,7 +15,7 @@ from lol_audio_unpack.manager.errors import is_shared_data_not_ready
 class DataLoadWorker(QThread):
     """异步数据加载线程"""
 
-    finished = Signal(list)
+    finished = Signal(object)
     error = Signal(str)
 
     def __init__(self, app_context: AppContext, entity_type: str):
@@ -28,8 +28,13 @@ class DataLoadWorker(QThread):
         try:
             loader = EntityDataLoader(self.app_context)
             logger.debug("EntityDataLoader 初始化成功")
-            data = loader.load_entities(self.entity_type)
-            logger.debug(f"{self.entity_type} 实体状态扫描完成，整理出 {len(data)} 个列表项")
+            data = (
+                loader.load_champion_catalog()
+                if self.entity_type == "champion_catalog"
+                else loader.load_entities(self.entity_type)
+            )
+            item_count = sum(len(rows) for rows in data.values()) if isinstance(data, dict) else len(data)
+            logger.debug(f"{self.entity_type} 实体状态扫描完成，整理出 {item_count} 个列表项")
             self.finished.emit(data)
             logger.debug(f"finished 信号已发送: {self.entity_type}")
         except Exception as e:

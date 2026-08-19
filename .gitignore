@@ -127,6 +127,7 @@ packer/
 .ai_memory/
 .CODING_STYLE.md
 benchmarks/
+/output/
 .temp/
 .superpowers/
 .worktrees/

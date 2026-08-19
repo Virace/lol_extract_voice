@@ -10,7 +10,13 @@ from loguru import logger
 
 from lol_audio_unpack.app.context import create_app_context
 from lol_audio_unpack.app.facade import LolAudioUnpackApp
+from lol_audio_unpack.app.resource_pack import partition_special_targets
+from lol_audio_unpack.app.special_content import (
+    is_special_content_supported,
+    merge_champion_ids,
+)
 from lol_audio_unpack.app.targets import resolve_scope
+from lol_audio_unpack.app.types import OperationOptions
 from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.gui.common.remote_mode_policy import normalize_app_context_settings
 from lol_audio_unpack.gui.task_models import (
@@ -39,24 +45,55 @@ STAGE_LABEL_BY_KEY = {
 ENTITY_SCOPE_LABEL_BY_TYPE = {
     "champion": "英雄",
     "map": "地图",
+    "resource_pack": "历史资源包",
     "wav": "音频转码",
 }
 
 
-def _resolve_task_scope(task: QueuedExecutionTask) -> tuple[str, bool, bool]:
+def _resolve_task_scope(task: QueuedExecutionTask) -> tuple[str, bool, bool, bool]:
     """推导任务对应的后端目标范围。
 
     Args:
         task: 已入队任务。
 
     Returns:
-        ``(target, include_champions, include_maps)`` 元组。
+        ``(target, include_champions, include_maps, include_resource_packs)`` 元组。
     """
     task_params = task.draft.task_params
-    return resolve_scope(
-        champion_ids=task_params.champion_ids,
+    partition = partition_special_targets(task_params.special_targets)
+    target, include_champions, include_maps = resolve_scope(
+        champion_ids=merge_champion_ids(task_params.champion_ids, partition.champion_targets),
         map_ids=task_params.map_ids,
     )
+    include_resource_packs = bool(partition.resource_pack_targets or task_params.resource_pack_wads)
+    if (
+        include_resource_packs
+        and task_params.champion_ids is None
+        and not partition.champion_targets
+        and task_params.map_ids is None
+    ):
+        # resource pack 由 app facade 独立消费，不能因空的普通目标退化为全量英雄/地图。
+        include_champions = False
+        include_maps = False
+    return target, include_champions, include_maps, include_resource_packs
+
+
+def _resolve_task_options(task: QueuedExecutionTask) -> OperationOptions:
+    """保留异构 special target，由应用门面按冻结合同分区。"""
+    return task.draft.task_params.to_operation_options()
+
+
+def _ensure_special_targets_supported(task: QueuedExecutionTask, source_mode: object) -> None:
+    """在创建任何 AppContext 前拒绝远端特殊内容任务。"""
+    task_params = task.draft.task_params
+    if task_params.special_targets and not is_special_content_supported(source_mode):
+        raise ValueError("特殊内容仅支持本地客户端资源。")
+    partition = partition_special_targets(task_params.special_targets)
+    has_resource_pack_scope = bool(partition.resource_pack_targets or task_params.resource_pack_wads)
+    if has_resource_pack_scope and not is_special_content_supported(source_mode):
+        raise ValueError("资源包发现仅支持本地客户端资源。")
+    if has_resource_pack_scope and task_params.wav_enabled:
+        raise ValueError("resource pack 当前不支持 WAV 转码；请先只执行 extract 或 mapping。")
 
 
 def _build_runtime_settings(
@@ -80,13 +117,20 @@ def _build_runtime_settings(
     return normalize_app_context_settings(settings)
 
 
-def _build_scope_label(*, include_champions: bool, include_maps: bool) -> str:
+def _build_scope_label(
+    *,
+    include_champions: bool,
+    include_maps: bool,
+    include_resource_packs: bool,
+) -> str:
     """将当前任务范围格式化为用户可读文案。"""
     scope_parts: list[str] = []
     if include_champions:
         scope_parts.append("英雄")
     if include_maps:
         scope_parts.append("地图")
+    if include_resource_packs:
+        scope_parts.append("历史资源包")
     return " + ".join(scope_parts) if scope_parts else "未选择目标"
 
 
@@ -139,16 +183,17 @@ def _ensure_map_banks_ready(
 
     reader = DataReader(ctx=ctx)
     map_ids = task.draft.task_params.map_ids
-    target_ids = tuple(int(map_id) for map_id in map_ids) if map_ids is not None else tuple(
-        int(map_data["id"]) for map_data in reader.get_maps() if map_data.get("id") is not None
+    target_ids = (
+        tuple(int(map_id) for map_id in map_ids)
+        if map_ids is not None
+        else tuple(int(map_data["id"]) for map_data in reader.get_maps() if map_data.get("id") is not None)
     )
     missing_ids = [map_id for map_id in target_ids if not reader.get_map_banks(map_id)]
     if not missing_ids:
         return
 
     raise RuntimeError(
-        "地图基础数据仍未准备完成，缺少地图 banks: "
-        f"{missing_ids[:10]}。请等待后台数据准备完成后再创建任务。"
+        f"地图基础数据仍未准备完成，缺少地图 banks: {missing_ids[:10]}。请等待后台数据准备完成后再创建任务。"
     )
 
 
@@ -167,11 +212,12 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     """
     started_at = perf_counter()
     task_params = task.draft.task_params
-    options = task_params.to_operation_options()
-    target, include_champions, include_maps = _resolve_task_scope(task)
+    options = _resolve_task_options(task)
+    target, include_champions, include_maps, include_resource_packs = _resolve_task_scope(task)
     task_scope_label = _build_scope_label(
         include_champions=include_champions,
         include_maps=include_maps,
+        include_resource_packs=include_resource_packs,
     )
     steps = task_params.selected_steps()
     completed_steps: list[str] = []
@@ -179,6 +225,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     map_banks_checked = False
     runtime_settings = _build_runtime_settings(task)
     source_mode = runtime_settings.get(SettingKey.SOURCE_MODE, "local_path")
+    _ensure_special_targets_supported(task, source_mode)
 
     try:
         logger.info(f"[执行中心] 任务 #{task.task_id} 开始执行: {' -> '.join(steps)}")

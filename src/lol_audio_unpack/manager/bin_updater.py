@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from lol_audio_unpack.app.game_version import resolve_game_version
+from lol_audio_unpack.app.targets import should_hide_champion_by_default
 from lol_audio_unpack.manager.bin_source import BinSource
 from lol_audio_unpack.manager.champion_bin_processor import ChampionBinProcessor
 from lol_audio_unpack.manager.files import read_data
@@ -98,6 +99,23 @@ class BinUpdater:
         """返回当前运行是否为开发模式。"""
         return bool(self.ctx.config.dev_mode)
 
+    def _filter_default_champions(self, data: dict) -> dict:
+        """过滤默认批量更新中应隐藏的特殊英雄。
+
+        Args:
+            data: 完整的聚合元数据。
+
+        Returns:
+            保留原元数据结构、仅替换英雄集合的新字典。
+        """
+        champions = data.get("champions", {})
+        visible = {
+            champion_id: champion
+            for champion_id, champion in champions.items()
+            if not should_hide_champion_by_default(champion)
+        }
+        return {**data, "champions": visible}
+
     @logger.catch
     @performance_monitor(level="INFO")
     def update(
@@ -143,15 +161,19 @@ class BinUpdater:
             logger.success(f"BinUpdater 更新完成（精确模式）：英雄 {champion_count} 个，地图 {map_count} 个")
         else:
             # 批量模式：使用target控制
-            champion_count = len(data.get("champions", {})) if target in ["skin", "all"] else 0
+            batch_data = self._filter_default_champions(data) if target in ["skin", "all"] else data
+            champion_count = len(batch_data.get("champions", {})) if target in ["skin", "all"] else 0
+            hidden_count = len(data.get("champions", {})) - champion_count if target in ["skin", "all"] else 0
             map_count = len(data.get("maps", {})) if target in ["map", "all"] else 0
             logger.info(
                 f"开始更新 BIN 数据（批量模式）：target={target}，英雄 {champion_count} 个，地图 {map_count} 个，"
                 f"事件处理={'开启' if self.process_events else '关闭'}，"
                 f"本地BIN模式={'开启' if local_bin_mode_enabled else '关闭'}"
             )
+            if hidden_count:
+                logger.info(f"默认批量更新已排除 {hidden_count} 个隐藏英雄实体")
             if target in ["skin", "all"]:
-                self._champion_processor._update_champions(data)
+                self._champion_processor._update_champions(batch_data)
             if target in ["map", "all"]:
                 self._map_processor._update_maps(data)
             logger.success(f"BinUpdater 更新完成（批量模式）：英雄 {champion_count} 个，地图 {map_count} 个")

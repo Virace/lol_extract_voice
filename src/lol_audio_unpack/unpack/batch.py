@@ -15,14 +15,14 @@ from loguru import logger
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.model import generate_champion_tasks, generate_map_tasks
 
-from .entity import unpack_champion, unpack_map
+from .entity import unpack_champion, unpack_map, unpack_resource_pack
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
 
 
 def execute_tasks(  # noqa: PLR0913
-    tasks: list[tuple[str, int, str]],
+    tasks: list[tuple[str, int | str, str]],
     reader: DataReader,
     max_workers: int = 4,
     *,
@@ -48,18 +48,23 @@ def execute_tasks(  # noqa: PLR0913
     total_tasks = len(tasks)
     champion_count = sum(1 for entity_type, _, _ in tasks if entity_type == "champion")
     map_count = sum(1 for entity_type, _, _ in tasks if entity_type == "map")
+    resource_pack_count = sum(1 for entity_type, _, _ in tasks if entity_type == "resource_pack")
     summary_parts = []
     if champion_count > 0:
         summary_parts.append(f"{champion_count} 个英雄")
     if map_count > 0:
         summary_parts.append(f"{map_count} 个地图")
+    if resource_pack_count > 0:
+        summary_parts.append(f"{resource_pack_count} 个资源包")
     totals_by_type = {
         "champion": champion_count,
         "map": map_count,
+        "resource_pack": resource_pack_count,
     }
     finished_by_type = {
         "champion": 0,
         "map": 0,
+        "resource_pack": 0,
     }
     progress_lock = threading.Lock() if max_workers > 1 else None
 
@@ -76,7 +81,7 @@ def execute_tasks(  # noqa: PLR0913
     wad_cache: dict[Path, WAD] = {}
     cache_lock = threading.Lock() if max_workers > 1 else None
 
-    def unpack_one(entity_type: str, entity_id: int) -> None:
+    def unpack_one(entity_type: str, entity_id: int | str) -> None:
         common_kwargs: dict[str, object] = {
             "wad_cache": wad_cache,
             "cache_lock": cache_lock,
@@ -87,6 +92,8 @@ def execute_tasks(  # noqa: PLR0913
             unpack_champion(entity_id, reader, **common_kwargs)
         elif entity_type == "map":
             unpack_map(entity_id, reader, **common_kwargs)
+        elif entity_type == "resource_pack":
+            unpack_resource_pack(str(entity_id), reader, **common_kwargs)
         else:
             raise ValueError(f"未知的实体类型: {entity_type}")
 
@@ -109,14 +116,17 @@ def execute_tasks(  # noqa: PLR0913
         with progress_lock:
             _emit()
 
-    def unpack_one_with_progress(entity_type: str, entity_id: int, description: str) -> None:
+    def unpack_one_with_progress(entity_type: str, entity_id: int | str, description: str) -> None:
         emit_running_progress(entity_type, description)
         unpack_one(entity_type, entity_id)
 
     if max_workers > 1:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_task = {
-                executor.submit(unpack_one_with_progress, entity_type, entity_id, description): (entity_type, description)
+                executor.submit(unpack_one_with_progress, entity_type, entity_id, description): (
+                    entity_type,
+                    description,
+                )
                 for entity_type, entity_id, description in tasks
             }
             finished_count = 0
@@ -236,6 +246,36 @@ def unpack_maps(  # noqa: PLR0913
 ) -> None:
     """解包指定地图音频。"""
     tasks = generate_map_tasks(reader, map_ids)
+    execute_tasks(
+        tasks,
+        reader,
+        max_workers=max_workers,
+        ctx=ctx,
+        progress_callback=progress_callback,
+        persisted_wem_callback=persisted_wem_callback,
+    )
+
+
+def unpack_resource_packs(  # noqa: PLR0913
+    reader: DataReader,
+    keys: list[str],
+    max_workers: int = 4,
+    *,
+    ctx: AppContext,
+    progress_callback: Callable[[str, int, int, str], None] | None = None,
+    persisted_wem_callback: Callable[[Path], None] | None = None,
+) -> None:
+    """解包指定 resource-pack 音频。
+
+    Args:
+        reader: 数据读取器实例。
+        keys: canonical resource-pack key 列表。
+        max_workers: 最大工作线程数。
+        ctx: 运行时上下文。
+        progress_callback: 每个实体完成后的可选进度回调。
+        persisted_wem_callback: WEM 落盘后的附加回调。
+    """
+    tasks = [("resource_pack", key, f"资源包 {key}") for key in keys]
     execute_tasks(
         tasks,
         reader,

@@ -6,8 +6,8 @@ from loguru import logger
 
 from lol_audio_unpack.manager import DataReader
 
-from .batch import build_all, build_champions, build_maps, execute_tasks
-from .entity import build_champion, build_entity, build_map, integrate_entity
+from .batch import build_all, build_champions, build_maps, build_resource_packs, execute_tasks
+from .entity import build_champion, build_entity, build_map, build_resource_pack, integrate_entity
 from .session import RuntimeCache, describe_hirc_backend
 
 __all__ = [
@@ -18,6 +18,8 @@ __all__ = [
     "build_entity",
     "build_map",
     "build_maps",
+    "build_resource_pack",
+    "build_resource_packs",
     "describe_hirc_backend",
     "execute_tasks",
     "integrate_entity",
