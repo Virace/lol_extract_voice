@@ -123,12 +123,14 @@ def _extract_new_wems(
 
 
 def _verify_mapping(output_path: Path, version: str) -> None:
-    """验证代表英雄和地图均生成原始 mapping 产物。"""
+    """验证普通英雄、旧版英雄和地图均生成原始 mapping 产物。"""
     hash_root = output_path / "hashes" / version
     champion_mapping = find_data_file(hash_root / "champions" / str(CHAMPION_ID), dev_mode=False)
+    jade_mapping = find_data_file(hash_root / "champions" / str(JADE_CHAMPION_ID), dev_mode=False)
     map_mapping = find_data_file(hash_root / "maps" / str(MAP_ID), dev_mode=False)
 
     assert champion_mapping is not None, "未生成英雄 mapping"
+    assert jade_mapping is not None, "未生成 Jade_Fiddlesticks mapping"
     assert map_mapping is not None, "未生成地图 mapping"
 
 
@@ -202,7 +204,7 @@ def test_local_pipeline_updates_extracts_and_maps(tmp_path: Path) -> None:
     assert (report_root / "maps" / f"_{MAP_ID}_metadata.yaml").is_file()
     assert (report_root / "maps" / f"_{TFT_MAP_ID}_metadata.yaml").is_file()
 
-    app.mapping(OperationOptions(champion_ids=(CHAMPION_ID,), max_workers=2))
+    app.mapping(OperationOptions(champion_ids=(CHAMPION_ID, JADE_CHAMPION_ID), max_workers=2))
     app.mapping(
         OperationOptions(map_ids=(MAP_ID,), max_workers=2),
         include_champions=False,

@@ -125,9 +125,19 @@ class OverviewPreviewController:
             if not skin_id:
                 continue
 
-            skin_name = self._resolve_champion_skin_name(skin)
+            skin_name = self._resolve_localized_name(skin, names_key="skinNames")
             if skin_name:
                 label_map[skin_id] = skin_name
+
+            for chroma in skin.get("chromas", []):
+                if not isinstance(chroma, dict):
+                    continue
+                chroma_id = str(chroma.get("id") or "").strip()
+                if not chroma_id:
+                    continue
+                chroma_name = self._resolve_localized_name(chroma, names_key="chromaNames")
+                if chroma_name:
+                    label_map[chroma_id] = chroma_name
 
         return label_map
 
@@ -164,16 +174,21 @@ class OverviewPreviewController:
         )
 
     @staticmethod
-    def _resolve_champion_skin_name(skin: dict[str, Any]) -> str | None:
-        """从英雄皮肤结构中提取可展示的皮肤名。"""
-        skin_names = skin.get("skinNames")
-        if isinstance(skin_names, dict):
-            zh_name = str(skin_names.get("zh_CN") or "").strip()
+    def _resolve_localized_name(payload: dict[str, Any], *, names_key: str) -> str | None:
+        """从皮肤或炫彩结构中提取本地化展示名。"""
+        names = payload.get(names_key)
+        if isinstance(names, dict):
+            zh_name = str(names.get("zh_CN") or "").strip()
             if zh_name:
                 return zh_name
 
+            for key in ("default", "en_US"):
+                fallback_name = str(names.get(key) or "").strip()
+                if fallback_name:
+                    return fallback_name
+
         for key in ("name", "displayName"):
-            value = str(skin.get(key) or "").strip()
+            value = str(payload.get(key) or "").strip()
             if value:
                 return value
 

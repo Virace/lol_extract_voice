@@ -147,4 +147,9 @@ class OverviewAudioPreviewPanel(QWidget):
             is_playing=is_playing,
             is_paused=is_paused,
         )
-        self.audio_list.set_audio_playback_state(audio_path, is_playing=is_playing)
+        self.audio_list.set_audio_playback_state(
+            audio_path,
+            progress=progress,
+            is_playing=is_playing,
+            is_paused=is_paused,
+        )

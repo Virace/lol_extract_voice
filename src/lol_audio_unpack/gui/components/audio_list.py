@@ -5,17 +5,30 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QPoint, QSortFilterProxyModel, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPolygonF
+from PySide6.QtCore import QAbstractListModel, QModelIndex, QPoint, QPointF, QRect, QSortFilterProxyModel, Qt, Signal
+from PySide6.QtGui import QPainter, QPolygonF
 from PySide6.QtWidgets import QListView, QStyle, QStyledItemDelegate, QStyleOptionViewItem
+from qfluentwidgets import isDarkTheme
 
 from lol_audio_unpack.app.artifacts import AudioRef
+from lol_audio_unpack.gui.common.styles import resolve_fluent_neutral_surface, resolve_fluent_text_primary_color
+from lol_audio_unpack.gui.components.audio_row_style import (
+    AUDIO_ROW_BUTTON_GAP,
+    AUDIO_ROW_BUTTON_SIZE,
+    AUDIO_ROW_HORIZONTAL_MARGIN,
+    AUDIO_ROW_LEADING_SLOT_WIDTH,
+    AUDIO_ROW_SELECTED_BAR_MARGIN,
+    AUDIO_ROW_SELECTED_BAR_WIDTH,
+    AUDIO_ROW_TEXT_GAP,
+    active_audio_row_color,
+    audio_control_colors,
+    audio_progress_color,
+    audio_selection_bar_color,
+)
 
 AUDIO_REF_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 EMPTY_MODEL_INDEX = QModelIndex()
-_ITEM_HEIGHT = 48
-_ROW_MARGIN = 6
-_AUDIO_BUTTON_SIZE = 20
+_ITEM_HEIGHT = 32
 
 
 class AudioListModel(QAbstractListModel):
@@ -101,7 +114,7 @@ class AudioListFilterModel(QSortFilterProxyModel):
 
 
 class _AudioListDelegate(QStyledItemDelegate):
-    """绘制两行文本与轻量播放按钮，不创建逐行 QWidget。"""
+    """按事件树叶子风格绘制紧凑单行试听项。"""
 
     def __init__(self, view: AudioListView) -> None:
         """初始化委托。
@@ -113,77 +126,91 @@ class _AudioListDelegate(QStyledItemDelegate):
         self._view = view
 
     def sizeHint(self, option: QStyleOptionViewItem, index: QModelIndex):
-        """返回稳定的两行列表项高度。"""
+        """返回与事件树叶子一致的紧凑行高。"""
         size = super().sizeHint(option, index)
         size.setHeight(max(size.height(), _ITEM_HEIGHT))
         return size
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
-        """绘制路径级 WEM 行的播放状态和可区分路径。"""
+        """绘制路径级 WEM 行的统一背景、进度与播放控件。"""
         ref = index.data(AUDIO_REF_ROLE)
         if not isinstance(ref, AudioRef):
             super().paint(painter, option, index)
             return
 
-        row_rect = option.rect.adjusted(_ROW_MARGIN, 2, -_ROW_MARGIN, -2)
+        row_rect = self._view.row_rect(option.rect)
         is_active = self._view.is_active(ref)
         is_selected = bool(option.state & QStyle.StateFlag.State_Selected)
         is_hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         if is_active or is_selected or is_hovered:
-            color = QColor("#2563eb" if is_active else "#64748b")
-            color.setAlpha(64 if is_active else 30)
+            if is_active and not is_selected and not is_hovered:
+                color = active_audio_row_color(is_dark=isDarkTheme())
+            else:
+                color = resolve_fluent_neutral_surface("emphasis_selected" if is_selected else "emphasis_hover")
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
             painter.drawRoundedRect(row_rect, 6, 6)
 
+        progress = self._view.playback_progress(ref)
+        if progress > 0:
+            progress_width = max(0, min(row_rect.width(), int(round(row_rect.width() * progress))))
+            painter.save()
+            painter.setClipRect(QRect(row_rect.left(), row_rect.top(), progress_width, row_rect.height()))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(audio_progress_color(is_dark=isDarkTheme(), is_playing=self._view.is_playing))
+            painter.drawRoundedRect(row_rect, 6, 6)
+            painter.restore()
+
+        if is_selected:
+            bar_rect = QRect(
+                row_rect.left() + AUDIO_ROW_SELECTED_BAR_MARGIN,
+                row_rect.top() + 7,
+                AUDIO_ROW_SELECTED_BAR_WIDTH,
+                max(0, row_rect.height() - 14),
+            )
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(audio_selection_bar_color(is_dark=isDarkTheme()))
+            painter.drawRoundedRect(bar_rect, 2, 2)
+
         button_rect = self._view.audio_control_rect(index)
-        button_color = QColor("#2563eb")
-        button_color.setAlpha(115 if is_active else 72)
+        if is_active:
+            button_color, icon_color = audio_control_colors(is_dark=isDarkTheme())
+        else:
+            button_color = resolve_fluent_neutral_surface("emphasis_hover")
+            button_color.setAlpha(20)
+            icon_color = resolve_fluent_text_primary_color()
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(button_color)
         painter.drawRoundedRect(button_rect, 5, 5)
 
-        text_rect = row_rect.adjusted(10, 4, -button_rect.width() - 16, -4)
+        text_left = button_rect.right() + AUDIO_ROW_BUTTON_GAP + 1
+        text_rect = QRect(text_left, option.rect.top(), max(0, row_rect.right() - text_left - 8), option.rect.height())
         painter.setPen(option.palette.text().color())
-        primary_font = option.font
-        primary_font.setBold(True)
-        painter.setFont(primary_font)
-        painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, ref.wem_id)
+        painter.setFont(option.font)
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, ref.wem_id)
 
-        secondary = ref.relative_path
-        if ref.audio_type:
-            secondary = f"{ref.audio_type} · {secondary}"
-        secondary_font = option.font
-        secondary_font.setPointSize(max(7, secondary_font.pointSize() - 1))
-        painter.setFont(secondary_font)
-        secondary_color = option.palette.text().color()
-        secondary_color.setAlpha(170)
-        painter.setPen(secondary_color)
-        painter.drawText(
-            text_rect.adjusted(0, 20, 0, 0), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, secondary
-        )
-
-        icon_color = QColor("#ffffff")
         painter.setBrush(icon_color)
         if is_active and self._view.is_playing:
-            side = max(6, button_rect.width() - 10)
-            stop_rect = button_rect.adjusted(
-                (button_rect.width() - side) // 2,
-                (button_rect.height() - side) // 2,
-                -((button_rect.width() - side) // 2),
-                -((button_rect.height() - side) // 2),
-            )
+            side = max(6, min(button_rect.width(), button_rect.height()) - 10)
+            stop_rect = QRect(0, 0, side, side)
+            stop_rect.moveCenter(button_rect.center())
             painter.drawRoundedRect(stop_rect, 1, 1)
         else:
             painter.drawPolygon(
                 QPolygonF(
-                    [
-                        button_rect.topLeft() + QPoint(8, 5),
-                        button_rect.bottomLeft() + QPoint(8, -5),
-                        button_rect.center() + QPoint(5, 0),
-                    ]
+                    (
+                        QPointF(
+                            button_rect.left() + button_rect.width() * 0.36,
+                            button_rect.top() + button_rect.height() * 0.26,
+                        ),
+                        QPointF(
+                            button_rect.left() + button_rect.width() * 0.36,
+                            button_rect.bottom() - button_rect.height() * 0.26,
+                        ),
+                        QPointF(button_rect.right() - button_rect.width() * 0.24, button_rect.center().y()),
+                    )
                 )
             )
         painter.restore()
@@ -200,7 +227,9 @@ class AudioListView(QListView):
         """初始化音频列表视图与其源/筛选模型。"""
         super().__init__(parent)
         self._active_audio_path: Path | None = None
+        self._active_audio_progress = 0.0
         self._is_playing = False
+        self._is_paused = False
         self.source_model = AudioListModel(self)
         self.filter_model = AudioListFilterModel(self)
         self.filter_model.setSourceModel(self.source_model)
@@ -210,7 +239,7 @@ class AudioListView(QListView):
         self.setVerticalScrollMode(QListView.ScrollMode.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setMouseTracking(True)
-        self.setSpacing(2)
+        self.setSpacing(0)
         selection_model = self.selectionModel()
         if selection_model is not None:
             selection_model.currentChanged.connect(self._on_current_changed)
@@ -219,6 +248,16 @@ class AudioListView(QListView):
     def is_playing(self) -> bool:
         """返回当前精确条目是否正在播放。"""
         return self._is_playing
+
+    @property
+    def is_paused(self) -> bool:
+        """返回当前精确条目是否处于暂停状态。"""
+        return self._is_paused
+
+    @property
+    def active_progress(self) -> float:
+        """返回当前精确条目的归一化播放进度。"""
+        return self._active_audio_progress
 
     def set_audio_refs(self, refs: tuple[AudioRef, ...]) -> None:
         """加载当前实体的所有路径级 WEM。"""
@@ -235,20 +274,46 @@ class AudioListView(QListView):
         ref = index.data(AUDIO_REF_ROLE)
         return ref if isinstance(ref, AudioRef) else None
 
-    def audio_control_rect(self, index: QModelIndex):
-        """返回指定列表行的播放按钮命中区域。"""
-        rect = self.visualRect(index)
-        side = min(_AUDIO_BUTTON_SIZE, max(14, rect.height() - 14))
-        return rect.adjusted(rect.width() - side - 10, (rect.height() - side) // 2, -10, -((rect.height() - side) // 2))
+    @staticmethod
+    def row_rect(rect: QRect) -> QRect:
+        """返回列表项在视口内的整行背景矩形。"""
+        return QRect(
+            AUDIO_ROW_HORIZONTAL_MARGIN,
+            rect.top() + 2,
+            max(0, rect.width() - AUDIO_ROW_HORIZONTAL_MARGIN * 2),
+            max(0, rect.height() - 4),
+        )
+
+    def audio_control_rect(self, index: QModelIndex) -> QRect:
+        """返回指定列表行左侧播放按钮的命中区域。"""
+        row_rect = self.row_rect(self.visualRect(index))
+        side = max(12, min(AUDIO_ROW_BUTTON_SIZE, row_rect.height() - 8))
+        left = row_rect.left() + AUDIO_ROW_LEADING_SLOT_WIDTH + AUDIO_ROW_TEXT_GAP
+        return QRect(left, row_rect.center().y() - side // 2, side, side)
 
     def is_active(self, ref: AudioRef) -> bool:
         """判断路径级引用是否为当前播放目标。"""
         return self._active_audio_path == ref.path
 
-    def set_audio_playback_state(self, audio_path: Path | None, *, is_playing: bool) -> None:
-        """按精确路径更新列表行的播放显示状态。"""
+    def playback_progress(self, ref: AudioRef) -> float:
+        """返回给定路径级引用的试听进度。"""
+        if not self.is_active(ref):
+            return 0.0
+        return self._active_audio_progress
+
+    def set_audio_playback_state(
+        self,
+        audio_path: Path | None,
+        *,
+        progress: float,
+        is_playing: bool,
+        is_paused: bool,
+    ) -> None:
+        """按精确路径更新列表行的播放按钮与进度状态。"""
         self._active_audio_path = Path(audio_path) if audio_path is not None else None
+        self._active_audio_progress = max(0.0, min(1.0, float(progress)))
         self._is_playing = bool(is_playing and self._active_audio_path)
+        self._is_paused = bool(is_paused and self._active_audio_path)
         self.viewport().update()
 
     def _on_current_changed(self, current: QModelIndex, _previous: QModelIndex) -> None:

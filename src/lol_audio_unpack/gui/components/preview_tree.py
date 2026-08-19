@@ -23,7 +23,19 @@ from lol_audio_unpack.gui.common.styles import (
     resolve_fluent_neutral_surface,
     resolve_fluent_text_primary_color,
 )
-from lol_audio_unpack.gui.theme import current_accent_preset_id, get_accent_preset
+from lol_audio_unpack.gui.components.audio_row_style import (
+    AUDIO_ROW_BUTTON_GAP,
+    AUDIO_ROW_BUTTON_SIZE,
+    AUDIO_ROW_HORIZONTAL_MARGIN,
+    AUDIO_ROW_LEADING_SLOT_WIDTH,
+    AUDIO_ROW_SELECTED_BAR_MARGIN,
+    AUDIO_ROW_SELECTED_BAR_WIDTH,
+    AUDIO_ROW_TEXT_GAP,
+    active_audio_row_color,
+    audio_control_colors,
+    audio_progress_color,
+    audio_selection_bar_color,
+)
 
 NODE_KIND_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 AUDIO_ID_ROLE = int(Qt.ItemDataRole.UserRole) + 2
@@ -34,16 +46,16 @@ AUDIO_REF_ROLE = int(Qt.ItemDataRole.UserRole) + 6
 AUDIO_AMBIGUOUS_ROLE = int(Qt.ItemDataRole.UserRole) + 7
 EMPTY_MODEL_INDEX = QModelIndex()
 PREVIEW_TREE_ITEM_MIN_HEIGHT = 20
-PREVIEW_TREE_ROW_HORIZONTAL_MARGIN = 10
-PREVIEW_TREE_BRANCH_SLOT_WIDTH = 28
+PREVIEW_TREE_ROW_HORIZONTAL_MARGIN = AUDIO_ROW_HORIZONTAL_MARGIN
+PREVIEW_TREE_BRANCH_SLOT_WIDTH = AUDIO_ROW_LEADING_SLOT_WIDTH
 PREVIEW_TREE_BRANCH_ICON_SIZE = 12
 PREVIEW_TREE_BRANCH_ICON_STROKE_WIDTH = 2
-PREVIEW_TREE_TEXT_GAP = 4
-PREVIEW_TREE_SELECTED_BAR_WIDTH = 3
-PREVIEW_TREE_SELECTED_BAR_MARGIN = 0
+PREVIEW_TREE_TEXT_GAP = AUDIO_ROW_TEXT_GAP
+PREVIEW_TREE_SELECTED_BAR_WIDTH = AUDIO_ROW_SELECTED_BAR_WIDTH
+PREVIEW_TREE_SELECTED_BAR_MARGIN = AUDIO_ROW_SELECTED_BAR_MARGIN
 PREVIEW_TREE_INDENTATION = 10
-PREVIEW_TREE_AUDIO_BUTTON_SIZE = 18
-PREVIEW_TREE_AUDIO_BUTTON_GAP = 6
+PREVIEW_TREE_AUDIO_BUTTON_SIZE = AUDIO_ROW_BUTTON_SIZE
+PREVIEW_TREE_AUDIO_BUTTON_GAP = AUDIO_ROW_BUTTON_GAP
 PREVIEW_MAPPING_ROOT_KEYS = ("skins", "map", "resourcePacks")
 
 
@@ -95,36 +107,6 @@ def _build_styles() -> tuple[str, str]:
         extra_item_rules=item_rules,
         extra_rules=branch_qss,
     )
-
-
-def _build_active_row_color(*, is_dark: bool) -> QColor:
-    """构造试听树活动叶子行的弱强调底色。"""
-    tone = 900 if is_dark else 100
-    color = get_accent_preset(current_accent_preset_id()).scale.color(tone)
-    color.setAlpha(44 if is_dark else 38)
-    return color
-
-
-def _build_progress_fill_color(*, is_dark: bool, is_playing: bool) -> QColor:
-    """构造试听树整行播放进度的强调底色。"""
-    tone = 700 if is_dark else 300
-    color = get_accent_preset(current_accent_preset_id()).scale.color(tone)
-    color.setAlpha(72 if is_playing else 56)
-    return color
-
-
-def _build_audio_control_colors(*, is_dark: bool) -> tuple[QColor, QColor]:
-    """构造试听树活动播放按钮的背景与图标颜色。"""
-    preset = get_accent_preset(current_accent_preset_id())
-    background = preset.scale.color(900 if is_dark else 100)
-    background.setAlpha(52 if is_dark else 46)
-    icon = preset.scale.color(100 if is_dark else 700)
-    return background, icon
-
-
-def _build_selection_bar_color(*, is_dark: bool) -> QColor:
-    """构造试听树选中竖条的强调色。"""
-    return get_accent_preset(current_accent_preset_id()).scale.color(300 if is_dark else 700)
 
 
 def inject_preview_tree_style(tree_view: QTreeView) -> None:
@@ -1055,7 +1037,7 @@ class PreviewTreeView(QTreeView):
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(_build_selection_bar_color(is_dark=isDarkTheme()))
+        painter.setBrush(audio_selection_bar_color(is_dark=isDarkTheme()))
         painter.drawRoundedRect(bar_rect, 2, 2)
         painter.restore()
 
@@ -1127,7 +1109,7 @@ class PreviewTreeView(QTreeView):
             return None
 
         if is_active_audio and not is_selected and not is_hovered:
-            return _build_active_row_color(is_dark=isDarkTheme())
+            return active_audio_row_color(is_dark=isDarkTheme())
         return resolve_fluent_neutral_surface("emphasis_selected" if is_selected else "emphasis_hover")
 
     def _audio_id_for_index(self, index: QModelIndex) -> str | None:
@@ -1180,7 +1162,7 @@ class PreviewTreeView(QTreeView):
         if progress <= 0:
             return
 
-        progress_color = _build_progress_fill_color(
+        progress_color = audio_progress_color(
             is_dark=isDarkTheme(),
             is_playing=self._active_audio_is_playing,
         )
@@ -1213,7 +1195,7 @@ class PreviewTreeView(QTreeView):
         audio_ref = self._audio_ref_for_index(index)
         is_active_audio = audio_ref is not None and audio_ref.path == self._active_audio_path
         if is_active_audio:
-            button_background, icon_color = _build_audio_control_colors(is_dark=isDarkTheme())
+            button_background, icon_color = audio_control_colors(is_dark=isDarkTheme())
         else:
             button_background = resolve_fluent_neutral_surface("emphasis_hover")
             button_background.setAlpha(20)

@@ -139,7 +139,14 @@ def test_overview_preview_controller_builds_champion_group_labels() -> None:
         data_reader=SimpleNamespace(
             get_champion=lambda champion_id: {
                 "skins": [
-                    {"id": 1000, "skinNames": {"zh_CN": "经典"}},
+                    {
+                        "id": 1000,
+                        "skinNames": {"zh_CN": "经典"},
+                        "chromas": [
+                            {"id": 1014, "chromaNames": {"zh_CN": "福牛守护者 安妮 贺岁"}},
+                            {"id": 1015, "chromaNames": {"en_US": "Lunar Beast Annie Chroma"}},
+                        ],
+                    },
                     {"id": 2000, "name": "勇者"},
                 ]
             }
@@ -156,7 +163,12 @@ def test_overview_preview_controller_builds_champion_group_labels() -> None:
     assert result.placeholder_message is None
     assert result.mapping_path == mapping_path
     assert result.available_audio_ids == {"1001", "1002"}
-    assert result.group_label_map == {"1000": "经典", "2000": "勇者"}
+    assert result.group_label_map == {
+        "1000": "经典",
+        "1014": "福牛守护者 安妮 贺岁",
+        "1015": "Lunar Beast Annie Chroma",
+        "2000": "勇者",
+    }
     assert result.default_preview_mode == EVENT_PREVIEW_MODE
 
 

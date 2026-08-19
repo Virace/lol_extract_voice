@@ -637,6 +637,7 @@ def test_overview_audio_preview_panel_can_reset_summary(qtbot) -> None:
 def test_overview_audio_preview_panel_can_set_preview_data_and_playback_state(qtbot) -> None:
     panel = OverviewAudioPreviewPanel(summary_placeholder="等待事件数据。")
     qtbot.addWidget(panel)
+    expected_progress = 0.25
 
     panel.set_preview_data(
         mapping_data={"skins": {"1000": {"events": {}}}},
@@ -644,9 +645,17 @@ def test_overview_audio_preview_panel_can_set_preview_data_and_playback_state(qt
         group_label_map={"1000": "经典"},
         summary_text="分组 1 · 类型 0 · 事件 0",
     )
-    panel.set_playback_state(Path("1001.wem"), progress=0.25, is_playing=False, is_paused=True)
+    panel.set_playback_state(
+        Path("1001.wem"),
+        progress=expected_progress,
+        is_playing=False,
+        is_paused=True,
+    )
 
     assert panel.summary_label.text() == "分组 1 · 类型 0 · 事件 0"
+    assert panel.audio_list.active_progress == expected_progress
+    assert panel.audio_list.is_playing is False
+    assert panel.audio_list.is_paused is True
 
 
 def test_overview_audio_preview_panel_expands_single_root_by_default(qtbot) -> None:
