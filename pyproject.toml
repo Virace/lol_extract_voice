@@ -6,11 +6,11 @@ authors = [
     { name = "Virace", email = "Virace@aliyun.com" }
 ]
 dependencies = [
-    "python-dotenv>=1.2.2",
+    "python-dotenv>=1.2.3",
     "msgpack>=1.2.1",
     "ruamel-yaml>=0.18.14",
-    "league-tools>=1.1.4",
-    "riotmanifest>=2.4.0",
+    "league-tools>=1.2.0",
+    "riotmanifest>=2.10.0",
     "pyvgmstream>=0.1.0",
 ]
 readme = "README.md"
@@ -18,8 +18,8 @@ requires-python = ">= 3.10"
 
 [project.optional-dependencies]
 gui = [
-    "pyside6>=6.11.1",
-    "pyside6-fluent-widgets>=1.11.2",
+    "pyside6>=6.11.2",
+    "pyside6-fluent-widgets>=1.11.3",
 ]
 
 [project.scripts]
@@ -37,12 +37,12 @@ default-groups = ["dev"]
 
 [dependency-groups]
 build = [
-    "pyinstaller>=6.20.0",
+    "pyinstaller>=6.22.2",
 ]
 dev = [
     "memory-profiler>=0.61.0",
-    "pytest>=9.0.3",
-    "ruff>=0.15.16",
+    "pytest>=9.1.1",
+    "ruff>=0.16.3",
 ]
 gui-test = [
     "pytest-qt>=4.5.0",

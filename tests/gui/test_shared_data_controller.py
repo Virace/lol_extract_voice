@@ -5,6 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+from lol_audio_unpack.app.resource_pack import ResourcePackWadRef, build_resource_pack_key
 from lol_audio_unpack.gui.controllers.contracts import GuiNotice
 from lol_audio_unpack.gui.controllers.shared_data import (
     SharedDataController,
@@ -129,6 +132,18 @@ def test_shared_data_controller_refresh_shared_output_state_uses_incremental_loa
         def __init__(self, app_context) -> None:
             loader_calls.append(("init", app_context))
 
+        def load_champion_rows_by_targets(
+            self,
+            *,
+            champion_ids: tuple[str, ...],
+            special_targets: tuple[str, ...],
+        ):
+            loader_calls.append(("champion_rows", champion_ids, special_targets))
+            return {
+                "champions": [{"id": champion_ids[0], "name": "champions"}],
+                "special": [{"id": "66600", "key": special_targets[0], "name": "厄加特"}],
+            }
+
         def load_entities_by_ids(self, entity_type: str, entity_ids: tuple[str, ...]):
             loader_calls.append((entity_type, tuple(entity_ids)))
             return [{"id": entity_ids[0], "name": entity_type}]
@@ -142,17 +157,56 @@ def test_shared_data_controller_refresh_shared_output_state_uses_incremental_loa
     controller.notice_requested.connect(notices.append)
     controller.reconfigure_runtime_logging_requested.connect(reconfigure_payloads.append)
 
-    controller.refresh_shared_output_state(OutputStateRefreshRequest(champion_ids=("1",), map_ids=("11",)))
+    controller.refresh_shared_output_state(
+        OutputStateRefreshRequest(
+            champion_ids=("1",),
+            map_ids=("11",),
+            special_targets=("champion:66600",),
+        )
+    )
 
     assert reconfigure_payloads == []
-    assert loader_calls[1:] == [("champions", ("1",)), ("maps", ("11",))]
-    assert [payload.entity_type for payload in updates] == ["champions", "maps"]
+    assert loader_calls[1:] == [
+        ("champion_rows", ("1",), ("champion:66600",)),
+        ("maps", ("11",)),
+    ]
+    assert [payload.entity_type for payload in updates] == ["champions", "special", "maps"]
     assert notices == [
         GuiNotice(
             title="数据已刷新",
             content="列表内容已经更新，可以继续查看或创建任务。",
             level="success",
         )
+    ]
+
+
+def test_shared_data_controller_refreshes_resource_pack_snapshot_without_champion_scan() -> None:
+    """资源包 key 与 snapshot 的完成任务仍走特殊目录增量刷新。"""
+    calls = []
+    ref = ResourcePackWadRef("Game/DATA/FINAL/Legacy.wad.client", size=12, mtime_ns=34)
+    key = build_resource_pack_key("Legacy.wad.client", "MODE_LEGACY")
+
+    class _FakeEntityDataLoader:
+        def __init__(self, _app_context) -> None:
+            calls.append("init")
+
+        def load_champion_rows_by_targets(self, *, champion_ids, special_targets):
+            calls.append((champion_ids, special_targets))
+            return {"champions": [], "special": [{"id": key, "name": "Legacy"}]}
+
+        def load_entities_by_ids(self, _entity_type, _entity_ids):
+            pytest.fail("资源包增量刷新不应读取地图目录")
+
+    controller = _build_controller(entity_data_loader_cls=_FakeEntityDataLoader)
+    controller.app_context = object()
+    updates = []
+    controller.entity_rows_updated.connect(updates.append)
+
+    controller.refresh_shared_output_state(OutputStateRefreshRequest(special_targets=(key,), resource_pack_wads=(ref,)))
+
+    assert calls == ["init", ((), (key,))]
+    assert [(payload.entity_type, payload.rows) for payload in updates] == [
+        ("special", ({"id": key, "name": "Legacy"},))
     ]
 
 

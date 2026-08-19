@@ -20,6 +20,7 @@ def _build_loader() -> EntityDataLoader:
 def test_entity_data_loader_logs_warning_with_exception_on_init_failure(monkeypatch) -> None:
     """初始化失败时应以带异常的 warning 记录，并继续向上抛出。"""
     loader = _build_loader()
+    loader.data_reader = SimpleNamespace(version="16.3", get_champions=lambda: [])
     opt_calls: list[dict[str, object]] = []
     warnings: list[str] = []
 

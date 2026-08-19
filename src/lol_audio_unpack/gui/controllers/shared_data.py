@@ -216,17 +216,12 @@ class SharedDataController(QObject):
                 )
         else:
             logger.debug(
-                "当前配置: source_mode=local_path, "
-                f"output_path={config.output_path}, game_path={config.game_path}"
+                f"当前配置: source_mode=local_path, output_path={config.output_path}, game_path={config.game_path}"
             )
 
-        worker = self._task_worker_cls(
-            lambda: self._create_app_context(settings=config.to_app_context_settings())
-        )
+        worker = self._task_worker_cls(lambda: self._create_app_context(settings=config.to_app_context_settings()))
         worker.signals.finished.connect(
-            lambda app_context, request_id=request_id: self.on_shared_context_build_finished(
-                request_id, app_context
-            )
+            lambda app_context, request_id=request_id: self.on_shared_context_build_finished(request_id, app_context)
         )
         worker.signals.failed.connect(
             lambda error, request_id=request_id: self.on_shared_context_build_failed(request_id, error)
@@ -247,11 +242,9 @@ class SharedDataController(QObject):
         self.app_context_changed.emit(self.app_context)
         self.shared_data_cleared.emit()
         logger.debug("共享数据 AppContext 创建成功")
-        self.loading_state_changed.emit(
-            SharedDataLoadingState(message="正在扫描英雄数据…", active=True)
-        )
-        logger.debug("准备启动 champions 实体状态扫描线程")
-        self._champions_worker = self._data_load_worker_cls(self.app_context, "champions")
+        self.loading_state_changed.emit(SharedDataLoadingState(message="正在扫描英雄与特殊内容数据…", active=True))
+        logger.debug("准备启动 champion_catalog 实体状态扫描线程")
+        self._champions_worker = self._data_load_worker_cls(self.app_context, "champion_catalog")
         self._champions_worker.finished.connect(self.on_champions_loaded)
         self._champions_worker.error.connect(self.on_data_load_error)
         self._champions_worker.start()
@@ -269,13 +262,9 @@ class SharedDataController(QObject):
         self.app_context_changed.emit(None)
         self.shared_data_cleared.emit()
         logger.error(f"创建 AppContext 失败: {error}")
-        self.loading_state_changed.emit(
-            SharedDataLoadingState(message=f"加载失败: {error}", active=False)
-        )
+        self.loading_state_changed.emit(SharedDataLoadingState(message=f"加载失败: {error}", active=False))
         if self.pending_refresh_notice:
-            self.notice_requested.emit(
-                GuiNotice(title="刷新失败", content=error, level="error")
-            )
+            self.notice_requested.emit(GuiNotice(title="刷新失败", content=error, level="error"))
             self.pending_refresh_notice = False
 
     def on_shared_context_build_timeout(self) -> None:
@@ -293,28 +282,27 @@ class SharedDataController(QObject):
         self.app_context_changed.emit(None)
         self.shared_data_cleared.emit()
         logger.error(f"共享数据加载超时: {message}")
-        self.loading_state_changed.emit(
-            SharedDataLoadingState(message=f"加载失败: {message}", active=False)
-        )
-        self.notice_requested.emit(
-            GuiNotice(title="共享数据加载超时", content=message, level="error")
-        )
+        self.loading_state_changed.emit(SharedDataLoadingState(message=f"加载失败: {message}", active=False))
+        self.notice_requested.emit(GuiNotice(title="共享数据加载超时", content=message, level="error"))
         if self.pending_refresh_notice:
             self.pending_refresh_notice = False
 
     def on_champions_loaded(self, data) -> None:
-        """英雄数据加载完成。"""
-        logger.info(f"champions 实体列表已刷新，当前展示 {len(data)} 项")
-        self.entity_data_replaced.emit(EntityRowsPayload.from_rows("champions", data))
+        """英雄与特殊内容目录加载完成。"""
+        catalog = data if isinstance(data, dict) else {"champions": data, "special": []}
+        champions = list(catalog.get("champions", []))
+        special = list(catalog.get("special", []))
+        logger.info(f"champions 实体列表已刷新，当前展示 {len(champions)} 项")
+        logger.info(f"special 实体列表已刷新，当前展示 {len(special)} 项")
+        self.entity_data_replaced.emit(EntityRowsPayload.from_rows("champions", champions))
+        self.entity_data_replaced.emit(EntityRowsPayload.from_rows("special", special))
 
         if self.app_context is None:
             logger.error("AppContext 未初始化，无法继续加载 maps 数据")
             self.finish_data_loading()
             return
 
-        self.loading_state_changed.emit(
-            SharedDataLoadingState(message="正在扫描地图数据…", active=True)
-        )
+        self.loading_state_changed.emit(SharedDataLoadingState(message="正在扫描地图数据…", active=True))
         logger.debug("准备启动 maps 实体状态扫描线程")
         self._maps_worker = self._data_load_worker_cls(self.app_context, "maps")
         self._maps_worker.finished.connect(self.on_maps_loaded)
@@ -337,27 +325,19 @@ class SharedDataController(QObject):
         ):
             self.auto_prepare_attempted = True
             logger.info("共享数据缺失或版本不兼容，转入后台数据准备流程")
-            self.loading_state_changed.emit(
-                SharedDataLoadingState(message="正在刷新基础数据…", active=True)
-            )
+            self.loading_state_changed.emit(SharedDataLoadingState(message="正在刷新基础数据…", active=True))
             self.start_prepare(self._get_config())
             return
-        self.loading_state_changed.emit(
-            SharedDataLoadingState(message=f"加载失败: {error}", active=False)
-        )
+        self.loading_state_changed.emit(SharedDataLoadingState(message=f"加载失败: {error}", active=False))
         if self.pending_refresh_notice:
-            self.notice_requested.emit(
-                GuiNotice(title="刷新失败", content=str(error), level="error")
-            )
+            self.notice_requested.emit(GuiNotice(title="刷新失败", content=str(error), level="error"))
             self.pending_refresh_notice = False
         self.flush_pending_runtime_entity_refresh()
 
     def finish_data_loading(self) -> None:
         """完成共享数据加载。"""
         self.is_loading_shared_data = False
-        self.loading_state_changed.emit(
-            SharedDataLoadingState(message="实体数据已就绪", active=False)
-        )
+        self.loading_state_changed.emit(SharedDataLoadingState(message="实体数据已就绪", active=False))
         if self.pending_refresh_notice:
             self.notice_requested.emit(
                 GuiNotice(
@@ -396,16 +376,18 @@ class SharedDataController(QObject):
             logger.info("开始增量刷新共享输出状态")
             try:
                 loader = self._entity_data_loader_cls(self.app_context)
-                if request.champion_ids:
-                    champion_rows = loader.load_entities_by_ids("champions", request.champion_ids)
-                    self.entity_rows_updated.emit(
-                        EntityRowsPayload.from_rows("champions", champion_rows)
+                if request.champion_ids or request.special_targets or request.resource_pack_wads:
+                    catalog = loader.load_champion_rows_by_targets(
+                        champion_ids=request.champion_ids,
+                        special_targets=request.special_targets,
                     )
+                    if request.champion_ids:
+                        self.entity_rows_updated.emit(EntityRowsPayload.from_rows("champions", catalog["champions"]))
+                    if request.special_targets or request.resource_pack_wads:
+                        self.entity_rows_updated.emit(EntityRowsPayload.from_rows("special", catalog["special"]))
                 if request.map_ids:
                     map_rows = loader.load_entities_by_ids("maps", request.map_ids)
-                    self.entity_rows_updated.emit(
-                        EntityRowsPayload.from_rows("maps", map_rows)
-                    )
+                    self.entity_rows_updated.emit(EntityRowsPayload.from_rows("maps", map_rows))
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"增量刷新共享输出状态失败，回退到全量刷新: {exc}")
                 self.request_shared_data_reload(show_notice=True, allow_auto_prepare=True)
@@ -426,10 +408,8 @@ class SharedDataController(QObject):
         self.allow_auto_prepare_on_reload = False
         self.auto_prepare_attempted = False
         self.is_loading_shared_data = True
-        self.loading_state_changed.emit(
-            SharedDataLoadingState(message="正在刷新输出状态…", active=True)
-        )
-        self._champions_worker = self._data_load_worker_cls(self.app_context, "champions")
+        self.loading_state_changed.emit(SharedDataLoadingState(message="正在刷新输出状态…", active=True))
+        self._champions_worker = self._data_load_worker_cls(self.app_context, "champion_catalog")
         self._champions_worker.finished.connect(self.on_champions_loaded)
         self._champions_worker.error.connect(self.on_data_load_error)
         self._champions_worker.start()
@@ -446,9 +426,7 @@ class SharedDataController(QObject):
         self.app_context = None
         self.shared_data_cleared.emit()
         self.app_context_changed.emit(None)
-        self.loading_state_changed.emit(
-            SharedDataLoadingState(message="正在重新加载数据…", active=True)
-        )
+        self.loading_state_changed.emit(SharedDataLoadingState(message="正在重新加载数据…", active=True))
         self.load_initial_data(config)
 
     def on_context_input_changed(self, config=None) -> None:
@@ -460,9 +438,7 @@ class SharedDataController(QObject):
         scan_changed = scan_signature != self.scan_signature
 
         if scan_changed:
-            self.reconfigure_runtime_logging_requested.emit(
-                RuntimeLoggingConfig.from_gui_config(config)
-            )
+            self.reconfigure_runtime_logging_requested.emit(RuntimeLoggingConfig.from_gui_config(config))
 
         self.reader_signature = reader_signature
         self.scan_signature = scan_signature
@@ -471,12 +447,8 @@ class SharedDataController(QObject):
             return
 
         self.pending_runtime_entity_refresh = True
-        self.pending_refresh_allow_prepare = (
-            self.pending_refresh_allow_prepare or reader_changed
-        )
-        self.pending_refresh_reset_reader = (
-            self.pending_refresh_reset_reader or reader_changed
-        )
+        self.pending_refresh_allow_prepare = self.pending_refresh_allow_prepare or reader_changed
+        self.pending_refresh_reset_reader = self.pending_refresh_reset_reader or reader_changed
         self.schedule_runtime_entity_refresh()
 
     def schedule_runtime_entity_refresh(self) -> None:
@@ -534,9 +506,7 @@ class SharedDataController(QObject):
 
         worker = self._task_worker_cls(run_prepare)
         worker.signals.started.connect(self.on_prepare_started)
-        worker.signals.finished.connect(
-            lambda _result, refresh_config=config: self.on_prepare_finished(refresh_config)
-        )
+        worker.signals.finished.connect(lambda _result, refresh_config=config: self.on_prepare_finished(refresh_config))
         worker.signals.failed.connect(self.on_prepare_failed)
         self.shared_data_prepare_worker = worker
         self._start_worker(worker)
@@ -545,9 +515,7 @@ class SharedDataController(QObject):
         """同步后台共享数据准备开始时的界面状态。"""
         logger.info("开始后台共享数据准备")
         self.is_preparing_shared_data = True
-        self.loading_state_changed.emit(
-            SharedDataLoadingState(message="正在刷新基础数据…", active=True)
-        )
+        self.loading_state_changed.emit(SharedDataLoadingState(message="正在刷新基础数据…", active=True))
 
     def on_prepare_finished(self, config) -> None:
         """在后台数据准备结束后重新加载共享实体数据。"""
@@ -561,13 +529,9 @@ class SharedDataController(QObject):
         logger.error(f"后台共享数据准备失败: {error}")
         self.is_preparing_shared_data = False
         self.shared_data_prepare_worker = None
-        self.loading_state_changed.emit(
-            SharedDataLoadingState(message=f"加载失败: {error}", active=False)
-        )
+        self.loading_state_changed.emit(SharedDataLoadingState(message=f"加载失败: {error}", active=False))
         if self.pending_refresh_notice:
-            self.notice_requested.emit(
-                GuiNotice(title="刷新失败", content=error, level="error")
-            )
+            self.notice_requested.emit(GuiNotice(title="刷新失败", content=error, level="error"))
             self.pending_refresh_notice = False
 
     def _apply_blocked_state(self, message: str) -> None:
@@ -579,13 +543,9 @@ class SharedDataController(QObject):
         self.app_context = None
         self.shared_data_cleared.emit()
         self.app_context_changed.emit(None)
-        self.loading_state_changed.emit(
-            SharedDataLoadingState(message=message, active=False)
-        )
+        self.loading_state_changed.emit(SharedDataLoadingState(message=message, active=False))
         if self.pending_refresh_notice:
-            self.notice_requested.emit(
-                GuiNotice(title="无法刷新数据", content=message, level="warning")
-            )
+            self.notice_requested.emit(GuiNotice(title="无法刷新数据", content=message, level="warning"))
             self.pending_refresh_notice = False
 
     @staticmethod

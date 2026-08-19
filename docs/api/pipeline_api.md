@@ -1,5 +1,111 @@
 # 解包与映射 API（核心流水线）
 
+## 0. 本地 resource binding artifact
+
+`local_path` 模式的 `update` 会对 declared BIN 与其引用的 BNK/WPK 做目标 hash 查询，
+只扫描 `Game/DATA/FINAL` 下 root WAD 与当前 `game_region` 的 WAD TOC。命中位置写入
+`manifest/<version>/banks/**`，不会持久化本机绝对路径。
+
+本地 banks artifact 的资源合同版本位于顶层：
+
+```yaml
+resourceSchemaVersion: 2
+entity:
+  type: champion
+  id: "60009"
+binBindings:
+  - path: data/characters/jade_fiddlesticks/skins/skin301.bin
+    normalizedPath: data/characters/jade_fiddlesticks/skins/skin301.bin
+    wad: Game/DATA/FINAL/Champions/FiddleSticks.wad.client
+    entryHash: "0000000000000000"
+    status: resolved
+bankBindings:
+  - category: Characters/Jade_Fiddlesticks/Skins/Skin301/VO
+    path: assets/sounds/wwise2016/vo/example_audio.bnk
+    normalizedPath: assets/sounds/wwise2016/vo/example_audio.bnk
+    kind: BNK
+    wad: Game/DATA/FINAL/Champions/FiddleSticks.zh_CN.wad.client
+    entryHash: "0000000000000000"
+    sourceBin: data/characters/jade_fiddlesticks/skins/skin301.bin
+    role: localized
+    status: resolved
+diagnostics:
+  completeness: complete
+  unresolvedBins: []
+  unresolvedBanks: []
+```
+
+单条解析状态为 `resolved`、`missing`、`ambiguous_identical`、
+`ambiguous_conflict` 或 `parse_failed`。`diagnostics.completeness` 为
+`complete`、`partial` 或 `failed`。同 hash 多候选只在歧义时读取 payload；内容不同不会
+静默选择首项。
+
+`DataReader.get_champion_banks(...)` 与 `get_map_banks(...)` 默认仍可读取旧 artifact；
+需要精确 binding 的调用方传入 `require_bindings=True`，或使用
+`get_champion_resource_bindings(...)` / `get_map_resource_bindings(...)`。旧 local artifact
+会提示重新运行 `update`；`remote_snapshot` 继续使用既有 `.use_local_bin` 与 v1 投影，
+不会实例化本地 WAD 索引。
+
+`AudioEntityData` 在 local v2 会把每条 `BankBinding` 投影为 `AudioBank`：它只补充
+逻辑子实体 ID 与音频类型，保留原始 binding 作为唯一物理资源事实。旧 local artifact 在
+创建解包或 mapping 实体时会明确提示重新运行 `update`；不会退回 alias、分类名或旧投影猜测
+WAD。`remote_snapshot` 仍保留 v1 root/language 投影，`resource_banks` 为空且
+`binding_diagnostics` 为 `None`，不会创建本地 WAD index。
+
+数据关系固定为：
+
+```text
+logical entity -> declared BIN -> BinBinding -> BANK_UNITS path
+               -> BankBinding -> physical BNK/WPK -> original WEM + exact output path
+```
+
+一个 logical entity 可以跨多个 root/current-language WAD，因此消费者必须按 binding 的
+`wad + entryHash` 处理，不能把 alias 还原为单一 WAD。地图更新仍先处理 Map 0 Common，
+再对 Map 11/22 等目标去重；只有目标地图而没有 Map 0 的系统结果不构成有效验收。
+
+### 0.1 显式 resource-pack 发现 artifact
+
+本地 API 可在 `OperationOptions.resource_pack_wads` 传入由
+`ResourcePackWadRef.from_path(game_root, path)` 创建的显式选择。每个 ref 只持久化游戏根相对
+WAD identity 与 `st_size` / `st_mtime_ns`；选择和执行阶段均严格解析、确认仍在
+`Game/DATA/FINAL` 下且为 `.wad.client`。remote 模式在应用门面拒绝该能力。
+
+发现只打开 selected WAD 的 TOC，只读取 storage type 为 `0`、`1` 或 `3` 的非零 candidate。解压前
+强制单 WAD 上限：4096 个 candidate、单 entry 4 MiB 未压缩尺寸、64 MiB candidate 压缩字节。候选
+payload 必须以 `PROP` 开头才交给 BIN parser；其他 false positive 只计读取成本。bank 的物理 WAD
+仍由 P1 resolver 按已声明 hash 查询 root/current-language TOC；除既有 hash 歧义比较外，不读取未选
+WAD payload。
+
+每个成功 `BANK_UNITS.category` 生成稳定 string identity：
+
+```text
+resource_pack:<wad-component>:<namespace-component>
+```
+
+组件使用 NFKC、casefold 与 UTF-8 percent encoding；WAD 组件去除 `.wad.client`。banks 与 events
+分别写入 `manifest/<version>/banks/resource_packs/` 与
+`manifest/<version>/events/resource_packs/`，文件名对完整 key 再做 percent encoding，payload 仍保存原
+stable key。banks 的 v2 `entity.type` 固定为 `resource_pack`，`entity.id` 为完整 key；`resourcePack`
+字段保存相对 WAD identity、stat fingerprint、category 与按 logical bank path 合并的 source entry hashes。
+同 key 指向不同规范化 WAD identity 或 source fingerprint 的既有 artifact 会标记 conflict，绝不覆盖。
+Map 22 已声明的 BIN entry 会按当前 map data/v2 binding ownership 从 candidate 中排除；该判定不依赖
+WAD 文件名前缀，同一 selected WAD 中不属于 Map 22 的独立 BIN 仍可继续发现。
+
+同 selected WAD/category 的重复声明按 logical bank path 合并，events 也去重。单 candidate parse failure、
+bank unresolved 或单 pack conflict 不阻断其他 category；`ResourcePackDiscoveryResult.scans` 提供每个
+selected-WAD 的状态、payload reads、压缩/未压缩字节与失败原因。尚无可解析 BIN 或无 BANK_UNITS bank
+path 时不生成伪 pack artifact。banks/events 写入后必须回读并匹配本次 payload；任一持久化校验失败时
+该 pack 报告为 failed，不会把不可供后续 consumer 读取的结果显示为扫描成功。
+
+`DataReader.get_resource_pack_banks(...)`、
+`get_resource_pack_resource_bindings(...)` 与 `get_resource_pack_events(...)` 提供该 artifact 的稳定读取
+边界。`AudioEntityData.from_resource_pack(...)` 把每个 pack 构造为唯一 logical sub-entity，并复用
+local v2 binding consumer：extract 只读取已解析的物理 WAD/entry，mapping 复用 WAD/HIRC cache。
+音频、raw hash、integrated hash 与 report 分别隔离到 `resource_packs` group；所有文件名使用完整 key
+的 Windows-safe component，payload 内仍保留完整 key。raw mapping 使用 `resourcePacks` data key，
+integrated mapping 使用 `data.resourcePack` 的稳定结构，并保留 namespace、WAD、events、audioPaths 与
+mapping diagnostics。缺 events 或没有可映射事件时仍会写入诊断，不会否定已经 extract 的平铺 WEM。
+
 ## 1. 解包入口
 
 公开包：`lol_audio_unpack.unpack`
@@ -69,10 +175,12 @@ def generate_output_path(
 
 单实体解包主线：
 
-1. 根据 `AudioEntityData` 收集 VO 与非 VO bank 路径
-2. 分别从语言 WAD / 根 WAD 提取原始 bank 数据
-3. 解析 `BNK` / `WPK` 并输出 `.wem`
-4. 记录统计信息与报告
+1. local v2 按每条成功 binding 的物理 WAD identity 与 entry 提取原始 bank；同一逻辑实体内
+   只复用相同 `(wad identity, entry hash)` 的 raw 数据，仍分别写回各自子实体和音频类型。
+2. remote v1 继续按语言 WAD / 根 WAD 的兼容投影提取。
+3. 解析 `BNK` / `WPK` 并输出原始 ID 命名的 `.wem`；同一最终相对输出路径只写入一次。
+4. 记录旧报告字段，并为 local v2 追加 `bindingDiagnostics`（逐 binding、逐 WAD 与
+   `complete` / `partial` / `failed`）；报告不写入绝对 WAD 路径。
 
 若当前工作流启用了 WAV，则由独立 `WAV 转码` stage 直接消费当前版本的 `audios/<version>` 输出树，
 再统一调用 `transcode_tree(...)` 生成镜像 WAV。
@@ -145,18 +253,21 @@ def integrate_entity(
 
 ### 2.5 当前映射语义
 
-映射阶段会遍历同时存在于 `banks` 与 `events` 的分类。
+local v2 映射只遍历成功 binding 中的 `_events.bnk`，并直接使用 binding 指向的 WAD；同一
+分类/路径位于多个 WAD 时会分别处理并合并原有 `events: category -> event -> WEM ID[]` 结构。
+remote v1 才继续按分类名选择语言 WAD / 根 WAD 的兼容分支。
 
-WAD 选择规则：
+映射输出额外包含：
 
-- 分类名包含 `VO`：优先语言 WAD
-- 其他分类：使用根 WAD
+- 子实体 sibling `audioPaths: category -> event -> relativePath[]`，仅指向实际解包的 WEM；
+  relative path 相对于当前逻辑实体输出根，使用 POSIX 分隔符，保留同 ID 的多路径。
+- 顶层 `mappingDiagnostics`：映射完整度、路径级 WEM 覆盖、缺 events、未解析 bank 与错误分类。
 
-因此：
-
-- `mapping` 通常会同时使用语言 WAD 与根 WAD
-- 它不受 `ctx.config.include_types` 的过滤约束
-- 地图映射往往会比英雄链路更重
+没有 events 不会伪造 mapping 或让已解包 WEM 失败，而是产生可观察的 `partial` 诊断。
+映射的本地 BNK/HIRC 磁盘缓存以完整 SHA-256 WAD identity namespace 隔离；运行期 key 同时
+包含 WAD identity、规范化 bank path 和 HIRC backend。写入 cache 前会校验规范化 bank path
+不能越出当前 WAD namespace；同 key 的并发提取在一次原子临界区内完成。events 中存在但没有
+对应 binding 的分类会以 `status: missing` 写入 `unresolvedBankCategories`。
 
 ## 3. 编排层入口
 

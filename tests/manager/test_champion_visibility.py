@@ -62,11 +62,12 @@ def test_hidden_champion_markers_use_alias_wad_and_id() -> None:
     assert should_hide_champion_by_default(champion) is True
 
 
-def test_filter_default_visible_champions_hides_ruby_series() -> None:
+def test_filter_default_visible_champions_hides_special_series() -> None:
     champions = [
         _make_champion(1, "Annie", "Game/DATA/FINAL/Champions/Annie.wad.client"),
         _make_champion(66600, "Ruby_Urgot", "Game/DATA/FINAL/Champions/Ruby_Urgot.wad.client"),
         _make_champion(666123, "TestAlias", "Game/DATA/FINAL/Champions/Garen.wad.client"),
+        _make_champion(60001, "Jade_Annie", "Game/DATA/FINAL/Champions/Jade_Annie.wad.client"),
     ]
 
     visible = filter_default_visible_champions(champions)
@@ -78,14 +79,18 @@ def test_generate_champion_tasks_skips_hidden_by_default_but_allows_explicit_ids
     champions = [
         _make_champion(1, "Annie", "Game/DATA/FINAL/Champions/Annie.wad.client"),
         _make_champion(66600, "Ruby_Urgot", "Game/DATA/FINAL/Champions/Ruby_Urgot.wad.client"),
+        _make_champion(60001, "Jade_Annie", "Game/DATA/FINAL/Champions/Jade_Annie.wad.client"),
     ]
     reader = SimpleNamespace(get_champions=lambda: champions)
 
     all_tasks = generate_champion_tasks(reader, None)
-    explicit_tasks = generate_champion_tasks(reader, [66600])
+    explicit_tasks = generate_champion_tasks(reader, [66600, 60001])
 
     assert all_tasks == [("champion", 1, "英雄ID 1")]
-    assert explicit_tasks == [("champion", 66600, "英雄ID 66600")]
+    assert explicit_tasks == [
+        ("champion", 66600, "英雄ID 66600"),
+        ("champion", 60001, "英雄ID 60001"),
+    ]
 
 
 def test_resolve_champion_ids_keeps_hidden_alias_available_when_explicit(
