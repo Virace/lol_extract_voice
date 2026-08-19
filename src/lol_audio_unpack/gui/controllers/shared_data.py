@@ -242,9 +242,9 @@ class SharedDataController(QObject):
         self.app_context_changed.emit(self.app_context)
         self.shared_data_cleared.emit()
         logger.debug("共享数据 AppContext 创建成功")
-        self.loading_state_changed.emit(SharedDataLoadingState(message="正在扫描英雄数据…", active=True))
-        logger.debug("准备启动 champions 实体状态扫描线程")
-        self._champions_worker = self._data_load_worker_cls(self.app_context, "champions")
+        self.loading_state_changed.emit(SharedDataLoadingState(message="正在扫描英雄与特殊内容数据…", active=True))
+        logger.debug("准备启动 champion_catalog 实体状态扫描线程")
+        self._champions_worker = self._data_load_worker_cls(self.app_context, "champion_catalog")
         self._champions_worker.finished.connect(self.on_champions_loaded)
         self._champions_worker.error.connect(self.on_data_load_error)
         self._champions_worker.start()
@@ -288,9 +288,14 @@ class SharedDataController(QObject):
             self.pending_refresh_notice = False
 
     def on_champions_loaded(self, data) -> None:
-        """英雄数据加载完成。"""
-        logger.info(f"champions 实体列表已刷新，当前展示 {len(data)} 项")
-        self.entity_data_replaced.emit(EntityRowsPayload.from_rows("champions", data))
+        """英雄与特殊内容目录加载完成。"""
+        catalog = data if isinstance(data, dict) else {"champions": data, "special": []}
+        champions = list(catalog.get("champions", []))
+        special = list(catalog.get("special", []))
+        logger.info(f"champions 实体列表已刷新，当前展示 {len(champions)} 项")
+        logger.info(f"special 实体列表已刷新，当前展示 {len(special)} 项")
+        self.entity_data_replaced.emit(EntityRowsPayload.from_rows("champions", champions))
+        self.entity_data_replaced.emit(EntityRowsPayload.from_rows("special", special))
 
         if self.app_context is None:
             logger.error("AppContext 未初始化，无法继续加载 maps 数据")
@@ -371,9 +376,15 @@ class SharedDataController(QObject):
             logger.info("开始增量刷新共享输出状态")
             try:
                 loader = self._entity_data_loader_cls(self.app_context)
-                if request.champion_ids:
-                    champion_rows = loader.load_entities_by_ids("champions", request.champion_ids)
-                    self.entity_rows_updated.emit(EntityRowsPayload.from_rows("champions", champion_rows))
+                if request.champion_ids or request.special_targets or request.resource_pack_wads:
+                    catalog = loader.load_champion_rows_by_targets(
+                        champion_ids=request.champion_ids,
+                        special_targets=request.special_targets,
+                    )
+                    if request.champion_ids:
+                        self.entity_rows_updated.emit(EntityRowsPayload.from_rows("champions", catalog["champions"]))
+                    if request.special_targets or request.resource_pack_wads:
+                        self.entity_rows_updated.emit(EntityRowsPayload.from_rows("special", catalog["special"]))
                 if request.map_ids:
                     map_rows = loader.load_entities_by_ids("maps", request.map_ids)
                     self.entity_rows_updated.emit(EntityRowsPayload.from_rows("maps", map_rows))
@@ -398,7 +409,7 @@ class SharedDataController(QObject):
         self.auto_prepare_attempted = False
         self.is_loading_shared_data = True
         self.loading_state_changed.emit(SharedDataLoadingState(message="正在刷新输出状态…", active=True))
-        self._champions_worker = self._data_load_worker_cls(self.app_context, "champions")
+        self._champions_worker = self._data_load_worker_cls(self.app_context, "champion_catalog")
         self._champions_worker.finished.connect(self.on_champions_loaded)
         self._champions_worker.error.connect(self.on_data_load_error)
         self._champions_worker.start()

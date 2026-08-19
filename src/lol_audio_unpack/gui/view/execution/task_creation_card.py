@@ -28,6 +28,7 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
+from lol_audio_unpack.app.resource_pack import ResourcePackWadRef
 from lol_audio_unpack.gui.common.font_compat import apply_tool_button_safe_font
 from lol_audio_unpack.gui.common.styles import (
     build_fluent_panel_frame_theme_pair,
@@ -61,11 +62,17 @@ def _parse_csv_int_ids(text: str, *, label: str) -> tuple[int, ...] | None:
         raise ValueError(f"{label} 仅支持逗号分隔的数字 ID。") from exc
 
 
-def _build_target_summary(champion_ids: tuple[str, ...], map_ids: tuple[str, ...]) -> str:
+def _build_target_summary(
+    champion_ids: tuple[str, ...],
+    map_ids: tuple[str, ...],
+    special_targets: tuple[str, ...] = (),
+    special_target_names: tuple[str, ...] = (),
+) -> str:
     """构造当前目标范围摘要。"""
-    if not champion_ids and not map_ids:
+    if not champion_ids and not map_ids and not special_targets:
         return "全部英雄+地图"
-    return f"英雄 {len(champion_ids)} 个，地图 {len(map_ids)} 个"
+    summary = f"英雄 {len(champion_ids)} 个，地图 {len(map_ids)} 个，特殊内容 {len(special_targets)} 个"
+    return f"{summary}（{'、'.join(special_target_names)}）" if special_target_names else summary
 
 
 def _build_task_scope_summary(
@@ -109,6 +116,8 @@ class _ExecutionTaskFormState:
 
     champion_ids: tuple[str, ...] = ()
     map_ids: tuple[str, ...] = ()
+    special_targets: tuple[str, ...] = ()
+    special_target_names: tuple[str, ...] = ()
     include_extract: bool = True
     include_mapping: bool = True
     vo_filter_key: str = "VO"
@@ -118,10 +127,16 @@ class _ExecutionTaskFormState:
     integrate_data: bool = True
     wav_enabled: bool = False
     wav_format: str = "pcm16"
+    resource_pack_wads: tuple[ResourcePackWadRef, ...] = ()
 
     def target_summary(self) -> str:
         """返回当前目标范围摘要。"""
-        return _build_target_summary(self.champion_ids, self.map_ids)
+        return _build_target_summary(
+            self.champion_ids,
+            self.map_ids,
+            self.special_targets,
+            self.special_target_names,
+        )
 
     def task_scope_summary(self) -> str:
         """返回当前勾选的任务步骤摘要。"""
@@ -467,6 +482,9 @@ class TaskCreationCard(HeaderCardWidget):
             "source": "未同步",
             "champion_ids": (),
             "map_ids": (),
+            "special_targets": (),
+            "special_target_names": (),
+            "resource_pack_wads": (),
             "summary": "尚未从实体总览同步选择。",
             "select_all": False,
         }
@@ -526,9 +544,17 @@ class TaskCreationCard(HeaderCardWidget):
         """从当前控件值同步内部任务表单状态。"""
         include_extract = self.extract_task_cb.isChecked()
         wav_enabled = self._sync_wav_control_state()
+        champion_ids = _parse_csv_ids(self.champion_ids_input.text())
+        map_ids = _parse_csv_ids(self.map_ids_input.text())
+        is_current_sync = champion_ids == tuple(self._synced_selection["champion_ids"]) and map_ids == tuple(
+            self._synced_selection["map_ids"]
+        )
         self._state = _ExecutionTaskFormState(
-            champion_ids=_parse_csv_ids(self.champion_ids_input.text()),
-            map_ids=_parse_csv_ids(self.map_ids_input.text()),
+            champion_ids=champion_ids,
+            map_ids=map_ids,
+            special_targets=tuple(self._synced_selection["special_targets"]) if is_current_sync else (),
+            special_target_names=tuple(self._synced_selection["special_target_names"]) if is_current_sync else (),
+            resource_pack_wads=tuple(self._synced_selection["resource_pack_wads"]) if is_current_sync else (),
             include_extract=include_extract,
             include_mapping=self.mapping_task_cb.isChecked(),
             vo_filter_key=self.vo_filter.currentRouteKey() or self._defaults.vo_filter_key,
@@ -549,6 +575,18 @@ class TaskCreationCard(HeaderCardWidget):
         """返回当前任务目标中的英雄和地图 ID。"""
         return self._state.champion_ids, self._state.map_ids
 
+    def current_special_targets(self) -> tuple[str, ...]:
+        """返回当前同步的特殊内容稳定 key。"""
+        return self._state.special_targets
+
+    def current_special_target_names(self) -> tuple[str, ...]:
+        """返回当前特殊内容的本地化展示名称。"""
+        return self._state.special_target_names
+
+    def current_resource_pack_wads(self) -> tuple[ResourcePackWadRef, ...]:
+        """返回当前特殊内容携带的来源 WAD 快照。"""
+        return self._state.resource_pack_wads
+
     def current_selection_source(self) -> str:
         """返回当前任务输入的来源标识。"""
         champion_ids, map_ids = self.current_target_ids()
@@ -556,6 +594,7 @@ class TaskCreationCard(HeaderCardWidget):
             self._synced_selection["source"] != "未同步"
             and champion_ids == tuple(self._synced_selection["champion_ids"])
             and map_ids == tuple(self._synced_selection["map_ids"])
+            and self._state.special_targets == tuple(self._synced_selection["special_targets"])
         ):
             return str(self._synced_selection["source"])
         if champion_ids or map_ids:
@@ -584,6 +623,9 @@ class TaskCreationCard(HeaderCardWidget):
         state = self._state
         champion_ids = _parse_csv_int_ids(",".join(state.champion_ids), label="英雄 ID")
         map_ids = _parse_csv_int_ids(",".join(state.map_ids), label="地图 ID")
+        special_targets = (
+            state.special_targets if self.current_selection_source() == str(self._synced_selection["source"]) else ()
+        )
         if self._synced_selection["select_all"] and self.current_selection_source() == str(
             self._synced_selection["source"]
         ):
@@ -600,6 +642,12 @@ class TaskCreationCard(HeaderCardWidget):
             task_params=ExecutionTaskParamsSnapshot(
                 champion_ids=champion_ids,
                 map_ids=map_ids,
+                special_targets=special_targets,
+                resource_pack_wads=(
+                    state.resource_pack_wads
+                    if self.current_selection_source() == str(self._synced_selection["source"])
+                    else ()
+                ),
                 run_update=state.force_update,
                 run_extract=state.include_extract,
                 run_mapping=state.include_mapping,
@@ -623,6 +671,9 @@ class TaskCreationCard(HeaderCardWidget):
         self._state = _ExecutionTaskFormState(
             champion_ids=(),
             map_ids=(),
+            special_targets=(),
+            special_target_names=(),
+            resource_pack_wads=(),
             include_extract=current_state.include_extract,
             include_mapping=current_state.include_mapping,
             vo_filter_key=defaults.vo_filter_key,
@@ -647,7 +698,7 @@ class TaskCreationCard(HeaderCardWidget):
         self._sync_wav_control_state()
         self.refresh_summary()
 
-    def apply_selected_entities(
+    def apply_selected_entities(  # noqa: PLR0913
         self,
         *,
         champion_ids: tuple[str, ...],
@@ -655,12 +706,18 @@ class TaskCreationCard(HeaderCardWidget):
         source: str,
         summary: str,
         select_all: bool = False,
+        special_targets: tuple[str, ...] = (),
+        special_target_names: tuple[str, ...] = (),
+        resource_pack_wads: tuple[ResourcePackWadRef, ...] = (),
     ) -> None:
         """将实体总览选择应用到任务表单。"""
         self._synced_selection = {
             "source": source,
             "champion_ids": champion_ids,
             "map_ids": map_ids,
+            "special_targets": special_targets,
+            "special_target_names": special_target_names,
+            "resource_pack_wads": tuple(dict.fromkeys(resource_pack_wads)),
             "summary": summary,
             "select_all": select_all,
         }

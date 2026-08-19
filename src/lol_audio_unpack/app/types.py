@@ -7,6 +7,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from .resource_pack import ResourcePackWadRef
+
 
 class AppContextValidationError(ValueError):
     """应用上下文构建失败异常。"""
@@ -85,7 +87,9 @@ class OperationOptions:
     integrate_data: bool = False
     champion_ids: tuple[int, ...] | None = None
     map_ids: tuple[int, ...] | None = None
+    special_targets: tuple[str, ...] = ()
     wav_output: WavOutputOptions = field(default_factory=WavOutputOptions)
+    resource_pack_wads: tuple[ResourcePackWadRef, ...] = ()
 
 
 @dataclass

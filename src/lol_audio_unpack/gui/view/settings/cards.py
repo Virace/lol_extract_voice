@@ -27,7 +27,7 @@ from lol_audio_unpack.gui.components.accordion_setting_card import FormAccordion
 class ComboRowSettingCard(SettingCard):
     """右侧带下拉框的设置卡。"""
 
-    def __init__(  # noqa: PLR0913
+    def __init__(  # noqa: PLR0913, PLR0917
         self,
         icon,
         title: str,

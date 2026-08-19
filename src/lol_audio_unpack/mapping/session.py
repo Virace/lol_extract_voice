@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -79,14 +80,14 @@ class RuntimeCache:
 
     Attributes:
         wad_cache: 已创建的 WAD 实例缓存。
-        extract_cache: 本轮已提取的 ``(wad_path, bnk_rel_path)`` 集合。
+        extract_cache: 本轮已提取的 ``(wad_identity, bnk_rel_path)`` 集合。
         hirc_cache: 已解析的 HIRC 缓存。
         cache_lock: 多线程模式下的缓存互斥锁。
     """
 
     wad_cache: dict[Path, WAD] = field(default_factory=dict)
-    extract_cache: set[tuple[Path, str]] = field(default_factory=set)
-    hirc_cache: dict[tuple[Path, str], ParsedHIRC] = field(default_factory=dict)
+    extract_cache: set[tuple[str, str]] = field(default_factory=set)
+    hirc_cache: dict[tuple[str, str, str], ParsedHIRC] = field(default_factory=dict)
     cache_lock: threading.Lock | None = None
 
 
@@ -110,13 +111,13 @@ def _get_wad(
 
 
 def _is_bnk_extracted(
-    key: tuple[Path, str],
+    key: tuple[str, str],
     runtime_cache: RuntimeCache | None,
 ) -> bool:
     """检查 bnk 文件是否已在本轮执行中提取过。
 
     Args:
-        key: 提取去重键，格式为 ``(wad_path, bnk_rel_path)``。
+        key: 提取去重键，格式为 ``(wad_identity, bnk_rel_path)``。
         runtime_cache: 映射过程共享缓存。
 
     Returns:
@@ -128,7 +129,7 @@ def _is_bnk_extracted(
     extract_cache = runtime_cache.extract_cache
     cache_lock = runtime_cache.cache_lock
 
-    # 提取去重必须同时看 wad_path 和 bnk 相对路径，
+    # 提取去重必须同时看稳定 WAD identity 和规范化 bnk 路径，
     # 否则不同 WAD 中同名 bnk 会被错误地视为已提取。
     if cache_lock is None:
         return key in extract_cache
@@ -137,13 +138,13 @@ def _is_bnk_extracted(
 
 
 def _mark_bnk_extracted(
-    key: tuple[Path, str],
+    key: tuple[str, str],
     runtime_cache: RuntimeCache | None,
 ) -> None:
     """标记 bnk 文件已提取。
 
     Args:
-        key: 提取去重键，格式为 ``(wad_path, bnk_rel_path)``。
+        key: 提取去重键，格式为 ``(wad_identity, bnk_rel_path)``。
         runtime_cache: 映射过程共享缓存。
     """
 
@@ -154,16 +155,56 @@ def _mark_bnk_extracted(
 
     if cache_lock is None:
         extract_cache.add(key)
+
+
+def _extract_bnk_once(
+    key: tuple[str, str],
+    extract: Callable[[], None],
+    runtime_cache: RuntimeCache | None,
+) -> bool:
+    """对同一 WAD/bank key 原子地执行一次磁盘提取。
+
+    Args:
+        key: ``(wad identity, normalized bank path)`` 去重键。
+        extract: 实际写入 BNK cache 的回调。
+        runtime_cache: 映射过程共享缓存。
+
+    Returns:
+        当前调用执行了提取时为 ``True``；复用已有结果时为 ``False``。
+    """
+    if runtime_cache is None:
+        extract()
+        return True
+
+    extract_cache = runtime_cache.extract_cache
+    cache_lock = runtime_cache.cache_lock
+    if cache_lock is None:
+        if key in extract_cache:
+            return False
+        extract()
+        extract_cache.add(key)
+        return True
+
+    # check、磁盘写入与 mark 必须处于同一临界区；否则并发实体会同时写同一 cache 文件。
+    with cache_lock:
+        if key in extract_cache:
+            return False
+        extract()
+        extract_cache.add(key)
+        return True
         return
     with cache_lock:
         extract_cache.add(key)
 
 
-def _get_cached_hirc(
+def _get_cached_hirc(  # noqa: PLR0913, PLR0917
     bnk_path: Path,
     hirc_cache_dir: Path,
     wwiser_manager: WwiserManager | None,
     runtime_cache: RuntimeCache | None,
+    *,
+    wad_identity: str | None = None,
+    normalized_bank_path: str | None = None,
 ) -> ParsedHIRC:
     """获取 HIRC 对象并复用缓存。
 
@@ -172,13 +213,19 @@ def _get_cached_hirc(
         hirc_cache_dir: hirc 缓存目录。
         wwiser_manager: 可选的 wwiser 管理器；为 ``None`` 时走 ``NativeHIRC``。
         runtime_cache: 映射过程共享缓存。
+        wad_identity: bank 所在物理 WAD 的稳定 identity。
+        normalized_bank_path: WAD 内的规范化 bank 路径。
 
     Returns:
         ParsedHIRC: 解析后的 HIRC 对象。
     """
 
     backend_key = "wwiser" if wwiser_manager is not None else "native"
-    cache_key = (bnk_path, backend_key)
+    # 旧调用方没有 binding identity 时使用规范化本地路径兜底；local v2 调用必须传入两项，
+    # 避免不同 WAD 中同名 BNK 被绝对临时路径偶然隔离。
+    wad_key = wad_identity or bnk_path.parent.as_posix()
+    bank_key = normalized_bank_path or bnk_path.name.casefold()
+    cache_key = (wad_key, bank_key, backend_key)
 
     def parse_hirc() -> ParsedHIRC:
         if wwiser_manager is None:
@@ -219,5 +266,3 @@ def _get_cached_hirc(
             return existing
         hirc_cache[cache_key] = parsed
         return parsed
-
-

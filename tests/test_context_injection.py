@@ -5,7 +5,7 @@ import pytest
 
 from lol_audio_unpack import mapping as m_mapping
 from lol_audio_unpack import unpack as m_unpack
-from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
+from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths, SourceMode
 from lol_audio_unpack.mapping import batch as mapping_batch
 from lol_audio_unpack.mapping import session as mapping_session
 from lol_audio_unpack.model import AudioEntityData
@@ -16,13 +16,14 @@ from lol_audio_unpack.utils.path_constants import format_entity_folder_name, for
 pytestmark = pytest.mark.unit
 
 
-def _build_ctx(
+def _build_ctx(  # noqa: PLR0913
     tmp_path: Path,
     *,
     game_region: str = "zh_CN",
     group_by_type: bool = False,
     with_bp_vo: bool = False,
     wwiser_path: Path | None = None,
+    source_mode: SourceMode = SourceMode.LOCAL_PATH,
 ) -> AppContext:
     game_path = tmp_path / "game"
     output_path = tmp_path / "output"
@@ -33,6 +34,7 @@ def _build_ctx(
         group_by_type=group_by_type,
         with_bp_vo=with_bp_vo,
         wwiser_path=wwiser_path,
+        source_mode=source_mode,
     )
     app_paths = AppPaths(
         audio_path=output_path / "audios",
@@ -52,7 +54,7 @@ def _build_ctx(
 
 
 def test_audio_entity_from_champion_uses_ctx_region_and_game_path(tmp_path: Path) -> None:
-    ctx = _build_ctx(tmp_path, game_region="en_US")
+    ctx = _build_ctx(tmp_path, game_region="en_US", source_mode=SourceMode.REMOTE_SNAPSHOT)
     wad_file = ctx.game_path / "Game" / "en.wad.client"
     root_wad_file = ctx.game_path / "Game" / "root.wad.client"
     wad_file.parent.mkdir(parents=True, exist_ok=True)

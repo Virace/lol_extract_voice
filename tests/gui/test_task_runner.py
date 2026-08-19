@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 import lol_audio_unpack.gui.window as window_module
+from lol_audio_unpack.app.resource_pack import ResourcePackWadRef, build_resource_pack_key
 from lol_audio_unpack.gui.service import task_runner
 from lol_audio_unpack.gui.task_models import (
     AppContextInputSnapshot,
@@ -20,13 +21,16 @@ from lol_audio_unpack.gui.window import _prepare_shared_entity_data
 EXPECTED_CONTEXT_COUNT_WITH_UPDATE = 2
 
 
-def _build_task(
+def _build_task(  # noqa: PLR0913
     *,
     source_mode: str,
     run_update: bool = False,
     run_extract: bool = True,
     run_mapping: bool = True,
     wav_enabled: bool = False,
+    champion_ids: tuple[int, ...] | None = None,
+    special_targets: tuple[str, ...] = (),
+    resource_pack_wads: tuple[ResourcePackWadRef, ...] = (),
 ) -> QueuedExecutionTask:
     return QueuedExecutionTask(
         task_id=1,
@@ -43,6 +47,9 @@ def _build_task(
                 )
             ),
             task_params=ExecutionTaskParamsSnapshot(
+                champion_ids=champion_ids,
+                special_targets=special_targets,
+                resource_pack_wads=resource_pack_wads,
                 run_update=run_update,
                 run_extract=run_extract,
                 run_mapping=run_mapping,
@@ -285,3 +292,124 @@ def test_run_execution_task_rejects_missing_map_banks_before_runtime_steps(
 
     with pytest.raises(RuntimeError, match="地图基础数据仍未准备完成"):
         task_runner.run_execution_task(task, signals)
+
+
+def test_run_execution_task_rejects_remote_special_targets_before_app_context(monkeypatch) -> None:
+    """远端 special key 必须在任何运行时上下文与 stage 前失败。"""
+    task = _build_task(source_mode="remote_snapshot", special_targets=("champion:66600",))
+    calls: list[str] = []
+    signals = SimpleNamespace(progress=SimpleNamespace(emit=lambda _payload: None))
+
+    monkeypatch.setattr(
+        task_runner,
+        "create_app_context",
+        lambda **_kwargs: calls.append("context") or pytest.fail("不应创建 AppContext"),
+    )
+    monkeypatch.setattr(
+        task_runner,
+        "LolAudioUnpackApp",
+        lambda *_args: calls.append("app") or pytest.fail("不应创建运行 App"),
+    )
+
+    with pytest.raises(ValueError, match="特殊内容仅支持本地客户端资源"):
+        task_runner.run_execution_task(task, signals)
+
+    assert calls == []
+
+
+def test_run_execution_task_preserves_special_targets_for_app_facade(monkeypatch, tmp_path: Path) -> None:
+    """GUI runner 不得把异构 special key 错当作普通英雄 ID。"""
+    task = _build_task(
+        source_mode="local_path",
+        run_mapping=False,
+        champion_ids=(1, 66600),
+        special_targets=("champion:66600", "champion:77702"),
+    )
+    runtime_context = SimpleNamespace(
+        paths=SimpleNamespace(audio_path=tmp_path / "audios", wav_path=tmp_path / "wavs"),
+        runtime_cache={},
+        config=SimpleNamespace(),
+    )
+    captured = []
+    signals = SimpleNamespace(progress=SimpleNamespace(emit=lambda _payload: None))
+
+    monkeypatch.setattr(task_runner, "create_app_context", lambda **_kwargs: runtime_context)
+
+    class FakeApp:
+        def __init__(self, app_context) -> None:
+            self.ctx = app_context
+
+        def extract(self, options, **_kwargs) -> None:
+            captured.append(options)
+
+    monkeypatch.setattr(task_runner, "LolAudioUnpackApp", FakeApp)
+
+    task_runner.run_execution_task(task, signals)
+
+    assert len(captured) == 1
+    assert captured[0].champion_ids == (1, 66600)
+    assert captured[0].special_targets == ("champion:66600", "champion:77702")
+
+
+def test_resource_pack_only_task_excludes_champion_and_map_runtime_scope(monkeypatch, tmp_path: Path) -> None:
+    """仅资源包任务不得退化为全量英雄/地图，也不能触发地图 banks 检查。"""
+    key = build_resource_pack_key("Legacy.wad.client", "MODE_LEGACY")
+    task = _build_task(source_mode="local_path", run_mapping=False, special_targets=(key,))
+    runtime_context = SimpleNamespace(
+        paths=SimpleNamespace(audio_path=tmp_path / "audios", wav_path=tmp_path / "wavs"),
+        runtime_cache={},
+        config=SimpleNamespace(),
+    )
+    calls: list[tuple[bool, bool]] = []
+    signals = SimpleNamespace(progress=SimpleNamespace(emit=lambda _payload: None))
+
+    monkeypatch.setattr(task_runner, "create_app_context", lambda **_kwargs: runtime_context)
+    monkeypatch.setattr(task_runner, "DataReader", lambda **_kwargs: pytest.fail("不应检查地图 banks"))
+
+    class FakeApp:
+        def __init__(self, app_context) -> None:
+            self.ctx = app_context
+
+        def extract(self, _options, *, include_champions: bool, include_maps: bool, **_kwargs) -> None:
+            calls.append((include_champions, include_maps))
+
+    monkeypatch.setattr(task_runner, "LolAudioUnpackApp", FakeApp)
+
+    task_runner.run_execution_task(task, signals)
+
+    assert calls == [(False, False)]
+
+
+@pytest.mark.parametrize(
+    ("source_mode", "wav_enabled", "error"),
+    [
+        ("remote_snapshot", False, "资源包发现仅支持本地客户端资源"),
+        ("local_path", True, "resource pack 当前不支持 WAV 转码"),
+    ],
+)
+def test_resource_pack_wad_snapshot_is_rejected_before_app_context(
+    monkeypatch,
+    source_mode: str,
+    wav_enabled: bool,
+    error: str,
+) -> None:
+    """直接构造的 WAD snapshot 也必须在创建上下文前通过 local/WAV 边界。"""
+    ref = ResourcePackWadRef("Game/DATA/FINAL/Legacy.wad.client", size=12, mtime_ns=34)
+    task = _build_task(
+        source_mode=source_mode,
+        run_mapping=False,
+        wav_enabled=wav_enabled,
+        resource_pack_wads=(ref,),
+    )
+    calls: list[str] = []
+    signals = SimpleNamespace(progress=SimpleNamespace(emit=lambda _payload: None))
+    monkeypatch.setattr(
+        task_runner,
+        "create_app_context",
+        lambda **_kwargs: calls.append("context") or pytest.fail("不应创建 AppContext"),
+    )
+
+    with pytest.raises(ValueError, match=error):
+        task_runner.run_execution_task(task, signals)
+
+    assert calls == []

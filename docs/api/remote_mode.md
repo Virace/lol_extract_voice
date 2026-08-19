@@ -28,6 +28,17 @@
 - `extract / mapping` 通过 `LolAudioUnpackApp.run_workflow(...)` 按实体顺序执行
 - 单实体完成后会清理当前远端 WAD（除非显式关闭）
 
+remote 仍使用既有 v1 banks 投影和 root/language WAD 准备计划；它不消费 local v2
+`resource_banks`、不会构建本地 WAD index，也不会因 local artifact schema 升级改变远端资源范围。
+
+特殊内容与历史 resource pack 属于本地客户能力：
+
+- `champion:<id>` 结构化特殊目标在 GUI 与后台 task boundary 都会被拒绝。
+- `ResourcePackWadRef` 必须指向本地 `Game/DATA/FINAL`，remote 不接受 selected-WAD 发现。
+- 已发现的 `resource_pack:...` key 不会被降级成普通英雄 ID，也不会扩大远端下载范围。
+
+这些限制不影响普通英雄与地图的 remote v1 update/extract/mapping。
+
 若要固定某个快照，则需要同时提供：
 
 - `REMOTE_VERSION`

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 
+from lol_audio_unpack.app.resource_pack import ResourcePackWadRef, build_resource_pack_key
 from lol_audio_unpack.gui.controllers.contracts import SharedDataLoadingState
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 from lol_audio_unpack.gui.view.setting_page import SettingPage
@@ -65,6 +66,46 @@ def test_execution_page_normalizes_synced_full_selection_to_default_scope(qtbot)
     assert page.taskBuilderPanel.current_target_ids() == (("1", "103"), ("11",))
     assert draft.task_params.champion_ids is None
     assert draft.task_params.map_ids is None
+
+
+def test_execution_page_treats_changed_resource_pack_snapshot_as_selection_conflict(qtbot, monkeypatch) -> None:
+    """相同资源包 key 的 WAD stat snapshot 变化也必须经同步冲突处理。"""
+    page = ExecutionPage()
+    qtbot.addWidget(page)
+    key = build_resource_pack_key("Legacy.wad.client", "MODE_LEGACY")
+    first = ResourcePackWadRef("Game/DATA/FINAL/Legacy.wad.client", size=12, mtime_ns=34)
+    second = ResourcePackWadRef("Game/DATA/FINAL/Legacy.wad.client", size=12, mtime_ns=56)
+    choices = []
+    monkeypatch.setattr(
+        "lol_audio_unpack.gui.view.execution_page.ask_selection_conflict_resolution",
+        lambda **kwargs: choices.append(kwargs) or "replace",
+    )
+
+    page.set_selected_entities(
+        {
+            "source": "overview_selection",
+            "champion_ids": (),
+            "map_ids": (),
+            "special_targets": (key,),
+            "special_target_names": ("历史资源包 · Legacy",),
+            "resource_pack_wads": (first,),
+            "summary": "首次同步。",
+        }
+    )
+    page.set_selected_entities(
+        {
+            "source": "overview_selection",
+            "champion_ids": (),
+            "map_ids": (),
+            "special_targets": (key,),
+            "special_target_names": ("历史资源包 · Legacy",),
+            "resource_pack_wads": (second,),
+            "summary": "重新同步。",
+        }
+    )
+
+    assert len(choices) == 1
+    assert page.taskBuilderPanel.current_resource_pack_wads() == (second,)
 
 
 def test_execution_page_primary_button_cancels_running_task(qtbot, monkeypatch) -> None:

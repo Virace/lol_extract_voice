@@ -133,7 +133,7 @@ uv build
 | 项目自有纯逻辑回归 | 路径、目标、版本、序列化、统计和状态转换输出稳定 | 单元或轻量集成测试 | 临时文件；仅隔离外部边界 | 对应模块测试；相关修改时 |
 | 公共 Python 入口漂移 | 文档推荐的关键符号可从声明模块导入 | 一组参数化 import smoke | 核心开发依赖 | `tests/test_public_api.py`；公开面修改时 |
 | GUI 稳定逻辑回归 | 配置持久化、任务状态、异步信号、错误恢复和试听生命周期稳定 | 精选 pytest-qt 行为测试 | `uv sync --extra gui --group gui-test`；原生 Windows 优先 | `tests/gui/`；GUI 逻辑修改时显式运行 |
-| 本地真实音频链路失效 | `update -> banks/events -> extract -> NativeHIRC mapping` 生成 WEM、报告与 hash | 单条系统测试；英雄 1、地图 0 与 11，共享一次准备 | 真实本地客户端、临时磁盘 | `tests/system/test_local_game.py`；核心链路或交付前 |
+| 本地真实音频链路失效 | `update -> bindings/events -> extract -> NativeHIRC mapping` 生成 WEM、报告与 hash | 单条共享准备系统测试；英雄 1、Jade 60009、地图 0/11/22；普通英雄、Jade 与地图 11 保留 mapping，Map 22 验证 binding 与 WEM | 当前版本含 Jade 的真实本地客户端、临时磁盘 | `tests/system/test_local_game.py`；核心 WAD/BIN 链路或交付前显式运行 |
 | 远端快照编排失效 | CLI 从 live manifest 下载代表英雄 VO 并生成 data、WEM 与报告 | 单条远端 CLI smoke | Riot 网络，最长 900 秒 | `tests/system/test_remote_snapshot.py`；远端改动或发布前 |
 | 旧 WAV 协调器多进程兼容回归 | 超时重试、熔断、报告和进度生命周期一致 | 显式系统兼容测试 | Windows 多进程 | `tests/system/test_wav_coordinator.py`；该兼容面修改时 |
 

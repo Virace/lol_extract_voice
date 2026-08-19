@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QFrame, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel
+from pathlib import Path
 
+from PySide6.QtWidgets import QFrame, QStackedWidget, QVBoxLayout, QWidget
+from qfluentwidgets import BodyLabel, ProgressBar
+
+from lol_audio_unpack.app.artifacts import AudioRef
+from lol_audio_unpack.gui.components.audio_list import AudioListView
 from lol_audio_unpack.gui.components.preview_tree import PreviewTreeModel, PreviewTreeView
+from lol_audio_unpack.gui.controllers.overview_preview import ALL_AUDIO_PREVIEW_MODE
 
 
 class OverviewAudioPreviewPanel(QWidget):
@@ -34,10 +39,21 @@ class OverviewAudioPreviewPanel(QWidget):
         self.summary_label = BodyLabel(summary_placeholder, self.summary_card)
         self.summary_label.setWordWrap(True)
         summary_layout.addWidget(self.summary_label)
+        self.load_progress_bar = ProgressBar(self.summary_card, useAni=False)
+        self.load_progress_bar.setAccessibleName("全部音频加载进度")
+        self.load_progress_bar.setTextVisible(False)
+        self.load_progress_bar.setVisible(False)
+        summary_layout.addWidget(self.load_progress_bar)
         layout.addWidget(self.summary_card)
 
-        self.audio_preview_tree = PreviewTreeView(self)
-        layout.addWidget(self.audio_preview_tree, 1)
+        self.preview_stack = QStackedWidget(self)
+        self.audio_preview_tree = PreviewTreeView(self.preview_stack)
+        self.audio_preview_tree.setAccessibleName("事件音频树")
+        self.audio_list = AudioListView(self.preview_stack)
+        self.audio_list.setAccessibleName("全部音频列表")
+        self.preview_stack.addWidget(self.audio_preview_tree)
+        self.preview_stack.addWidget(self.audio_list)
+        layout.addWidget(self.preview_stack, 1)
 
     def set_summary_text(self, text: str) -> None:
         """更新摘要文案。
@@ -58,6 +74,26 @@ class OverviewAudioPreviewPanel(QWidget):
     def reset_summary(self) -> None:
         """恢复默认摘要文案。"""
         self.summary_label.setText(self._summary_placeholder)
+        self.clear_load_progress()
+
+    def set_load_progress(self, current: int, total: int) -> None:
+        """显示全部音频索引的计数进度。
+
+        Args:
+            current: 已处理的 WEM 候选数。
+            total: 当前发现的 WEM 候选总数；未知时为 0。
+        """
+        maximum = max(int(total), 1)
+        value = max(0, min(int(current), maximum))
+        self.load_progress_bar.setRange(0, maximum)
+        self.load_progress_bar.setValue(value)
+        self.load_progress_bar.setVisible(True)
+
+    def clear_load_progress(self) -> None:
+        """隐藏并重置全部音频索引进度。"""
+        self.load_progress_bar.setVisible(False)
+        self.load_progress_bar.setRange(0, 1)
+        self.load_progress_bar.setValue(0)
 
     def clear_preview(self) -> None:
         """清空当前试听树并恢复默认摘要。"""
@@ -65,23 +101,46 @@ class OverviewAudioPreviewPanel(QWidget):
         if isinstance(model, PreviewTreeModel):
             self.audio_preview_tree.collapseAll()
             model.clear_preview()
+        self.audio_list.set_audio_refs(())
         self.reset_summary()
 
     def set_preview_data(
         self,
         *,
         mapping_data: dict | None,
-        available_audio_ids: set[str],
+        audio_refs: tuple[AudioRef, ...],
         group_label_map: dict[str, str] | None,
         summary_text: str,
     ) -> None:
         """刷新事件树数据与摘要文案。"""
+        self.clear_load_progress()
         self.set_summary_text(summary_text)
         model = self.audio_preview_tree.model()
         if isinstance(model, PreviewTreeModel):
             self.audio_preview_tree.collapseAll()
-            model.set_preview_data(mapping_data, available_audio_ids, group_label_map)
+            model.set_preview_data(mapping_data, audio_refs, group_label_map)
             self._expand_single_root()
+
+    def set_audio_refs(self, refs: tuple[AudioRef, ...], *, summary_text: str) -> None:
+        """刷新全部音频平铺列表与摘要。
+
+        Args:
+            refs: 当前实体全部路径级 WEM 引用。
+            summary_text: 当前搜索状态对应的摘要文案。
+        """
+        self.clear_load_progress()
+        self.set_summary_text(summary_text)
+        self.audio_list.set_audio_refs(refs)
+
+    def set_audio_keyword(self, keyword: str) -> None:
+        """将当前搜索关键字应用到全部音频模型。"""
+        self.audio_list.set_keyword(keyword)
+
+    def set_preview_mode(self, mode_key: str) -> None:
+        """切换事件树与全部音频平铺列表。"""
+        self.preview_stack.setCurrentWidget(
+            self.audio_list if mode_key == ALL_AUDIO_PREVIEW_MODE else self.audio_preview_tree
+        )
 
     def _expand_single_root(self) -> None:
         """在仅有一个根节点时自动展开首层。
@@ -102,7 +161,7 @@ class OverviewAudioPreviewPanel(QWidget):
 
     def set_playback_state(
         self,
-        audio_id: str | None,
+        audio_path: Path | None,
         *,
         progress: float,
         is_playing: bool,
@@ -110,7 +169,13 @@ class OverviewAudioPreviewPanel(QWidget):
     ) -> None:
         """同步当前试听叶子行的播放状态。"""
         self.audio_preview_tree.set_audio_playback_state(
-            audio_id,
+            audio_path,
+            progress=progress,
+            is_playing=is_playing,
+            is_paused=is_paused,
+        )
+        self.audio_list.set_audio_playback_state(
+            audio_path,
             progress=progress,
             is_playing=is_playing,
             is_paused=is_paused,

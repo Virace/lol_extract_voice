@@ -319,6 +319,50 @@ def test_update_logs_stage_start_and_summary_for_targeted_mode(tmp_path, monkeyp
     assert success_messages == ["BinUpdater 更新完成（精确模式）：英雄 1 个，地图 1 个"]
 
 
+def test_update_filters_hidden_champions_only_in_batch_mode(tmp_path, monkeypatch):
+    """验证默认批量排除特殊英雄，但精确模式仍允许显式处理。"""
+    updater = m_bin_updater.BinUpdater.__new__(m_bin_updater.BinUpdater)
+    updater.ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False), runtime_cache={}, paths=SimpleNamespace())
+    updater.force_update = False
+    updater.process_events = True
+    updater.version = "16.16"
+    updater.data_file_base = tmp_path / "data"
+    updater.languages = []
+    updater.bin_source = SimpleNamespace(languages=[], _is_local_bin_mode_enabled=lambda: False)
+
+    champion_updates: list[dict] = []
+    map_updates: list[dict] = []
+    updater._champion_processor = SimpleNamespace(_update_champions=champion_updates.append)
+    updater._map_processor = SimpleNamespace(languages=[], _update_maps=map_updates.append)
+
+    monkeypatch.setattr(
+        m_bin_updater,
+        "read_data",
+        lambda *args, **kwargs: {
+            "metadata": {"languages": ["zh_CN"]},
+            "champions": {
+                "1": {"id": 1, "alias": "Annie", "wad": {"root": "Champions/Annie.wad.client"}},
+                "60001": {
+                    "id": 60001,
+                    "alias": "Jade_Annie",
+                    "wad": {"root": "Champions/Jade_Annie.wad.client"},
+                },
+            },
+            "maps": {"11": {"id": 11}},
+        },
+    )
+
+    updater.update(target="all")
+
+    assert list(champion_updates[0]["champions"]) == ["1"]
+    assert champion_updates[0]["maps"] == {"11": {"id": 11}}
+    assert map_updates[0]["maps"] == {"11": {"id": 11}}
+
+    updater.update(target="skin", champion_ids=["60001"])
+
+    assert list(champion_updates[1]["champions"]) == ["60001"]
+
+
 def test_process_single_map_records_note_when_common_dedup_removes_all_events(tmp_path, monkeypatch):
     """验证公共事件去重清空结果时会记录可解释差异。"""
     processor = m_map_processor.MapBinProcessor.__new__(m_map_processor.MapBinProcessor)

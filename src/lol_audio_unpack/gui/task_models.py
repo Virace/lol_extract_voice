@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from lol_audio_unpack.app.resource_pack import ResourcePackWadRef
 from lol_audio_unpack.app.types import OperationOptions, WavOutputOptions
 from lol_audio_unpack.config import SettingKey
 
@@ -37,6 +38,7 @@ class ExecutionTaskParamsSnapshot:
     Args:
         champion_ids: 目标英雄 ID；为空时表示不限制英雄范围。
         map_ids: 目标地图 ID；为空时表示不限制地图范围。
+        special_targets: 从特殊内容目录同步的稳定选择 key。
         run_update: 是否在执行解包/映射前先强制刷新基础数据；GUI 中等价于前置一次 ``update --force``。
         run_extract: 是否执行音频解包。
         run_mapping: 是否执行事件映射。
@@ -49,10 +51,12 @@ class ExecutionTaskParamsSnapshot:
         wav_timeout: 单个音频转码任务超时时间。
         wav_retries: 音频转码失败后的最大重试次数。
         wav_format: 音频转码输出格式。
+        resource_pack_wads: 已选历史资源包 WAD 的相对路径与 stat 快照。
     """
 
     champion_ids: tuple[int, ...] | None = None
     map_ids: tuple[int, ...] | None = None
+    special_targets: tuple[str, ...] = ()
     run_update: bool = False
     run_extract: bool = True
     run_mapping: bool = True
@@ -65,6 +69,7 @@ class ExecutionTaskParamsSnapshot:
     wav_timeout: int = 5
     wav_retries: int = 3
     wav_format: str = "pcm16"
+    resource_pack_wads: tuple[ResourcePackWadRef, ...] = ()
 
     def selected_steps(self) -> tuple[str, ...]:
         """返回当前任务参数实际勾选的执行步骤。
@@ -98,6 +103,8 @@ class ExecutionTaskParamsSnapshot:
             integrate_data=self.integrate_data,
             champion_ids=self.champion_ids,
             map_ids=self.map_ids,
+            special_targets=self.special_targets,
+            resource_pack_wads=self.resource_pack_wads,
             wav_output=WavOutputOptions(
                 enabled=self.wav_enabled,
                 worker_count=self.wav_workers,
@@ -207,14 +214,22 @@ class ExecutionTaskResult:
 
 @dataclass(slots=True, frozen=True)
 class OutputStateRefreshRequest:
-    """任务完成后用于刷新 GUI 实体状态的请求。"""
+    """任务完成后用于刷新 GUI 实体状态的请求。
+
+    Args:
+        champion_ids: 需要增量刷新的普通英雄 ID。
+        map_ids: 需要增量刷新的地图 ID。
+        special_targets: 需要增量刷新的异构特殊内容 key。
+        requires_full_refresh: 是否必须回退到完整目录刷新。
+        resource_pack_wads: 随任务保留的资源包 WAD 快照。
+    """
 
     champion_ids: tuple[str, ...] = ()
     map_ids: tuple[str, ...] = ()
+    special_targets: tuple[str, ...] = ()
     requires_full_refresh: bool = False
+    resource_pack_wads: tuple[ResourcePackWadRef, ...] = ()
 
     def has_incremental_targets(self) -> bool:
         """返回当前请求是否包含可增量刷新的实体目标。"""
-        return bool(self.champion_ids or self.map_ids)
-
-
+        return bool(self.champion_ids or self.map_ids or self.special_targets or self.resource_pack_wads)

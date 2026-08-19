@@ -32,6 +32,7 @@ from lol_audio_unpack.app import (
     RemoteEntityCallbackPayload,
     RemoteEntityWorkItem,
     RemoteSnapshotConfig,
+    ResourcePackWadRef,
     SourceMode,
     WavOutputOptions,
     create_app_context,
@@ -61,7 +62,11 @@ def create_app_context(
 - `AppContext`
   - 运行时上下文对象，统一封装 `config`、`paths` 与 `runtime_cache`
 - `OperationOptions`
-  - 单次操作参数，包含 `max_workers`、`force_update`、`process_events`、`integrate_data`、`champion_ids`、`map_ids`
+  - 单次操作参数，包含 `max_workers`、`force_update`、`process_events`、`integrate_data`、`champion_ids`、`map_ids`、`special_targets`、`resource_pack_wads`
+- `ResourcePackWadRef`
+  - 显式 selected-WAD 的相对 identity 与 `st_size` / `st_mtime_ns` 快照；使用
+    `ResourcePackWadRef.from_path(game_root, path)` 创建。创建与执行均会验证路径仍在
+    `Game/DATA/FINAL`、后缀为 `.wad.client` 且 stat 未变化，artifact 不保存绝对路径。
 - `WavOutputOptions`
   - 独立 WAV 转码 stage 配置，包含 `enabled`、`worker_count`、`timeout_seconds`、`max_retries`、`format`
 - `RemoteSnapshotConfig`
@@ -69,14 +74,26 @@ def create_app_context(
 - `SourceMode`
   - 当前支持 `local_path` 与 `remote_snapshot`
 
+`special_targets` 可包含 GUI 特殊内容的 `champion:<id>`，也可保留已发现的
+`resource_pack:<wad-component>:<namespace-component>` key。应用门面只把前者归约为英雄数值 ID，
+不会把 resource pack 交给数值 target 合并。`remote_snapshot` 拒绝 special target 与
+`resource_pack_wads`。本地 `extract` / `mapping` 会把 resource-pack key 交给专用 consumer；
+pack-only 选择不会回退到全量 champion/map 流程，混合选择会分别执行三类实体。WAV 转码当前明确
+不支持 resource pack，并在应用边界报错，不影响 extract 或 mapping。
+
 ### 2.3 `LolAudioUnpackApp`
 
 `LolAudioUnpackApp` 是应用编排入口，负责 update / extract / wav / mapping 与 remote 单位驱动。
+
+`update(OperationOptions(resource_pack_wads=(ref,)))` 在准备共享数据后只扫描 selected WAD，
+不会因为英雄/地图 ID 为空而触发默认全量 `BinUpdater.update`。显式英雄或地图 target 与 selected WAD
+同时存在时，两条 update 路径会各自执行。
 
 当前公开方法可按职责分为三组：
 
 - 常规主链
   - `update(opts, *, target="all")`
+  - `discover_resource_packs(opts)`
   - `extract(opts, *, include_champions=True, include_maps=True, prepare_remote=True, ...)`
   - `transcode_wav(opts, *, progress_callback=None, job_label=None)`
   - `mapping(opts, *, include_champions=True, include_maps=True, prepare_remote=True, ...)`
@@ -119,6 +136,8 @@ def create_app_context(
 - `unpack_champions`
 - `unpack_map`
 - `unpack_maps`
+- `unpack_resource_pack`
+- `unpack_resource_packs`
 
 ### 3.3 `lol_audio_unpack.mapping`
 
@@ -131,6 +150,8 @@ def create_app_context(
 - `build_champions`
 - `build_map`
 - `build_maps`
+- `build_resource_pack`
+- `build_resource_packs`
 - `execute_tasks`
 - `integrate_entity`
 - `describe_hirc_backend`
@@ -173,6 +194,20 @@ def create_app_context(
 - `DataUpdater`
 - `BinUpdater`
 - `DataReader`
+- `ResourcePackDiscovery`
+
+`DataReader` 的 banks 读取边界：
+
+- `get_champion_banks(id, require_bindings=False)` / `get_map_banks(id, require_bindings=False)`
+  默认兼容旧投影；local 调用方显式要求 bindings 时，v1 artifact 会提示重新 update。
+- `get_champion_resource_bindings(id)` / `get_map_resource_bindings(id)` 在 local 返回 typed
+  `ResourceBindings`；`remote_snapshot` 继续使用旧合同并返回 `None`。
+- `get_resource_pack_banks(key, require_bindings=False)`、
+  `get_resource_pack_resource_bindings(key)` 与 `get_resource_pack_events(key)` 读取
+  `resource_pack` string identity 的独立 artifact group；本地 v2 缺失时会提示重新运行 update。
+- `AudioEntityData.from_resource_pack(key, reader, include_events=..., ctx=...)` 构造唯一 logical
+  sub-entity，完整 key 保留在 payload/诊断中；输出、mapping hash 与 report 路径使用该 key 的
+  Windows-safe component。
 
 这些类都要求显式传入 `ctx: AppContext`。
 
