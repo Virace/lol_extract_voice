@@ -159,6 +159,7 @@ class OverviewPage(QWidget):
         self._preview_controller = OverviewPreviewController()
         self._selected_entity_ids: dict[str, set[str]] = {"champions": set(), "maps": set(), "special": set()}
         self._current_preview_ids: dict[str, str | None] = {"champions": None, "maps": None, "special": None}
+        self._current_preview_key: tuple[str, str, str, str] | None = None
         self._current_preview_entity_type: str | None = None
         self._current_preview_entity_id: str | None = None
         self._current_mapping_path: Path | None = None
@@ -255,6 +256,7 @@ class OverviewPage(QWidget):
         """
         self._audio_refs_token += 1
         self._audio_refs_cache.clear()
+        self._current_preview_key = None
         self._audio_refs_progress = None
         self._pending_audio_refs_request = None
         self._app_context = app_context
@@ -291,6 +293,8 @@ class OverviewPage(QWidget):
         if not self._entity_data_store.set_rows(entity_type, data):
             return
 
+        if self._current_entity_type() == entity_type:
+            self._current_preview_key = None
         self._rebuild_entity_list(entity_type)
         if self._current_entity_type() == entity_type:
             self._sync_current_list_view()
@@ -794,16 +798,23 @@ class OverviewPage(QWidget):
             self._show_placeholder(DEFAULT_PREVIEW_PLACEHOLDER_TEXT)
             return
 
-        preview_state_id = row.get("key", row["id"]) if entity_type == "special" else row["id"]
-        self._current_preview_ids[entity_type] = str(preview_state_id)
+        preview_state_id = str(row.get("key", row["id"]) if entity_type == "special" else row["id"])
+        self._current_preview_ids[entity_type] = preview_state_id
         preview_entity_type = str(row.get("entity_type", entity_type))
+        preview_entity_id = str(row["id"])
+        preview_key = (entity_type, preview_state_id, preview_entity_type, preview_entity_id)
+        if preview_key == self._current_preview_key:
+            self.previewPanel.show_current_preview()
+            self._apply_preview_mode(self.preview_mode_pivot.currentRouteKey() or self._active_preview_mode)
+            return
+
         self._current_preview_entity_type = preview_entity_type
-        self._current_preview_entity_id = str(row["id"])
+        self._current_preview_entity_id = preview_entity_id
         self._audio_refs_token += 1
         loader = self._ensure_loader()
         preview_result = self._preview_controller.load_preview(
             entity_type=preview_entity_type,
-            entity_id=str(row["id"]),
+            entity_id=preview_entity_id,
             entity_name=str(row.get("display_name", row["name"])),
             loader=loader,
         )
@@ -811,6 +822,7 @@ class OverviewPage(QWidget):
             self._show_placeholder(preview_result.placeholder_message)
             return
 
+        self._current_preview_key = preview_key
         self._current_mapping_path = preview_result.mapping_path
         self.text_preview.setPlainText(preview_result.preview_content)
         self._clear_audio_preview_request()
@@ -1040,6 +1052,7 @@ class OverviewPage(QWidget):
 
     def _show_placeholder(self, message: str) -> None:
         self._current_mapping_path = None
+        self._current_preview_key = None
         self._current_preview_entity_type = None
         self._current_preview_entity_id = None
         self._current_preview_mapping_data = None
@@ -1131,11 +1144,6 @@ class OverviewPage(QWidget):
         if self._current_preview_entity_type is None or self._current_preview_entity_id is None:
             return
 
-        # 事件页切换实体时保留隐藏模型，避免同步拆除数万行；只有用户真正进入
-        # “全部音频”且新实体尚未就绪时，才清掉上一实体的可见列表。
-        if not self._audio_list_ready and self.audio_list.source_model.rowCount() > 0:
-            self.audioPreviewPanel.set_audio_refs((), summary_text="")
-
         request = _AudioRefsRequest(
             token=self._audio_refs_token,
             entity_type=self._current_preview_entity_type,
@@ -1148,6 +1156,11 @@ class OverviewPage(QWidget):
             self._audio_refs_progress = None
             self._populate_audio_list()
             return
+
+        # 事件页切换实体时保留隐藏模型，避免同步拆除数万行；只有用户真正进入
+        # “全部音频”且新实体没有缓存时，才清掉上一实体的可见列表。
+        if not self._audio_list_ready and self.audio_list.source_model.rowCount() > 0:
+            self.audioPreviewPanel.set_audio_refs((), summary_text="")
         if self._audio_refs_request == request:
             return
         if self._audio_refs_worker is not None:

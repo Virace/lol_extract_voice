@@ -206,6 +206,65 @@ def test_overview_page_reports_audio_scan_and_defers_hidden_model_reset(qtbot) -
     assert resets == []
 
 
+def test_overview_page_reuses_current_preview_models_when_page_is_resynced(qtbot) -> None:
+    """重新进入总览页时应复用当前实体模型，不能再次构建大型树。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    calls: list[dict[str, object]] = []
+    audio_ref = AudioRef(
+        relative_path="SFX/1001.wem",
+        path=Path("audios/map/SFX/1001.wem"),
+        wem_id="1001",
+        audio_type="SFX",
+        sub_entity="22",
+    )
+    page._preview_playback_controller = SimpleNamespace(
+        set_volume_percent=lambda _value: None,
+        set_output_device_key=lambda _value: None,
+        play=lambda **_kwargs: None,
+        stop=lambda: None,
+    )
+    page._preview_controller = SimpleNamespace(
+        load_preview=lambda **kwargs: (
+            calls.append(kwargs)
+            or OverviewPreviewLoadResult(
+                entity_id="22",
+                mapping_path=Path("map22.msgpack"),
+                mapping_data={"map": {"22": {"events": {"SFX": {"evt": ["1001"]}}}}},
+                preview_content="{}",
+                available_audio_ids={"1001"},
+                group_label_map={},
+                audio_refs=(audio_ref,),
+                default_preview_mode=EVENT_PREVIEW_MODE,
+            )
+        )
+    )
+    page._ensure_loader = object
+    page.set_entity_data("maps", [{"id": 22, "name": "云顶之弈"}])
+    page.nav_pivot.setCurrentItem("maps")
+    current = page.entityListPanel.find_index_by_entity_id("maps", "22")
+    page._current_entity_list().setCurrentIndex(current)
+    page.preview_mode_pivot.setCurrentItem(ALL_AUDIO_PREVIEW_MODE)
+
+    event_resets: list[bool] = []
+    audio_resets: list[bool] = []
+    page.audio_preview_tree.model().modelReset.connect(lambda: event_resets.append(True))
+    page.audio_list.source_model.modelReset.connect(lambda: audio_resets.append(True))
+
+    page._sync_current_list_view()
+
+    assert len(calls) == 1
+    assert event_resets == []
+    assert audio_resets == []
+    assert page.preview_mode_pivot.currentRouteKey() == ALL_AUDIO_PREVIEW_MODE
+    assert page.audio_list.model().rowCount() == 1
+
+    page.set_entity_data("maps", [{"id": 22, "name": "云顶之弈", "audio": "已存在"}])
+
+    expected_reload_count = 2
+    assert len(calls) == expected_reload_count
+
+
 def test_overview_page_rejects_stale_all_audio_worker_result(qtbot) -> None:
     """旧实体的后台结果不得污染当前实体或当前上下文缓存。"""
     page = OverviewPage()
