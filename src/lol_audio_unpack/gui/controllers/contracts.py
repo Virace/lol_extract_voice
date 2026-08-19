@@ -102,3 +102,5 @@ class OverviewSelectionSyncRequest:
     champion_ids: tuple[int, ...]
     map_ids: tuple[int, ...]
     summary: str
+    special_targets: tuple[str, ...] = ()
+    special_target_names: tuple[str, ...] = ()

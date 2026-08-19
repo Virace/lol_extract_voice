@@ -37,6 +37,7 @@ class ExecutionTaskParamsSnapshot:
     Args:
         champion_ids: 目标英雄 ID；为空时表示不限制英雄范围。
         map_ids: 目标地图 ID；为空时表示不限制地图范围。
+        special_targets: 从特殊内容目录同步的稳定选择 key。
         run_update: 是否在执行解包/映射前先强制刷新基础数据；GUI 中等价于前置一次 ``update --force``。
         run_extract: 是否执行音频解包。
         run_mapping: 是否执行事件映射。
@@ -53,6 +54,7 @@ class ExecutionTaskParamsSnapshot:
 
     champion_ids: tuple[int, ...] | None = None
     map_ids: tuple[int, ...] | None = None
+    special_targets: tuple[str, ...] = ()
     run_update: bool = False
     run_extract: bool = True
     run_mapping: bool = True
@@ -98,6 +100,7 @@ class ExecutionTaskParamsSnapshot:
             integrate_data=self.integrate_data,
             champion_ids=self.champion_ids,
             map_ids=self.map_ids,
+            special_targets=self.special_targets,
             wav_output=WavOutputOptions(
                 enabled=self.wav_enabled,
                 worker_count=self.wav_workers,
@@ -211,10 +214,9 @@ class OutputStateRefreshRequest:
 
     champion_ids: tuple[str, ...] = ()
     map_ids: tuple[str, ...] = ()
+    special_targets: tuple[str, ...] = ()
     requires_full_refresh: bool = False
 
     def has_incremental_targets(self) -> bool:
         """返回当前请求是否包含可增量刷新的实体目标。"""
-        return bool(self.champion_ids or self.map_ids)
-
-
+        return bool(self.champion_ids or self.map_ids or self.special_targets)

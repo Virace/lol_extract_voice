@@ -19,7 +19,14 @@ from lol_audio_unpack.app.artifacts import (
     resolve_mapping_path as resolve_artifact_mapping_path,
 )
 from lol_audio_unpack.app.path_layout import get_output_dir_name
-from lol_audio_unpack.app.targets import get_default_visible_champions
+from lol_audio_unpack.app.special_content import (
+    build_special_content_item,
+    is_structured_special_champion,
+)
+from lol_audio_unpack.app.targets import (
+    get_default_visible_champions,
+    should_hide_champion_by_default,
+)
 from lol_audio_unpack.manager.data_reader import DataReader
 from lol_audio_unpack.manager.errors import SharedDataMissingError
 from lol_audio_unpack.manager.files import read_data
@@ -312,6 +319,149 @@ class EntityDataLoader:
             "mapping_file": str(mapping_path) if mapping_path else "",
         }
 
+    def _localized_champion_name(self, champion: dict) -> str:
+        """读取当前区域的英雄名，缺失时交由 special profile 回退基础 alias。"""
+        names = champion.get("names", {})
+        if not isinstance(names, dict):
+            return ""
+        return str(names.get(self.ctx.game_region, names.get("default", ""))).strip()
+
+    def _build_special_row(self, champion: dict, version: str, *, display_name: str) -> dict | None:
+        """构造特殊内容行；缺少 banks 时保留可解释的未准备状态。"""
+        item = build_special_content_item(
+            champion,
+            display_name=display_name,
+        )
+        if item is None:
+            return None
+
+        audio_status = "未准备"
+        mapping_status = "未准备"
+        mapping_file = ""
+        try:
+            entity_data = self._build_entity_data("champions", str(item.champion_id))
+            audio_status, mapping_status = check_entity_status(self.ctx, entity_data, version)
+            mapping_path = resolve_mapping_file_path(self.ctx, "champions", str(item.champion_id), version)
+            mapping_file = str(mapping_path) if mapping_path else ""
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("特殊内容 {} 尚未准备可用 banks，将保留在目录中: {}", item.key, exc)
+
+        return {
+            "id": str(item.champion_id),
+            "key": item.key,
+            "name": item.display_name,
+            "display_name": item.standalone_name,
+            "alias": item.internal_alias,
+            "base_alias": item.base_alias,
+            "mode_key": item.profile.mode_key,
+            "mode_display_name": item.profile.display_name,
+            "mode_english_name": item.profile.english_name,
+            "search_text": item.search_text,
+            "tooltip": (
+                f"{item.standalone_name}\n"
+                f"ID: {item.champion_id}\n"
+                f"资源键: {item.key}\n"
+                f"内部标识: {item.internal_alias}\n"
+                f"音频: {audio_status}\n"
+                f"映射: {mapping_status}\n"
+                f"文件: {mapping_file or '当前还没有 mapping 文件'}"
+            ),
+            "audio": audio_status,
+            "mapping": mapping_status,
+            "entity_type": "champions",
+            "mapping_file": mapping_file,
+        }
+
+    def load_champion_catalog(self) -> dict[str, list[dict]]:
+        """一次读取并扫描完整英雄数据，分区返回普通与特殊目录。"""
+        try:
+            version = self.data_reader.version
+            champions = self.data_reader.get_champions()
+            self._ensure_bank_dataset_ready("champions")
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=True).warning(f"Error initializing data for champions: {exc}")
+            raise
+
+        ordinary_rows: list[dict] = []
+        special_rows: list[dict] = []
+        ordinary_names = {
+            str(champion.get("alias", "")).casefold(): self._localized_champion_name(champion)
+            for champion in champions
+            if not is_structured_special_champion(champion)
+        }
+        for champion in champions:
+            if is_structured_special_champion(champion):
+                profile_item = build_special_content_item(champion)
+                display_name = ordinary_names.get(profile_item.base_alias.casefold(), "") if profile_item else ""
+                row = self._build_special_row(champion, version, display_name=display_name)
+                if row is not None:
+                    special_rows.append(row)
+                continue
+            if should_hide_champion_by_default(champion):
+                continue
+            try:
+                ordinary_rows.append(self._build_entity_row("champions", champion, version))
+            except Exception as exc:  # noqa: BLE001
+                logger.opt(exception=True).warning(f"Error loading entity {champion.get('id', 'unknown')}: {exc}")
+
+        return {"champions": ordinary_rows, "special": special_rows}
+
+    def load_champion_rows_by_targets(
+        self,
+        *,
+        champion_ids: tuple[str, ...] = (),
+        special_targets: tuple[str, ...] = (),
+    ) -> dict[str, list[dict]]:
+        """一次读取冠军元数据，仅重建指定普通与特殊条目的输出状态。
+
+        Args:
+            champion_ids: 要增量更新的普通英雄数值 ID。
+            special_targets: 要增量更新的 ``champion:<id>`` 特殊内容 key。
+
+        Returns:
+            包含 ``champions`` 与 ``special`` 两个分区的增量行。
+        """
+        ordinary_targets = set(champion_ids)
+        special_target_keys = set(special_targets)
+        if not ordinary_targets and not special_target_keys:
+            return {"champions": [], "special": []}
+
+        try:
+            version = self.data_reader.version
+            champions = self.data_reader.get_champions()
+            self._ensure_bank_dataset_ready("champions")
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=True).warning(f"Error initializing data for champions: {exc}")
+            raise
+
+        ordinary_names = {
+            str(champion.get("alias", "")).casefold(): self._localized_champion_name(champion)
+            for champion in champions
+            if not is_structured_special_champion(champion)
+        }
+        ordinary_rows: list[dict] = []
+        special_rows: list[dict] = []
+        for champion in champions:
+            entity_id = str(champion.get("id", ""))
+            if is_structured_special_champion(champion):
+                profile_item = build_special_content_item(champion)
+                if profile_item is None or profile_item.key not in special_target_keys:
+                    continue
+                display_name = ordinary_names.get(profile_item.base_alias.casefold(), "")
+                row = self._build_special_row(champion, version, display_name=display_name)
+                if row is not None:
+                    special_rows.append(row)
+                continue
+
+            if entity_id not in ordinary_targets or should_hide_champion_by_default(champion):
+                continue
+            try:
+                ordinary_rows.append(self._build_entity_row("champions", champion, version))
+            except Exception as exc:  # noqa: BLE001
+                logger.opt(exception=True).warning(f"Error loading entity {champion.get('id', 'unknown')}: {exc}")
+
+        return {"champions": ordinary_rows, "special": special_rows}
+
     def load_entities(self, entity_type: Literal["champions", "maps"]) -> list[dict]:
         """加载指定类型的实体数据。
 
@@ -321,6 +471,9 @@ class EntityDataLoader:
         Returns:
             供 GUI 直接展示的实体列表。
         """
+        if entity_type == "champions":
+            return self.load_champion_catalog()["champions"]
+
         try:
             version, raw_data = self._load_raw_entities(entity_type)
             self._ensure_bank_dataset_ready(entity_type)

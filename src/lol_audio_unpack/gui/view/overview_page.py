@@ -54,6 +54,7 @@ from qfluentwidgets import (
 )
 
 from lol_audio_unpack.app.artifacts import AudioRef
+from lol_audio_unpack.app.special_content import is_special_content_supported
 from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled
 from lol_audio_unpack.gui.common.page_style import apply_page_content_margins
 from lol_audio_unpack.gui.common.styles import build_fluent_panel_frame_theme_pair
@@ -64,6 +65,7 @@ from lol_audio_unpack.gui.components.preview_tree import (
     extract_preview_modifiers,
     filter_preview_mapping_data,
 )
+from lol_audio_unpack.gui.components.special_content_tree import SpecialContentTreeView
 from lol_audio_unpack.gui.controllers import (
     OverviewPreviewController,
     PreviewPlaybackController,
@@ -132,10 +134,10 @@ class OverviewPage(QWidget):
         self.gui_config = None
         self._app_context = None
         self._loader = None
-        self._entity_data_store = EntityDataStore(entity_types=("champions", "maps"))
+        self._entity_data_store = EntityDataStore(entity_types=("champions", "maps", "special"))
         self._preview_controller = OverviewPreviewController()
-        self._selected_entity_ids: dict[str, set[str]] = {"champions": set(), "maps": set()}
-        self._current_preview_ids: dict[str, str | None] = {"champions": None, "maps": None}
+        self._selected_entity_ids: dict[str, set[str]] = {"champions": set(), "maps": set(), "special": set()}
+        self._current_preview_ids: dict[str, str | None] = {"champions": None, "maps": None, "special": None}
         self._current_preview_entity_type: str | None = None
         self._current_preview_entity_id: str | None = None
         self._current_mapping_path: Path | None = None
@@ -163,7 +165,7 @@ class OverviewPage(QWidget):
         }
         self._preview_audio_volume_percent = DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT
         self._preview_audio_output_device_key = DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY
-        self._entity_lists: dict[str, OverviewEntityListView] = {}
+        self._entity_lists: dict[str, OverviewEntityListView | SpecialContentTreeView] = {}
         self._build_ui()
         self._preview_playback_controller = PreviewPlaybackController(parent=self)
         self._preview_playback_controller.playback_state_changed.connect(self._apply_audio_preview_playback_state)
@@ -215,12 +217,27 @@ class OverviewPage(QWidget):
         self._app_context = app_context
         self._loader = None
         if app_context is None:
+            self.entityListPanel.set_special_interaction_enabled(False)
+            self.entityListPanel.set_special_availability_message(None)
+            self._update_catalog_subtitle()
             self._show_placeholder("当前配置尚未完成初始化，暂时无法读取预览内容。")
             return
+
+        special_supported = is_special_content_supported(app_context.config.source_mode)
+        self.entityListPanel.set_special_interaction_enabled(special_supported)
+        self.entityListPanel.set_special_availability_message(
+            None if special_supported else "特殊内容仅支持本地客户端资源。"
+        )
+        if not special_supported:
+            self._selected_entity_ids["special"] = set()
+            self._current_preview_ids["special"] = None
+        self._update_catalog_subtitle()
 
         current_index = self._current_entity_list().currentIndex()
         if current_index.isValid():
             self._load_preview_for_item(self._current_entity_type(), current_index)
+        else:
+            self._sync_current_list_view()
 
     def set_entity_data(self, entity_type: str, data: list[dict[str, Any]]) -> None:
         """更新页面缓存的实体数据。"""
@@ -244,8 +261,9 @@ class OverviewPage(QWidget):
     def clear_data(self) -> None:
         """清空页面缓存并恢复占位内容。"""
         self._entity_data_store.clear()
-        self._selected_entity_ids = {"champions": set(), "maps": set()}
-        self._current_preview_ids = {"champions": None, "maps": None}
+        self.entityListPanel.set_special_catalog_notice(None)
+        self._selected_entity_ids = {"champions": set(), "maps": set(), "special": set()}
+        self._current_preview_ids = {"champions": None, "maps": None, "special": None}
         self._current_mapping_path = None
         for _entity_type, list_widget in self._entity_lists.items():
             selection_model = list_widget.selectionModel()
@@ -361,7 +379,7 @@ class OverviewPage(QWidget):
     def _current_entity_type(self) -> str:
         return self.nav_pivot.currentRouteKey() or "champions"
 
-    def _current_entity_list(self) -> OverviewEntityListView:
+    def _current_entity_list(self) -> OverviewEntityListView | SpecialContentTreeView:
         return self._entity_lists[self._current_entity_type()]
 
     def _ensure_loader(self) -> EntityDataLoader | None:
@@ -376,7 +394,7 @@ class OverviewPage(QWidget):
 
         header_layout = QHBoxLayout()
         title_label = SubtitleLabel("实体总览", self)
-        self.subtitle_label = CaptionLabel("查看英雄和地图状态，选好后可直接发送到执行中心。", self)
+        self.subtitle_label = CaptionLabel("查看英雄、地图与特殊内容状态，选好后可直接发送到执行中心。", self)
         self.subtitle_label.setWordWrap(False)
 
         title_column = QVBoxLayout()
@@ -473,11 +491,43 @@ class OverviewPage(QWidget):
         self.entityListPanel.set_current_entity_type(entity_type)
         list_widget = self._current_entity_list()
 
-        if not source_rows:
+        if entity_type == "special" and self._special_content_is_remote_unsupported():
+            self.entityListPanel.set_special_catalog_notice(None)
             self._set_splitter_sizes_evenly()
-            self._show_placeholder("当前实体数据尚未加载完成。")
+            self._show_placeholder("特殊内容仅支持本地客户端资源。")
             self._update_selection_summary()
             return
+
+        if entity_type == "special" and self._app_context is None:
+            self.entityListPanel.set_special_catalog_notice(None)
+            self._set_splitter_sizes_evenly()
+            self._show_placeholder("当前特殊内容数据尚未加载完成。")
+            self._update_selection_summary()
+            return
+
+        if not source_rows:
+            if entity_type == "special":
+                self.entityListPanel.set_special_catalog_notice(None)
+            self._set_splitter_sizes_evenly()
+            placeholders = {
+                "champions": "当前英雄数据尚未加载完成。",
+                "maps": "当前地图数据尚未加载完成。",
+                "special": "当前版本未发现特殊内容",
+            }
+            placeholder = placeholders.get(entity_type, "当前实体数据尚未加载完成。")
+            self._show_placeholder(placeholder)
+            self._update_selection_summary()
+            return
+
+        if entity_type == "special":
+            self.entityListPanel.set_special_catalog_notice(
+                "特殊内容资源尚未准备，需要更新实体数据后才能显示完整状态。"
+                if all(
+                    str(row.get("audio", "")) == "未准备" and str(row.get("mapping", "")) == "未准备"
+                    for row in source_rows
+                )
+                else None
+            )
 
         if visible_count == 0:
             self._set_splitter_sizes_evenly()
@@ -507,17 +557,32 @@ class OverviewPage(QWidget):
     def _update_selection_summary(self) -> None:
         champion_count = len(self._selected_entity_ids["champions"])
         map_count = len(self._selected_entity_ids["maps"])
+        special_count = len(self._selected_entity_ids["special"])
         self.entityListPanel.set_selection_counts(
             champion_count=champion_count,
             map_count=map_count,
+            special_count=special_count,
         )
 
     def _sync_selected_entities(self) -> None:
+        if self._selected_entity_ids["special"] and self._special_content_is_remote_unsupported():
+            InfoBar.warning(
+                "无法同步特殊内容",
+                "特殊内容仅支持本地客户端资源。",
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+            )
+            return
         payload = self.entityListPanel.build_selection_sync_request(
             selected_champion_ids=self._selected_entity_ids["champions"],
             selected_map_ids=self._selected_entity_ids["maps"],
+            selected_special_targets=self._selected_entity_ids["special"],
+            special_target_names={
+                str(row.get("key", "")): str(row.get("display_name", ""))
+                for row in self._entity_data_store.rows_for("special")
+            },
         )
-        total_count = len(payload.champion_ids) + len(payload.map_ids)
+        total_count = len(payload.champion_ids) + len(payload.map_ids) + len(payload.special_targets)
         if total_count == 0:
             InfoBar.warning(
                 "没有可同步的选择",
@@ -530,13 +595,15 @@ class OverviewPage(QWidget):
         self.selection_sync_requested.emit(payload)
 
     def _clear_selected_entities(self) -> None:
-        entity_type = self._current_entity_type()
-        self._selected_entity_ids[entity_type] = set()
-        self._current_preview_ids[entity_type] = None
-        self.entityListPanel.clear_selection(entity_type)
+        for entity_type in self._selected_entity_ids:
+            self._selected_entity_ids[entity_type] = set()
+            self._current_preview_ids[entity_type] = None
+            self.entityListPanel.clear_selection(entity_type)
         self._sync_current_list_view()
 
     def _on_nav_changed(self, _key: str) -> None:
+        self._update_catalog_subtitle()
+        self._update_catalog_search_placeholder()
         self._sync_current_list_view()
 
     def _on_search_text_changed(self, _text: str) -> None:
@@ -565,14 +632,16 @@ class OverviewPage(QWidget):
             self._show_placeholder(DEFAULT_PREVIEW_PLACEHOLDER_TEXT)
             return
 
-        self._current_preview_ids[entity_type] = str(row["id"])
-        self._current_preview_entity_type = entity_type
+        preview_state_id = row.get("key", row["id"]) if entity_type == "special" else row["id"]
+        self._current_preview_ids[entity_type] = str(preview_state_id)
+        preview_entity_type = str(row.get("entity_type", entity_type))
+        self._current_preview_entity_type = preview_entity_type
         self._current_preview_entity_id = str(row["id"])
         loader = self._ensure_loader()
         preview_result = self._preview_controller.load_preview(
-            entity_type=entity_type,
+            entity_type=preview_entity_type,
             entity_id=str(row["id"]),
-            entity_name=str(row["name"]),
+            entity_name=str(row.get("display_name", row["name"])),
             loader=loader,
         )
         if preview_result.placeholder_message is not None:
@@ -879,6 +948,39 @@ class OverviewPage(QWidget):
         left_width = max(left_width, min(left_min_width, total_width))
         right_width = max(total_width - left_width, 0)
         self.splitter.setSizes([left_width, right_width])
+
+    def _special_content_supported(self) -> bool:
+        """返回当前上下文是否允许选择并执行特殊内容。"""
+        return self._app_context is not None and is_special_content_supported(self._app_context.config.source_mode)
+
+    def _special_content_is_remote_unsupported(self) -> bool:
+        """判断当前已初始化上下文是否明确禁止特殊内容。"""
+        return self._app_context is not None and not self._special_content_supported()
+
+    def _update_catalog_subtitle(self) -> None:
+        """按当前一级目录更新总览说明，避免隐藏特殊内容可用性边界。"""
+        entity_type = self._current_entity_type()
+        if entity_type == "special" and self._special_content_is_remote_unsupported():
+            self.subtitle_label.setText("特殊内容仅支持本地客户端资源。")
+            return
+        if entity_type == "special" and self._app_context is None:
+            self.subtitle_label.setText("正在准备特殊内容数据。")
+            return
+        labels = {
+            "champions": "查看英雄状态，选好后可直接发送到执行中心。",
+            "maps": "查看地图状态，选好后可直接发送到执行中心。",
+            "special": "查看本地客户端支持的特殊内容，选好后可直接发送到执行中心。",
+        }
+        self.subtitle_label.setText(labels.get(entity_type, "查看实体状态，选好后可直接发送到执行中心。"))
+
+    def _update_catalog_search_placeholder(self) -> None:
+        """按当前目录收窄搜索提示，说明各目录实际可检索字段。"""
+        placeholders = {
+            "champions": "搜索英雄、别名或 ID",
+            "maps": "搜索地图、别名或 ID",
+            "special": "搜索模式、英雄、别名或资源包",
+        }
+        self.search_input.setPlaceholderText(placeholders.get(self._current_entity_type(), "搜索实体名称或 ID"))
 
     def _resolve_preview_target(self) -> Path | None:
         """按当前预览方式返回可安全打开的单一资源目标。"""

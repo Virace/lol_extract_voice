@@ -47,11 +47,16 @@ def _build_output_state_refresh_request(
         tuple(str(entity_id) for entity_id in task_params.champion_ids) if task_params.champion_ids is not None else ()
     )
     map_ids = tuple(str(entity_id) for entity_id in task_params.map_ids) if task_params.map_ids is not None else ()
+    special_targets = task_params.special_targets
 
-    if not champion_ids and not map_ids:
+    if not champion_ids and not map_ids and not special_targets:
         return OutputStateRefreshRequest(requires_full_refresh=True)
 
-    return OutputStateRefreshRequest(champion_ids=champion_ids, map_ids=map_ids)
+    return OutputStateRefreshRequest(
+        champion_ids=champion_ids,
+        map_ids=map_ids,
+        special_targets=special_targets,
+    )
 
 
 class ExecutionQueueController(QObject):

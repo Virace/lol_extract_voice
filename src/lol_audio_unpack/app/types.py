@@ -85,6 +85,7 @@ class OperationOptions:
     integrate_data: bool = False
     champion_ids: tuple[int, ...] | None = None
     map_ids: tuple[int, ...] | None = None
+    special_targets: tuple[str, ...] = ()
     wav_output: WavOutputOptions = field(default_factory=WavOutputOptions)
 
 

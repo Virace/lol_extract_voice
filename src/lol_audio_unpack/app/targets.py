@@ -6,6 +6,8 @@ from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from lol_audio_unpack.app.special_content import is_structured_special_champion
+
 EntityRef = tuple[str, int]
 EntityTask = tuple[str, int, str]
 
@@ -38,7 +40,7 @@ def get_default_hidden_champion_markers(champion: Mapping[str, Any]) -> tuple[st
 
 def should_hide_champion_by_default(champion: Mapping[str, Any]) -> bool:
     """判断英雄是否应在默认列表与默认全量任务中隐藏。"""
-    return bool(get_default_hidden_champion_markers(champion))
+    return bool(get_default_hidden_champion_markers(champion)) or is_structured_special_champion(champion)
 
 
 def filter_default_visible_champions(champions: Iterable[dict]) -> list[dict]:

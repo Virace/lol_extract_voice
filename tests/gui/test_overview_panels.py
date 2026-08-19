@@ -3,17 +3,45 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
+from PySide6.QtCore import Qt
+
+import lol_audio_unpack.gui.service.data_loader as data_loader_module
 from lol_audio_unpack.app.artifacts import AudioRef
 from lol_audio_unpack.gui.components.preview_tree import (
     extract_preview_modifiers,
     extract_tree_groups,
     filter_preview_mapping_data,
 )
+from lol_audio_unpack.gui.components.special_content_tree import SpecialContentTreeView
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
 from lol_audio_unpack.gui.view.overview.audio_preview_panel import OverviewAudioPreviewPanel
 from lol_audio_unpack.gui.view.overview.entity_list_panel import OverviewEntityListPanel
 from lol_audio_unpack.gui.view.overview.preview_panel import OverviewPreviewPanel
+from lol_audio_unpack.manager.errors import SharedDataMissingError
+
+
+def _make_special_row(
+    *,
+    key: str,
+    mode_key: str,
+    name: str,
+    group_name: str,
+) -> dict:
+    """构造特殊内容树行为测试使用的最小行。"""
+    return {
+        "id": key.partition(":")[2],
+        "key": key,
+        "name": name,
+        "display_name": f"{group_name} · {name}",
+        "mode_key": mode_key,
+        "audio": "未准备",
+        "mapping": "未准备",
+        "search_text": f"{group_name} {name} {key}".casefold(),
+    }
+
 
 MATCHED_AUDIO_IDS = 2
 
@@ -32,8 +60,8 @@ def test_overview_entity_list_panel_switches_current_entity_type(qtbot) -> None:
     assert panel.current_list() is panel.entity_lists["maps"]
     assert panel.clear_selection_btn.isEnabled() is True
     assert panel.sync_selection_btn.isEnabled() is True
-    panel.set_selection_counts(champion_count=2, map_count=1)
-    assert panel.selection_status_label.text() == "已选 2 个英雄，1 张地图。"
+    panel.set_selection_counts(champion_count=2, map_count=1, special_count=0)
+    assert panel.selection_status_label.text() == "已选：2 英雄 · 1 地图 · 0 特殊内容"
 
 
 def test_overview_entity_list_panel_filters_and_finds_entity_ids(qtbot) -> None:
@@ -92,14 +120,298 @@ def test_overview_entity_list_panel_can_build_selection_sync_request(qtbot) -> N
     payload = panel.build_selection_sync_request(
         selected_champion_ids={"103", "1"},
         selected_map_ids={"11"},
+        selected_special_targets={"champion:66600"},
+        special_target_names={"champion:66600": "末日人机 · 厄加特"},
     )
 
     assert payload == OverviewSelectionSyncRequest(
         source="overview_selection",
         champion_ids=(1, 103),
         map_ids=(11,),
-        summary="已选择 2 个英雄、1 张地图，请前往执行中心继续创建任务。",
+        summary="已选择 2 个英雄、1 张地图、1 个特殊内容，请前往执行中心继续创建任务。",
+        special_targets=("champion:66600",),
+        special_target_names=("末日人机 · 厄加特",),
     )
+
+
+def test_special_content_tree_keeps_one_level_groups_and_restores_expansion_after_search(qtbot) -> None:
+    """特殊目录分组不可选，搜索和数据刷新不应丢失会话展开状态。"""
+    tree = SpecialContentTreeView()
+    qtbot.addWidget(tree)
+    rows = [
+        _make_special_row(
+            key="champion:60001",
+            mode_key="legacy_champions",
+            name="安妮",
+            group_name="旧版英雄",
+        ),
+        _make_special_row(
+            key="champion:66600",
+            mode_key="doom_bots",
+            name="厄加特",
+            group_name="末日人机",
+        ),
+        _make_special_row(
+            key="champion:77702",
+            mode_key="swarm",
+            name="金克丝",
+            group_name="无尽狂潮",
+        ),
+    ]
+
+    tree.set_rows(rows)
+    model = tree.model()
+    legacy_group = model.index(0, 0)
+    doom_group = model.index(1, 0)
+    assert [model.index(row, 0).data() for row in range(model.rowCount())] == [
+        "旧版英雄 (1)",
+        "末日人机 (1)",
+        "无尽狂潮 (1)",
+    ]
+    assert not bool(legacy_group.flags() & Qt.ItemFlag.ItemIsSelectable)
+    assert legacy_group.data(Qt.ItemDataRole.AccessibleTextRole) == "旧版英雄，1 项"
+    assert "可展开或折叠" in legacy_group.data(Qt.ItemDataRole.AccessibleDescriptionRole)
+    assert tree.isExpanded(doom_group) is True
+
+    tree.collapseAll()
+    tree.set_rows(rows)
+    assert tree.expanded_mode_keys() == set()
+
+    tree.set_keyword("末日人机")
+    assert tree.visible_row_count() == 1
+    assert tree.isExpanded(tree.model().index(0, 0)) is True
+    tree.set_keyword("")
+    assert tree.expanded_mode_keys() == set()
+
+
+def test_special_content_tree_clear_then_reload_restores_default_expansion(qtbot) -> None:
+    """数据清空后的重新加载应回到 profile 默认展开，而非沿用空模型状态。"""
+    tree = SpecialContentTreeView()
+    qtbot.addWidget(tree)
+    rows = [
+        _make_special_row(
+            key="champion:60001",
+            mode_key="legacy_champions",
+            name="安妮",
+            group_name="旧版英雄",
+        ),
+        _make_special_row(
+            key="champion:66600",
+            mode_key="doom_bots",
+            name="厄加特",
+            group_name="末日人机",
+        ),
+        _make_special_row(
+            key="champion:77702",
+            mode_key="swarm",
+            name="金克丝",
+            group_name="无尽狂潮",
+        ),
+    ]
+
+    tree.set_rows(rows)
+    tree.set_rows([])
+    tree.set_rows(rows)
+
+    assert tree.expanded_mode_keys() == {"doom_bots", "swarm"}
+
+
+def test_special_content_tree_keeps_hidden_search_selection_state_restorable(qtbot) -> None:
+    """搜索中刷新时，隐藏的 special key 不得被视为已删除。"""
+    panel = OverviewEntityListPanel()
+    qtbot.addWidget(panel)
+    rows = [
+        _make_special_row(
+            key="champion:66600",
+            mode_key="doom_bots",
+            name="厄加特",
+            group_name="末日人机",
+        ),
+        _make_special_row(
+            key="champion:77702",
+            mode_key="swarm",
+            name="金克丝",
+            group_name="无尽狂潮",
+        ),
+    ]
+    selected_ids = {"champion:66600", "champion:77702"}
+    panel.set_rows("special", rows)
+    panel.apply_keyword_and_restore(
+        entity_type="special",
+        keyword="",
+        selected_ids=selected_ids,
+        current_entity_id="champion:77702",
+    )
+
+    panel.apply_keyword_and_restore(
+        entity_type="special",
+        keyword="末日人机",
+        selected_ids=selected_ids,
+        current_entity_id="champion:77702",
+    )
+    special_tree = panel.entity_lists["special"]
+    assert special_tree.entity_ids() == selected_ids
+
+    panel.set_rows("special", rows)
+    panel.apply_keyword_and_restore(
+        entity_type="special",
+        keyword="末日人机",
+        selected_ids=selected_ids,
+        current_entity_id="champion:77702",
+    )
+    panel.apply_keyword_and_restore(
+        entity_type="special",
+        keyword="",
+        selected_ids=selected_ids,
+        current_entity_id="champion:77702",
+    )
+
+    assert special_tree.selected_entity_ids() == selected_ids
+    assert special_tree.currentIndex().data(Qt.ItemDataRole.UserRole)["key"] == "champion:77702"
+
+
+def test_special_content_tree_disables_item_selection_for_remote_mode(qtbot) -> None:
+    """远端模式仍可浏览特殊目录，但子项不再可选。"""
+    tree = SpecialContentTreeView()
+    qtbot.addWidget(tree)
+    tree.set_rows(
+        [
+            _make_special_row(
+                key="champion:66600",
+                mode_key="doom_bots",
+                name="厄加特",
+                group_name="末日人机",
+            )
+        ]
+    )
+    tree.set_interaction_enabled(False)
+    group = tree.model().index(0, 0)
+    item = tree.model().index(0, 0, group)
+
+    assert not bool(item.flags() & Qt.ItemFlag.ItemIsSelectable)
+    assert "仅支持本地客户端资源" in tree.toolTip()
+
+
+def test_entity_data_loader_partitions_special_rows_and_keeps_unprepared_rows(monkeypatch) -> None:
+    """一次冠军扫描应分区普通/特殊，并为未准备 special 保留诚实状态。"""
+    loader = data_loader_module.EntityDataLoader.__new__(data_loader_module.EntityDataLoader)
+    loader.ctx = SimpleNamespace(game_region="zh_CN")
+    loader.data_reader = SimpleNamespace(
+        version="16.16",
+        get_champions=lambda: [
+            {"id": 6, "alias": "Urgot", "names": {"zh_CN": "厄加特"}},
+            {"id": 222, "alias": "Jinx", "names": {"zh_CN": "金克丝"}},
+            {"id": 666123, "alias": "Kaisa", "names": {"zh_CN": "卡莎"}},
+            {"id": 66600, "alias": "Ruby_Urgot", "wad": {"root": "Champions/Ruby_Urgot.wad.client"}},
+            {
+                "id": 77702,
+                "alias": "Strawberry_Jinx",
+                "wad": {"root": "Champions/Strawberry_Jinx.wad.client"},
+            },
+        ],
+    )
+    monkeypatch.setattr(loader, "_ensure_bank_dataset_ready", lambda _entity_type: None)
+    monkeypatch.setattr(
+        loader,
+        "_build_entity_row",
+        lambda _entity_type, entity, _version: {"id": str(entity["id"]), "name": entity["names"]["zh_CN"]},
+    )
+    monkeypatch.setattr(
+        loader,
+        "_build_entity_data",
+        lambda _entity_type, entity_id: (_ for _ in ()).throw(RuntimeError(f"banks missing: {entity_id}")),
+    )
+
+    catalog = loader.load_champion_catalog()
+
+    assert [row["id"] for row in catalog["champions"]] == ["6", "222"]
+    assert [(row["name"], row["display_name"]) for row in catalog["special"]] == [
+        ("厄加特", "末日人机 · 厄加特"),
+        ("金克丝", "无尽狂潮 · 金克丝"),
+    ]
+    assert all(row["audio"] == "未准备" and row["mapping"] == "未准备" for row in catalog["special"])
+    assert "资源键: champion:66600" in catalog["special"][0]["tooltip"]
+
+
+def test_entity_data_loader_default_raw_champions_preserve_hidden_marker_filter() -> None:
+    """普通列表的原始加载仍复用默认隐藏策略。"""
+    loader = data_loader_module.EntityDataLoader.__new__(data_loader_module.EntityDataLoader)
+    loader.data_reader = SimpleNamespace(
+        version="16.16",
+        get_champions=lambda: [
+            {"id": 6, "alias": "Urgot"},
+            {"id": 666123, "alias": "Kaisa"},
+            {"id": 66600, "alias": "Ruby_Urgot"},
+        ],
+    )
+
+    _version, champions = loader._load_raw_entities("champions")
+
+    assert [champion["id"] for champion in champions] == [6]
+
+
+def test_entity_data_loader_incremental_champion_targets_only_build_requested_rows(monkeypatch) -> None:
+    """特殊内容增量刷新只重建指定普通与特殊条目，元数据仍只读取一次。"""
+    loader = data_loader_module.EntityDataLoader.__new__(data_loader_module.EntityDataLoader)
+    loader.ctx = SimpleNamespace(game_region="zh_CN")
+    loader.data_reader = SimpleNamespace(
+        version="16.16",
+        get_champions=lambda: [
+            {"id": 6, "alias": "Urgot", "names": {"zh_CN": "厄加特"}},
+            {"id": 222, "alias": "Jinx", "names": {"zh_CN": "金克丝"}},
+            {"id": 666123, "alias": "Kaisa", "names": {"zh_CN": "卡莎"}},
+            {"id": 66600, "alias": "Ruby_Urgot"},
+            {"id": 77702, "alias": "Strawberry_Jinx"},
+        ],
+    )
+    monkeypatch.setattr(loader, "_ensure_bank_dataset_ready", lambda _entity_type: None)
+    built_rows: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        loader,
+        "_build_entity_row",
+        lambda entity_type, entity, _version: (
+            built_rows.append((entity_type, str(entity["id"]))) or {"id": str(entity["id"]), "name": entity["alias"]}
+        ),
+    )
+    monkeypatch.setattr(
+        loader,
+        "_build_special_row",
+        lambda entity, _version, *, display_name: (
+            built_rows.append(("special", str(entity["id"])))
+            or {"id": str(entity["id"]), "key": f"champion:{entity['id']}", "name": display_name}
+        ),
+    )
+
+    rows = loader.load_champion_rows_by_targets(
+        champion_ids=("6", "666123"),
+        special_targets=("champion:66600",),
+    )
+
+    assert built_rows == [("champions", "6"), ("special", "66600")]
+    assert [row["id"] for row in rows["champions"]] == ["6"]
+    assert [row["key"] for row in rows["special"]] == ["champion:66600"]
+
+
+def test_entity_data_loader_propagates_shared_bank_root_missing_error(monkeypatch) -> None:
+    """共享 banks 根缺失必须上抛，交由既有自动准备和刷新回退处理。"""
+    loader = data_loader_module.EntityDataLoader.__new__(data_loader_module.EntityDataLoader)
+    loader.ctx = SimpleNamespace(game_region="zh_CN")
+    loader.data_reader = SimpleNamespace(
+        version="16.16",
+        get_champions=lambda: [
+            {"id": 6, "alias": "Urgot", "names": {"zh_CN": "厄加特"}},
+            {"id": 66600, "alias": "Ruby_Urgot"},
+        ],
+    )
+    monkeypatch.setattr(
+        loader,
+        "_ensure_bank_dataset_ready",
+        lambda _entity_type: (_ for _ in ()).throw(SharedDataMissingError("共享 banks 未准备")),
+    )
+    with pytest.raises(SharedDataMissingError, match="共享 banks 未准备"):
+        loader.load_champion_catalog()
+    with pytest.raises(SharedDataMissingError, match="共享 banks 未准备"):
+        loader.load_champion_rows_by_targets(special_targets=("champion:66600",))
 
 
 def test_overview_preview_panel_show_placeholder_clears_preview_state(qtbot) -> None:

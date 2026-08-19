@@ -7,6 +7,7 @@ Manager 与流程函数。
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from loguru import logger
@@ -27,6 +28,7 @@ from .artifacts import resolve_audio_paths, resolve_mapping_path
 from .path_layout import get_output_dir_name
 from .remote import RemoteEntityCallbackPayload, RemoteEntityWorkItem
 from .remote_workflow import RemoteWorkflowOrchestrator
+from .special_content import is_special_content_supported, merge_champion_ids
 from .types import AppContext, OperationOptions, SourceMode
 
 UPDATE_PREPARED_KEY = "update_data_prepared_force"
@@ -53,6 +55,15 @@ class LolAudioUnpackApp:
     def _create_reader(self) -> DataReader:
         """创建数据读取器实例。"""
         return DataReader(ctx=self.ctx)
+
+    def _resolve_operation_options(self, opts: OperationOptions) -> OperationOptions:
+        """归约 special target，保留已有英雄/地图执行合同。"""
+        if opts.special_targets and not is_special_content_supported(self.ctx.config.source_mode):
+            raise ValueError("特殊内容仅支持本地客户端资源。")
+        return replace(
+            opts,
+            champion_ids=merge_champion_ids(opts.champion_ids, opts.special_targets),
+        )
 
     def _describe_mapping_backend(self) -> str:
         """返回 mapping 流程使用的 HIRC 后端。"""
@@ -237,6 +248,7 @@ class LolAudioUnpackApp:
 
     def update(self, opts: OperationOptions, *, target: str = "all") -> None:
         """执行更新流程。"""
+        opts = self._resolve_operation_options(opts)
         logger.info(
             f"开始执行更新流程：target={target}，英雄 {len(opts.champion_ids or ())} 个，"
             f"地图 {len(opts.map_ids or ())} 个，事件处理={'开启' if opts.process_events else '关闭'}"
@@ -276,6 +288,7 @@ class LolAudioUnpackApp:
         Returns:
             dict[str, object]: WAV 转码汇总结果。
         """
+        opts = self._resolve_operation_options(opts)
         reader = self._create_reader()
         audio_targets: tuple[TranscodeTarget, ...] | None = None
         if opts.champion_ids is not None or opts.map_ids is not None:
@@ -334,6 +347,7 @@ class LolAudioUnpackApp:
             prepare_remote: 是否在 remote 模式下预准备所需资源。
             progress_callback: 每个实体处理结束后的可选进度回调。
         """
+        opts = self._resolve_operation_options(opts)
         reader = self._create_reader()
         remote_preparer = self._create_remote_preparer()
         if prepare_remote and remote_preparer is not None:
@@ -350,8 +364,10 @@ class LolAudioUnpackApp:
         logger.info(f"输出路径: {self.ctx.config.output_path}")
         logger.info(f"语言: {self.ctx.config.game_region}")
 
-        if opts.champion_ids is not None:
-            return unpack_champions(
+        has_explicit_champions = opts.champion_ids is not None
+        has_explicit_maps = opts.map_ids is not None
+        if has_explicit_champions:
+            unpack_champions(
                 reader=reader,
                 champion_ids=list(opts.champion_ids),
                 max_workers=opts.max_workers,
@@ -359,7 +375,7 @@ class LolAudioUnpackApp:
                 progress_callback=progress_callback,
                 persisted_wem_callback=persisted_wem_callback,
             )
-        if opts.map_ids is not None:
+        if has_explicit_maps:
             unpack_maps(
                 reader=reader,
                 map_ids=list(opts.map_ids),
@@ -368,6 +384,7 @@ class LolAudioUnpackApp:
                 progress_callback=progress_callback,
                 persisted_wem_callback=persisted_wem_callback,
             )
+        if has_explicit_champions or has_explicit_maps:
             return
 
         unpack_all(
@@ -390,6 +407,7 @@ class LolAudioUnpackApp:
         progress_callback: Callable[[str, int, int, str], None] | None = None,
     ) -> None:
         """执行映射流程。"""
+        opts = self._resolve_operation_options(opts)
         backend_label = self._describe_mapping_backend()
         reader = self._create_reader()
         remote_preparer = self._create_remote_preparer()
@@ -407,7 +425,9 @@ class LolAudioUnpackApp:
         logger.info(f"HIRC 后端: {backend_label}")
         logger.info(f"语言: {self.ctx.config.game_region}")
 
-        if opts.champion_ids is not None:
+        has_explicit_champions = opts.champion_ids is not None
+        has_explicit_maps = opts.map_ids is not None
+        if has_explicit_champions:
             build_champions(
                 reader=reader,
                 champion_ids=list(opts.champion_ids),
@@ -416,8 +436,7 @@ class LolAudioUnpackApp:
                 ctx=self.ctx,
                 progress_callback=progress_callback,
             )
-            return
-        if opts.map_ids is not None:
+        if has_explicit_maps:
             build_maps(
                 reader=reader,
                 map_ids=list(opts.map_ids),
@@ -426,6 +445,7 @@ class LolAudioUnpackApp:
                 ctx=self.ctx,
                 progress_callback=progress_callback,
             )
+        if has_explicit_champions or has_explicit_maps:
             return
 
         build_all(

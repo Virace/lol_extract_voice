@@ -20,13 +20,15 @@ from lol_audio_unpack.gui.window import _prepare_shared_entity_data
 EXPECTED_CONTEXT_COUNT_WITH_UPDATE = 2
 
 
-def _build_task(
+def _build_task(  # noqa: PLR0913
     *,
     source_mode: str,
     run_update: bool = False,
     run_extract: bool = True,
     run_mapping: bool = True,
     wav_enabled: bool = False,
+    champion_ids: tuple[int, ...] | None = None,
+    special_targets: tuple[str, ...] = (),
 ) -> QueuedExecutionTask:
     return QueuedExecutionTask(
         task_id=1,
@@ -43,6 +45,8 @@ def _build_task(
                 )
             ),
             task_params=ExecutionTaskParamsSnapshot(
+                champion_ids=champion_ids,
+                special_targets=special_targets,
                 run_update=run_update,
                 run_extract=run_extract,
                 run_mapping=run_mapping,
@@ -285,3 +289,58 @@ def test_run_execution_task_rejects_missing_map_banks_before_runtime_steps(
 
     with pytest.raises(RuntimeError, match="地图基础数据仍未准备完成"):
         task_runner.run_execution_task(task, signals)
+
+
+def test_run_execution_task_rejects_remote_special_targets_before_app_context(monkeypatch) -> None:
+    """远端 special key 必须在任何运行时上下文与 stage 前失败。"""
+    task = _build_task(source_mode="remote_snapshot", special_targets=("champion:66600",))
+    calls: list[str] = []
+    signals = SimpleNamespace(progress=SimpleNamespace(emit=lambda _payload: None))
+
+    monkeypatch.setattr(
+        task_runner,
+        "create_app_context",
+        lambda **_kwargs: calls.append("context") or pytest.fail("不应创建 AppContext"),
+    )
+    monkeypatch.setattr(
+        task_runner,
+        "LolAudioUnpackApp",
+        lambda *_args: calls.append("app") or pytest.fail("不应创建运行 App"),
+    )
+
+    with pytest.raises(ValueError, match="特殊内容仅支持本地客户端资源"):
+        task_runner.run_execution_task(task, signals)
+
+    assert calls == []
+
+
+def test_run_execution_task_merges_special_targets_into_local_champion_scope(monkeypatch, tmp_path: Path) -> None:
+    """本地任务应将 special key 与普通英雄 ID 归约为一个去重范围。"""
+    task = _build_task(
+        source_mode="local_path",
+        run_mapping=False,
+        champion_ids=(1, 66600),
+        special_targets=("champion:66600", "champion:77702"),
+    )
+    runtime_context = SimpleNamespace(
+        paths=SimpleNamespace(audio_path=tmp_path / "audios", wav_path=tmp_path / "wavs"),
+        runtime_cache={},
+        config=SimpleNamespace(),
+    )
+    captured: list[tuple[int, ...] | None] = []
+    signals = SimpleNamespace(progress=SimpleNamespace(emit=lambda _payload: None))
+
+    monkeypatch.setattr(task_runner, "create_app_context", lambda **_kwargs: runtime_context)
+
+    class FakeApp:
+        def __init__(self, app_context) -> None:
+            self.ctx = app_context
+
+        def extract(self, options, **_kwargs) -> None:
+            captured.append(options.champion_ids)
+
+    monkeypatch.setattr(task_runner, "LolAudioUnpackApp", FakeApp)
+
+    task_runner.run_execution_task(task, signals)
+
+    assert captured == [(1, 66600, 77702)]

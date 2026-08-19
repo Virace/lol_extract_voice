@@ -147,3 +147,46 @@ def test_task_creation_card_restore_button_resets_custom_inputs_to_defaults(qtbo
     assert panel.integrate_data_cb.isChecked() is True
     assert panel.wav_task_cb.isChecked() is False
     assert panel.wav_format_combo.currentText() == "pcm16"
+
+
+def test_task_creation_card_discards_synced_special_targets_after_manual_id_edit(qtbot) -> None:
+    """用户手改普通 ID 后，隐藏的特殊 key 不能继续进入任务草稿。"""
+    panel = _build_panel(qtbot)
+    gui_config = _FakeGuiConfig()
+
+    panel.apply_selected_entities(
+        champion_ids=("1",),
+        map_ids=(),
+        special_targets=("champion:66600",),
+        special_target_names=("末日人机 · 厄加特",),
+        source="overview_selection",
+        summary="已同步特殊内容。",
+    )
+    assert "末日人机 · 厄加特" in panel.target_summary_value.text()
+
+    panel.champion_ids_input.setText("103")
+    panel.sync_state_from_widgets()
+    draft = panel.build_task_draft(gui_config=gui_config)
+
+    assert panel.current_special_targets() == ()
+    assert "特殊内容 0 个" in panel.target_summary_value.text()
+    assert draft.task_params.special_targets == ()
+
+
+def test_task_creation_card_counts_special_targets_without_display_names(qtbot) -> None:
+    """兼容旧同步输入缺少名称时，范围摘要仍应显示 special 数量且不泄露 key。"""
+    panel = _build_panel(qtbot)
+
+    panel.apply_selected_entities(
+        champion_ids=(),
+        map_ids=(),
+        special_targets=("champion:66600",),
+        special_target_names=(),
+        source="overview_selection",
+        summary="已同步特殊内容。",
+    )
+
+    summary = panel.target_summary_value.text()
+    assert "特殊内容 1 个" in summary
+    assert "全部英雄+地图" not in summary
+    assert "champion:66600" not in summary

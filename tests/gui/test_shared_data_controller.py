@@ -129,6 +129,18 @@ def test_shared_data_controller_refresh_shared_output_state_uses_incremental_loa
         def __init__(self, app_context) -> None:
             loader_calls.append(("init", app_context))
 
+        def load_champion_rows_by_targets(
+            self,
+            *,
+            champion_ids: tuple[str, ...],
+            special_targets: tuple[str, ...],
+        ):
+            loader_calls.append(("champion_rows", champion_ids, special_targets))
+            return {
+                "champions": [{"id": champion_ids[0], "name": "champions"}],
+                "special": [{"id": "66600", "key": special_targets[0], "name": "厄加特"}],
+            }
+
         def load_entities_by_ids(self, entity_type: str, entity_ids: tuple[str, ...]):
             loader_calls.append((entity_type, tuple(entity_ids)))
             return [{"id": entity_ids[0], "name": entity_type}]
@@ -142,11 +154,20 @@ def test_shared_data_controller_refresh_shared_output_state_uses_incremental_loa
     controller.notice_requested.connect(notices.append)
     controller.reconfigure_runtime_logging_requested.connect(reconfigure_payloads.append)
 
-    controller.refresh_shared_output_state(OutputStateRefreshRequest(champion_ids=("1",), map_ids=("11",)))
+    controller.refresh_shared_output_state(
+        OutputStateRefreshRequest(
+            champion_ids=("1",),
+            map_ids=("11",),
+            special_targets=("champion:66600",),
+        )
+    )
 
     assert reconfigure_payloads == []
-    assert loader_calls[1:] == [("champions", ("1",)), ("maps", ("11",))]
-    assert [payload.entity_type for payload in updates] == ["champions", "maps"]
+    assert loader_calls[1:] == [
+        ("champion_rows", ("1",), ("champion:66600",)),
+        ("maps", ("11",)),
+    ]
+    assert [payload.entity_type for payload in updates] == ["champions", "special", "maps"]
     assert notices == [
         GuiNotice(
             title="数据已刷新",

@@ -61,13 +61,17 @@ def create_app_context(
 - `AppContext`
   - 运行时上下文对象，统一封装 `config`、`paths` 与 `runtime_cache`
 - `OperationOptions`
-  - 单次操作参数，包含 `max_workers`、`force_update`、`process_events`、`integrate_data`、`champion_ids`、`map_ids`
+  - 单次操作参数，包含 `max_workers`、`force_update`、`process_events`、`integrate_data`、`champion_ids`、`map_ids`、`special_targets`
 - `WavOutputOptions`
   - 独立 WAV 转码 stage 配置，包含 `enabled`、`worker_count`、`timeout_seconds`、`max_retries`、`format`
 - `RemoteSnapshotConfig`
   - 固定快照配置，包含 `version`、`lcu_manifest_url`、`game_manifest_url`
 - `SourceMode`
   - 当前支持 `local_path` 与 `remote_snapshot`
+
+`special_targets` 是 GUI 特殊内容目录使用的稳定 key（`champion:<id>`）。本地模式会在应用门面与 GUI 任务运行器
+中归约为原有英雄数值 ID，并与显式 `champion_ids` 去重；`remote_snapshot` 不支持此字段，会在创建运行时上下文前拒绝。
+它仅用于结构化特殊内容目录，不代表历史资源包或额外资源发现能力。
 
 ### 2.3 `LolAudioUnpackApp`
 

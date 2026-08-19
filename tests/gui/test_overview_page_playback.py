@@ -5,8 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+from PySide6.QtCore import Qt
+
 import lol_audio_unpack.gui.view.overview_page as overview_page_module
 from lol_audio_unpack.app.artifacts import AudioRef
+from lol_audio_unpack.app.types import SourceMode
 from lol_audio_unpack.gui.controllers.overview_preview import (
     ALL_AUDIO_PREVIEW_MODE,
     EVENT_PREVIEW_MODE,
@@ -15,6 +18,171 @@ from lol_audio_unpack.gui.controllers.overview_preview import (
     OverviewPreviewLoadResult,
 )
 from lol_audio_unpack.gui.view.overview_page import OverviewPage
+
+
+def _build_preview_load_result() -> OverviewPreviewLoadResult:
+    """构造特殊内容预览链路共用的最小加载结果。"""
+    return OverviewPreviewLoadResult(
+        entity_id="66600",
+        mapping_path=None,
+        mapping_data=None,
+        preview_content="",
+        available_audio_ids=set(),
+        group_label_map={},
+        placeholder_message="尚未生成事件映射。",
+    )
+
+
+def test_overview_page_special_preview_uses_stable_state_key_and_champion_loader(qtbot) -> None:
+    """特殊内容应以稳定 key 恢复目录状态，但仍按英雄 ID 加载预览。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    calls: list[dict[str, object]] = []
+    page._preview_playback_controller = SimpleNamespace(
+        set_volume_percent=lambda _value: None,
+        set_output_device_key=lambda _value: None,
+        play=lambda **_kwargs: None,
+        stop=lambda: None,
+    )
+    page._preview_controller = SimpleNamespace(
+        load_preview=lambda **kwargs: calls.append(kwargs) or _build_preview_load_result(),
+    )
+    loader = object()
+    page._ensure_loader = lambda: loader
+    page.entityListPanel.resolve_row_payload = lambda _item: {
+        "id": "66600",
+        "key": "champion:66600",
+        "name": "厄加特",
+        "display_name": "末日人机 · 厄加特",
+        "entity_type": "champions",
+    }
+
+    page._load_preview_for_item("special", object())
+
+    assert page._current_preview_ids["special"] == "champion:66600"
+    assert calls == [
+        {
+            "entity_type": "champions",
+            "entity_id": "66600",
+            "entity_name": "末日人机 · 厄加特",
+            "loader": loader,
+        }
+    ]
+
+
+def test_overview_page_remote_special_tab_shows_local_only_notice(qtbot) -> None:
+    """远端模式下特殊目录仍可浏览，但不能选择或发送。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    page.set_entity_data(
+        "special",
+        [
+            {
+                "id": "66600",
+                "key": "champion:66600",
+                "name": "厄加特",
+                "display_name": "末日人机 · 厄加特",
+                "mode_key": "doom_bots",
+                "audio": "未准备",
+                "mapping": "未准备",
+                "search_text": "末日人机 doom bots 厄加特 ruby_urgot 66600 champion:66600",
+            }
+        ],
+    )
+    page.nav_pivot.setCurrentItem("special")
+    page.set_app_context(SimpleNamespace(config=SimpleNamespace(source_mode=SourceMode.REMOTE_SNAPSHOT)))
+
+    item = (
+        page.entityListPanel.current_list()
+        .model()
+        .index(
+            0,
+            0,
+            page.entityListPanel.current_list().model().index(0, 0),
+        )
+    )
+
+    assert page.entityListPanel.special_availability_label.isHidden() is False
+    assert not bool(item.flags() & Qt.ItemFlag.ItemIsSelectable)
+    assert page.subtitle_label.text() == "特殊内容仅支持本地客户端资源。"
+    assert page.previewPanel.text_preview.toPlainText() == "特殊内容仅支持本地客户端资源。"
+
+    page.nav_pivot.setCurrentItem("champions")
+
+    assert page.entityListPanel.special_availability_label.isHidden() is True
+    assert page.search_input.placeholderText() == "搜索英雄、别名或 ID"
+
+
+def test_overview_page_updates_search_placeholder_per_entity_directory(qtbot) -> None:
+    """一级目录切换应说明各自可搜索字段。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+
+    expected = {
+        "champions": "搜索英雄、别名或 ID",
+        "maps": "搜索地图、别名或 ID",
+        "special": "搜索模式、英雄、别名或资源包",
+    }
+    for entity_type, placeholder in expected.items():
+        page.nav_pivot.setCurrentItem(entity_type)
+        assert page.search_input.placeholderText() == placeholder
+
+
+def test_overview_page_special_catalog_empty_and_unprepared_states_are_explicit(qtbot) -> None:
+    """本地目录应区分当前版本无 special 与需要更新实体数据。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    page.nav_pivot.setCurrentItem("special")
+    page.set_app_context(SimpleNamespace(config=SimpleNamespace(source_mode=SourceMode.LOCAL_PATH)))
+
+    assert page.previewPanel.text_preview.toPlainText() == "当前版本未发现特殊内容"
+
+    page.set_entity_data(
+        "special",
+        [
+            {
+                "id": "66600",
+                "key": "champion:66600",
+                "name": "厄加特",
+                "display_name": "末日人机 · 厄加特",
+                "mode_key": "doom_bots",
+                "audio": "未准备",
+                "mapping": "未准备",
+                "search_text": "末日人机 厄加特",
+            }
+        ],
+    )
+
+    assert (
+        page.entityListPanel.special_availability_label.text()
+        == "特殊内容资源尚未准备，需要更新实体数据后才能显示完整状态。"
+    )
+    assert page.entityListPanel.special_availability_label.isHidden() is False
+
+
+def test_overview_page_clear_selection_resets_all_entity_directories(qtbot) -> None:
+    """全局清空操作应同时清理英雄、地图和特殊内容状态。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    page._selected_entity_ids = {
+        "champions": {"1"},
+        "maps": {"11"},
+        "special": {"champion:66600"},
+    }
+    page._current_preview_ids = {
+        "champions": "1",
+        "maps": "11",
+        "special": "champion:66600",
+    }
+    cleared: list[str] = []
+    page.entityListPanel.clear_selection = cleared.append
+    page._sync_current_list_view = lambda: None
+
+    page._clear_selected_entities()
+
+    assert page._selected_entity_ids == {"champions": set(), "maps": set(), "special": set()}
+    assert page._current_preview_ids == {"champions": None, "maps": None, "special": None}
+    assert cleared == ["champions", "maps", "special"]
 
 
 def test_overview_page_toggle_audio_preview_starts_preview_playback(qtbot) -> None:
