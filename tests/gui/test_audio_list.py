@@ -71,3 +71,12 @@ def test_audio_list_tracks_playback_by_exact_path(qtbot) -> None:
     assert view.active_progress == EXPECTED_PLAYBACK_PROGRESS
     assert view.is_playing is True
     assert view.is_paused is False
+
+
+def test_audio_list_uses_batched_uniform_layout_for_large_models(qtbot) -> None:
+    """平铺大列表应避免为每一行重复计算尺寸和一次性布局。"""
+    view = AudioListView()
+    qtbot.addWidget(view)
+
+    assert view.uniformItemSizes() is True
+    assert view.layoutMode() == AudioListView.LayoutMode.Batched

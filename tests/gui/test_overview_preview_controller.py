@@ -36,18 +36,11 @@ def test_overview_preview_controller_returns_placeholder_when_loader_missing() -
     )
 
 
-def test_overview_preview_controller_keeps_audio_refs_when_mapping_missing() -> None:
+def test_overview_preview_controller_defers_all_audio_when_mapping_missing() -> None:
     controller = OverviewPreviewController()
-    audio_ref = AudioRef(
-        relative_path="1000/VO/1001.wem",
-        path=Path("1000/VO/1001.wem"),
-        wem_id="1001",
-        audio_type="VO",
-        sub_entity="1000",
-    )
     loader = SimpleNamespace(
         load_mapping_preview=lambda entity_type, entity_id: (None, None, ""),
-        load_audio_refs=lambda entity_type, entity_id: (audio_ref,),
+        load_event_audio_refs=lambda entity_type, entity_id, mapping_data: (),
         load_audio_roots=lambda entity_type, entity_id, **_kwargs: (Path("audios/entity"),),
     )
 
@@ -60,7 +53,9 @@ def test_overview_preview_controller_keeps_audio_refs_when_mapping_missing() -> 
 
     assert result.placeholder_message is None
     assert result.mapping_path is None
-    assert result.audio_refs == (audio_ref,)
+    assert result.audio_refs == ()
+    assert result.event_audio_refs == ()
+    assert result.audio_refs_loaded is False
     assert result.default_preview_mode == ALL_AUDIO_PREVIEW_MODE
     assert result.mapping_notice == "Annie 尚未生成事件映射。"
 
@@ -68,16 +63,9 @@ def test_overview_preview_controller_keeps_audio_refs_when_mapping_missing() -> 
 def test_resource_pack_preview_keeps_flat_audio_and_hides_stable_key_from_group_label() -> None:
     """资源包缺 mapping 时仍可试听，存在 mapping 时首层显示 catalog 名称。"""
     key = build_resource_pack_key("Legacy.wad.client", "MODE_LEGACY")
-    audio_ref = AudioRef(
-        relative_path="SFX/1001.wem",
-        path=Path("resource_packs/legacy/SFX/1001.wem"),
-        wem_id="1001",
-        audio_type="SFX",
-        sub_entity=key,
-    )
     loader = SimpleNamespace(
         load_mapping_preview=lambda *_args: (None, None, ""),
-        load_audio_refs=lambda *_args: (audio_ref,),
+        load_event_audio_refs=lambda *_args: (),
         load_audio_roots=lambda *_args, **_kwargs: (Path("resource_packs/legacy"),),
     )
     controller = OverviewPreviewController()
@@ -90,7 +78,8 @@ def test_resource_pack_preview_keeps_flat_audio_and_hides_stable_key_from_group_
     )
 
     assert result.default_preview_mode == ALL_AUDIO_PREVIEW_MODE
-    assert result.audio_refs == (audio_ref,)
+    assert result.audio_refs == ()
+    assert result.audio_refs_loaded is False
     assert result.group_label_map == {key: "历史资源包 · Legacy"}
 
 
@@ -134,7 +123,7 @@ def test_overview_preview_controller_builds_champion_group_labels() -> None:
             {"skins": {"1000": {"events": {}}}},
             '{"skins": {"1000": {}}}',
         ),
-        load_audio_refs=lambda entity_type, entity_id: audio_refs,
+        load_event_audio_refs=lambda entity_type, entity_id, mapping_data: audio_refs,
         load_audio_roots=lambda entity_type, entity_id, **_kwargs: (),
         data_reader=SimpleNamespace(
             get_champion=lambda champion_id: {
@@ -163,6 +152,9 @@ def test_overview_preview_controller_builds_champion_group_labels() -> None:
     assert result.placeholder_message is None
     assert result.mapping_path == mapping_path
     assert result.available_audio_ids == {"1001", "1002"}
+    assert result.audio_refs == ()
+    assert result.event_audio_refs == audio_refs
+    assert result.audio_refs_loaded is False
     assert result.group_label_map == {
         "1000": "经典",
         "1014": "福牛守护者 安妮 贺岁",

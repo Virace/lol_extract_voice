@@ -29,6 +29,7 @@ from lol_audio_unpack.gui.components.audio_row_style import (
 AUDIO_REF_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 EMPTY_MODEL_INDEX = QModelIndex()
 _ITEM_HEIGHT = 32
+_LAYOUT_BATCH_SIZE = 512
 
 
 class AudioListModel(QAbstractListModel):
@@ -50,7 +51,7 @@ class AudioListModel(QAbstractListModel):
             refs: 按稳定相对路径排序的音频引用。
         """
         self.beginResetModel()
-        self._refs = tuple(sorted(refs, key=lambda ref: ref.relative_path))
+        self._refs = tuple(refs)
         self.endResetModel()
 
     def rowCount(self, parent: QModelIndex = EMPTY_MODEL_INDEX) -> int:
@@ -238,6 +239,9 @@ class AudioListView(QListView):
         self.setSelectionMode(QListView.SelectionMode.SingleSelection)
         self.setVerticalScrollMode(QListView.ScrollMode.ScrollPerPixel)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setUniformItemSizes(True)
+        self.setLayoutMode(QListView.LayoutMode.Batched)
+        self.setBatchSize(_LAYOUT_BATCH_SIZE)
         self.setMouseTracking(True)
         self.setSpacing(0)
         selection_model = self.selectionModel()

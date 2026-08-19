@@ -25,6 +25,8 @@ class OverviewPreviewLoadResult:
     available_audio_ids: set[str]
     group_label_map: dict[str, str]
     audio_refs: tuple[AudioRef, ...] = ()
+    event_audio_refs: tuple[AudioRef, ...] = ()
+    audio_refs_loaded: bool = True
     audio_roots: tuple[Path, ...] = ()
     default_preview_mode: str = ALL_AUDIO_PREVIEW_MODE
     mapping_notice: str | None = None
@@ -67,9 +69,9 @@ class OverviewPreviewController:
             )
 
         mapping_path, mapping_data, preview_content = loader.load_mapping_preview(entity_type, entity_id)
-        audio_refs = loader.load_audio_refs(entity_type, entity_id)
-        audio_roots = loader.load_audio_roots(entity_type, entity_id, audio_refs=audio_refs)
-        available_audio_ids = {ref.wem_id for ref in audio_refs}
+        event_audio_refs = loader.load_event_audio_refs(entity_type, entity_id, mapping_data)
+        audio_roots = loader.load_audio_roots(entity_type, entity_id)
+        available_audio_ids = {ref.wem_id for ref in event_audio_refs}
         group_label_map = self._build_preview_group_label_map(
             entity_type=entity_type,
             entity_id=entity_id,
@@ -84,7 +86,8 @@ class OverviewPreviewController:
             preview_content=preview_content or "尚未生成事件映射。",
             available_audio_ids=available_audio_ids,
             group_label_map=group_label_map,
-            audio_refs=audio_refs,
+            event_audio_refs=event_audio_refs,
+            audio_refs_loaded=False,
             audio_roots=audio_roots,
             default_preview_mode=EVENT_PREVIEW_MODE if mapping_path is not None else ALL_AUDIO_PREVIEW_MODE,
             mapping_notice=None if mapping_path is not None else f"{entity_name} 尚未生成事件映射。",

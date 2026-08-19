@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from lol_audio_unpack.app.artifacts import enumerate_audio_refs
+from lol_audio_unpack.app.artifacts import enumerate_audio_refs, resolve_audio_refs
 from lol_audio_unpack.app.path_layout import format_entity_folder_name, format_sub_entity_folder_name
 from lol_audio_unpack.model import AudioEntityData
 
@@ -71,6 +71,36 @@ def test_enumerate_audio_refs_preserves_duplicate_ids_across_sub_entity_and_type
     assert all(entity_folder not in ref.key for ref in refs)
 
 
+def test_resolve_audio_refs_only_checks_explicit_mapping_paths(tmp_path: Path, monkeypatch) -> None:
+    """事件路径解析不得退化为对实体输出目录的递归扫描。"""
+    ctx = _build_ctx(tmp_path, group_by_type=False)
+    entity = _build_entity()
+    version = "16.16"
+    entity_folder = format_entity_folder_name("1", "annie", "Annie", "黑暗之女")
+    skin = format_sub_entity_folder_name("1000", "基础皮肤")
+    base = ctx.paths.audio_path / version / "champions" / entity_folder
+    target = base / skin / "VO" / "101.wem"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"vo")
+    (target.parent / "102.wem").write_bytes(b"unused")
+    monkeypatch.setattr(Path, "rglob", lambda *_args, **_kwargs: pytest.fail("不应递归枚举全部 WEM"))
+
+    refs = resolve_audio_refs(
+        ctx,
+        entity,
+        version,
+        (
+            f"{skin}/VO/101.wem",
+            f"{skin}/VO/missing.wem",
+            "../outside.wem",
+        ),
+    )
+
+    assert [(ref.relative_path, ref.wem_id, ref.audio_type, ref.sub_entity) for ref in refs] == [
+        (f"{skin}/VO/101.wem", "101", "VO", "1000")
+    ]
+
+
 def test_enumerate_audio_refs_uses_grouped_layout_and_rejects_escaping_symlink(tmp_path: Path) -> None:
     """grouped 布局应保留类型段，且外部 symlink 不得进入引用集。"""
     ctx = _build_ctx(tmp_path, group_by_type=True, include_types=("VO",))
@@ -93,8 +123,22 @@ def test_enumerate_audio_refs_uses_grouped_layout_and_rejects_escaping_symlink(t
         pytest.skip("当前 Windows 测试环境不允许创建 symlink")
 
     refs = enumerate_audio_refs(ctx, entity, version)
+    direct_refs = resolve_audio_refs(
+        ctx,
+        entity,
+        version,
+        (
+            f"VO/{skin0}/201.wem",
+            f"SFX/{skin0}/202.wem",
+            f"VO/{skin0}/escape.wem",
+        ),
+    )
 
     assert [(ref.relative_path, ref.audio_type, ref.sub_entity) for ref in refs] == [
+        (f"SFX/{skin0}/202.wem", "SFX", "1000"),
+        (f"VO/{skin0}/201.wem", "VO", "1000"),
+    ]
+    assert [(ref.relative_path, ref.audio_type, ref.sub_entity) for ref in direct_refs] == [
         (f"SFX/{skin0}/202.wem", "SFX", "1000"),
         (f"VO/{skin0}/201.wem", "VO", "1000"),
     ]
@@ -117,3 +161,4 @@ def test_enumerate_audio_refs_rejects_symlink_that_escapes_only_the_entity_root(
         pytest.skip("当前 Windows 测试环境不允许创建 symlink")
 
     assert enumerate_audio_refs(ctx, entity, version) == ()
+    assert resolve_audio_refs(ctx, entity, version, ("301.wem",)) == ()

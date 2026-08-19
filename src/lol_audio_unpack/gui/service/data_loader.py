@@ -12,6 +12,7 @@ from loguru import logger
 from lol_audio_unpack.app.artifacts import (
     AudioRef,
     enumerate_audio_refs,
+    resolve_audio_refs,
 )
 from lol_audio_unpack.app.artifacts import (
     resolve_audio_paths as resolve_artifact_audio_paths,
@@ -45,6 +46,34 @@ if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
 
 GuiEntityType = Literal["champions", "maps", "resource_packs"]
+
+
+def _mapping_audio_paths(mapping_data: dict | None) -> tuple[str, ...]:
+    """提取标准化 mapping 中事件明确引用的唯一 WEM 路径。"""
+    paths: set[str] = set()
+    if not isinstance(mapping_data, dict):
+        return ()
+
+    for root_key in ("skins", "map", "resourcePacks"):
+        groups = mapping_data.get(root_key)
+        if not isinstance(groups, dict):
+            continue
+        for group in groups.values():
+            if not isinstance(group, dict):
+                continue
+            paths_by_type = group.get("audioPaths")
+            if not isinstance(paths_by_type, dict):
+                continue
+            for paths_by_event in paths_by_type.values():
+                if not isinstance(paths_by_event, dict):
+                    continue
+                for event_paths in paths_by_event.values():
+                    if not isinstance(event_paths, list | tuple):
+                        continue
+                    paths.update(
+                        normalized for path in event_paths if (normalized := str(path).replace("\\", "/").strip("/"))
+                    )
+    return tuple(sorted(paths))
 
 
 def _build_mapping_preview_base(metadata: dict[str, object] | None) -> dict[str, object]:
@@ -765,6 +794,28 @@ class EntityDataLoader:
         """
         entity_data = self._build_entity_data(entity_type, str(entity_id))
         return enumerate_audio_refs(self.ctx, entity_data, self.data_reader.version)
+
+    def load_event_audio_refs(
+        self,
+        entity_type: GuiEntityType,
+        entity_id: str,
+        mapping_data: dict | None,
+    ) -> tuple[AudioRef, ...]:
+        """只加载事件 mapping 明确引用且已落盘的 WEM。
+
+        Args:
+            entity_type: 实体类型目录名。
+            entity_id: 实体 ID。
+            mapping_data: 标准化事件 mapping。
+
+        Returns:
+            按相对路径排序的事件级稳定引用；不会递归枚举全部音频。
+        """
+        paths = _mapping_audio_paths(mapping_data)
+        if not paths:
+            return ()
+        entity_data = self._build_entity_data(entity_type, str(entity_id))
+        return resolve_audio_refs(self.ctx, entity_data, self.data_reader.version, paths)
 
     def load_audio_roots(
         self,

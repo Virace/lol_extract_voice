@@ -102,6 +102,159 @@ def test_overview_page_schedules_resource_pack_scan_without_calling_discovery_on
     assert app_calls == []
 
 
+def test_overview_page_defers_all_audio_scan_and_hidden_model_reset(qtbot, monkeypatch) -> None:
+    """事件预览不得提前枚举或拆除上一实体的隐藏大模型。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    scheduled = []
+    event_ref = AudioRef(
+        relative_path="SFX/1001.wem",
+        path=Path("audios/map/SFX/1001.wem"),
+        wem_id="1001",
+        audio_type="SFX",
+        sub_entity="22",
+    )
+    flat_ref = AudioRef(
+        relative_path="MUSIC/2001.wem",
+        path=Path("audios/map/MUSIC/2001.wem"),
+        wem_id="2001",
+        audio_type="MUSIC",
+        sub_entity="22",
+    )
+    previous_ref = AudioRef(
+        relative_path="SFX/9999.wem",
+        path=Path("audios/previous/SFX/9999.wem"),
+        wem_id="9999",
+        audio_type="SFX",
+        sub_entity="11",
+    )
+    page._preview_playback_controller = SimpleNamespace(
+        set_volume_percent=lambda _value: None,
+        set_output_device_key=lambda _value: None,
+        play=lambda **_kwargs: None,
+        stop=lambda: None,
+    )
+    page._preview_controller = SimpleNamespace(
+        load_preview=lambda **_kwargs: OverviewPreviewLoadResult(
+            entity_id="22",
+            mapping_path=Path("map22.msgpack"),
+            mapping_data={
+                "map": {
+                    "22": {
+                        "events": {"SFX": {"evt": ["1001"]}},
+                        "audioPaths": {"SFX": {"evt": [event_ref.relative_path]}},
+                    }
+                }
+            },
+            preview_content="{}",
+            available_audio_ids={"1001"},
+            group_label_map={"22": "云顶之弈"},
+            event_audio_refs=(event_ref,),
+            audio_refs_loaded=False,
+            audio_roots=(Path("audios/map"),),
+            default_preview_mode=EVENT_PREVIEW_MODE,
+        )
+    )
+    page._app_context = SimpleNamespace()
+    page._ensure_loader = object
+    page.entityListPanel.resolve_row_payload = lambda _item: {"id": 22, "name": "云顶之弈"}
+    monkeypatch.setattr(
+        overview_page_module,
+        "QThreadPool",
+        SimpleNamespace(globalInstance=lambda: SimpleNamespace(start=scheduled.append)),
+    )
+    page.audioPreviewPanel.set_audio_refs((previous_ref,), summary_text="")
+    page._audio_list_ready = True
+
+    page._load_preview_for_item("maps", object())
+
+    assert scheduled == []
+    assert page.audio_list.model().rowCount() == 1
+    assert page._current_event_audio_refs == (event_ref,)
+
+    page.preview_mode_pivot.setCurrentItem(ALL_AUDIO_PREVIEW_MODE)
+
+    assert len(scheduled) == 1
+    assert scheduled[0] is page._audio_refs_worker
+    assert page.audio_list.model().rowCount() == 0
+    assert "正在后台加载全部音频" in page.audio_preview_summary_label.text()
+    scheduled[0].signals.finished.emit((flat_ref,))
+    assert page.audio_list.model().rowCount() == 1
+    assert "全部音频 1 个 WEM" in page.audio_preview_summary_label.text()
+
+    resets: list[bool] = []
+    page.audio_list.source_model.modelReset.connect(lambda: resets.append(True))
+    page.preview_mode_pivot.setCurrentItem(EVENT_PREVIEW_MODE)
+    page.preview_mode_pivot.setCurrentItem(ALL_AUDIO_PREVIEW_MODE)
+
+    assert len(scheduled) == 1
+    assert resets == []
+
+
+def test_overview_page_rejects_stale_all_audio_worker_result(qtbot, monkeypatch) -> None:
+    """旧实体的后台结果不得污染当前实体或当前上下文缓存。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    scheduled = []
+    first_ref = AudioRef(
+        relative_path="SFX/1001.wem",
+        path=Path("audios/map11/SFX/1001.wem"),
+        wem_id="1001",
+        audio_type="SFX",
+        sub_entity="11",
+    )
+    second_ref = AudioRef(
+        relative_path="SFX/2001.wem",
+        path=Path("audios/map22/SFX/2001.wem"),
+        wem_id="2001",
+        audio_type="SFX",
+        sub_entity="22",
+    )
+    current_row = {"id": 11, "name": "召唤师峡谷"}
+    page._preview_playback_controller = SimpleNamespace(
+        set_volume_percent=lambda _value: None,
+        set_output_device_key=lambda _value: None,
+        play=lambda **_kwargs: None,
+        stop=lambda: None,
+    )
+    page._preview_controller = SimpleNamespace(
+        load_preview=lambda **kwargs: OverviewPreviewLoadResult(
+            entity_id=str(kwargs["entity_id"]),
+            mapping_path=Path(f"map{kwargs['entity_id']}.msgpack"),
+            mapping_data={"map": {str(kwargs["entity_id"]): {"events": {}}}},
+            preview_content="{}",
+            available_audio_ids=set(),
+            group_label_map={},
+            audio_refs_loaded=False,
+            default_preview_mode=EVENT_PREVIEW_MODE,
+        )
+    )
+    page._app_context = SimpleNamespace()
+    page._ensure_loader = object
+    page.entityListPanel.resolve_row_payload = lambda _item: dict(current_row)
+    monkeypatch.setattr(
+        overview_page_module,
+        "QThreadPool",
+        SimpleNamespace(globalInstance=lambda: SimpleNamespace(start=scheduled.append)),
+    )
+
+    page._load_preview_for_item("maps", object())
+    page.preview_mode_pivot.setCurrentItem(ALL_AUDIO_PREVIEW_MODE)
+    first_worker = scheduled[0]
+
+    current_row.update(id=22, name="云顶之弈")
+    page._load_preview_for_item("maps", object())
+    page.preview_mode_pivot.setCurrentItem(ALL_AUDIO_PREVIEW_MODE)
+    first_worker.signals.finished.emit((first_ref,))
+
+    assert scheduled == [first_worker, page._audio_refs_worker]
+    assert ("maps", "11") not in page._audio_refs_cache
+    assert page._current_audio_refs == ()
+    scheduled[-1].signals.finished.emit((second_ref,))
+    assert page._current_audio_refs == (second_ref,)
+    assert page.audio_list.model().rowCount() == 1
+
+
 def test_overview_page_remote_special_tab_shows_local_only_notice(qtbot) -> None:
     """远端模式下特殊目录仍可浏览，但不能选择或发送。"""
     page = OverviewPage()

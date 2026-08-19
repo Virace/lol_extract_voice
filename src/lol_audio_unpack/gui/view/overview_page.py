@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -97,6 +98,20 @@ DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT = 10
 DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY = "default"
 
 
+@dataclass(frozen=True, slots=True)
+class _AudioRefsRequest:
+    """标识一次可被实体切换作废的全部音频后台加载。"""
+
+    token: int
+    entity_type: str
+    entity_id: str
+
+    @property
+    def key(self) -> tuple[str, str]:
+        """返回当前上下文内可复用的实体缓存键。"""
+        return self.entity_type, self.entity_id
+
+
 def build_preview_path_text(resource_path: Path | None) -> str:
     """构造右侧预览区域顶部路径文本。
 
@@ -153,8 +168,17 @@ class OverviewPage(QWidget):
         self._current_audio_preview_is_paused = False
         self._current_preview_mapping_data: dict[str, Any] | None = None
         self._current_preview_group_label_map: dict[str, str] = {}
+        self._current_event_audio_refs: tuple[AudioRef, ...] = ()
         self._current_audio_refs: tuple[AudioRef, ...] = ()
         self._current_audio_roots: tuple[Path, ...] = ()
+        self._audio_refs_loaded = False
+        self._audio_list_ready = False
+        self._audio_refs_error: str | None = None
+        self._audio_refs_token = 0
+        self._audio_refs_cache: dict[tuple[str, str], tuple[AudioRef, ...]] = {}
+        self._audio_refs_worker: TaskWorker | None = None
+        self._audio_refs_request: _AudioRefsRequest | None = None
+        self._pending_audio_refs_request: _AudioRefsRequest | None = None
         self._selected_audio_refs: dict[str, AudioRef | None] = {
             EVENT_PREVIEW_MODE: None,
             ALL_AUDIO_PREVIEW_MODE: None,
@@ -220,6 +244,9 @@ class OverviewPage(QWidget):
         Args:
             app_context: 当前应用上下文；为 ``None`` 时仅保留占位提示。
         """
+        self._audio_refs_token += 1
+        self._audio_refs_cache.clear()
+        self._pending_audio_refs_request = None
         self._app_context = app_context
         self._loader = None
         if app_context is None:
@@ -384,6 +411,8 @@ class OverviewPage(QWidget):
         if mode_key == EVENT_PREVIEW_MODE:
             self.audioPreviewPanel.set_summary_text(self._event_preview_summary)
         elif mode_key == ALL_AUDIO_PREVIEW_MODE:
+            self._ensure_audio_refs()
+            self._refresh_all_audio_preview()
             self.audioPreviewPanel.set_summary_text(self._all_audio_preview_summary)
         self._sync_preview_path()
 
@@ -759,6 +788,7 @@ class OverviewPage(QWidget):
         preview_entity_type = str(row.get("entity_type", entity_type))
         self._current_preview_entity_type = preview_entity_type
         self._current_preview_entity_id = str(row["id"])
+        self._audio_refs_token += 1
         loader = self._ensure_loader()
         preview_result = self._preview_controller.load_preview(
             entity_type=preview_entity_type,
@@ -776,7 +806,13 @@ class OverviewPage(QWidget):
         self._current_preview_mapping_data = preview_result.mapping_data
         self._current_preview_group_label_map = dict(preview_result.group_label_map)
         self._current_audio_refs = preview_result.audio_refs
+        self._current_event_audio_refs = preview_result.event_audio_refs or preview_result.audio_refs
         self._current_audio_roots = preview_result.audio_roots
+        self._audio_refs_loaded = preview_result.audio_refs_loaded
+        self._audio_list_ready = False
+        self._audio_refs_error = None
+        if self._audio_refs_loaded:
+            self._audio_refs_cache[(preview_entity_type, str(row["id"]))] = self._current_audio_refs
         self._selected_audio_refs = {
             EVENT_PREVIEW_MODE: None,
             ALL_AUDIO_PREVIEW_MODE: None,
@@ -796,7 +832,8 @@ class OverviewPage(QWidget):
             list(modifiers.audio_types),
         )
         self._refresh_audio_preview_tree()
-        self.audioPreviewPanel.set_audio_refs(self._current_audio_refs, summary_text="")
+        if self._audio_refs_loaded:
+            self._populate_audio_list()
         self._refresh_all_audio_preview()
         self.previewPanel.show_current_preview()
         self._sync_audio_preview_playback_state()
@@ -995,8 +1032,13 @@ class OverviewPage(QWidget):
         self._current_preview_entity_id = None
         self._current_preview_mapping_data = None
         self._current_preview_group_label_map = {}
+        self._current_event_audio_refs = ()
         self._current_audio_refs = ()
         self._current_audio_roots = ()
+        self._audio_refs_loaded = False
+        self._audio_list_ready = False
+        self._audio_refs_error = None
+        self._audio_refs_token += 1
         self._selected_audio_refs = {
             EVENT_PREVIEW_MODE: None,
             ALL_AUDIO_PREVIEW_MODE: None,
@@ -1012,7 +1054,7 @@ class OverviewPage(QWidget):
         """根据当前搜索状态刷新右侧事件树。"""
         keyword = self._preview_search_keywords[EVENT_PREVIEW_MODE]
         filter_result = filter_preview_mapping_data(self._current_preview_mapping_data, keyword)
-        stats = collect_tree_stats(filter_result.mapping_data, self._current_audio_refs)
+        stats = collect_tree_stats(filter_result.mapping_data, self._current_event_audio_refs)
         summary_text = build_tree_summary_text(stats)
         if self._current_mapping_notice:
             summary_text = f"{self._current_mapping_notice} · {summary_text}"
@@ -1025,7 +1067,7 @@ class OverviewPage(QWidget):
 
         self.audioPreviewPanel.set_preview_data(
             mapping_data=filter_result.mapping_data,
-            audio_refs=self._current_audio_refs,
+            audio_refs=self._current_event_audio_refs,
             group_label_map=self._current_preview_group_label_map,
             summary_text=summary_text,
         )
@@ -1036,6 +1078,14 @@ class OverviewPage(QWidget):
         """根据当前搜索状态刷新全部音频模型与摘要。"""
         keyword = self._preview_search_keywords[ALL_AUDIO_PREVIEW_MODE]
         self.audioPreviewPanel.set_audio_keyword(keyword)
+        if not self._audio_refs_loaded:
+            summary_text = self._audio_refs_error or "正在后台加载全部音频…"
+            if self._current_mapping_notice:
+                summary_text = f"{self._current_mapping_notice} · {summary_text}"
+            self._all_audio_preview_summary = summary_text
+            self.audioPreviewPanel.set_summary_text(summary_text)
+            return
+
         matched_count = self.audio_list.model().rowCount()
         total_count = len(self._current_audio_refs)
         summary_text = f"全部音频 {total_count} 个 WEM"
@@ -1047,6 +1097,102 @@ class OverviewPage(QWidget):
             summary_text = f"{self._current_mapping_notice} · {summary_text}"
         self._all_audio_preview_summary = summary_text
         self.audioPreviewPanel.set_summary_text(summary_text)
+
+    def _ensure_audio_refs(self) -> None:
+        """在首次进入全部音频时请求后台枚举，后续切换复用缓存。"""
+        if self._audio_refs_loaded:
+            self._populate_audio_list()
+            return
+        if self._current_preview_entity_type is None or self._current_preview_entity_id is None:
+            return
+
+        # 事件页切换实体时保留隐藏模型，避免同步拆除数万行；只有用户真正进入
+        # “全部音频”且新实体尚未就绪时，才清掉上一实体的可见列表。
+        if not self._audio_list_ready and self.audio_list.source_model.rowCount() > 0:
+            self.audioPreviewPanel.set_audio_refs((), summary_text="")
+
+        request = _AudioRefsRequest(
+            token=self._audio_refs_token,
+            entity_type=self._current_preview_entity_type,
+            entity_id=self._current_preview_entity_id,
+        )
+        if request.key in self._audio_refs_cache:
+            self._current_audio_refs = self._audio_refs_cache[request.key]
+            self._audio_refs_loaded = True
+            self._audio_refs_error = None
+            self._populate_audio_list()
+            return
+        if self._audio_refs_request == request:
+            return
+        if self._audio_refs_worker is not None:
+            self._pending_audio_refs_request = request
+            return
+        self._start_audio_refs_load(request)
+
+    def _start_audio_refs_load(self, request: _AudioRefsRequest) -> None:
+        """把一次全量 WEM 枚举提交到线程池。"""
+        if self._app_context is None:
+            return
+
+        context = self._app_context
+        self._audio_refs_request = request
+        self._audio_refs_error = None
+        self._audio_refs_worker = TaskWorker(
+            lambda: EntityDataLoader(context).load_audio_refs(request.entity_type, request.entity_id)
+        )
+        worker = self._audio_refs_worker
+        worker.signals.finished.connect(self._on_audio_refs_loaded)
+        worker.signals.failed.connect(self._on_audio_refs_failed)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_audio_refs_loaded(self, result: object) -> None:
+        """接收后台枚举结果，并拒绝覆盖已切换的实体。"""
+        request = self._audio_refs_request
+        self._audio_refs_worker = None
+        self._audio_refs_request = None
+        refs = tuple(ref for ref in result if isinstance(ref, AudioRef)) if isinstance(result, list | tuple) else ()
+        if request is not None and self._audio_refs_request_is_current(request):
+            self._audio_refs_cache[request.key] = refs
+            self._current_audio_refs = refs
+            self._audio_refs_loaded = True
+            self._audio_refs_error = None
+            if (self.preview_mode_pivot.currentRouteKey() or self._active_preview_mode) == ALL_AUDIO_PREVIEW_MODE:
+                self._populate_audio_list()
+                self._refresh_all_audio_preview()
+                self._sync_preview_path()
+        self._start_pending_audio_refs_load()
+
+    def _on_audio_refs_failed(self, error: str) -> None:
+        """记录当前实体的后台枚举失败，并继续处理最新待加载实体。"""
+        request = self._audio_refs_request
+        self._audio_refs_worker = None
+        self._audio_refs_request = None
+        if request is not None and self._audio_refs_request_is_current(request):
+            self._audio_refs_error = f"全部音频加载失败：{error}"
+            self._refresh_all_audio_preview()
+        self._start_pending_audio_refs_load()
+
+    def _start_pending_audio_refs_load(self) -> None:
+        """当前 worker 结束后只继续仍为当前实体的最后一次请求。"""
+        request = self._pending_audio_refs_request
+        self._pending_audio_refs_request = None
+        if request is not None and self._audio_refs_request_is_current(request) and not self._audio_refs_loaded:
+            self._start_audio_refs_load(request)
+
+    def _audio_refs_request_is_current(self, request: _AudioRefsRequest) -> bool:
+        """判断后台结果是否仍属于当前预览实体。"""
+        return (
+            request.token == self._audio_refs_token
+            and request.entity_type == self._current_preview_entity_type
+            and request.entity_id == self._current_preview_entity_id
+        )
+
+    def _populate_audio_list(self) -> None:
+        """只把当前实体的全量 refs 同步到平铺模型一次。"""
+        if self._audio_list_ready:
+            return
+        self.audioPreviewPanel.set_audio_refs(self._current_audio_refs, summary_text="")
+        self._audio_list_ready = True
 
     def _refresh_current_preview_mode(self) -> None:
         """只刷新当前模式所需的筛选模型，避免切换时重置另一视图。"""
