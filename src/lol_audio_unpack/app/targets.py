@@ -10,6 +10,7 @@ from lol_audio_unpack.app.special_content import is_structured_special_champion
 
 EntityRef = tuple[str, int]
 EntityTask = tuple[str, int, str]
+_HIDDEN_CHAMPION_PREFIXES = ("ruby_", "jade_")
 
 
 def get_default_hidden_champion_markers(champion: Mapping[str, Any]) -> tuple[str, ...]:
@@ -21,15 +22,16 @@ def get_default_hidden_champion_markers(champion: Mapping[str, Any]) -> tuple[st
     """
     markers: list[str] = []
 
-    alias = str(champion.get("alias", "")).strip().casefold()
-    if alias.startswith("ruby_"):
-        markers.append("alias:ruby")
-
     wad_info = champion.get("wad", {})
     wad_root = str(wad_info.get("root", "")) if isinstance(wad_info, dict) else ""
+    alias = str(champion.get("alias", "")).strip().casefold()
     wad_filename = Path(wad_root).name.casefold()
-    if wad_filename.startswith("ruby_"):
-        markers.append("wad:ruby")
+    for prefix in _HIDDEN_CHAMPION_PREFIXES:
+        series = prefix.removesuffix("_")
+        if alias.startswith(prefix):
+            markers.append(f"alias:{series}")
+        if wad_filename.startswith(prefix):
+            markers.append(f"wad:{series}")
 
     champion_id = str(champion.get("id", "")).strip()
     if champion_id.startswith("666"):

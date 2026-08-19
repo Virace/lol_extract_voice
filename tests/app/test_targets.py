@@ -37,6 +37,7 @@ def _build_reader() -> SimpleNamespace:
     champions = [
         _make_champion(1, "Annie", "Game/DATA/FINAL/Champions/Annie.wad.client"),
         _make_champion(66600, "Ruby_Urgot", "Game/DATA/FINAL/Champions/Ruby_Urgot.wad.client"),
+        _make_champion(60001, "Jade_Annie", "Game/DATA/FINAL/Champions/Jade_Annie.wad.client"),
     ]
     maps = [_make_map(11), _make_map(12)]
     return SimpleNamespace(
@@ -76,13 +77,16 @@ def test_iter_entity_refs_uses_default_visible_champions_and_all_maps() -> None:
 
 def test_default_visible_champion_policy_uses_stable_markers() -> None:
     """默认可见英雄策略应由 targets 模块直接维护。"""
-    hidden = _make_champion(66600, "Ruby_Urgot", "Game/DATA/FINAL/Champions/Ruby_Urgot.wad.client")
+    ruby = _make_champion(66600, "Ruby_Urgot", "Game/DATA/FINAL/Champions/Ruby_Urgot.wad.client")
+    jade = _make_champion(60001, "Jade_Annie", "Game/DATA/FINAL/Champions/Jade_Annie.wad.client")
     visible = _make_champion(1, "Annie", "Game/DATA/FINAL/Champions/Annie.wad.client")
     reader = _build_reader()
 
-    assert get_default_hidden_champion_markers(hidden) == ("alias:ruby", "wad:ruby", "id:666")
-    assert should_hide_champion_by_default(hidden) is True
-    assert filter_default_visible_champions([visible, hidden]) == [visible]
+    assert get_default_hidden_champion_markers(ruby) == ("alias:ruby", "wad:ruby", "id:666")
+    assert get_default_hidden_champion_markers(jade) == ("alias:jade", "wad:jade")
+    assert should_hide_champion_by_default(ruby) is True
+    assert should_hide_champion_by_default(jade) is True
+    assert filter_default_visible_champions([visible, ruby, jade]) == [visible]
     assert get_default_visible_champions(reader) == [visible]
 
 
