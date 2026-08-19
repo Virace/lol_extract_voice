@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtWidgets import QFrame, QStackedWidget, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel
+from qfluentwidgets import BodyLabel, ProgressBar
 
 from lol_audio_unpack.app.artifacts import AudioRef
 from lol_audio_unpack.gui.components.audio_list import AudioListView
@@ -39,6 +39,11 @@ class OverviewAudioPreviewPanel(QWidget):
         self.summary_label = BodyLabel(summary_placeholder, self.summary_card)
         self.summary_label.setWordWrap(True)
         summary_layout.addWidget(self.summary_label)
+        self.load_progress_bar = ProgressBar(self.summary_card, useAni=False)
+        self.load_progress_bar.setAccessibleName("全部音频加载进度")
+        self.load_progress_bar.setTextVisible(False)
+        self.load_progress_bar.setVisible(False)
+        summary_layout.addWidget(self.load_progress_bar)
         layout.addWidget(self.summary_card)
 
         self.preview_stack = QStackedWidget(self)
@@ -69,6 +74,26 @@ class OverviewAudioPreviewPanel(QWidget):
     def reset_summary(self) -> None:
         """恢复默认摘要文案。"""
         self.summary_label.setText(self._summary_placeholder)
+        self.clear_load_progress()
+
+    def set_load_progress(self, current: int, total: int) -> None:
+        """显示全部音频索引的计数进度。
+
+        Args:
+            current: 已处理的 WEM 候选数。
+            total: 当前发现的 WEM 候选总数；未知时为 0。
+        """
+        maximum = max(int(total), 1)
+        value = max(0, min(int(current), maximum))
+        self.load_progress_bar.setRange(0, maximum)
+        self.load_progress_bar.setValue(value)
+        self.load_progress_bar.setVisible(True)
+
+    def clear_load_progress(self) -> None:
+        """隐藏并重置全部音频索引进度。"""
+        self.load_progress_bar.setVisible(False)
+        self.load_progress_bar.setRange(0, 1)
+        self.load_progress_bar.setValue(0)
 
     def clear_preview(self) -> None:
         """清空当前试听树并恢复默认摘要。"""
@@ -88,6 +113,7 @@ class OverviewAudioPreviewPanel(QWidget):
         summary_text: str,
     ) -> None:
         """刷新事件树数据与摘要文案。"""
+        self.clear_load_progress()
         self.set_summary_text(summary_text)
         model = self.audio_preview_tree.model()
         if isinstance(model, PreviewTreeModel):
@@ -102,6 +128,7 @@ class OverviewAudioPreviewPanel(QWidget):
             refs: 当前实体全部路径级 WEM 引用。
             summary_text: 当前搜索状态对应的摘要文案。
         """
+        self.clear_load_progress()
         self.set_summary_text(summary_text)
         self.audio_list.set_audio_refs(refs)
 

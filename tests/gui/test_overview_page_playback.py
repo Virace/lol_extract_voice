@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from PySide6.QtCore import Qt
 
 import lol_audio_unpack.gui.view.overview_page as overview_page_module
-from lol_audio_unpack.app.artifacts import AudioRef
+from lol_audio_unpack.app.artifacts import AudioIndexProgress, AudioRef
 from lol_audio_unpack.app.resource_pack import ResourcePackWadRef
 from lol_audio_unpack.app.types import SourceMode
 from lol_audio_unpack.gui.controllers.overview_preview import (
@@ -102,11 +102,15 @@ def test_overview_page_schedules_resource_pack_scan_without_calling_discovery_on
     assert app_calls == []
 
 
-def test_overview_page_defers_all_audio_scan_and_hidden_model_reset(qtbot, monkeypatch) -> None:
-    """事件预览不得提前枚举或拆除上一实体的隐藏大模型。"""
+def test_overview_page_reports_audio_scan_and_defers_hidden_model_reset(qtbot) -> None:
+    """事件页不扫描；全部音频报告进度且隐藏页不构建大模型。"""
     page = OverviewPage()
     qtbot.addWidget(page)
+    page._sync_current_list_view = lambda: None
+    page.show()
     scheduled = []
+    expected_current = 15_360
+    expected_total = 30_343
     event_ref = AudioRef(
         relative_path="SFX/1001.wem",
         path=Path("audios/map/SFX/1001.wem"),
@@ -158,11 +162,7 @@ def test_overview_page_defers_all_audio_scan_and_hidden_model_reset(qtbot, monke
     page._app_context = SimpleNamespace()
     page._ensure_loader = object
     page.entityListPanel.resolve_row_payload = lambda _item: {"id": 22, "name": "云顶之弈"}
-    monkeypatch.setattr(
-        overview_page_module,
-        "QThreadPool",
-        SimpleNamespace(globalInstance=lambda: SimpleNamespace(start=scheduled.append)),
-    )
+    page._audio_refs_pool = SimpleNamespace(start=scheduled.append)
     page.audioPreviewPanel.set_audio_refs((previous_ref,), summary_text="")
     page._audio_list_ready = True
 
@@ -177,9 +177,24 @@ def test_overview_page_defers_all_audio_scan_and_hidden_model_reset(qtbot, monke
     assert len(scheduled) == 1
     assert scheduled[0] is page._audio_refs_worker
     assert page.audio_list.model().rowCount() == 0
-    assert "正在后台加载全部音频" in page.audio_preview_summary_label.text()
-    scheduled[0].signals.finished.emit((flat_ref,))
-    assert page.audio_list.model().rowCount() == 1
+    assert "正在发现全部音频" in page.audio_preview_summary_label.text()
+    worker = scheduled[0]
+    worker.signals.progress.emit(AudioIndexProgress(current=expected_current, total=expected_total))
+    assert page.audioPreviewPanel.load_progress_bar.isHidden() is False
+    assert page.audioPreviewPanel.load_progress_bar.value() == expected_current
+    assert page.audioPreviewPanel.load_progress_bar.maximum() == expected_total
+    assert "15,360 / 30,343（50%）" in page.audio_preview_summary_label.text()
+
+    page.preview_mode_pivot.setCurrentItem(EVENT_PREVIEW_MODE)
+    assert page.audioPreviewPanel.load_progress_bar.isHidden() is True
+    page.preview_mode_pivot.setCurrentItem(ALL_AUDIO_PREVIEW_MODE)
+    assert page.audioPreviewPanel.load_progress_bar.value() == expected_current
+
+    page.hide()
+    worker.signals.finished.emit((flat_ref,))
+    assert page.audio_list.model().rowCount() == 0
+    page.show()
+    qtbot.waitUntil(lambda: page.audio_list.model().rowCount() == 1)
     assert "全部音频 1 个 WEM" in page.audio_preview_summary_label.text()
 
     resets: list[bool] = []
@@ -191,10 +206,11 @@ def test_overview_page_defers_all_audio_scan_and_hidden_model_reset(qtbot, monke
     assert resets == []
 
 
-def test_overview_page_rejects_stale_all_audio_worker_result(qtbot, monkeypatch) -> None:
+def test_overview_page_rejects_stale_all_audio_worker_result(qtbot) -> None:
     """旧实体的后台结果不得污染当前实体或当前上下文缓存。"""
     page = OverviewPage()
     qtbot.addWidget(page)
+    page.show()
     scheduled = []
     first_ref = AudioRef(
         relative_path="SFX/1001.wem",
@@ -232,11 +248,7 @@ def test_overview_page_rejects_stale_all_audio_worker_result(qtbot, monkeypatch)
     page._app_context = SimpleNamespace()
     page._ensure_loader = object
     page.entityListPanel.resolve_row_payload = lambda _item: dict(current_row)
-    monkeypatch.setattr(
-        overview_page_module,
-        "QThreadPool",
-        SimpleNamespace(globalInstance=lambda: SimpleNamespace(start=scheduled.append)),
-    )
+    page._audio_refs_pool = SimpleNamespace(start=scheduled.append)
 
     page._load_preview_for_item("maps", object())
     page.preview_mode_pivot.setCurrentItem(ALL_AUDIO_PREVIEW_MODE)

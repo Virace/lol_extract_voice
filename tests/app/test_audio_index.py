@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from lol_audio_unpack.app.artifacts import enumerate_audio_refs, resolve_audio_refs
+from lol_audio_unpack.app.artifacts import AudioIndexProgress, enumerate_audio_refs, resolve_audio_refs
 from lol_audio_unpack.app.path_layout import format_entity_folder_name, format_sub_entity_folder_name
 from lol_audio_unpack.model import AudioEntityData
 
@@ -58,7 +58,8 @@ def test_enumerate_audio_refs_preserves_duplicate_ids_across_sub_entity_and_type
     (base / skin1 / "SFX" / "101.wem").write_bytes(b"sfx")
     (base / "lobby" / "101.wem").write_bytes(b"lobby")
 
-    refs = enumerate_audio_refs(ctx, entity, version)
+    updates: list[AudioIndexProgress] = []
+    refs = enumerate_audio_refs(ctx, entity, version, progress=updates.append)
 
     assert [ref.relative_path for ref in refs] == sorted(ref.relative_path for ref in refs)
     assert [ref.wem_id for ref in refs] == ["101", "101", "101"]
@@ -69,6 +70,10 @@ def test_enumerate_audio_refs_preserves_duplicate_ids_across_sub_entity_and_type
     }
     assert all("/" in ref.key for ref in refs)
     assert all(entity_folder not in ref.key for ref in refs)
+    assert updates[0] == AudioIndexProgress(current=0, total=0)
+    assert updates[1] == AudioIndexProgress(current=0, total=3)
+    assert updates[-1] == AudioIndexProgress(current=3, total=3)
+    assert [update.current for update in updates[1:]] == sorted(update.current for update in updates[1:])
 
 
 def test_resolve_audio_refs_only_checks_explicit_mapping_paths(tmp_path: Path, monkeypatch) -> None:

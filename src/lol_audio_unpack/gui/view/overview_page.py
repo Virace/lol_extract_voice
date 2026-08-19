@@ -15,6 +15,7 @@ from PySide6.QtCore import (
     QPoint,
     QSignalBlocker,
     Qt,
+    QThread,
     QThreadPool,
     QUrl,
     Signal,
@@ -55,7 +56,7 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
-from lol_audio_unpack.app.artifacts import AudioRef
+from lol_audio_unpack.app.artifacts import AudioIndexProgress, AudioRef
 from lol_audio_unpack.app.facade import LolAudioUnpackApp
 from lol_audio_unpack.app.resource_pack import ResourcePackSelectionError, ResourcePackWadRef
 from lol_audio_unpack.app.special_content import is_special_content_supported
@@ -174,8 +175,12 @@ class OverviewPage(QWidget):
         self._audio_refs_loaded = False
         self._audio_list_ready = False
         self._audio_refs_error: str | None = None
+        self._audio_refs_progress: AudioIndexProgress | None = None
         self._audio_refs_token = 0
         self._audio_refs_cache: dict[tuple[str, str], tuple[AudioRef, ...]] = {}
+        self._audio_refs_pool = QThreadPool(self)
+        self._audio_refs_pool.setMaxThreadCount(1)
+        self._audio_refs_pool.setThreadPriority(QThread.Priority.LowPriority)
         self._audio_refs_worker: TaskWorker | None = None
         self._audio_refs_request: _AudioRefsRequest | None = None
         self._pending_audio_refs_request: _AudioRefsRequest | None = None
@@ -203,6 +208,7 @@ class OverviewPage(QWidget):
         self._setup_connections()
         self.destroyed.connect(self._disconnect_theme_refresh_listeners)
         self.destroyed.connect(self._preview_playback_controller.shutdown)
+        self.destroyed.connect(self._audio_refs_pool.clear)
 
     def showEvent(self, event):
         """页面首次展示时同步当前缓存。"""
@@ -210,6 +216,9 @@ class OverviewPage(QWidget):
         if self._current_preview_ids[self._current_entity_type()] is None:
             self._set_splitter_sizes_evenly()
         self._sync_current_list_view()
+        if (self.preview_mode_pivot.currentRouteKey() or self._active_preview_mode) == ALL_AUDIO_PREVIEW_MODE:
+            self._ensure_audio_refs()
+            self._refresh_all_audio_preview()
 
     def resizeEvent(self, event) -> None:
         """窗口尺寸变化时，重新收敛左右面板宽度。"""
@@ -246,6 +255,7 @@ class OverviewPage(QWidget):
         """
         self._audio_refs_token += 1
         self._audio_refs_cache.clear()
+        self._audio_refs_progress = None
         self._pending_audio_refs_request = None
         self._app_context = app_context
         self._loader = None
@@ -409,6 +419,7 @@ class OverviewPage(QWidget):
             del blocker
 
         if mode_key == EVENT_PREVIEW_MODE:
+            self.audioPreviewPanel.clear_load_progress()
             self.audioPreviewPanel.set_summary_text(self._event_preview_summary)
         elif mode_key == ALL_AUDIO_PREVIEW_MODE:
             self._ensure_audio_refs()
@@ -811,6 +822,7 @@ class OverviewPage(QWidget):
         self._audio_refs_loaded = preview_result.audio_refs_loaded
         self._audio_list_ready = False
         self._audio_refs_error = None
+        self._audio_refs_progress = None
         if self._audio_refs_loaded:
             self._audio_refs_cache[(preview_entity_type, str(row["id"]))] = self._current_audio_refs
         self._selected_audio_refs = {
@@ -1038,7 +1050,9 @@ class OverviewPage(QWidget):
         self._audio_refs_loaded = False
         self._audio_list_ready = False
         self._audio_refs_error = None
+        self._audio_refs_progress = None
         self._audio_refs_token += 1
+        self.audioPreviewPanel.clear_load_progress()
         self._selected_audio_refs = {
             EVENT_PREVIEW_MODE: None,
             ALL_AUDIO_PREVIEW_MODE: None,
@@ -1079,13 +1093,24 @@ class OverviewPage(QWidget):
         keyword = self._preview_search_keywords[ALL_AUDIO_PREVIEW_MODE]
         self.audioPreviewPanel.set_audio_keyword(keyword)
         if not self._audio_refs_loaded:
-            summary_text = self._audio_refs_error or "正在后台加载全部音频…"
+            if self._audio_refs_error:
+                self.audioPreviewPanel.clear_load_progress()
+                summary_text = self._audio_refs_error
+            else:
+                progress = self._audio_refs_progress or AudioIndexProgress(current=0, total=0)
+                self.audioPreviewPanel.set_load_progress(progress.current, progress.total)
+                if progress.total > 0:
+                    percent = progress.current * 100 // progress.total
+                    summary_text = f"正在后台加载全部音频… {progress.current:,} / {progress.total:,}（{percent}%）"
+                else:
+                    summary_text = "正在发现全部音频…"
             if self._current_mapping_notice:
                 summary_text = f"{self._current_mapping_notice} · {summary_text}"
             self._all_audio_preview_summary = summary_text
             self.audioPreviewPanel.set_summary_text(summary_text)
             return
 
+        self.audioPreviewPanel.clear_load_progress()
         matched_count = self.audio_list.model().rowCount()
         total_count = len(self._current_audio_refs)
         summary_text = f"全部音频 {total_count} 个 WEM"
@@ -1120,6 +1145,7 @@ class OverviewPage(QWidget):
             self._current_audio_refs = self._audio_refs_cache[request.key]
             self._audio_refs_loaded = True
             self._audio_refs_error = None
+            self._audio_refs_progress = None
             self._populate_audio_list()
             return
         if self._audio_refs_request == request:
@@ -1137,13 +1163,34 @@ class OverviewPage(QWidget):
         context = self._app_context
         self._audio_refs_request = request
         self._audio_refs_error = None
+        self._audio_refs_progress = AudioIndexProgress(current=0, total=0)
         self._audio_refs_worker = TaskWorker(
-            lambda: EntityDataLoader(context).load_audio_refs(request.entity_type, request.entity_id)
+            lambda signals: EntityDataLoader(context).load_audio_refs(
+                request.entity_type,
+                request.entity_id,
+                progress=signals.progress.emit,
+            ),
+            pass_signals=True,
         )
         worker = self._audio_refs_worker
+        worker.signals.progress.connect(self._on_audio_refs_progress)
         worker.signals.finished.connect(self._on_audio_refs_loaded)
         worker.signals.failed.connect(self._on_audio_refs_failed)
-        QThreadPool.globalInstance().start(worker)
+        self._audio_refs_pool.start(worker)
+
+    def _on_audio_refs_progress(self, result: object) -> None:
+        """更新当前实体的后台索引进度，隐藏页面只保留状态。"""
+        request = self._audio_refs_request
+        if not isinstance(result, AudioIndexProgress):
+            return
+        if request is None or not self._audio_refs_request_is_current(request):
+            return
+        self._audio_refs_progress = result
+        if (
+            self.isVisible()
+            and (self.preview_mode_pivot.currentRouteKey() or self._active_preview_mode) == ALL_AUDIO_PREVIEW_MODE
+        ):
+            self._refresh_all_audio_preview()
 
     def _on_audio_refs_loaded(self, result: object) -> None:
         """接收后台枚举结果，并拒绝覆盖已切换的实体。"""
@@ -1156,7 +1203,11 @@ class OverviewPage(QWidget):
             self._current_audio_refs = refs
             self._audio_refs_loaded = True
             self._audio_refs_error = None
-            if (self.preview_mode_pivot.currentRouteKey() or self._active_preview_mode) == ALL_AUDIO_PREVIEW_MODE:
+            self._audio_refs_progress = None
+            if (
+                self.isVisible()
+                and (self.preview_mode_pivot.currentRouteKey() or self._active_preview_mode) == ALL_AUDIO_PREVIEW_MODE
+            ):
                 self._populate_audio_list()
                 self._refresh_all_audio_preview()
                 self._sync_preview_path()
@@ -1169,7 +1220,9 @@ class OverviewPage(QWidget):
         self._audio_refs_request = None
         if request is not None and self._audio_refs_request_is_current(request):
             self._audio_refs_error = f"全部音频加载失败：{error}"
-            self._refresh_all_audio_preview()
+            self._audio_refs_progress = None
+            if self.isVisible():
+                self._refresh_all_audio_preview()
         self._start_pending_audio_refs_load()
 
     def _start_pending_audio_refs_load(self) -> None:

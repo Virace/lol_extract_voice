@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
 from loguru import logger
 
 from lol_audio_unpack.app.artifacts import (
+    AudioIndexProgress,
     AudioRef,
     enumerate_audio_refs,
     resolve_audio_refs,
@@ -782,18 +783,30 @@ class EntityDataLoader:
         )
         return mapping_path, mapping_data, json.dumps(raw_mapping_data, ensure_ascii=False, indent=2)
 
-    def load_audio_refs(self, entity_type: GuiEntityType, entity_id: str) -> tuple[AudioRef, ...]:
+    def load_audio_refs(
+        self,
+        entity_type: GuiEntityType,
+        entity_id: str,
+        *,
+        progress: Callable[[AudioIndexProgress], None] | None = None,
+    ) -> tuple[AudioRef, ...]:
         """加载当前实体全部已解包 WEM 的路径级稳定引用。
 
         Args:
             entity_type: 实体类型目录名。
             entity_id: 实体 ID。
+            progress: 可选的音频索引计数进度回调。
 
         Returns:
             按相对路径排序的 WEM 引用；同一 ID 的不同路径会保留为独立项。
         """
         entity_data = self._build_entity_data(entity_type, str(entity_id))
-        return enumerate_audio_refs(self.ctx, entity_data, self.data_reader.version)
+        return enumerate_audio_refs(
+            self.ctx,
+            entity_data,
+            self.data_reader.version,
+            progress=progress,
+        )
 
     def load_event_audio_refs(
         self,

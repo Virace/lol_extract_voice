@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -47,6 +47,19 @@ class AudioRef:
     def key(self) -> str:
         """返回用于 artifact 的稳定相对路径键。"""
         return self.relative_path
+
+
+@dataclass(frozen=True, slots=True)
+class AudioIndexProgress:
+    """全部音频路径索引的计数进度。
+
+    Args:
+        current: 已处理的 WEM 候选数。
+        total: 本次发现的 WEM 候选总数；发现阶段尚未知时为 0。
+    """
+
+    current: int
+    total: int
 
 
 def resolve_audio_paths(
@@ -95,6 +108,8 @@ def enumerate_audio_refs(
     ctx: AppContext,
     entity_data: AudioEntityData,
     version: str,
+    *,
+    progress: Callable[[AudioIndexProgress], None] | None = None,
 ) -> tuple[AudioRef, ...]:
     """枚举实体实际输出的 WEM，并拒绝经 symlink 逃逸的路径。
 
@@ -102,6 +117,7 @@ def enumerate_audio_refs(
         ctx: 当前应用上下文。
         entity_data: 实体数据对象。
         version: 当前数据版本号。
+        progress: 可选的计数进度回调；最多按整数百分比更新一次。
 
     Returns:
         按稳定 POSIX 相对路径排序的 WEM 引用。
@@ -109,6 +125,9 @@ def enumerate_audio_refs(
     version_root = (Path(ctx.paths.audio_path) / version).resolve()
     refs: list[AudioRef] = []
     seen: set[str] = set()
+    roots: list[tuple[Path, Path, str | None, tuple[Path, ...]]] = []
+    if progress is not None:
+        progress(AudioIndexProgress(current=0, total=0))
 
     for entity_root in _resolve_audio_ref_roots(ctx, entity_data, version):
         if not entity_root.is_dir():
@@ -120,37 +139,79 @@ def enumerate_audio_refs(
             continue
 
         audio_type_prefix = _grouped_audio_type(entity_root, version_root) if ctx.config.group_by_type else None
-        for candidate in entity_root.rglob("*.wem"):
+        roots.append((entity_root, resolved_root, audio_type_prefix, tuple(entity_root.rglob("*.wem"))))
+
+    total = sum(len(candidates) for _entity_root, _resolved_root, _prefix, candidates in roots)
+    if progress is not None:
+        progress(AudioIndexProgress(current=0, total=total))
+
+    current = 0
+    last_percent = 0
+    resolved_parents: dict[tuple[Path, Path], Path | None] = {}
+    for entity_root, resolved_root, audio_type_prefix, candidates in roots:
+        for candidate in candidates:
+            current += 1
             try:
-                resolved_path = candidate.resolve(strict=True)
-                resolved_path.relative_to(resolved_root)
-            except (OSError, ValueError):
-                # 产物目录可包含用户放入的 symlink；它们不应成为可播放或可持久化引用。
-                continue
+                parent_key = resolved_root, candidate.parent
+                if parent_key not in resolved_parents:
+                    try:
+                        resolved_parent = candidate.parent.resolve(strict=True)
+                        resolved_parent.relative_to(resolved_root)
+                        resolved_parent.relative_to(version_root)
+                    except (OSError, ValueError):
+                        resolved_parent = None
+                    resolved_parents[parent_key] = resolved_parent
+                else:
+                    resolved_parent = resolved_parents[parent_key]
 
-            physical_relative = candidate.relative_to(entity_root)
-            if ctx.config.group_by_type:
-                prefix = "lobby" if entity_root.name == "lobby" else audio_type_prefix
-                if prefix is None:
+                resolved_path: Path | None = None
+                if resolved_parent is not None:
+                    candidate_path = resolved_parent / candidate.name
+                    try:
+                        if candidate_path.is_symlink():
+                            resolved_path = candidate_path.resolve(strict=True)
+                            resolved_path.relative_to(resolved_root)
+                            resolved_path.relative_to(version_root)
+                        else:
+                            resolved_path = candidate_path
+                    except (OSError, ValueError):
+                        resolved_path = None
+
+                if resolved_path is None or not resolved_path.is_file():
                     continue
-                logical_relative = Path(prefix) / physical_relative
-            else:
-                logical_relative = physical_relative
-            relative = logical_relative.as_posix()
 
-            if relative in seen:
-                continue
-            seen.add(relative)
-            audio_type, sub_entity = _describe_audio_ref(entity_data, logical_relative, ctx=ctx)
-            refs.append(
-                AudioRef(
-                    relative_path=relative,
-                    path=resolved_path,
-                    wem_id=candidate.stem,
-                    audio_type=audio_type,
-                    sub_entity=sub_entity,
+                try:
+                    physical_relative = candidate.relative_to(entity_root)
+                except ValueError:
+                    continue
+                if ctx.config.group_by_type:
+                    prefix = "lobby" if entity_root.name == "lobby" else audio_type_prefix
+                    if prefix is None:
+                        continue
+                    logical_relative = Path(prefix) / physical_relative
+                else:
+                    logical_relative = physical_relative
+                relative = logical_relative.as_posix()
+
+                if relative in seen:
+                    continue
+                seen.add(relative)
+                audio_type, sub_entity = _describe_audio_ref(entity_data, logical_relative, ctx=ctx)
+                refs.append(
+                    AudioRef(
+                        relative_path=relative,
+                        path=resolved_path,
+                        wem_id=candidate.stem,
+                        audio_type=audio_type,
+                        sub_entity=sub_entity,
+                    )
                 )
-            )
+            finally:
+                if progress is not None:
+                    percent = current * 100 // total if total else 100
+                    if percent > last_percent:
+                        last_percent = percent
+                        progress(AudioIndexProgress(current=current, total=total))
 
     return tuple(sorted(refs, key=lambda item: item.relative_path))
 
@@ -409,6 +470,7 @@ def _build_mapping_bases(
 
 
 __all__ = [
+    "AudioIndexProgress",
     "AudioRef",
     "enumerate_audio_refs",
     "resolve_audio_refs",
