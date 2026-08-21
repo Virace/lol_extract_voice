@@ -184,7 +184,7 @@ class ChampionBinProcessor:
             dev_mode=self._is_dev_mode(),
             resource_schema=resource_schema,
         )
-        events_need_update = needs_update(
+        events_need_update = self.process_events and needs_update(
             events_file_base,
             self.version,
             self.force_update,
@@ -239,7 +239,7 @@ class ChampionBinProcessor:
             try:
                 bin_file = BIN(bin_raw)
                 references.extend(self._collect_bank_references(bin_file, path, skin_id))
-                if self.process_events and (skin_events := self._extract_skin_events(bin_file, base_skin_id, skin_id)):
+                if events_need_update and (skin_events := self._extract_skin_events(bin_file, base_skin_id, skin_id)):
                     champion_skin_events[skin_id] = skin_events
 
             except Exception:

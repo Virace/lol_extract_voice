@@ -130,16 +130,13 @@ class HomePage(SmoothScrollArea):
         self.environment_status = StatusLine("正在准备运行环境…", self._loading_widget)
         self.indeterminate_progress_bar = IndeterminateProgressBar(self._loading_widget)
         self.determinate_progress_bar = ProgressBar(self._loading_widget, useAni=False)
-        self.progress_count_label = CaptionLabel("", self._loading_widget)
         self.shared_data_action_btn = PushButton("", self._loading_widget)
         self.shared_data_action_btn.clicked.connect(self._emit_shared_data_action)
         self.determinate_progress_bar.hide()
-        self.progress_count_label.hide()
         self.shared_data_action_btn.hide()
         loading_layout.addWidget(self.environment_status)
         loading_layout.addWidget(self.indeterminate_progress_bar)
         loading_layout.addWidget(self.determinate_progress_bar)
-        loading_layout.addWidget(self.progress_count_label)
         loading_layout.addWidget(self.shared_data_action_btn, 0, Qt.AlignmentFlag.AlignLeft)
         root_layout.addWidget(self._loading_widget)
 
@@ -306,18 +303,14 @@ class HomePage(SmoothScrollArea):
             self.determinate_progress_bar.setRange(0, display.progress_total or 1)
             self.determinate_progress_bar.setValue(display.progress_current or 0)
             self.determinate_progress_bar.show()
-            self.progress_count_label.setText(display.progress_text)
-            self.progress_count_label.show()
         elif state.active:
             self.determinate_progress_bar.hide()
-            self.progress_count_label.hide()
             self.indeterminate_progress_bar.show()
             self.indeterminate_progress_bar.start()
         else:
             self.indeterminate_progress_bar.stop()
             self.indeterminate_progress_bar.hide()
             self.determinate_progress_bar.hide()
-            self.progress_count_label.hide()
 
         self._shared_data_action_key = display.action_key
         self.shared_data_action_btn.setText(display.action_text)

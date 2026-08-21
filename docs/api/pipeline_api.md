@@ -312,6 +312,10 @@ remote v1 才继续按分类名选择语言 WAD / 根 WAD 的兼容分支。
 `champion_banks` 与 `map_banks` 阶段。进度只描述阶段内处理位置；即使 current 到达 total，调用方
 仍必须以最终 `StageResult` 判断成功、部分完成、失败或取消。
 
+`OperationOptions.process_events=False` 时，events artifact 的缺失或新鲜度不参与逐实体更新判定；
+只要 banks 已就绪即可跳过 BIN 读取。启用事件处理时也只在 events 缺失、过期或显式 force 时提取
+事件；banks 单独因 resource schema 迁移需要重建时，不会重复解析已经新鲜的 events。
+
 WAV runtime 实际处理至少一个文件时，`transcode_wav(...)` 会返回一个稳定的 `wav:batch`
 实体，其 `artifacts` 为 runtime 报告的真实 `wav_root`；零文件 success no-op 不创建实体。
 extract 的 artifacts 是本轮确认落盘的 WEM 或大厅音频路径，mapping 的 artifacts 是最终写入文件；

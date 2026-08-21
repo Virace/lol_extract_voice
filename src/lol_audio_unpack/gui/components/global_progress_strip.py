@@ -156,6 +156,7 @@ class GlobalProgressStripCoordinator:
         self._current_state = GlobalProgressStripState()
         self._shared_generation = -1
         self._shared_update_deferred = False
+        self._shared_progress_suppressed = False
 
     def set_task_state(self, state: GlobalProgressStripState) -> None:
         """更新用户任务状态；运行中的用户任务始终优先。
@@ -170,9 +171,9 @@ class GlobalProgressStripCoordinator:
             return
         if task_was_visible and self._shared_update_deferred:
             self._shared_update_deferred = False
-            self._publish(self._shared_state)
+            self._publish(state if self._shared_progress_suppressed else self._shared_state)
             return
-        if self._shared_state.visible:
+        if self._shared_state.visible and not self._shared_progress_suppressed:
             self._publish(self._shared_state)
             return
         self._publish(state)
@@ -189,6 +190,25 @@ class GlobalProgressStripCoordinator:
         self._shared_state = build_shared_data_progress_strip_state(state)
         if self._task_state.visible:
             self._shared_update_deferred = True
+            return
+        if self._shared_progress_suppressed:
+            self._publish(GlobalProgressStripState(cancellable=False))
+            return
+        self._publish(self._shared_state)
+
+    def set_shared_data_progress_suppressed(self, suppressed: bool) -> None:
+        """按当前页面抑制共享准备进度，不影响用户任务进度。
+
+        Args:
+            suppressed: 首页已展示同源进度时为 ``True``。
+        """
+        if suppressed == self._shared_progress_suppressed:
+            return
+        self._shared_progress_suppressed = suppressed
+        if self._task_state.visible:
+            return
+        if suppressed:
+            self._publish(GlobalProgressStripState(cancellable=False))
             return
         self._publish(self._shared_state)
 
@@ -422,7 +442,7 @@ class GlobalProgressStrip(QWidget):
         self._content_layout.setContentsMargins(
             PROGRESS_CONTENT_HORIZONTAL_MARGIN,
             PROGRESS_CONTENT_VERTICAL_MARGIN,
-            0,
+            PROGRESS_CONTENT_HORIZONTAL_MARGIN,
             PROGRESS_CONTENT_VERTICAL_MARGIN,
         )
         self._content_layout.setSpacing(PROGRESS_CONTENT_HORIZONTAL_MARGIN)
@@ -466,10 +486,6 @@ class GlobalProgressStrip(QWidget):
         self._content_layout.addWidget(
             self._action_widget, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         )
-
-        self._progress_animation = QPropertyAnimation(self, b"displayProgress", self)
-        self._progress_animation.setDuration(PROGRESS_STRIP_ANIMATION_MS)
-        self._progress_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         self._sweep_animation = QPropertyAnimation(self, b"sweepPhase", self)
         self._sweep_animation.setDuration(DEFAULT_PROGRESS_SWEEP_ANIMATION_MS + DEFAULT_PROGRESS_SWEEP_IDLE_DELAY_MS)
@@ -576,9 +592,8 @@ class GlobalProgressStrip(QWidget):
 
         Args:
             state: 最新展示状态。
-            animate: 是否对进度增长启用动画。
+            animate: 保留给宿主过渡；确定型填充始终同步真实计数。
         """
-        was_visible = self._state.visible
         self._state = state
         self._target_progress = _normalized_progress_ratio(state.progress_current, state.progress_total)
 
@@ -591,13 +606,8 @@ class GlobalProgressStrip(QWidget):
         self._configured_sweep_idle_delay_ms = max(0, state.sweep_idle_delay_ms)
         self._sweep_animation.setDuration(self._configured_sweep_duration_ms + self._configured_sweep_idle_delay_ms)
 
-        self._progress_animation.stop()
-        if not animate or (not was_visible and state.visible):
-            self.set_display_progress(self._target_progress)
-        else:
-            self._progress_animation.setStartValue(self._display_progress)
-            self._progress_animation.setEndValue(self._target_progress)
-            self._progress_animation.start()
+        # 确定型计数必须与填充宽度同步；高频事件若持续重启动画，会让视觉值长期落后于真实值。
+        self.set_display_progress(self._target_progress)
 
         self.set_animation_active(state.visible)
         self._apply_state()
@@ -802,6 +812,8 @@ class GlobalProgressStrip(QWidget):
 
     def _action_rect(self) -> QRectF:
         """返回按钮区在组件坐标中的矩形。"""
+        if not self._action_widget.isVisible():
+            return QRectF()
         return QRectF(self._action_widget.geometry())
 
     def _dynamic_meta_color_for_widget(self, widget: QWidget, *, fallback: QColor) -> QColor:
@@ -824,7 +836,6 @@ class GlobalProgressStrip(QWidget):
         super().resizeEvent(event)
         self._apply_state()
 
-    displayProgress = Property(float, get_display_progress, set_display_progress)
     sweepPhase = Property(float, get_sweep_phase, set_sweep_phase)
 
 
@@ -890,6 +901,9 @@ class GlobalProgressStripHost(QWidget):
 
         # 从可见态切到隐藏态时，保留当前进度条片刻，避免完成瞬间闪退。
         if self._state.visible and self._host_height > 0:
+            if not state.cancellable and not (state.title_text or state.detail_text or state.status_text):
+                self._apply_state(state, animate=animate)
+                return
             if state.title_text or state.detail_text or state.status_text:
                 self._strip.set_state(replace(state, visible=True), animate=animate)
             self._pending_hide_state = state

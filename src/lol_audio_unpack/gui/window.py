@@ -379,6 +379,12 @@ class MainWindow(FluentWindow):
         """把协调后的单一全局进度状态应用到窗口宿主。"""
         self._progress_strip_host.set_state(state, animate=True)
 
+    def _sync_shared_data_progress_visibility(self, *_args: object) -> None:
+        """首页显示页内进度时隐藏同源底栏，其他页面继续展示。"""
+        home_page = getattr(self, "homeInterface", None)
+        current_page = self.stackedWidget.currentWidget()
+        self._progress_strip_coordinator.set_shared_data_progress_suppressed(current_page is home_page)
+
     def _dispatch_shared_data_action(self, action_key: str) -> None:
         """处理首页共享数据状态区发出的稳定动作。"""
         dispatch_shared_data_action(
@@ -410,6 +416,8 @@ class MainWindow(FluentWindow):
             ),
         )
         self._shared_data_controller.state_changed.connect(self._progress_strip_coordinator.set_shared_data_state)
+        self.stackedWidget.currentChanged.connect(self._sync_shared_data_progress_visibility)
+        self._sync_shared_data_progress_visibility()
 
         # 路径改变时实时同步到首页
         si.game_path_changed.connect(hi.update_game_dir)

@@ -32,6 +32,21 @@ def test_shared_data_display_uses_real_progress_counts() -> None:
     assert (known.progress_current, known.progress_total) == (4, 9)
 
 
+def test_shared_data_display_normalizes_out_of_range_progress() -> None:
+    """异常 current 不得让计数文案或进度条越过真实 total。"""
+    display = describe_shared_data_state(
+        SharedDataState(
+            SharedDataPhase.PREPARING,
+            3,
+            "local_path",
+            progress=SharedDataProgress(3, "champion_banks", "advanced", current=200, total=173),
+        )
+    )
+
+    assert display.progress_text == "英雄数据 · 173/173"
+    assert (display.progress_current, display.progress_total) == (173, 173)
+
+
 def test_shared_data_display_ready_and_partial_share_authoritative_summary() -> None:
     """就绪与部分可用文案必须来自同一份动态扫描摘要。"""
     summary = SharedDataSummary(173, 172, 1, 9, 9, 0, 63, 0, 63)

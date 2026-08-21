@@ -209,7 +209,7 @@ class MapBinProcessor:
             dev_mode=self._is_dev_mode(),
             resource_schema=resource_schema,
         )
-        events_need_update = needs_update(
+        events_need_update = self.process_events and needs_update(
             events_file_base,
             self.version,
             self.force_update,
@@ -271,7 +271,7 @@ class MapBinProcessor:
                 logger.trace(f"地图 {map_id} 去重后无独有Banks数据，跳过写入")
 
         # 处理Events数据，只有在启用事件处理时才提取
-        if self.process_events and events_need_update and bin_file is not None:
+        if events_need_update and bin_file is not None:
             map_events, dedup_summary = self._extract_map_events(
                 bin_file,
                 common_event_sources if map_id != "0" else None,

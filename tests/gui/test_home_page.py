@@ -103,7 +103,6 @@ def test_home_page_switches_between_determinate_progress_and_terminal_summary(qt
     assert page.determinate_progress_bar.isHidden() is False
     assert page.determinate_progress_bar.value() == EXPECTED_PROGRESS_CURRENT
     assert page.determinate_progress_bar.maximum() == EXPECTED_PROGRESS_TOTAL
-    assert page.progress_count_label.text() == "英雄数据 · 42/173"
 
     page.set_shared_data_state(
         SharedDataState(

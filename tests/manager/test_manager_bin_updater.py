@@ -228,6 +228,136 @@ def test_process_champion_skins_reports_missing_bin_as_failure_input(tmp_path, m
     assert write_calls == []
 
 
+def test_champion_bank_migration_does_not_reparse_fresh_events(tmp_path, monkeypatch) -> None:
+    """banks 迁移时若 events 已新鲜，不应再次解析全部英雄事件。"""
+    processor = m_champion_processor.ChampionBinProcessor.__new__(m_champion_processor.ChampionBinProcessor)
+    processor.ctx = SimpleNamespace(config=SimpleNamespace(game_path=tmp_path, dev_mode=False), paths=SimpleNamespace())
+    processor.force_update = False
+    processor.process_events = True
+    processor.version = "16.16"
+    processor.game_path = tmp_path
+    processor.champion_banks_dir = tmp_path / "banks" / "champions"
+    processor.champion_events_dir = tmp_path / "events" / "champions"
+    processor.bin_source = SimpleNamespace(
+        _uses_resource_v2=lambda: False,
+        _create_base_data=lambda entity_id, _entity_type, **payload: {
+            "metadata": {"gameVersion": "16.16"},
+            "championId": entity_id,
+            **payload,
+        },
+    )
+    bin_path = "data/characters/Annie/skins/skin0001.bin"
+    fake_bin = SimpleNamespace(
+        theme_music=None,
+        data=[
+            SimpleNamespace(
+                music=None,
+                bank_units=[
+                    SimpleNamespace(
+                        category="Characters/Annie/Skins/Skin1/VO",
+                        bank_path=["assets/sounds/wwise2016/vo/annie_audio.bnk"],
+                        events=[SimpleNamespace(string="Play_Annie_VO")],
+                    )
+                ],
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        processor,
+        "_read_bin_batch",
+        lambda *_args, **_kwargs: m_bin_source.BinBatch(
+            raws={bin_path: b"bin"},
+            bindings=[],
+            resource_v2=False,
+        ),
+    )
+    monkeypatch.setattr(m_champion_processor, "BIN", lambda _raw: fake_bin)
+    monkeypatch.setattr(
+        m_champion_processor,
+        "needs_update",
+        lambda base_path, *_args, **_kwargs: "banks" in Path(base_path).parts,
+    )
+    monkeypatch.setattr(
+        m_champion_processor,
+        "write_data",
+        lambda *_args, **_kwargs: tmp_path / "banks" / "champions" / "1.msgpack",
+    )
+    event_parse_calls: list[str] = []
+    monkeypatch.setattr(
+        processor,
+        "_extract_skin_events",
+        lambda *_args, **_kwargs: event_parse_calls.append("events") or {"events": {}},
+    )
+
+    result = processor._process_champion_skins(
+        {
+            "alias": "Annie",
+            "skins": [{"id": "1", "isBase": True, "binPath": bin_path}],
+        },
+        "1",
+    )
+
+    assert result.status is UpdateStatus.SUCCESS
+    assert event_parse_calls == []
+
+
+def test_skip_events_ignores_missing_champion_event_artifact(tmp_path, monkeypatch) -> None:
+    """显式跳过 events 时，已就绪 banks 不应因 events 缺失而重复读取 BIN。"""
+    processor = m_champion_processor.ChampionBinProcessor.__new__(m_champion_processor.ChampionBinProcessor)
+    processor.ctx = SimpleNamespace(config=SimpleNamespace(game_path=tmp_path, dev_mode=False), paths=SimpleNamespace())
+    processor.force_update = False
+    processor.process_events = False
+    processor.version = "16.16"
+    processor.game_path = tmp_path
+    processor.champion_banks_dir = tmp_path / "banks" / "champions"
+    processor.champion_events_dir = tmp_path / "events" / "champions"
+    processor.bin_source = SimpleNamespace(_uses_resource_v2=lambda: False)
+    monkeypatch.setattr(
+        m_champion_processor,
+        "needs_update",
+        lambda base_path, *_args, **_kwargs: "events" in Path(base_path).parts,
+    )
+    monkeypatch.setattr(
+        processor,
+        "_read_bin_batch",
+        lambda *_args, **_kwargs: pytest.fail("skip-events 不应读取英雄 BIN"),
+    )
+
+    result = processor._process_champion_skins({"alias": "Annie", "skins": []}, "1")
+
+    assert result.status is UpdateStatus.SUCCESS
+
+
+def test_skip_events_ignores_missing_map_event_artifact(tmp_path, monkeypatch) -> None:
+    """显式跳过 events 时，已就绪地图 banks 不应因 events 缺失而重复读取 BIN。"""
+    processor = m_map_processor.MapBinProcessor.__new__(m_map_processor.MapBinProcessor)
+    processor.ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False), runtime_cache={})
+    processor.force_update = False
+    processor.process_events = False
+    processor.version = "16.16"
+    processor.languages = []
+    processor.map_banks_dir = tmp_path / "banks" / "maps"
+    processor.map_events_dir = tmp_path / "events" / "maps"
+    processor.bin_source = SimpleNamespace(_uses_resource_v2=lambda: False)
+    monkeypatch.setattr(
+        m_map_processor,
+        "needs_update",
+        lambda base_path, *_args, **_kwargs: "events" in Path(base_path).parts,
+    )
+    monkeypatch.setattr(
+        processor,
+        "_load_map_resource",
+        lambda *_args, **_kwargs: pytest.fail("skip-events 不应读取地图 BIN"),
+    )
+
+    result = processor._process_single_map(
+        "11",
+        {"binPath": "data/maps/shipping/map11/map11.bin", "names": {"default": "Map11"}},
+    )
+
+    assert result.status is UpdateStatus.SUCCESS
+
+
 def test_load_map_bin_file_reads_local_bin_when_available(tmp_path, monkeypatch):
     """验证地图 BIN 可用时优先读取本地文件内容。"""
     source = _build_bin_source(tmp_path)

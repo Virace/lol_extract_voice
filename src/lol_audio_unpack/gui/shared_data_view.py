@@ -81,7 +81,8 @@ def _progress_parts(state: SharedDataState) -> tuple[str, int | None, int | None
     total = progress.total
     if current is None or total is None or total <= 0:
         return stage_label, None, None
-    return f"{stage_label} · {current}/{total}", current, total
+    normalized_current = min(max(current, 0), total)
+    return f"{stage_label} · {normalized_current}/{total}", normalized_current, total
 
 
 def _recovery_action(state: SharedDataState) -> tuple[str | None, str]:
