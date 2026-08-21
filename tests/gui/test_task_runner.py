@@ -11,6 +11,7 @@ import lol_audio_unpack.gui.window as window_module
 from lol_audio_unpack.app.resource_pack import ResourcePackWadRef, build_resource_pack_key
 from lol_audio_unpack.app.results import EntityResult, ResultStatus, StageResult
 from lol_audio_unpack.gui.service import task_runner
+from lol_audio_unpack.gui.shared_data import SharedDataRepairScope
 from lol_audio_unpack.gui.task_models import (
     AppContextInputSnapshot,
     ExecutionTaskDraft,
@@ -20,6 +21,7 @@ from lol_audio_unpack.gui.task_models import (
 from lol_audio_unpack.gui.window import _prepare_shared_entity_data
 
 EXPECTED_CONTEXT_COUNT_WITH_UPDATE = 2
+PREPARE_GENERATION = 3
 
 
 def _stage(stage: str) -> StageResult:
@@ -134,13 +136,15 @@ def test_build_runtime_settings_forces_local_path_when_packaged(monkeypatch) -> 
 
 def test_prepare_shared_entity_data_normalizes_source_mode_before_app_context(monkeypatch) -> None:
     captured: dict[str, str | bool] = {}
+    update_calls = []
 
     class _FakeApp:
         def __init__(self, _app_context) -> None:
             pass
 
-        def update(self, _options, *, target: str) -> None:
-            assert target == "all"
+        def update(self, options, *, target: str, progress_callback):
+            update_calls.append((options, target, progress_callback))
+            return StageResult("update", status=ResultStatus.SUCCESS)
 
     def _fake_create_app_context(*, settings):
         captured.update(settings)
@@ -155,9 +159,26 @@ def test_prepare_shared_entity_data_normalizes_source_mode_before_app_context(mo
     monkeypatch.setattr(window_module, "create_app_context", _fake_create_app_context)
     monkeypatch.setattr(window_module, "LolAudioUnpackApp", _FakeApp)
 
-    _prepare_shared_entity_data({"SOURCE_MODE": "remote_snapshot"})
+    def progress_callback(_progress) -> None:
+        pass
+
+    result = _prepare_shared_entity_data(
+        {"SOURCE_MODE": "remote_snapshot"},
+        generation=PREPARE_GENERATION,
+        scope=SharedDataRepairScope(full=False, champion_ids=(1,)),
+        force_update=True,
+        progress_callback=progress_callback,
+    )
 
     assert captured["SOURCE_MODE"] == "local_path"
+    options, target, callback = update_calls[0]
+    assert target == "all"
+    assert options.champion_ids == (1,)
+    assert options.map_ids is None
+    assert options.force_update is True
+    assert callback is progress_callback
+    assert result.generation == PREPARE_GENERATION
+    assert result.stage_result.status is ResultStatus.SUCCESS
 
 
 def test_run_execution_task_runs_stages_in_order_and_reuses_runtime_context(monkeypatch, tmp_path: Path) -> None:

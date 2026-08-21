@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from time import perf_counter
 
@@ -27,7 +28,6 @@ from lol_audio_unpack import __version__
 from lol_audio_unpack.app.context import create_app_context
 from lol_audio_unpack.app.facade import LolAudioUnpackApp
 from lol_audio_unpack.app.types import OperationOptions
-from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.gui.common import (
     apply_smooth_scroll_enabled,
     get_block_reason,
@@ -62,7 +62,8 @@ from lol_audio_unpack.gui.controllers.window_shell import (
 )
 from lol_audio_unpack.gui.resources import assets
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
-from lol_audio_unpack.gui.service.worker import DataLoadWorker
+from lol_audio_unpack.gui.service.worker import SharedDataScanWorker
+from lol_audio_unpack.gui.shared_data import SharedDataPreparationResult, SharedDataRepairScope
 from lol_audio_unpack.gui.view.about_page import AboutPage, get_minimum_shell_size
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 from lol_audio_unpack.gui.view.home_page import HomePage
@@ -70,6 +71,7 @@ from lol_audio_unpack.gui.view.item_lookup_page import ItemLookupPage
 from lol_audio_unpack.gui.view.overview_page import OverviewPage
 from lol_audio_unpack.gui.view.setting_page import SettingPage
 from lol_audio_unpack.gui.workers import TaskWorker
+from lol_audio_unpack.model.progress import OperationProgress
 from lol_audio_unpack.utils.logging import setup_logging
 
 NAV_EXPANDED_WIDTH_THRESHOLD = 100
@@ -87,14 +89,25 @@ def _log_window_stage(stage: str, startup_begin: float, previous_mark: float) ->
     return current_mark
 
 
-def _prepare_shared_entity_data(shared_settings: dict[str, str | bool]) -> None:
-    """为实体列表准备后端共享数据。"""
-    prepare_settings = dict(shared_settings)
-    prepare_settings[SettingKey.WITH_BP_VO] = True
-    prepare_settings = normalize_app_context_settings(prepare_settings)
+def _prepare_shared_entity_data(
+    shared_settings: dict[str, str | bool],
+    *,
+    generation: int,
+    scope: SharedDataRepairScope,
+    force_update: bool,
+    progress_callback: Callable[[OperationProgress], None],
+) -> SharedDataPreparationResult:
+    """按扫描证据执行一次后端共享数据准备并保留 typed result。"""
+    prepare_settings = normalize_app_context_settings(dict(shared_settings))
     app_context = create_app_context(settings=prepare_settings)
     app = LolAudioUnpackApp(app_context)
-    app.update(OperationOptions(), target="all")
+    options = OperationOptions(
+        force_update=force_update,
+        champion_ids=None if scope.full or not scope.champion_ids else scope.champion_ids,
+        map_ids=None if scope.full or not scope.map_ids else scope.map_ids,
+    )
+    stage_result = app.update(options, target="all", progress_callback=progress_callback)
+    return SharedDataPreparationResult(generation, scope, stage_result)
 
 
 class MainWindow(FluentWindow):
@@ -176,7 +189,7 @@ class MainWindow(FluentWindow):
             get_config=lambda: self.settingInterface.config,
             has_incomplete_tasks=self.executionInterface.has_incomplete_tasks,
             create_app_context_fn=create_app_context,
-            data_load_worker_cls=DataLoadWorker,
+            data_load_worker_cls=SharedDataScanWorker,
             task_worker_cls=TaskWorker,
             entity_data_loader_cls=EntityDataLoader,
             start_worker_fn=lambda worker: QThreadPool.globalInstance().start(worker),

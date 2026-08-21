@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from lol_audio_unpack.model.progress import ProgressEvent
+from lol_audio_unpack.app.results import ResultStatus, StageResult
+from lol_audio_unpack.model.progress import OperationProgress, ProgressEvent
 
 
 class SharedDataPhase(str, Enum):
@@ -28,6 +29,15 @@ class SharedDataReadiness(str, Enum):
     COMPLETE = "complete"
     PARTIAL = "partial"
     FAILED = "failed"
+
+
+class SharedDataPrepareTrigger(str, Enum):
+    """启动当前 generation 的稳定入口。"""
+
+    INITIAL = "initial"
+    CONTEXT_CHANGE = "context_change"
+    MANUAL_REFRESH = "manual_refresh"
+    MANUAL_RETRY = "manual_retry"
 
 
 class SharedDataProblemCode(str, Enum):
@@ -251,14 +261,109 @@ class SharedDataScanResult:
         return SharedDataReadiness.PARTIAL
 
 
+@dataclass(frozen=True, slots=True)
+class SharedDataRepairScope:
+    """描述一次共享数据准备需要更新的最小普通实体范围。"""
+
+    full: bool
+    champion_ids: tuple[int, ...] = ()
+    map_ids: tuple[int, ...] = ()
+
+    @classmethod
+    def from_scan(cls, scan: SharedDataScanResult) -> SharedDataRepairScope:
+        """从扫描证据构造完整或逐实体修复范围。"""
+        full_codes = {
+            SharedDataProblemCode.DATASET_MISSING,
+            SharedDataProblemCode.DATASET_STALE,
+            SharedDataProblemCode.DATASET_EMPTY,
+            SharedDataProblemCode.MAP_COMMON_MISSING,
+        }
+        if any(problem.blocking and problem.code in full_codes for problem in scan.problems):
+            return cls(full=True)
+
+        champion_ids: list[int] = []
+        map_ids: list[int] = []
+        for section, target in ((scan.champions, champion_ids), (scan.maps, map_ids)):
+            for failure in section.failures:
+                if not failure.entity_id.isdigit():
+                    return cls(full=True)
+                target.append(int(failure.entity_id))
+        if not champion_ids and not map_ids:
+            return cls(full=True)
+        return cls(
+            full=False,
+            champion_ids=tuple(dict.fromkeys(champion_ids)),
+            map_ids=tuple(dict.fromkeys(map_ids)),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SharedDataPreparationResult:
+    """保留一次后台准备的 generation、范围与权威阶段结果。"""
+
+    generation: int
+    scope: SharedDataRepairScope
+    stage_result: StageResult
+
+
+@dataclass(frozen=True, slots=True)
+class SharedDataState:
+    """共享目录控制器发布给所有页面的单一状态快照。"""
+
+    phase: SharedDataPhase
+    generation: int
+    source_mode: str
+    summary: SharedDataSummary | None = None
+    progress: SharedDataProgress | OperationProgress | None = None
+    problem: SharedDataProblem | None = None
+    prepare_attempted: bool = False
+    prepare_trigger: SharedDataPrepareTrigger = SharedDataPrepareTrigger.INITIAL
+    scan: SharedDataScanResult | None = None
+    preparation: SharedDataPreparationResult | None = None
+
+    @property
+    def active(self) -> bool:
+        """返回当前阶段是否仍有共享后台流程在运行。"""
+        return self.phase in {
+            SharedDataPhase.CHECKING,
+            SharedDataPhase.PREPARING,
+            SharedDataPhase.VERIFYING,
+        }
+
+    @property
+    def blocks_new_tasks(self) -> bool:
+        """返回当前状态是否阻止创建新任务。"""
+        return self.phase is not SharedDataPhase.READY
+
+    @property
+    def status_role(self) -> str:
+        """返回供视图选择图标与语义色的稳定角色。"""
+        if self.phase is SharedDataPhase.READY:
+            return "success"
+        if self.phase in {SharedDataPhase.PARTIAL, SharedDataPhase.BLOCKED, SharedDataPhase.CANCELLED}:
+            return "caution"
+        if self.phase is SharedDataPhase.FAILED:
+            return "critical"
+        return "info"
+
+    @property
+    def prepare_status(self) -> ResultStatus | None:
+        """返回最近准备结果状态；未准备时为空。"""
+        return self.preparation.stage_result.status if self.preparation is not None else None
+
+
 __all__ = [
     "SharedDataFailure",
     "SharedDataPhase",
+    "SharedDataPreparationResult",
+    "SharedDataPrepareTrigger",
     "SharedDataProblem",
     "SharedDataProblemCode",
     "SharedDataProgress",
     "SharedDataReadiness",
+    "SharedDataRepairScope",
     "SharedDataScanResult",
     "SharedDataSectionResult",
+    "SharedDataState",
     "SharedDataSummary",
 ]

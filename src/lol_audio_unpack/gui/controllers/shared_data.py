@@ -1,12 +1,14 @@
-"""共享实体数据加载与刷新的后台控制器。"""
+"""共享实体目录的 generation 状态机与后台编排。"""
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 
 from loguru import logger
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from lol_audio_unpack.app.results import ResultStatus, StageResult
 from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.gui.controllers.contracts import (
     EntityRowsPayload,
@@ -14,8 +16,18 @@ from lol_audio_unpack.gui.controllers.contracts import (
     RuntimeLoggingConfig,
     SharedDataLoadingState,
 )
+from lol_audio_unpack.gui.shared_data import (
+    SharedDataPhase,
+    SharedDataPreparationResult,
+    SharedDataPrepareTrigger,
+    SharedDataProblem,
+    SharedDataProblemCode,
+    SharedDataReadiness,
+    SharedDataRepairScope,
+    SharedDataScanResult,
+    SharedDataState,
+)
 from lol_audio_unpack.gui.task_models import OutputStateRefreshRequest
-from lol_audio_unpack.manager.errors import is_shared_data_not_ready
 
 SHARED_CONTEXT_BUILD_TIMEOUT_MS = 15000
 
@@ -58,10 +70,8 @@ def build_shared_context_loading_message(config) -> str:
     """根据当前模式生成首页共享数据加载阶段文案。"""
     if _resolve_source_mode(config) != "remote_snapshot":
         return "正在读取本地共享数据…"
-
     if getattr(config, "remote_snapshot_strategy", "latest") == "custom":
         return "正在校验固定远端快照…"
-
     return "正在解析最新远端版本…"
 
 
@@ -69,16 +79,39 @@ def build_shared_context_timeout_message(config) -> str:
     """根据当前模式生成共享数据加载超时提示。"""
     if config is None or _resolve_source_mode(config) != "remote_snapshot":
         return "读取共享数据超时，请重试。"
-
     if getattr(config, "remote_snapshot_strategy", "latest") == "custom":
         return "校验固定远端快照超时，请检查配置后重试。"
-
     return "解析最新远端版本超时，请检查网络连接后重试。"
 
 
-class SharedDataController(QObject):
-    """负责共享实体数据主线的状态机与后台编排。"""
+def _state_message(state: SharedDataState, config=None) -> str:  # noqa: PLR0911
+    """在页面迁移期间把 typed state 投影成旧展示文案。"""
+    if state.phase is SharedDataPhase.BLOCKED:
+        return state.problem.message if state.problem is not None else "共享数据尚未配置。"
+    if state.phase is SharedDataPhase.CHECKING:
+        if state.progress is not None:
+            return "正在扫描英雄与地图数据…"
+        return build_shared_context_loading_message(config) if config is not None else "正在检查共享数据…"
+    if state.phase is SharedDataPhase.WAITING:
+        return "等待当前任务结束后刷新实体数据…"
+    if state.phase is SharedDataPhase.PREPARING:
+        return "正在刷新基础数据…"
+    if state.phase is SharedDataPhase.VERIFYING:
+        return "正在复检实体数据…"
+    if state.phase is SharedDataPhase.READY:
+        return "实体数据已就绪"
+    if state.phase is SharedDataPhase.PARTIAL:
+        return state.problem.message if state.problem is not None else "实体数据未完整，新任务已暂停。"
+    if state.phase is SharedDataPhase.CANCELLED:
+        return "实体数据准备已取消，请重试。"
+    message = state.problem.message if state.problem is not None else "共享数据准备失败。"
+    return f"加载失败: {message}"
 
+
+class SharedDataController(QObject):
+    """持有共享目录单一状态，并编排检查、准备与复检。"""
+
+    state_changed = Signal(object)
     loading_state_changed = Signal(object)
     app_context_changed = Signal(object)
     shared_data_cleared = Signal()
@@ -97,22 +130,25 @@ class SharedDataController(QObject):
         task_worker_cls,
         entity_data_loader_cls,
         start_worker_fn: Callable[[object], None],
-        prepare_shared_entity_data_fn: Callable[[dict[str, str | bool]], None],
+        prepare_shared_entity_data_fn: Callable[..., SharedDataPreparationResult],
         app_context_block_reason_fn: Callable[[object], str | None],
         parent=None,
     ) -> None:
+        """初始化共享目录控制器及其异步依赖。"""
         super().__init__(parent)
         self._get_config = get_config
         self._has_incomplete_tasks = has_incomplete_tasks
         self._create_app_context = create_app_context_fn
-        self._data_load_worker_cls = data_load_worker_cls
+        self._scan_worker_cls = data_load_worker_cls
         self._task_worker_cls = task_worker_cls
         self._entity_data_loader_cls = entity_data_loader_cls
         self._start_worker = start_worker_fn
         self._prepare_shared_entity_data = prepare_shared_entity_data_fn
         self._get_app_context_block_reason = app_context_block_reason_fn
 
+        self.generation = 0
         self.app_context = None
+        self.state = SharedDataState(SharedDataPhase.BLOCKED, 0, "local_path")
         self.is_loading_shared_data = False
         self.is_preparing_shared_data = False
         self.pending_refresh_notice = False
@@ -120,12 +156,25 @@ class SharedDataController(QObject):
         self.pending_refresh_allow_prepare = False
         self.allow_auto_prepare_on_reload = True
         self.auto_prepare_attempted = False
-        self.shared_data_prepare_worker = None
+        self.reader_signature: tuple[str | bool, ...] | None = None
+        self.scan_signature: tuple[str | bool, ...] | None = None
+
         self.build_worker = None
         self.build_config = None
         self.build_request_id = 0
-        self.reader_signature: tuple[str | bool, ...] | None = None
-        self.scan_signature: tuple[str | bool, ...] | None = None
+        self._build_generation = 0
+        self._scan_worker = None
+        self._scan_generation = 0
+        self.shared_data_prepare_worker = None
+        self._prepare_generation = 0
+        self._prepare_scope = SharedDataRepairScope(full=True)
+        self._prepare_force_update = False
+        self._prepare_result: SharedDataPreparationResult | None = None
+        self._trigger = SharedDataPrepareTrigger.INITIAL
+        self._notice_keys: set[tuple[int, str]] = set()
+        self._closed = False
+
+        # P4 完成页面迁移前保留旧字段，避免阶段提交破坏窗口生命周期。
         self._champions_worker = None
         self._maps_worker = None
 
@@ -139,36 +188,111 @@ class SharedDataController(QObject):
         self.build_timeout_timer.setInterval(SHARED_CONTEXT_BUILD_TIMEOUT_MS)
         self.build_timeout_timer.timeout.connect(self.on_shared_context_build_timeout)
 
+    def _publish_state(self, state: SharedDataState, *, config=None) -> None:
+        """原子保存 typed state，并同步迁移期旧展示信号。"""
+        if self._closed or state.generation != self.generation:
+            return
+        self.state = state
+        self.is_loading_shared_data = state.phase in {SharedDataPhase.CHECKING, SharedDataPhase.VERIFYING}
+        self.is_preparing_shared_data = state.phase is SharedDataPhase.PREPARING
+        self.state_changed.emit(state)
+        self.loading_state_changed.emit(
+            SharedDataLoadingState(
+                message=_state_message(state, config or self._get_config()),
+                active=state.active,
+            )
+        )
+
+    def _replace_state(self, **changes) -> None:
+        """在当前 generation 上发布部分字段变更。"""
+        self._publish_state(replace(self.state, **changes))
+
+    def _emit_notice_once(self, key: str, notice: GuiNotice) -> None:
+        """同一 generation 的相同状态转折只发送一次通知。"""
+        identity = (self.generation, key)
+        if identity in self._notice_keys:
+            return
+        self._notice_keys.add(identity)
+        self.notice_requested.emit(notice)
+
+    @staticmethod
+    def _problem_from_stage_result(result: StageResult) -> SharedDataProblem:
+        """把 update 阶段终态转换为稳定 GUI 问题。"""
+        affected_ids = tuple(
+            str(entity.entity_id)
+            for entity in result.entities
+            if entity.status in {ResultStatus.PARTIAL, ResultStatus.FAILED, ResultStatus.CANCELLED}
+        )
+        if result.status is ResultStatus.PARTIAL:
+            return SharedDataProblem(
+                SharedDataProblemCode.RESOURCE_BINDING_INCOMPLETE,
+                "update",
+                "实体数据更新只完成了一部分；已复检当前可用目录。",
+                affected_ids,
+            )
+        if result.status is ResultStatus.CANCELLED:
+            return SharedDataProblem(
+                SharedDataProblemCode.UNEXPECTED,
+                "update",
+                "实体数据准备已取消。",
+                affected_ids,
+            )
+        code_by_error_type = {
+            "ArtifactWriteError": SharedDataProblemCode.OUTPUT_NOT_WRITABLE,
+            "DataVersionMismatchError": SharedDataProblemCode.DATASET_STALE,
+            "ResourceSchemaMismatchError": SharedDataProblemCode.RESOURCE_SCHEMA_MISMATCH,
+            "SharedDataCorruptError": SharedDataProblemCode.ARTIFACT_CORRUPT,
+            "SharedDataMissingError": SharedDataProblemCode.BANK_ARTIFACT_MISSING,
+            "DecompressError": SharedDataProblemCode.SOURCE_UNAVAILABLE,
+            "DownloadBatchError": SharedDataProblemCode.SOURCE_UNAVAILABLE,
+            "DownloadError": SharedDataProblemCode.SOURCE_UNAVAILABLE,
+        }
+        code = code_by_error_type.get(result.error_type or "", SharedDataProblemCode.UNEXPECTED)
+        message_by_code = {
+            SharedDataProblemCode.OUTPUT_NOT_WRITABLE: "无法写入实体数据输出目录；请检查输出路径或权限后重试。",
+            SharedDataProblemCode.DATASET_STALE: "实体基础数据与当前版本不兼容；请重试更新。",
+            SharedDataProblemCode.RESOURCE_SCHEMA_MISMATCH: "实体数据仍使用旧版资源结构；请重试更新。",
+            SharedDataProblemCode.ARTIFACT_CORRUPT: "实体数据文件无法读取；请重试更新。",
+            SharedDataProblemCode.BANK_ARTIFACT_MISSING: "实体 banks 数据未生成；请重试更新。",
+            SharedDataProblemCode.SOURCE_UNAVAILABLE: "当前数据来源不可用；请检查连接或游戏目录后重试。",
+        }
+        return SharedDataProblem(
+            code,
+            "update",
+            message_by_code.get(code, "实体数据更新未能完成；请重试或查看日志。"),
+            affected_ids,
+        )
+
+    def _has_running_worker(self) -> bool:
+        """返回 controller 是否仍持有未结算的后台 owner。"""
+        return (
+            self.build_worker is not None
+            or self._scan_worker is not None
+            or self.shared_data_prepare_worker is not None
+        )
+
     def has_active_background_work(self) -> bool:
         """返回共享数据链路是否仍有后台工作未结束。"""
-        short_thread_running = any(
+        legacy_thread_running = any(
             worker is not None and getattr(worker, "isRunning", lambda: False)()
             for worker in (self._champions_worker, self._maps_worker)
         )
+        scan_running = self._scan_worker is not None and getattr(self._scan_worker, "isRunning", lambda: False)()
         return (
-            self.is_loading_shared_data
-            or self.is_preparing_shared_data
-            or self.build_worker is not None
-            or self.shared_data_prepare_worker is not None
-            or short_thread_running
+            self.state.active
+            or self._has_running_worker()
+            or legacy_thread_running
+            or scan_running
             or self.runtime_entity_refresh_timer.isActive()
             or self.build_timeout_timer.isActive()
         )
 
     def bootstrap(self, config=None) -> None:
-        """初始化共享数据签名，并决定是否执行首轮加载。"""
+        """初始化配置签名并启动首轮共享目录检查。"""
         config = config or self._get_config()
         self.reader_signature = build_shared_entity_reader_signature(config)
         self.scan_signature = build_shared_entity_scan_signature(config)
-
-        block_reason = self._get_app_context_block_reason(config)
-        if block_reason is not None:
-            logger.info(f"共享实体数据首轮加载已跳过: {block_reason}")
-            self._apply_blocked_state(block_reason)
-            return
-
-        logger.debug("准备触发首轮共享实体数据加载")
-        self.load_initial_data(config)
+        self.load_initial_data(config, trigger=SharedDataPrepareTrigger.INITIAL)
 
     def set_queue_busy(self, busy: bool) -> None:
         """在任务队列忙碌状态变化时暂停或恢复待处理刷新。"""
@@ -177,179 +301,423 @@ class SharedDataController(QObject):
             return
         self.flush_pending_runtime_entity_refresh()
 
-    def load_initial_data(self, config=None) -> None:
-        """程序启动或重载时加载共享实体数据。"""
+    def _next_generation(self, trigger: SharedDataPrepareTrigger) -> int:
+        """使旧回调失效并初始化新 generation 的流程字段。"""
+        self.generation += 1
+        self._trigger = trigger
+        self.auto_prepare_attempted = False
+        self._prepare_result = None
+        self._prepare_force_update = False
+        self._notice_keys = {identity for identity in self._notice_keys if identity[0] == self.generation}
+        return self.generation
+
+    def load_initial_data(
+        self,
+        config=None,
+        *,
+        trigger: SharedDataPrepareTrigger = SharedDataPrepareTrigger.INITIAL,
+        generation: int | None = None,
+    ) -> None:
+        """为新 generation 后台构建上下文并开始完整检查。"""
         config = config or self._get_config()
-        logger.info("开始加载共享实体数据")
         block_reason = self._get_app_context_block_reason(config)
         if block_reason is not None:
-            logger.info(f"共享实体数据加载已跳过: {block_reason}")
-            self._apply_blocked_state(block_reason)
+            self._apply_blocked_state(block_reason, trigger=trigger)
             return
 
-        self.is_loading_shared_data = True
+        generation = generation if generation is not None else self._next_generation(trigger)
+        self._trigger = trigger
         self.build_request_id += 1
-        request_id = self.build_request_id
+        self._build_generation = generation
         self.build_config = config
-        self.loading_state_changed.emit(
-            SharedDataLoadingState(
-                message=build_shared_context_loading_message(config),
-                active=True,
-            )
+        self._publish_state(
+            SharedDataState(
+                phase=SharedDataPhase.CHECKING,
+                generation=generation,
+                source_mode=_resolve_source_mode(config),
+                prepare_attempted=self.auto_prepare_attempted,
+                prepare_trigger=trigger,
+            ),
+            config=config,
         )
-
-        source_mode = _resolve_source_mode(config)
-        if source_mode == "remote_snapshot":
-            strategy = getattr(config, "remote_snapshot_strategy", "latest")
-            if strategy == "custom":
-                logger.debug(
-                    "当前配置: source_mode=remote_snapshot, strategy=custom, "
-                    f"version={getattr(config, 'snapshot_version', '')}, output_path={config.output_path}"
-                )
-            else:
-                logger.debug(
-                    "当前配置: source_mode=remote_snapshot, strategy=latest, "
-                    f"live_region={getattr(config, 'remote_live_region', '')}, output_path={config.output_path}"
-                )
-        else:
-            logger.debug(
-                f"当前配置: source_mode=local_path, output_path={config.output_path}, game_path={config.game_path}"
-            )
 
         worker = self._task_worker_cls(lambda: self._create_app_context(settings=config.to_app_context_settings()))
-        worker.signals.finished.connect(
-            lambda app_context, request_id=request_id: self.on_shared_context_build_finished(request_id, app_context)
-        )
-        worker.signals.failed.connect(
-            lambda error, request_id=request_id: self.on_shared_context_build_failed(request_id, error)
-        )
+        worker.signals.finished.connect(self._on_shared_context_build_payload)
+        worker.signals.failed.connect(self._on_shared_context_build_error)
         self.build_worker = worker
         self.build_timeout_timer.start()
         self._start_worker(worker)
 
-    def on_shared_context_build_finished(self, request_id: int, app_context) -> None:
-        """共享 AppContext 后台构建完成后，继续实体扫描流程。"""
-        if request_id != self.build_request_id:
+    def _on_shared_context_build_payload(self, app_context) -> None:
+        """在 controller 所在线程消费当前 build owner 的结果。"""
+        if self.build_worker is None:
             return
+        self.on_shared_context_build_finished(self.build_request_id, app_context, self._build_generation)
 
+    def _on_shared_context_build_error(self, error: str) -> None:
+        """在 controller 所在线程消费当前 build owner 的失败。"""
+        if self.build_worker is None:
+            return
+        self.on_shared_context_build_failed(self.build_request_id, error, self._build_generation)
+
+    def on_shared_context_build_finished(self, request_id: int, app_context, generation: int | None = None) -> None:
+        """上下文构建完成后启动同 generation 的原子目录扫描。"""
+        generation = self._build_generation if generation is None else generation
+        if request_id != self.build_request_id or generation != self.generation:
+            if request_id == self.build_request_id:
+                self.build_worker = None
+                self.build_timeout_timer.stop()
+                self.flush_pending_runtime_entity_refresh()
+            return
         self.build_timeout_timer.stop()
         self.build_worker = None
         self.build_config = None
         self.app_context = app_context
-        self.app_context_changed.emit(self.app_context)
+        self.app_context_changed.emit(app_context)
         self.shared_data_cleared.emit()
-        logger.debug("共享数据 AppContext 创建成功")
-        self.loading_state_changed.emit(SharedDataLoadingState(message="正在扫描英雄与特殊内容数据…", active=True))
-        logger.debug("准备启动 champion_catalog 实体状态扫描线程")
-        self._champions_worker = self._data_load_worker_cls(self.app_context, "champion_catalog")
-        self._champions_worker.finished.connect(self.on_champions_loaded)
-        self._champions_worker.error.connect(self.on_data_load_error)
-        self._champions_worker.start()
+        self._start_scan(generation, SharedDataPhase.CHECKING)
 
-    def on_shared_context_build_failed(self, request_id: int, error: str) -> None:
-        """处理共享 AppContext 后台构建失败。"""
-        if request_id != self.build_request_id:
+    def on_shared_context_build_failed(
+        self,
+        request_id: int,
+        error: str,
+        generation: int | None = None,
+    ) -> None:
+        """把上下文构建失败发布为当前 generation 的 typed failed。"""
+        generation = self._build_generation if generation is None else generation
+        if request_id != self.build_request_id or generation != self.generation:
+            if request_id == self.build_request_id:
+                self.build_worker = None
+                self.build_timeout_timer.stop()
+                self.flush_pending_runtime_entity_refresh()
             return
-
         self.build_timeout_timer.stop()
         self.build_worker = None
         self.build_config = None
-        self.is_loading_shared_data = False
         self.app_context = None
         self.app_context_changed.emit(None)
         self.shared_data_cleared.emit()
-        logger.error(f"创建 AppContext 失败: {error}")
-        self.loading_state_changed.emit(SharedDataLoadingState(message=f"加载失败: {error}", active=False))
-        if self.pending_refresh_notice:
-            self.notice_requested.emit(GuiNotice(title="刷新失败", content=error, level="error"))
-            self.pending_refresh_notice = False
+        logger.error("共享 AppContext 构建失败: {}", error)
+        problem = SharedDataProblem(
+            SharedDataProblemCode.UNEXPECTED,
+            "context",
+            "无法建立共享数据上下文；请检查设置后重试。",
+        )
+        self._publish_terminal(SharedDataPhase.FAILED, problem=problem)
 
     def on_shared_context_build_timeout(self) -> None:
-        """处理共享 AppContext 后台构建超时。"""
+        """使超时 generation 失效，并发布可重试失败。"""
         if self.build_worker is None:
             return
-
-        config = self.build_config
-        message = build_shared_context_timeout_message(config)
+        if self._build_generation != self.generation:
+            self.build_worker = None
+            self.build_config = None
+            self.build_timeout_timer.stop()
+            self.flush_pending_runtime_entity_refresh()
+            return
+        message = build_shared_context_timeout_message(self.build_config)
         self.build_request_id += 1
         self.build_worker = None
         self.build_config = None
-        self.is_loading_shared_data = False
         self.app_context = None
         self.app_context_changed.emit(None)
         self.shared_data_cleared.emit()
-        logger.error(f"共享数据加载超时: {message}")
-        self.loading_state_changed.emit(SharedDataLoadingState(message=f"加载失败: {message}", active=False))
-        self.notice_requested.emit(GuiNotice(title="共享数据加载超时", content=message, level="error"))
-        if self.pending_refresh_notice:
-            self.pending_refresh_notice = False
+        problem = SharedDataProblem(SharedDataProblemCode.SOURCE_UNAVAILABLE, "context", message)
+        self._publish_terminal(SharedDataPhase.FAILED, problem=problem, notice_title="共享数据加载超时")
 
-    def on_champions_loaded(self, data) -> None:
-        """英雄与特殊内容目录加载完成。"""
-        catalog = data if isinstance(data, dict) else {"champions": data, "special": []}
-        champions = list(catalog.get("champions", []))
-        special = list(catalog.get("special", []))
-        logger.info(f"champions 实体列表已刷新，当前展示 {len(champions)} 项")
-        logger.info(f"special 实体列表已刷新，当前展示 {len(special)} 项")
-        self.entity_data_replaced.emit(EntityRowsPayload.from_rows("champions", champions))
-        self.entity_data_replaced.emit(EntityRowsPayload.from_rows("special", special))
-
-        if self.app_context is None:
-            logger.error("AppContext 未初始化，无法继续加载 maps 数据")
-            self.finish_data_loading()
+    def _start_scan(self, generation: int, phase: SharedDataPhase) -> None:
+        """启动当前 generation 唯一的完整目录扫描 owner。"""
+        if generation != self.generation or self.app_context is None or self._scan_worker is not None:
             return
+        self._replace_state(phase=phase, progress=None)
+        worker = self._scan_worker_cls(self.app_context, generation)
+        worker.progress.connect(self._on_scan_progress_payload)
+        worker.finished.connect(self._on_scan_finished_payload)
+        worker.error.connect(self._on_scan_error_payload)
+        self._scan_worker = worker
+        self._scan_generation = generation
+        worker.start()
 
-        self.loading_state_changed.emit(SharedDataLoadingState(message="正在扫描地图数据…", active=True))
-        logger.debug("准备启动 maps 实体状态扫描线程")
-        self._maps_worker = self._data_load_worker_cls(self.app_context, "maps")
-        self._maps_worker.finished.connect(self.on_maps_loaded)
-        self._maps_worker.error.connect(self.on_data_load_error)
-        self._maps_worker.start()
+    def _on_scan_progress_payload(self, progress) -> None:
+        """按 progress 自带 generation 路由扫描进度。"""
+        self.on_scan_progress(getattr(progress, "generation", self._scan_generation), progress)
 
-    def on_maps_loaded(self, data) -> None:
-        """地图数据加载完成。"""
-        logger.info(f"maps 实体列表已刷新，当前展示 {len(data)} 项")
-        self.entity_data_replaced.emit(EntityRowsPayload.from_rows("maps", data))
-        self.finish_data_loading()
+    def _on_scan_finished_payload(self, scan: SharedDataScanResult) -> None:
+        """按 typed result 自带 generation 路由扫描终态。"""
+        self.on_scan_finished(scan.generation, scan)
 
-    def on_data_load_error(self, error) -> None:
-        """共享实体数据扫描失败。"""
-        self.is_loading_shared_data = False
-        if (
-            self.allow_auto_prepare_on_reload
-            and not self.auto_prepare_attempted
-            and self.should_auto_prepare(str(error))
-        ):
-            self.auto_prepare_attempted = True
-            logger.info("共享数据缺失或版本不兼容，转入后台数据准备流程")
-            self.loading_state_changed.emit(SharedDataLoadingState(message="正在刷新基础数据…", active=True))
-            self.start_prepare(self._get_config())
+    def _on_scan_error_payload(self, problem: SharedDataProblem) -> None:
+        """把当前 scan owner 的 worker-level 问题路由到 controller。"""
+        self.on_scan_error(self._scan_generation, problem)
+
+    def on_scan_progress(self, generation: int, progress) -> None:
+        """只接受当前 generation 的扫描进度。"""
+        if generation != self.generation or getattr(progress, "generation", generation) != generation:
             return
-        self.loading_state_changed.emit(SharedDataLoadingState(message=f"加载失败: {error}", active=False))
-        if self.pending_refresh_notice:
-            self.notice_requested.emit(GuiNotice(title="刷新失败", content=str(error), level="error"))
-            self.pending_refresh_notice = False
-        self.flush_pending_runtime_entity_refresh()
+        self._replace_state(progress=progress)
 
-    def finish_data_loading(self) -> None:
-        """完成共享数据加载。"""
-        self.is_loading_shared_data = False
-        self.loading_state_changed.emit(SharedDataLoadingState(message="实体数据已就绪", active=False))
-        if self.pending_refresh_notice:
-            self.notice_requested.emit(
-                GuiNotice(
-                    title="数据已刷新",
-                    content="列表内容已经更新，可以继续查看或创建任务。",
-                    level="success",
+    def on_scan_error(self, generation: int, problem: SharedDataProblem) -> None:
+        """处理无法形成 typed scan result 的 worker-level 异常。"""
+        if generation != self.generation:
+            if generation == self._scan_generation:
+                self._scan_worker = None
+                self.flush_pending_runtime_entity_refresh()
+            return
+        self._scan_worker = None
+        self._publish_terminal(SharedDataPhase.FAILED, problem=problem)
+
+    def _publish_scan_rows(self, scan: SharedDataScanResult) -> None:
+        """把同一 typed snapshot 的三个分区一次性发布给页面。"""
+        self.entity_data_replaced.emit(EntityRowsPayload.from_rows("champions", scan.champions.rows))
+        self.entity_data_replaced.emit(EntityRowsPayload.from_rows("special", scan.special.rows))
+        self.entity_data_replaced.emit(EntityRowsPayload.from_rows("maps", scan.maps.rows))
+
+    def on_scan_finished(self, generation: int, scan: SharedDataScanResult) -> None:
+        """消费完整扫描真相，决定 ready、自动准备或阻断终态。"""
+        if generation != self.generation or scan.generation != generation:
+            if generation == self._scan_generation:
+                self._scan_worker = None
+                self.flush_pending_runtime_entity_refresh()
+            return
+        self._scan_worker = None
+        verifying = self.state.phase is SharedDataPhase.VERIFYING
+        preparation = self._prepare_result
+
+        if scan.readiness is SharedDataReadiness.COMPLETE:
+            self._publish_scan_rows(scan)
+            if verifying and preparation is not None and preparation.stage_result.status is ResultStatus.PARTIAL:
+                self._publish_terminal(
+                    SharedDataPhase.PARTIAL,
+                    scan=scan,
+                    problem=self._problem_from_stage_result(preparation.stage_result),
+                )
+                return
+            self._publish_state(
+                SharedDataState(
+                    SharedDataPhase.READY,
+                    generation,
+                    scan.source_mode,
+                    summary=scan.summary,
+                    prepare_attempted=self.auto_prepare_attempted,
+                    prepare_trigger=self._trigger,
+                    scan=scan,
+                    preparation=preparation,
                 )
             )
+            logger.info(
+                "共享实体目录复检完成: generation={} champions={} maps={}",
+                generation,
+                scan.summary.champion_loaded,
+                scan.summary.map_loaded,
+            )
+            if preparation is not None:
+                self._emit_notice_once(
+                    "prepare_ready",
+                    GuiNotice(
+                        title="实体数据已更新",
+                        content=f"已验证 {scan.summary.champion_loaded} 个英雄、{scan.summary.map_loaded} 张地图。",
+                        level="success",
+                    ),
+                )
+            elif self.pending_refresh_notice:
+                self._emit_notice_once(
+                    "manual_ready",
+                    GuiNotice(
+                        title="数据已刷新",
+                        content="实体目录已经重新检查，可以继续查看或创建任务。",
+                        level="success",
+                    ),
+                )
             self.pending_refresh_notice = False
+            self.flush_pending_runtime_entity_refresh()
+            return
+
+        can_auto_prepare = (
+            not verifying
+            and self.allow_auto_prepare_on_reload
+            and not self.auto_prepare_attempted
+            and scan.all_blocking_problems_repairable
+        )
+        if can_auto_prepare:
+            self.auto_prepare_attempted = True
+            self._prepare_scope = SharedDataRepairScope.from_scan(scan)
+            self.start_prepare(
+                self._get_config(),
+                generation=generation,
+                scope=self._prepare_scope,
+                force_update=self._prepare_force_update,
+            )
+            return
+
+        if scan.readiness is SharedDataReadiness.PARTIAL:
+            self._publish_scan_rows(scan)
+            phase = SharedDataPhase.PARTIAL
+        else:
+            self.shared_data_cleared.emit()
+            phase = SharedDataPhase.FAILED
+        problem = next(iter(scan.blocking_problems), None)
+        self._publish_terminal(phase, scan=scan, problem=problem)
+
+    def start_prepare(
+        self,
+        config=None,
+        *,
+        generation: int | None = None,
+        scope: SharedDataRepairScope | None = None,
+        force_update: bool = False,
+    ) -> None:
+        """在后台执行一次 typed update，并转发核心结构化进度。"""
+        if self.shared_data_prepare_worker is not None:
+            return
+        config = config or self._get_config()
+        generation = self.generation if generation is None else generation
+        if generation != self.generation:
+            return
+        scope = scope or SharedDataRepairScope(full=True)
+        overrides = dict(config.to_app_context_settings())
+
+        def run_prepare(signals) -> SharedDataPreparationResult:
+            return self._prepare_shared_entity_data(
+                overrides,
+                generation=generation,
+                scope=scope,
+                force_update=force_update,
+                progress_callback=signals.progress.emit,
+            )
+
+        worker = self._task_worker_cls(run_prepare, pass_signals=True)
+        worker.signals.started.connect(self.on_prepare_started)
+        worker.signals.progress.connect(self._on_prepare_progress_payload)
+        worker.signals.finished.connect(self._on_prepare_finished_payload)
+        worker.signals.failed.connect(self.on_prepare_failed)
+        self.shared_data_prepare_worker = worker
+        self._prepare_generation = generation
+        self._start_worker(worker)
+
+    def _on_prepare_progress_payload(self, progress) -> None:
+        """在 controller 所在线程消费当前 prepare owner 的进度。"""
+        self.on_prepare_progress(self._prepare_generation, progress)
+
+    def _on_prepare_finished_payload(self, result: SharedDataPreparationResult) -> None:
+        """按 typed preparation result 自带 generation 路由终态。"""
+        self.on_prepare_finished(result.generation, result)
+
+    def on_prepare_started(self, generation: int | None = None) -> None:
+        """发布 preparing，并为自动迁移发送一次信息通知。"""
+        generation = self._prepare_generation if generation is None else generation
+        if generation != self.generation:
+            return
+        self._replace_state(phase=SharedDataPhase.PREPARING, progress=None, prepare_attempted=True)
+        logger.info(
+            "开始共享实体数据准备: generation={} full={} champions={} maps={}",
+            generation,
+            self._prepare_scope.full,
+            len(self._prepare_scope.champion_ids),
+            len(self._prepare_scope.map_ids),
+        )
+        self._emit_notice_once(
+            "prepare_started",
+            GuiNotice(
+                title="正在更新实体数据",
+                content="检测到旧版或缺失的实体数据，已开始自动更新。",
+                level="info",
+            ),
+        )
+
+    def on_prepare_progress(self, generation: int, progress) -> None:
+        """只接受当前准备 owner 的核心结构化进度。"""
+        if generation == self.generation:
+            self._replace_state(progress=progress)
+
+    def on_prepare_finished(self, generation: int, result: SharedDataPreparationResult) -> None:
+        """消费权威 StageResult；success/partial 进入复检，其他状态直接终止。"""
+        if generation != self.generation or result.generation != generation:
+            if generation == self._prepare_generation:
+                self.shared_data_prepare_worker = None
+                self.flush_pending_runtime_entity_refresh()
+            return
+        self.shared_data_prepare_worker = None
+        self._prepare_result = result
+        status = result.stage_result.status
+        if status in {ResultStatus.SUCCESS, ResultStatus.PARTIAL}:
+            self._replace_state(phase=SharedDataPhase.VERIFYING, progress=None, preparation=result)
+            self._start_scan(generation, SharedDataPhase.VERIFYING)
+            return
+        if status is ResultStatus.CANCELLED:
+            self._publish_terminal(
+                SharedDataPhase.CANCELLED,
+                problem=self._problem_from_stage_result(result.stage_result),
+                preparation=result,
+            )
+            return
+        self._publish_terminal(
+            SharedDataPhase.FAILED,
+            problem=self._problem_from_stage_result(result.stage_result),
+            preparation=result,
+        )
+
+    def on_prepare_failed(self, generation: int | str, error: str | None = None) -> None:
+        """处理 prepare adapter 自身未返回 typed result 的程序错误。"""
+        if error is None:
+            error = str(generation)
+            generation = self._prepare_generation
+        if generation != self.generation:
+            if generation == self._prepare_generation:
+                self.shared_data_prepare_worker = None
+            return
+        self.shared_data_prepare_worker = None
+        logger.error("共享数据 prepare adapter 失败: {}", error)
+        problem = SharedDataProblem(
+            SharedDataProblemCode.UNEXPECTED,
+            "update",
+            "实体数据准备发生未预期错误；请重试或查看日志。",
+        )
+        self._publish_terminal(SharedDataPhase.FAILED, problem=problem)
+
+    def _publish_terminal(
+        self,
+        phase: SharedDataPhase,
+        *,
+        problem: SharedDataProblem | None,
+        scan: SharedDataScanResult | None = None,
+        preparation: SharedDataPreparationResult | None = None,
+        notice_title: str | None = None,
+    ) -> None:
+        """发布 partial/failed/cancelled 终态及一次可操作通知。"""
+        self._publish_state(
+            SharedDataState(
+                phase,
+                self.generation,
+                scan.source_mode if scan is not None else _resolve_source_mode(self._get_config()),
+                summary=scan.summary if scan is not None else None,
+                problem=problem,
+                prepare_attempted=self.auto_prepare_attempted,
+                prepare_trigger=self._trigger,
+                scan=scan,
+                preparation=preparation or self._prepare_result,
+            )
+        )
+        log_message = (
+            f"共享实体数据进入终态: generation={self.generation} phase={phase.value} "
+            f"code={problem.code.value if problem is not None else 'unknown'}"
+        )
+        if phase is SharedDataPhase.FAILED:
+            logger.error(log_message)
+        else:
+            logger.warning(log_message)
+        level = "warning" if phase in {SharedDataPhase.PARTIAL, SharedDataPhase.CANCELLED} else "error"
+        title = notice_title or {
+            SharedDataPhase.PARTIAL: "实体数据未完整",
+            SharedDataPhase.CANCELLED: "实体数据准备已取消",
+        }.get(phase, "实体数据准备失败")
+        content = problem.message if problem is not None else "请重试实体数据更新。"
+        self._emit_notice_once(f"terminal:{phase.value}", GuiNotice(title=title, content=content, level=level))
+        self.pending_refresh_notice = False
         self.flush_pending_runtime_entity_refresh()
 
     def refresh_shared_output_state(self, refresh_request: object | None = None) -> None:
-        """仅刷新解包产物对应的实体检测状态与输出扫描结果。"""
+        """刷新输出状态；增量成功不改变已验证的共享目录 readiness。"""
         if self._has_incomplete_tasks():
-            logger.debug("执行中心仍有未完成任务，忽略共享刷新请求")
             self.notice_requested.emit(
                 GuiNotice(
                     title="队列未清空",
@@ -358,19 +726,16 @@ class SharedDataController(QObject):
                 )
             )
             return
-        if self.is_loading_shared_data or self.is_preparing_shared_data:
-            logger.debug("共享数据仍在加载中，忽略重复刷新请求")
+        if self.state.active:
             return
-
-        request = refresh_request if isinstance(refresh_request, OutputStateRefreshRequest) else None
         self.pending_refresh_notice = True
         if self.app_context is None:
             logger.warning("共享上下文尚未就绪，回退到完整共享数据刷新")
             self.request_shared_data_reload(show_notice=True, allow_auto_prepare=True)
             return
 
+        request = refresh_request if isinstance(refresh_request, OutputStateRefreshRequest) else None
         if request is not None and not request.requires_full_refresh and request.has_incremental_targets():
-            logger.info("开始增量刷新共享输出状态")
             try:
                 loader = self._entity_data_loader_cls(self.app_context)
                 if request.champion_ids or request.special_targets or request.resource_pack_wads:
@@ -383,161 +748,145 @@ class SharedDataController(QObject):
                     if request.special_targets or request.resource_pack_wads:
                         self.entity_rows_updated.emit(EntityRowsPayload.from_rows("special", catalog["special"]))
                 if request.map_ids:
-                    map_rows = loader.load_entities_by_ids("maps", request.map_ids)
-                    self.entity_rows_updated.emit(EntityRowsPayload.from_rows("maps", map_rows))
+                    rows = loader.load_entities_by_ids("maps", request.map_ids)
+                    self.entity_rows_updated.emit(EntityRowsPayload.from_rows("maps", rows))
             except Exception as exc:  # noqa: BLE001
-                logger.warning(f"增量刷新共享输出状态失败，回退到全量刷新: {exc}")
+                logger.warning(f"增量刷新共享输出状态失败，回退到全量检查: {exc}")
                 self.request_shared_data_reload(show_notice=True, allow_auto_prepare=True)
                 return
-
-            if self.pending_refresh_notice:
-                self.notice_requested.emit(
-                    GuiNotice(
-                        title="数据已刷新",
-                        content="列表内容已经更新，可以继续查看或创建任务。",
-                        level="success",
-                    )
+            self.notice_requested.emit(
+                GuiNotice(
+                    title="数据已刷新",
+                    content="列表内容已经更新，可以继续查看或创建任务。",
+                    level="success",
                 )
-                self.pending_refresh_notice = False
+            )
+            self.pending_refresh_notice = False
             return
 
-        logger.info("开始刷新共享输出状态")
-        self.allow_auto_prepare_on_reload = False
-        self.auto_prepare_attempted = False
-        self.is_loading_shared_data = True
-        self.loading_state_changed.emit(SharedDataLoadingState(message="正在刷新输出状态…", active=True))
-        self._champions_worker = self._data_load_worker_cls(self.app_context, "champion_catalog")
-        self._champions_worker.finished.connect(self.on_champions_loaded)
-        self._champions_worker.error.connect(self.on_data_load_error)
-        self._champions_worker.start()
+        self.request_shared_data_reload(show_notice=True, allow_auto_prepare=True)
 
     def reload_unpack_data(self, config=None) -> None:
-        """重新加载页面共用的实体数据。"""
-        config = config or self._get_config()
-        block_reason = self._get_app_context_block_reason(config)
-        if block_reason is not None:
-            logger.info(f"共享实体数据重载已跳过: {block_reason}")
-            self._apply_blocked_state(block_reason)
-            return
-
-        self.app_context = None
-        self.shared_data_cleared.emit()
-        self.app_context_changed.emit(None)
-        self.loading_state_changed.emit(SharedDataLoadingState(message="正在重新加载数据…", active=True))
-        self.load_initial_data(config)
+        """按当前配置显式重建共享目录。"""
+        self.request_shared_data_reload(show_notice=False, allow_auto_prepare=True, config=config)
 
     def on_context_input_changed(self, config=None) -> None:
-        """根据共享上下文输入变化类型安排共享实体数据刷新。"""
+        """配置签名变化时使旧 generation 失效，并安排检查。"""
         config = config or self._get_config()
         reader_signature = build_shared_entity_reader_signature(config)
         scan_signature = build_shared_entity_scan_signature(config)
         reader_changed = reader_signature != self.reader_signature
         scan_changed = scan_signature != self.scan_signature
-
         if scan_changed:
             self.reconfigure_runtime_logging_requested.emit(RuntimeLoggingConfig.from_gui_config(config))
-
         self.reader_signature = reader_signature
         self.scan_signature = scan_signature
-
         if not reader_changed and not scan_changed:
             return
 
         self.pending_runtime_entity_refresh = True
-        self.pending_refresh_allow_prepare = self.pending_refresh_allow_prepare or reader_changed
+        self.pending_refresh_allow_prepare = self.pending_refresh_allow_prepare or reader_changed or scan_changed
+        generation = self._next_generation(SharedDataPrepareTrigger.CONTEXT_CHANGE)
+        self._publish_state(
+            SharedDataState(
+                SharedDataPhase.WAITING,
+                generation,
+                _resolve_source_mode(config),
+                prepare_trigger=SharedDataPrepareTrigger.CONTEXT_CHANGE,
+            )
+        )
         self.schedule_runtime_entity_refresh()
 
     def schedule_runtime_entity_refresh(self) -> None:
-        """为运行时配置变更安排一次共享实体数据刷新。"""
-        if self._has_incomplete_tasks():
-            logger.debug("任务队列未清空，延后处理运行时配置对应的实体数据刷新")
-            return
-        if self.is_loading_shared_data or self.is_preparing_shared_data:
-            logger.debug("共享数据刷新仍在进行中，保留待处理的运行时配置刷新")
+        """在任务与旧 worker 清空后安排一次配置刷新。"""
+        if self._has_incomplete_tasks() or self._has_running_worker():
             return
         self.runtime_entity_refresh_timer.start()
 
     def flush_pending_runtime_entity_refresh(self) -> None:
-        """在合适时机执行待处理的运行时配置刷新。"""
+        """在队列和后台 owner 均空闲时继续 waiting generation。"""
         if not self.pending_runtime_entity_refresh:
             return
-        if self._has_incomplete_tasks():
-            return
-        if self.is_loading_shared_data or self.is_preparing_shared_data:
+        if self._has_incomplete_tasks() or self._has_running_worker():
             return
         allow_auto_prepare = self.pending_refresh_allow_prepare
         self.pending_runtime_entity_refresh = False
         self.pending_refresh_allow_prepare = False
-        self.request_shared_data_reload(show_notice=False, allow_auto_prepare=allow_auto_prepare)
-
-    def request_shared_data_reload(self, *, show_notice: bool, allow_auto_prepare: bool) -> None:
-        """启动一次共享实体数据刷新流程。"""
-        self.pending_refresh_notice = show_notice
         self.allow_auto_prepare_on_reload = allow_auto_prepare
-        self.auto_prepare_attempted = False
-        self.reload_unpack_data(self._get_config())
+        self.load_initial_data(
+            self._get_config(),
+            trigger=SharedDataPrepareTrigger.CONTEXT_CHANGE,
+            generation=self.generation,
+        )
 
-    def should_auto_prepare(self, error: str) -> bool:
-        """判断当前共享数据加载错误是否适合自动补一次后端更新。
-
-        分类逻辑集中在 ``manager.errors.is_shared_data_not_ready``；此处经 Qt 信号
-        拿到的是错误字符串，走集中维护的文案兜底判定，避免与后端各处文案漂移。
-        """
-        return is_shared_data_not_ready(error)
-
-    def start_prepare(self, config=None) -> None:
-        """在后台线程中补齐共享实体数据所需的后端更新。"""
-        config = config or self._get_config()
-        if self.shared_data_prepare_worker is not None:
+    def request_shared_data_reload(
+        self,
+        *,
+        show_notice: bool,
+        allow_auto_prepare: bool,
+        config=None,
+    ) -> None:
+        """启动一次手动或内部共享目录刷新。"""
+        self.pending_refresh_notice = show_notice
+        if self._has_running_worker():
+            self.pending_runtime_entity_refresh = True
+            self.pending_refresh_allow_prepare = self.pending_refresh_allow_prepare or allow_auto_prepare
+            trigger = (
+                SharedDataPrepareTrigger.MANUAL_REFRESH if show_notice else SharedDataPrepareTrigger.CONTEXT_CHANGE
+            )
+            generation = self._next_generation(trigger)
+            self._publish_state(
+                SharedDataState(
+                    SharedDataPhase.WAITING,
+                    generation,
+                    _resolve_source_mode(config or self._get_config()),
+                    prepare_trigger=trigger,
+                )
+            )
             return
+        self.allow_auto_prepare_on_reload = allow_auto_prepare
+        trigger = SharedDataPrepareTrigger.MANUAL_REFRESH if show_notice else SharedDataPrepareTrigger.CONTEXT_CHANGE
+        self.load_initial_data(config or self._get_config(), trigger=trigger)
 
-        overrides = dict(config.to_app_context_settings())
+    def request_shared_data_retry(self, *, force_update: bool = False) -> None:
+        """显式开始新的 retry generation；force 仅用于用户选择的二级恢复。"""
+        if self._has_incomplete_tasks() or self._has_running_worker():
+            return
+        self.allow_auto_prepare_on_reload = True
+        generation = self._next_generation(SharedDataPrepareTrigger.MANUAL_RETRY)
+        self._prepare_force_update = force_update
+        self.load_initial_data(
+            self._get_config(),
+            trigger=SharedDataPrepareTrigger.MANUAL_RETRY,
+            generation=generation,
+        )
 
-        def run_prepare() -> None:
-            self._prepare_shared_entity_data(overrides)
-
-        worker = self._task_worker_cls(run_prepare)
-        worker.signals.started.connect(self.on_prepare_started)
-        worker.signals.finished.connect(lambda _result, refresh_config=config: self.on_prepare_finished(refresh_config))
-        worker.signals.failed.connect(self.on_prepare_failed)
-        self.shared_data_prepare_worker = worker
-        self._start_worker(worker)
-
-    def on_prepare_started(self) -> None:
-        """同步后台共享数据准备开始时的界面状态。"""
-        logger.info("开始后台共享数据准备")
-        self.is_preparing_shared_data = True
-        self.loading_state_changed.emit(SharedDataLoadingState(message="正在刷新基础数据…", active=True))
-
-    def on_prepare_finished(self, config) -> None:
-        """在后台数据准备结束后重新加载共享实体数据。"""
-        logger.info("后台共享数据准备完成，重新加载共享实体数据")
-        self.is_preparing_shared_data = False
-        self.shared_data_prepare_worker = None
-        self.reload_unpack_data(config)
-
-    def on_prepare_failed(self, error: str) -> None:
-        """处理后台共享数据准备失败后的界面状态。"""
-        logger.error(f"后台共享数据准备失败: {error}")
-        self.is_preparing_shared_data = False
-        self.shared_data_prepare_worker = None
-        self.loading_state_changed.emit(SharedDataLoadingState(message=f"加载失败: {error}", active=False))
-        if self.pending_refresh_notice:
-            self.notice_requested.emit(GuiNotice(title="刷新失败", content=error, level="error"))
-            self.pending_refresh_notice = False
-
-    def _apply_blocked_state(self, message: str) -> None:
-        """在共享数据暂不可用时切到空状态而不是错误态。"""
-        self.is_loading_shared_data = False
+    def _apply_blocked_state(
+        self,
+        message: str,
+        *,
+        trigger: SharedDataPrepareTrigger = SharedDataPrepareTrigger.INITIAL,
+    ) -> None:
+        """把必要配置缺失发布为 blocked，而不是运行失败。"""
+        generation = self._next_generation(trigger)
         self.build_timeout_timer.stop()
         self.build_worker = None
         self.build_config = None
         self.app_context = None
         self.shared_data_cleared.emit()
         self.app_context_changed.emit(None)
-        self.loading_state_changed.emit(SharedDataLoadingState(message=message, active=False))
+        problem = SharedDataProblem(SharedDataProblemCode.CONFIGURATION_REQUIRED, "context", message)
+        self._publish_state(
+            SharedDataState(
+                SharedDataPhase.BLOCKED,
+                generation,
+                _resolve_source_mode(self._get_config()),
+                problem=problem,
+                prepare_trigger=trigger,
+            )
+        )
         if self.pending_refresh_notice:
-            self.notice_requested.emit(GuiNotice(title="无法刷新数据", content=message, level="warning"))
+            self._emit_notice_once("blocked", GuiNotice(title="无法刷新数据", content=message, level="warning"))
             self.pending_refresh_notice = False
 
     @staticmethod
@@ -546,10 +895,9 @@ class SharedDataController(QObject):
         if worker is None:
             return
         try:
-            is_running = getattr(worker, "isRunning", lambda: False)()
+            if not getattr(worker, "isRunning", lambda: False)():
+                return
         except RuntimeError:
-            return
-        if not is_running:
             return
         for method_name in ("requestInterruption", "quit"):
             method = getattr(worker, method_name, None)
@@ -567,17 +915,21 @@ class SharedDataController(QObject):
             terminate()
 
     def shutdown_background_work(self) -> None:
-        """在窗口关闭前收尾共享数据链路持有的后台对象。"""
+        """在窗口关闭前失效 generation 并停止接受后台回调。"""
+        self._closed = True
+        self.generation += 1
         self.runtime_entity_refresh_timer.stop()
         self.build_timeout_timer.stop()
-        self.is_loading_shared_data = False
-        self.is_preparing_shared_data = False
         self.pending_runtime_entity_refresh = False
         self.pending_refresh_allow_prepare = False
         self.pending_refresh_notice = False
+        self._stop_thread(self._scan_worker)
         self._stop_thread(self._champions_worker)
         self._stop_thread(self._maps_worker)
+        self._scan_worker = None
         self._champions_worker = None
         self._maps_worker = None
         self.build_worker = None
         self.shared_data_prepare_worker = None
+        self.is_loading_shared_data = False
+        self.is_preparing_shared_data = False

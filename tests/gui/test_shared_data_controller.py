@@ -2,19 +2,35 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from lol_audio_unpack.app.resource_pack import ResourcePackWadRef, build_resource_pack_key
+from lol_audio_unpack.app.results import ResultStatus, StageResult
 from lol_audio_unpack.gui.controllers.contracts import GuiNotice
 from lol_audio_unpack.gui.controllers.shared_data import (
     SharedDataController,
     build_shared_context_loading_message,
     build_shared_entity_reader_signature,
 )
+from lol_audio_unpack.gui.shared_data import (
+    SharedDataFailure,
+    SharedDataPhase,
+    SharedDataPreparationResult,
+    SharedDataPrepareTrigger,
+    SharedDataProblem,
+    SharedDataProblemCode,
+    SharedDataRepairScope,
+    SharedDataScanResult,
+    SharedDataSectionResult,
+)
 from lol_audio_unpack.gui.task_models import OutputStateRefreshRequest
+
+EXPECTED_SCAN_COUNT_AFTER_VERIFICATION = 2
+CURRENT_GENERATION = 2
 
 
 class _FakeConfig:
@@ -72,14 +88,87 @@ class _FakeTaskWorkerSignals:
         self.started = _FakeSignal()
         self.finished = _FakeSignal()
         self.failed = _FakeSignal()
+        self.progress = _FakeSignal()
 
 
 class _FakeTaskWorker:
     """共享数据控制器测试使用的最小 worker。"""
 
-    def __init__(self, func) -> None:
+    def __init__(self, func, *, pass_signals: bool = False) -> None:
         self.func = func
+        self.pass_signals = pass_signals
         self.signals = _FakeTaskWorkerSignals()
+
+    def run(self):
+        """同步运行函数并发送与生产 TaskWorker 一致的信号。"""
+        self.signals.started.emit()
+        result = self.func(self.signals) if self.pass_signals else self.func()
+        self.signals.finished.emit(result)
+        return result
+
+
+class _FakeScanWorker:
+    """可由测试显式结算的完整目录扫描 worker。"""
+
+    instances = []
+
+    def __init__(self, app_context, generation: int) -> None:
+        self.app_context = app_context
+        self.generation = generation
+        self.progress = _FakeSignal()
+        self.finished = _FakeSignal()
+        self.error = _FakeSignal()
+        self.started = False
+        self.__class__.instances.append(self)
+
+    def start(self) -> None:
+        self.started = True
+
+    def isRunning(self) -> bool:
+        return self.started
+
+
+def _scan_result(
+    generation: int,
+    *,
+    champion_failures: tuple[SharedDataFailure, ...] = (),
+    all_champions_failed: bool = False,
+) -> SharedDataScanResult:
+    """构造 controller 测试使用的完整或不完整目录快照。"""
+    failures = champion_failures
+    champion_rows = () if all_champions_failed else ({"id": "1", "name": "Annie"},)
+    champion_ids = ("1", "2") if failures else ("1",)
+    champions = SharedDataSectionResult(
+        "champions",
+        champion_ids,
+        rows=champion_rows,
+        failures=failures,
+    )
+    maps = SharedDataSectionResult(
+        "maps",
+        ("0", "11"),
+        rows=({"id": "0", "name": "Common"}, {"id": "11", "name": "峡谷"}),
+    )
+    special = SharedDataSectionResult("special", (), required=False)
+    problems = ()
+    if failures:
+        problems = (
+            SharedDataProblem(
+                failures[0].code,
+                "champions",
+                failures[0].message,
+                tuple(failure.entity_id for failure in failures),
+            ),
+        )
+    return SharedDataScanResult(
+        generation,
+        "local_path",
+        "16.16",
+        champions,
+        maps,
+        special,
+        problems,
+    )
 
 
 def _build_controller(  # noqa: PLR0913
@@ -88,19 +177,21 @@ def _build_controller(  # noqa: PLR0913
     entity_data_loader_cls=object,
     create_app_context_fn=lambda **_kwargs: object(),
     task_worker_cls=object,
+    data_load_worker_cls=object,
     start_worker_fn=lambda _worker: None,
     app_context_block_reason_fn=lambda _cfg: None,
+    prepare_shared_entity_data_fn=lambda *_args, **_kwargs: None,
 ) -> SharedDataController:
     cfg = _FakeConfig()
     return SharedDataController(
         get_config=lambda: cfg,
         has_incomplete_tasks=has_incomplete_tasks,
         create_app_context_fn=create_app_context_fn,
-        data_load_worker_cls=object,
+        data_load_worker_cls=data_load_worker_cls,
         task_worker_cls=task_worker_cls,
         entity_data_loader_cls=entity_data_loader_cls,
         start_worker_fn=start_worker_fn,
-        prepare_shared_entity_data_fn=lambda _overrides: None,
+        prepare_shared_entity_data_fn=prepare_shared_entity_data_fn,
         app_context_block_reason_fn=app_context_block_reason_fn,
     )
 
@@ -149,6 +240,7 @@ def test_shared_data_controller_refresh_shared_output_state_uses_incremental_loa
 
     controller = _build_controller(entity_data_loader_cls=_FakeEntityDataLoader)
     controller.app_context = object()
+    controller.state = replace(controller.state, phase=SharedDataPhase.READY)
     updates = []
     notices = []
     reconfigure_payloads = []
@@ -177,6 +269,7 @@ def test_shared_data_controller_refresh_shared_output_state_uses_incremental_loa
             level="success",
         )
     ]
+    assert controller.state.phase is SharedDataPhase.READY
 
 
 def test_shared_data_controller_refreshes_resource_pack_snapshot_without_champion_scan() -> None:
@@ -325,9 +418,15 @@ def test_shared_data_controller_load_initial_data_failed_callback_clears_state_a
     assert controller.app_context is None
     assert app_context_events == [None]
     assert cleared_events == [True]
-    assert loading_states[-1].message == "加载失败: boom"
+    assert loading_states[-1].message == "加载失败: 无法建立共享数据上下文；请检查设置后重试。"
     assert loading_states[-1].active is False
-    assert notices == [GuiNotice(title="刷新失败", content="boom", level="error")]
+    assert notices == [
+        GuiNotice(
+            title="实体数据准备失败",
+            content="无法建立共享数据上下文；请检查设置后重试。",
+            level="error",
+        )
+    ]
     assert controller.pending_refresh_notice is False
 
 
@@ -371,8 +470,30 @@ def test_shared_data_controller_on_shared_context_build_timeout_resets_state_and
     ]
 
 
+def test_stale_build_timeout_resumes_waiting_generation_without_failure() -> None:
+    """旧 generation 的 build timeout 只释放 owner，不能覆盖新 waiting 状态。"""
+    started_workers = []
+    controller = _build_controller(
+        task_worker_cls=_FakeTaskWorker,
+        start_worker_fn=started_workers.append,
+    )
+    controller.generation = CURRENT_GENERATION
+    controller.state = replace(controller.state, generation=CURRENT_GENERATION, phase=SharedDataPhase.WAITING)
+    controller.build_worker = object()
+    controller.build_config = _FakeConfig()
+    controller._build_generation = 1
+    controller.pending_runtime_entity_refresh = True
+    controller.pending_refresh_allow_prepare = True
+
+    controller.on_shared_context_build_timeout()
+
+    assert len(started_workers) == 1
+    assert controller.state.phase is SharedDataPhase.CHECKING
+    assert controller.state.generation == CURRENT_GENERATION
+
+
 def test_shared_data_controller_reloads_for_reader_and_scan_signature_changes() -> None:
-    """读取上下文或输出扫描配置变化时都应触发既有重载。"""
+    """读取上下文或输出配置变化都应启动新的 waiting generation。"""
     cfg = _FakeConfig()
     controller = _build_controller()
     controller.reader_signature = build_shared_entity_reader_signature(cfg)
@@ -380,7 +501,7 @@ def test_shared_data_controller_reloads_for_reader_and_scan_signature_changes() 
     reconfigure_payloads = []
     reload_calls = []
     controller.reconfigure_runtime_logging_requested.connect(reconfigure_payloads.append)
-    controller.request_shared_data_reload = lambda **kwargs: reload_calls.append(kwargs)
+    controller.load_initial_data = lambda config, **kwargs: reload_calls.append((config, kwargs))
 
     cfg.game_path = "new-game"
     controller.on_context_input_changed(cfg)
@@ -392,10 +513,264 @@ def test_shared_data_controller_reloads_for_reader_and_scan_signature_changes() 
 
     assert len(reconfigure_payloads) == 1
     assert reconfigure_payloads[0].log_dir == Path("logs/runtime")
-    assert reload_calls == [
-        {"show_notice": False, "allow_auto_prepare": True},
-        {"show_notice": False, "allow_auto_prepare": False},
+    assert [call[1]["trigger"] for call in reload_calls] == [
+        SharedDataPrepareTrigger.CONTEXT_CHANGE,
+        SharedDataPrepareTrigger.CONTEXT_CHANGE,
     ]
+    assert [call[1]["generation"] for call in reload_calls] == [1, 2]
+
+
+def test_shared_data_controller_publishes_ready_only_from_complete_scan() -> None:
+    """worker 生命周期结束不能替代当前 generation 的 complete scan。"""
+    _FakeScanWorker.instances.clear()
+    started_workers = []
+    controller = _build_controller(
+        task_worker_cls=_FakeTaskWorker,
+        data_load_worker_cls=_FakeScanWorker,
+        start_worker_fn=started_workers.append,
+    )
+    states = []
+    rows = []
+    notices = []
+    controller.state_changed.connect(states.append)
+    controller.entity_data_replaced.connect(rows.append)
+    controller.notice_requested.connect(notices.append)
+
+    controller.load_initial_data()
+    started_workers[0].run()
+    scan_worker = _FakeScanWorker.instances[-1]
+    scan_worker.finished.emit(_scan_result(controller.generation))
+
+    assert controller.state.phase is SharedDataPhase.READY
+    assert controller.state.summary.champion_loaded == 1
+    assert [payload.entity_type for payload in rows] == ["champions", "special", "maps"]
+    assert notices == []
+    assert states[-1].blocks_new_tasks is False
+
+
+@pytest.mark.parametrize(
+    ("stage_status", "expected_phase", "expects_verification"),
+    [
+        (ResultStatus.SUCCESS, SharedDataPhase.READY, True),
+        (ResultStatus.PARTIAL, SharedDataPhase.PARTIAL, True),
+        (ResultStatus.FAILED, SharedDataPhase.FAILED, False),
+        (ResultStatus.CANCELLED, SharedDataPhase.CANCELLED, False),
+    ],
+)
+def test_shared_data_controller_consumes_prepare_stage_result_four_states(
+    stage_status: ResultStatus,
+    expected_phase: SharedDataPhase,
+    expects_verification: bool,
+) -> None:
+    """TaskWorker.finished 只传递结果，业务终态必须按 StageResult 四态决定。"""
+    _FakeScanWorker.instances.clear()
+    started_workers = []
+    prepare_calls = []
+    progress_event = SimpleNamespace(stage_key="champion_banks", current=1, total=2)
+
+    def prepare(_settings, **kwargs) -> SharedDataPreparationResult:
+        prepare_calls.append(kwargs)
+        kwargs["progress_callback"](progress_event)
+        stage = StageResult(
+            "update",
+            status=stage_status,
+            error_type="UpdateFailed" if stage_status is ResultStatus.FAILED else None,
+            error_message="更新失败" if stage_status is ResultStatus.FAILED else None,
+            note="用户取消" if stage_status is ResultStatus.CANCELLED else None,
+        )
+        return SharedDataPreparationResult(kwargs["generation"], kwargs["scope"], stage)
+
+    controller = _build_controller(
+        task_worker_cls=_FakeTaskWorker,
+        data_load_worker_cls=_FakeScanWorker,
+        start_worker_fn=started_workers.append,
+        prepare_shared_entity_data_fn=prepare,
+    )
+    notices = []
+    states = []
+    controller.notice_requested.connect(notices.append)
+    controller.state_changed.connect(states.append)
+
+    controller.load_initial_data()
+    started_workers[0].run()
+    failure = SharedDataFailure(
+        "2",
+        SharedDataProblemCode.RESOURCE_SCHEMA_MISMATCH,
+        "共享 banks artifact 仍使用旧版资源结构。",
+    )
+    _FakeScanWorker.instances[-1].finished.emit(_scan_result(controller.generation, champion_failures=(failure,)))
+
+    prepare_worker = started_workers[1]
+    prepare_worker.signals.started.emit()
+    prepare_worker.run()
+    if expects_verification:
+        assert controller.state.phase is SharedDataPhase.VERIFYING
+        assert len(_FakeScanWorker.instances) == EXPECTED_SCAN_COUNT_AFTER_VERIFICATION
+        _FakeScanWorker.instances[-1].finished.emit(_scan_result(controller.generation))
+
+    assert controller.state.phase is expected_phase
+    assert len(prepare_calls) == 1
+    assert prepare_calls[0]["scope"] == SharedDataRepairScope(full=False, champion_ids=(2,))
+    assert prepare_calls[0]["force_update"] is False
+    assert any(state.progress is progress_event for state in states)
+    assert notices[0].level == "info"
+    assert sum(notice.title == "正在更新实体数据" for notice in notices) == 1
+    if stage_status is ResultStatus.SUCCESS:
+        assert notices[-1].level == "success"
+    else:
+        assert notices[-1].level in {"warning", "error"}
+
+
+def test_shared_data_controller_does_not_auto_prepare_twice_after_failed_verification() -> None:
+    """update success 后复检仍不完整时保持终态，不进入自动循环。"""
+    _FakeScanWorker.instances.clear()
+    started_workers = []
+    prepare_count = 0
+
+    def prepare(_settings, **kwargs) -> SharedDataPreparationResult:
+        nonlocal prepare_count
+        prepare_count += 1
+        return SharedDataPreparationResult(
+            kwargs["generation"],
+            kwargs["scope"],
+            StageResult("update", status=ResultStatus.SUCCESS),
+        )
+
+    controller = _build_controller(
+        task_worker_cls=_FakeTaskWorker,
+        data_load_worker_cls=_FakeScanWorker,
+        start_worker_fn=started_workers.append,
+        prepare_shared_entity_data_fn=prepare,
+    )
+    failure = SharedDataFailure(
+        "2",
+        SharedDataProblemCode.RESOURCE_SCHEMA_MISMATCH,
+        "共享 banks artifact 仍使用旧版资源结构。",
+    )
+    controller.load_initial_data()
+    started_workers[0].run()
+    _FakeScanWorker.instances[-1].finished.emit(_scan_result(controller.generation, champion_failures=(failure,)))
+    started_workers[1].run()
+    _FakeScanWorker.instances[-1].finished.emit(_scan_result(controller.generation, champion_failures=(failure,)))
+
+    assert prepare_count == 1
+    assert controller.state.phase is SharedDataPhase.PARTIAL
+    assert controller.state.prepare_attempted is True
+
+
+def test_shared_data_controller_maps_stage_error_type_to_stable_problem() -> None:
+    """准备失败按 typed error_type 分类，不解析或直接展示底层路径文案。"""
+    result = StageResult(
+        "update",
+        status=ResultStatus.FAILED,
+        error_type="ArtifactWriteError",
+        error_message="artifact 写入失败（replace）: C:/private/output/data.msgpack",
+    )
+
+    problem = SharedDataController._problem_from_stage_result(result)
+
+    assert problem.code is SharedDataProblemCode.OUTPUT_NOT_WRITABLE
+    assert "C:/private" not in problem.message
+
+
+def test_shared_data_repair_scope_uses_full_update_for_dataset_problem() -> None:
+    """无法枚举可信失败 ID 的 dataset 问题必须回退完整 update。"""
+    scan = replace(
+        _scan_result(1),
+        problems=(
+            SharedDataProblem(
+                SharedDataProblemCode.DATASET_MISSING,
+                "dataset",
+                "当前版本的实体基础数据不存在。",
+            ),
+        ),
+    )
+
+    assert SharedDataRepairScope.from_scan(scan) == SharedDataRepairScope(full=True)
+
+
+def test_shared_data_manual_retry_forwards_explicit_force_only() -> None:
+    """force rebuild 只由显式 manual retry 传给 prepare adapter。"""
+    _FakeScanWorker.instances.clear()
+    started_workers = []
+    prepare_calls = []
+
+    def prepare(_settings, **kwargs) -> SharedDataPreparationResult:
+        prepare_calls.append(kwargs)
+        return SharedDataPreparationResult(
+            kwargs["generation"],
+            kwargs["scope"],
+            StageResult("update", status=ResultStatus.FAILED),
+        )
+
+    controller = _build_controller(
+        task_worker_cls=_FakeTaskWorker,
+        data_load_worker_cls=_FakeScanWorker,
+        start_worker_fn=started_workers.append,
+        prepare_shared_entity_data_fn=prepare,
+    )
+    controller.request_shared_data_retry(force_update=True)
+    started_workers[0].run()
+    failure = SharedDataFailure(
+        "2",
+        SharedDataProblemCode.RESOURCE_SCHEMA_MISMATCH,
+        "共享 banks artifact 仍使用旧版资源结构。",
+    )
+    _FakeScanWorker.instances[-1].finished.emit(_scan_result(controller.generation, champion_failures=(failure,)))
+    started_workers[1].run()
+
+    assert prepare_calls[0]["force_update"] is True
+    assert controller.state.prepare_trigger is SharedDataPrepareTrigger.MANUAL_RETRY
+
+
+def test_shared_data_controller_rejects_stale_generation_callbacks() -> None:
+    """旧 generation 的 scan、progress 与 prepare 结果都不能覆盖新状态。"""
+    controller = _build_controller()
+    controller.generation = CURRENT_GENERATION
+    controller.state = replace(controller.state, generation=CURRENT_GENERATION, phase=SharedDataPhase.WAITING)
+    stale_scan = _scan_result(1)
+
+    controller.on_scan_progress(1, SimpleNamespace(generation=1, current=1, total=1))
+    controller.on_prepare_progress(1, SimpleNamespace(current=1, total=1))
+    controller.on_scan_finished(1, stale_scan)
+    controller.on_prepare_finished(
+        1,
+        SharedDataPreparationResult(
+            1,
+            SharedDataRepairScope(full=True),
+            StageResult("update", status=ResultStatus.SUCCESS),
+        ),
+    )
+
+    assert controller.state.phase is SharedDataPhase.WAITING
+    assert controller.state.generation == CURRENT_GENERATION
+    assert controller.state.progress is None
+
+
+def test_shared_data_controller_waits_for_busy_queue_then_resumes_checking() -> None:
+    """配置变化在队列忙时进入 waiting，清空后自动继续同一 generation。"""
+    busy = True
+    started_workers = []
+    cfg = _FakeConfig()
+    controller = _build_controller(
+        has_incomplete_tasks=lambda: busy,
+        task_worker_cls=_FakeTaskWorker,
+        start_worker_fn=started_workers.append,
+    )
+    controller.reader_signature = build_shared_entity_reader_signature(cfg)
+    controller.scan_signature = (cfg.output_path, cfg.group_by_type)
+
+    cfg.game_path = "new-game"
+    controller.on_context_input_changed(cfg)
+
+    assert controller.state.phase is SharedDataPhase.WAITING
+    assert started_workers == []
+
+    busy = False
+    controller.set_queue_busy(False)
+
+    assert controller.state.phase is SharedDataPhase.CHECKING
+    assert len(started_workers) == 1
 
 
 def test_shared_data_controller_shutdown_background_work_stops_short_workers() -> None:
