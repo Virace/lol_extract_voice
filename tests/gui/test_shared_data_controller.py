@@ -23,6 +23,7 @@ from lol_audio_unpack.gui.shared_data import (
     SharedDataPrepareTrigger,
     SharedDataProblem,
     SharedDataProblemCode,
+    SharedDataProgress,
     SharedDataRepairScope,
     SharedDataScanResult,
     SharedDataSectionResult,
@@ -329,9 +330,9 @@ def test_shared_data_controller_refresh_shared_output_state_warns_before_full_re
 def test_shared_data_controller_refresh_shared_output_state_emits_notice_when_reload_is_blocked() -> None:
     controller = _build_controller(app_context_block_reason_fn=lambda _cfg: "请先在「全局设置」中配置游戏目录。")
     notices = []
-    loading_states = []
+    states = []
     controller.notice_requested.connect(notices.append)
-    controller.loading_state_changed.connect(loading_states.append)
+    controller.state_changed.connect(states.append)
 
     controller.refresh_shared_output_state()
 
@@ -342,8 +343,8 @@ def test_shared_data_controller_refresh_shared_output_state_emits_notice_when_re
             level="warning",
         )
     ]
-    assert loading_states[-1].message == "请先在「全局设置」中配置游戏目录。"
-    assert loading_states[-1].active is False
+    assert states[-1].phase is SharedDataPhase.BLOCKED
+    assert states[-1].problem.message == "请先在「全局设置」中配置游戏目录。"
     assert controller.pending_refresh_notice is False
 
 
@@ -358,10 +359,10 @@ def test_shared_data_uses_effective_local_mode_when_packaged() -> None:
     assert build_shared_context_loading_message(cfg) == "正在读取本地共享数据…"
 
 
-def test_shared_data_controller_load_initial_data_starts_worker_and_emits_loading_state() -> None:
+def test_shared_data_controller_load_initial_data_starts_worker_and_emits_typed_state() -> None:
     started_workers = []
     create_calls = []
-    loading_states = []
+    states = []
 
     def _create_app_context(**kwargs):
         create_calls.append(kwargs)
@@ -372,7 +373,7 @@ def test_shared_data_controller_load_initial_data_starts_worker_and_emits_loadin
         task_worker_cls=_FakeTaskWorker,
         start_worker_fn=started_workers.append,
     )
-    controller.loading_state_changed.connect(loading_states.append)
+    controller.state_changed.connect(states.append)
 
     controller.load_initial_data()
 
@@ -381,8 +382,8 @@ def test_shared_data_controller_load_initial_data_starts_worker_and_emits_loadin
     assert len(started_workers) == 1
     worker = started_workers[0]
     assert worker is controller.build_worker
-    assert loading_states[-1].message == "正在读取本地共享数据…"
-    assert loading_states[-1].active is True
+    assert states[-1].phase is SharedDataPhase.CHECKING
+    assert states[-1].active is True
     assert create_calls == []
 
     worker.func()
@@ -394,7 +395,7 @@ def test_shared_data_controller_load_initial_data_starts_worker_and_emits_loadin
 
 def test_shared_data_controller_load_initial_data_failed_callback_clears_state_and_notifies() -> None:
     started_workers = []
-    loading_states = []
+    states = []
     notices = []
     app_context_events = []
     cleared_events = []
@@ -403,7 +404,7 @@ def test_shared_data_controller_load_initial_data_failed_callback_clears_state_a
         task_worker_cls=_FakeTaskWorker,
         start_worker_fn=started_workers.append,
     )
-    controller.loading_state_changed.connect(loading_states.append)
+    controller.state_changed.connect(states.append)
     controller.notice_requested.connect(notices.append)
     controller.app_context_changed.connect(app_context_events.append)
     controller.shared_data_cleared.connect(lambda: cleared_events.append(True))
@@ -418,8 +419,8 @@ def test_shared_data_controller_load_initial_data_failed_callback_clears_state_a
     assert controller.app_context is None
     assert app_context_events == [None]
     assert cleared_events == [True]
-    assert loading_states[-1].message == "加载失败: 无法建立共享数据上下文；请检查设置后重试。"
-    assert loading_states[-1].active is False
+    assert states[-1].phase is SharedDataPhase.FAILED
+    assert states[-1].problem.message == "无法建立共享数据上下文；请检查设置后重试。"
     assert notices == [
         GuiNotice(
             title="实体数据准备失败",
@@ -432,7 +433,7 @@ def test_shared_data_controller_load_initial_data_failed_callback_clears_state_a
 
 def test_shared_data_controller_on_shared_context_build_timeout_resets_state_and_emits_notice() -> None:
     started_workers = []
-    loading_states = []
+    states = []
     notices = []
     app_context_events = []
     cleared_events = []
@@ -442,7 +443,7 @@ def test_shared_data_controller_on_shared_context_build_timeout_resets_state_and
         task_worker_cls=_FakeTaskWorker,
         start_worker_fn=started_workers.append,
     )
-    controller.loading_state_changed.connect(loading_states.append)
+    controller.state_changed.connect(states.append)
     controller.notice_requested.connect(notices.append)
     controller.app_context_changed.connect(app_context_events.append)
     controller.shared_data_cleared.connect(lambda: cleared_events.append(True))
@@ -459,8 +460,8 @@ def test_shared_data_controller_on_shared_context_build_timeout_resets_state_and
     assert controller.app_context is None
     assert app_context_events == [None]
     assert cleared_events == [True]
-    assert loading_states[-1].message == "加载失败: 读取共享数据超时，请重试。"
-    assert loading_states[-1].active is False
+    assert states[-1].phase is SharedDataPhase.FAILED
+    assert states[-1].problem.message == "读取共享数据超时，请重试。"
     assert notices == [
         GuiNotice(
             title="共享数据加载超时",
@@ -745,6 +746,25 @@ def test_shared_data_controller_rejects_stale_generation_callbacks() -> None:
     assert controller.state.phase is SharedDataPhase.WAITING
     assert controller.state.generation == CURRENT_GENERATION
     assert controller.state.progress is None
+
+
+def test_shared_data_controller_throttles_ordinary_progress_but_keeps_latest(qtbot) -> None:
+    """高频普通进度只按窗口刷新，并在窗口结束时发布最后一份快照。"""
+    controller = _build_controller()
+    controller.generation = 1
+    controller.state = replace(
+        controller.state,
+        generation=1,
+        phase=SharedDataPhase.CHECKING,
+    )
+    first = SharedDataProgress(1, "champions", "advanced", current=1, total=3)
+    latest = SharedDataProgress(1, "champions", "advanced", current=2, total=3)
+
+    controller.on_scan_progress(1, first)
+    controller.on_scan_progress(1, latest)
+
+    assert controller.state.progress is first
+    qtbot.waitUntil(lambda: controller.state.progress is latest, timeout=1000)
 
 
 def test_shared_data_controller_waits_for_busy_queue_then_resumes_checking() -> None:

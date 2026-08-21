@@ -12,6 +12,8 @@ from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
     IndeterminateProgressBar,
+    ProgressBar,
+    PushButton,
     SmoothScrollArea,
     StrongBodyLabel,
     TitleLabel,
@@ -28,6 +30,8 @@ from lol_audio_unpack.gui.controllers import (
     HomeStatusController,
     HomeStatusDisplayState,
 )
+from lol_audio_unpack.gui.shared_data import SharedDataState
+from lol_audio_unpack.gui.shared_data_view import describe_shared_data_state
 from lol_audio_unpack.gui.theme import get_accent_text_color_pair
 from lol_audio_unpack.gui.view.home.widgets import (
     CompactStatusCard,
@@ -56,12 +60,14 @@ class HomePage(SmoothScrollArea):
 
     navigate_to_execution_requested = Signal()
     navigate_to_overview_requested = Signal()
+    shared_data_action_requested = Signal(str)
 
     def __init__(self, cfg: GuiConfig, parent=None):
         super().__init__(parent=parent)
         self._cfg = cfg
         self._current_version: str = ""  # filled in by worker
         self._initial_status_check_started = False
+        self._shared_data_action_key: str | None = None
         self._home_status_controller = HomeStatusController(parent=self)
         self._home_status_controller.display_state_ready.connect(self._apply_home_status_display_state)
 
@@ -122,9 +128,19 @@ class HomePage(SmoothScrollArea):
         loading_layout.setContentsMargins(0, 0, 0, 0)
         loading_layout.setSpacing(6)
         self.environment_status = StatusLine("正在准备运行环境…", self._loading_widget)
-        self.progress_bar = IndeterminateProgressBar(self._loading_widget)
+        self.indeterminate_progress_bar = IndeterminateProgressBar(self._loading_widget)
+        self.determinate_progress_bar = ProgressBar(self._loading_widget, useAni=False)
+        self.progress_count_label = CaptionLabel("", self._loading_widget)
+        self.shared_data_action_btn = PushButton("", self._loading_widget)
+        self.shared_data_action_btn.clicked.connect(self._emit_shared_data_action)
+        self.determinate_progress_bar.hide()
+        self.progress_count_label.hide()
+        self.shared_data_action_btn.hide()
         loading_layout.addWidget(self.environment_status)
-        loading_layout.addWidget(self.progress_bar)
+        loading_layout.addWidget(self.indeterminate_progress_bar)
+        loading_layout.addWidget(self.determinate_progress_bar)
+        loading_layout.addWidget(self.progress_count_label)
+        loading_layout.addWidget(self.shared_data_action_btn, 0, Qt.AlignmentFlag.AlignLeft)
         root_layout.addWidget(self._loading_widget)
 
         self.top_status_widget = QWidget(self.view)
@@ -272,42 +288,45 @@ class HomePage(SmoothScrollArea):
         self.execution_center_card.setDetailText(state.cache_detail)
         self.execution_center_card.set_status_role(state.cache_role)
 
-    def set_loading_state(self, message: str, *, active: bool) -> None:
-        """更新首页顶部的加载状态条。
+    def set_shared_data_state(self, state: SharedDataState) -> None:
+        """把共享数据事实快照应用到首页状态区。
 
         Args:
-            message: 当前要展示的状态文案。
-            active: 是否处于活跃加载阶段。
+            state: 当前 generation 的类型化共享状态。
         """
-        if active:
-            self.environment_status.set_status(message, role="info")
-            self.entity_data_card.setDisplayText("准备中…")
-            self.entity_data_card.setDetailText("正在读取英雄和地图信息。")
-            self.entity_data_card.set_status_role("info")
-            self.progress_bar.setVisible(True)
-            self.progress_bar.start()
-            return
+        display = describe_shared_data_state(state)
+        self.environment_status.set_status(display.status_text, role=display.status_role)
+        self.entity_data_card.setDisplayText(display.card_text)
+        self.entity_data_card.setDetailText(display.detail_text)
+        self.entity_data_card.set_status_role(display.status_role)
 
-        self.progress_bar.stop()
-        self.progress_bar.setVisible(False)
-        if message == "实体数据已就绪":
-            self.environment_status.set_status("运行环境已就绪", role="success")
-            self.entity_data_card.setDisplayText("已就绪")
-            self.entity_data_card.setDetailText("可浏览全部英雄与地图信息。")
-            self.entity_data_card.set_status_role("success")
-            return
+        if state.active and display.has_determinate_progress:
+            self.indeterminate_progress_bar.stop()
+            self.indeterminate_progress_bar.hide()
+            self.determinate_progress_bar.setRange(0, display.progress_total or 1)
+            self.determinate_progress_bar.setValue(display.progress_current or 0)
+            self.determinate_progress_bar.show()
+            self.progress_count_label.setText(display.progress_text)
+            self.progress_count_label.show()
+        elif state.active:
+            self.determinate_progress_bar.hide()
+            self.progress_count_label.hide()
+            self.indeterminate_progress_bar.show()
+            self.indeterminate_progress_bar.start()
+        else:
+            self.indeterminate_progress_bar.stop()
+            self.indeterminate_progress_bar.hide()
+            self.determinate_progress_bar.hide()
+            self.progress_count_label.hide()
 
-        if "失败" in message:
-            self.environment_status.set_status("运行环境准备失败", role="critical")
-            self.entity_data_card.setDisplayText("加载失败")
-            self.entity_data_card.setDetailText("请检查设置与日志后重试。")
-            self.entity_data_card.set_status_role("critical")
-            return
+        self._shared_data_action_key = display.action_key
+        self.shared_data_action_btn.setText(display.action_text)
+        self.shared_data_action_btn.setVisible(display.action_key is not None)
 
-        self.environment_status.set_status(message or "运行环境暂不可用", role="caution")
-        self.entity_data_card.setDisplayText("等待配置")
-        self.entity_data_card.setDetailText("完成必要设置后会自动加载。")
-        self.entity_data_card.set_status_role("caution")
+    def _emit_shared_data_action(self) -> None:
+        """发送当前状态对应的稳定恢复或导航动作。"""
+        if self._shared_data_action_key is not None:
+            self.shared_data_action_requested.emit(self._shared_data_action_key)
 
     def _refresh_theme_styles(self, *_args: object) -> None:
         """刷新首页的强调色引导文字与状态语义色。"""

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Literal
 
@@ -28,6 +29,8 @@ from qfluentwidgets import BodyLabel, TransparentToolButton, isDarkTheme, qconfi
 
 from lol_audio_unpack.gui.common.font_compat import apply_tool_button_safe_font
 from lol_audio_unpack.gui.resources import assets
+from lol_audio_unpack.gui.shared_data import SharedDataPhase, SharedDataState
+from lol_audio_unpack.gui.shared_data_view import describe_shared_data_state
 from lol_audio_unpack.gui.theme import (
     current_accent_preset_id,
     resolve_legacy_accent_preset,
@@ -74,6 +77,8 @@ class GlobalProgressStripState:
         rate_text: 右侧速率文案。
         status_text: 右侧状态文案。
         paused: 是否为暂停态。
+        indeterminate: 是否为未知总量的阶段。
+        cancellable: 是否显示用户任务取消入口。
         accent_color: 主色；为空时使用默认颜色。
     """
 
@@ -85,6 +90,8 @@ class GlobalProgressStripState:
     rate_text: str = ""
     status_text: str = ""
     paused: bool = False
+    indeterminate: bool = False
+    cancellable: bool = True
     accent_color: QColor | None = None
     theme_mode: ThemeMode = "auto"
     sweep_duration_ms: int = DEFAULT_PROGRESS_SWEEP_ANIMATION_MS
@@ -92,6 +99,113 @@ class GlobalProgressStripState:
     inner_radius: float = 0.0
     button_radius: float = DEFAULT_BUTTON_RADIUS
     sweep_idle_delay_ms: int = DEFAULT_PROGRESS_SWEEP_IDLE_DELAY_MS
+
+
+def build_shared_data_progress_strip_state(state: SharedDataState) -> GlobalProgressStripState:
+    """把共享数据状态转换为全局进度条状态。
+
+    Args:
+        state: 当前共享数据状态。
+
+    Returns:
+        GlobalProgressStripState: 不带用户任务取消入口的进度条状态。
+    """
+    display = describe_shared_data_state(state)
+    if state.active:
+        determinate = display.has_determinate_progress
+        return GlobalProgressStripState(
+            visible=True,
+            title_text=display.status_text,
+            detail_text=display.detail_text,
+            progress_current=display.progress_current or 0,
+            progress_total=display.progress_total or 100,
+            status_text=display.progress_text,
+            indeterminate=not determinate,
+            cancellable=False,
+        )
+    if state.phase in {
+        SharedDataPhase.READY,
+        SharedDataPhase.PARTIAL,
+        SharedDataPhase.FAILED,
+        SharedDataPhase.CANCELLED,
+    }:
+        return GlobalProgressStripState(
+            visible=False,
+            title_text=display.status_text,
+            detail_text=display.detail_text,
+            progress_current=1 if state.phase is SharedDataPhase.READY else 0,
+            progress_total=1,
+            status_text=display.card_text,
+            cancellable=False,
+        )
+    return GlobalProgressStripState(cancellable=False)
+
+
+class GlobalProgressStripCoordinator:
+    """协调用户任务与共享准备对全局进度条的展示所有权。"""
+
+    def __init__(self, apply_state: Callable[[GlobalProgressStripState], None]) -> None:
+        """初始化进度条状态协调器。
+
+        Args:
+            apply_state: 将仲裁结果应用到全局宿主的回调。
+        """
+        self._apply_state = apply_state
+        self._task_state = GlobalProgressStripState()
+        self._shared_state = GlobalProgressStripState(cancellable=False)
+        self._current_state = GlobalProgressStripState()
+        self._shared_generation = -1
+        self._shared_update_deferred = False
+
+    def set_task_state(self, state: GlobalProgressStripState) -> None:
+        """更新用户任务状态；运行中的用户任务始终优先。
+
+        Args:
+            state: 执行队列生成的全局进度状态。
+        """
+        task_was_visible = self._task_state.visible
+        self._task_state = state
+        if state.visible:
+            self._publish(state)
+            return
+        if task_was_visible and self._shared_update_deferred:
+            self._shared_update_deferred = False
+            self._publish(self._shared_state)
+            return
+        if self._shared_state.visible:
+            self._publish(self._shared_state)
+            return
+        self._publish(state)
+
+    def set_shared_data_state(self, state: SharedDataState) -> None:
+        """更新共享准备状态，并拒绝回退到旧 generation。
+
+        Args:
+            state: 共享数据控制器发布的最新状态。
+        """
+        if state.generation < self._shared_generation:
+            return
+        self._shared_generation = state.generation
+        self._shared_state = build_shared_data_progress_strip_state(state)
+        if self._task_state.visible:
+            self._shared_update_deferred = True
+            return
+        self._publish(self._shared_state)
+
+    def current_state(self) -> GlobalProgressStripState:
+        """返回最近一次实际发布到宿主的状态。
+
+        Returns:
+            GlobalProgressStripState: 经过所有权仲裁后的状态。
+        """
+        return self._current_state
+
+    def _publish(self, state: GlobalProgressStripState) -> None:
+        """保存并向宿主发布新的进度条状态。"""
+        if state == self._current_state:
+            return
+        self._current_state = state
+        self._apply_state(state)
 
 
 def _normalized_progress_ratio(current: int, total: int) -> float:
@@ -504,6 +618,7 @@ class GlobalProgressStrip(QWidget):
         self._meta_text_color = QColor(palette.text_primary)
         self._rate_text_color = QColor(palette.text_primary)
         self._status_text_color = QColor(palette.text_secondary)
+        self._action_widget.setVisible(self._state.cancellable)
 
         self._title_text_color = fill_text_color
         self._detail_text_color = _with_alpha(fill_text_color, 214)
@@ -566,19 +681,23 @@ class GlobalProgressStrip(QWidget):
         painter.setBrush(self._track_background_color)
         painter.drawPath(_build_uniform_round_rect_path(outer_rect, self._state.outer_radius))
 
-        fill_rect = self._fill_rect()
+        fill_rect = self._indeterminate_fill_rect() if self._state.indeterminate else self._fill_rect()
         if fill_rect.width() <= 0:
             return
 
         fill_color = self.current_fill_color()
-        clipped_fill_path = self._clipped_fill_path()
+        clipped_fill_path = self._clipped_fill_path(fill_rect)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(fill_color)
         painter.drawPath(clipped_fill_path)
 
         fill_path = QPainterPath()
         fill_path.addPath(clipped_fill_path)
-        glow_rect = self._glow_rect(fill_rect=fill_rect, phase=self._sweep_phase_value)
+        glow_rect = (
+            QRectF()
+            if self._state.indeterminate
+            else self._glow_rect(fill_rect=fill_rect, phase=self._sweep_phase_value)
+        )
         gradient = QLinearGradient(glow_rect.left(), 0, glow_rect.right(), 0)
         gradient.setColorAt(0.0, QColor(255, 255, 255, 0))
         gradient.setColorAt(0.5, QColor(255, 255, 255, 92))
@@ -611,14 +730,24 @@ class GlobalProgressStrip(QWidget):
             return QRectF()
         return QRectF(progress_rect.left(), progress_rect.top(), fill_width, progress_rect.height())
 
-    def _clipped_fill_path(self) -> QPainterPath:
+    def _clipped_fill_path(self, fill_rect: QRectF | None = None) -> QPainterPath:
         """返回被外层圆角裁剪后的填充路径。"""
-        fill_rect = self._fill_rect()
+        fill_rect = fill_rect if fill_rect is not None else self._fill_rect()
         if fill_rect.isNull():
             return QPainterPath()
         fill_path = _build_uniform_round_rect_path(fill_rect, self._state.inner_radius)
         outer_path = _build_uniform_round_rect_path(self._outer_rect(), self._state.outer_radius)
         return fill_path.intersected(outer_path)
+
+    def _indeterminate_fill_rect(self) -> QRectF:
+        """返回未知总量阶段随 sweep 移动的进度片段。"""
+        progress_rect = self._progress_rect()
+        if progress_rect.isNull():
+            return QRectF()
+        segment_width = min(96.0, max(40.0, progress_rect.width() * 0.22))
+        travel_width = progress_rect.width() + segment_width
+        left = progress_rect.left() - segment_width + travel_width * self._sweep_phase_value
+        return QRectF(left, progress_rect.top(), segment_width, progress_rect.height())
 
     def _progress_rect(self) -> QRectF:
         """返回按钮区左侧的可填充区域。"""

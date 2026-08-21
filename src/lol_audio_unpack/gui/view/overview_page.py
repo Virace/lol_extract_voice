@@ -86,7 +86,10 @@ from lol_audio_unpack.gui.controllers.overview_preview import (
 from lol_audio_unpack.gui.controllers.preview_playback import PreviewPlaybackState
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 from lol_audio_unpack.gui.service.preview_export import resolve_wav_path, transcode_wav
+from lol_audio_unpack.gui.shared_data import SharedDataPhase, SharedDataState
+from lol_audio_unpack.gui.shared_data_view import describe_shared_data_state
 from lol_audio_unpack.gui.theme import get_accent_text_color_pair
+from lol_audio_unpack.gui.view.home.widgets import StatusLine
 from lol_audio_unpack.gui.view.overview.audio_preview_panel import OverviewAudioPreviewPanel
 from lol_audio_unpack.gui.view.overview.entity_list_panel import OverviewEntityListPanel
 from lol_audio_unpack.gui.view.overview.preview_panel import (
@@ -155,6 +158,7 @@ class OverviewPage(QWidget):
         self.gui_config = None
         self._app_context = None
         self._loader = None
+        self._shared_data_state = SharedDataState(SharedDataPhase.BLOCKED, 0, "local_path")
         self._entity_data_store = EntityDataStore(entity_types=("champions", "maps", "special"))
         self._preview_controller = OverviewPreviewController()
         self._selected_entity_ids: dict[str, set[str]] = {"champions": set(), "maps": set(), "special": set()}
@@ -206,6 +210,7 @@ class OverviewPage(QWidget):
         self._preview_playback_controller = PreviewPlaybackController(parent=self)
         self._preview_playback_controller.playback_state_changed.connect(self._apply_audio_preview_playback_state)
         self._preview_playback_controller.playback_error.connect(self._show_audio_preview_playback_error)
+        self.set_shared_data_state(self._shared_data_state)
         self._setup_connections()
         self.destroyed.connect(self._disconnect_theme_refresh_listeners)
         self.destroyed.connect(self._preview_playback_controller.shutdown)
@@ -237,6 +242,23 @@ class OverviewPage(QWidget):
         self.set_preview_audio_output_device(
             str(getattr(cfg, "preview_audio_output_device_key", DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY))
         )
+
+    def set_shared_data_state(self, state: SharedDataState) -> None:
+        """同步共享目录阶段、摘要与总览页选择门禁。
+
+        Args:
+            state: 当前 generation 的类型化共享状态。
+        """
+        previous_phase = self._shared_data_state.phase
+        self._shared_data_state = state
+        display = describe_shared_data_state(state)
+        status_text = display.detail_text if state.active else display.status_text
+        self.shared_data_status.set_status(status_text, role=display.status_role)
+        self.shared_data_status.setToolTip(display.detail_text)
+        self.shared_data_status.setVisible(state.phase is not SharedDataPhase.READY)
+        if state.phase is not previous_phase:
+            self._update_selection_summary()
+            self._sync_current_list_view()
 
     def set_preview_audio_volume(self, value: int) -> None:
         """缓存试听音量设置并同步到底层播放器。"""
@@ -461,6 +483,9 @@ class OverviewPage(QWidget):
         header_layout.addStretch(1)
         root_layout.addLayout(header_layout)
 
+        self.shared_data_status = StatusLine("正在检查实体数据…", self)
+        root_layout.addWidget(self.shared_data_status)
+
         self.splitter = QSplitter(Qt.Horizontal, self)
         self.splitter.setObjectName("OverviewSplitter")
         self.splitter.setChildrenCollapsible(False)
@@ -537,7 +562,7 @@ class OverviewPage(QWidget):
         if current_preview_id is not None and current_preview_id not in available_ids:
             self._current_preview_ids[entity_type] = None
 
-    def _sync_current_list_view(self) -> None:
+    def _sync_current_list_view(self) -> None:  # noqa: PLR0911
         """同步当前 tab 的列表显示状态，不重建已有缓存。"""
         entity_type = self._current_entity_type()
         source_rows = self._entity_data_store.rows_for(entity_type)
@@ -564,6 +589,11 @@ class OverviewPage(QWidget):
             if entity_type == "special":
                 self.entityListPanel.set_special_catalog_notice(None)
             self._set_splitter_sizes_evenly()
+            if self._shared_data_state.phase is not SharedDataPhase.READY:
+                display = describe_shared_data_state(self._shared_data_state)
+                self._show_placeholder(display.status_text)
+                self._update_selection_summary()
+                return
             placeholders = {
                 "champions": "当前英雄数据尚未加载完成。",
                 "maps": "当前地图数据尚未加载完成。",
@@ -618,8 +648,23 @@ class OverviewPage(QWidget):
             map_count=map_count,
             special_count=special_count,
         )
+        if self._shared_data_state.blocks_new_tasks:
+            display = describe_shared_data_state(self._shared_data_state)
+            self.sync_selection_btn.setEnabled(False)
+            self.sync_selection_btn.setToolTip(display.task_block_reason)
+        else:
+            self.sync_selection_btn.setToolTip("")
 
     def _sync_selected_entities(self) -> None:
+        if self._shared_data_state.blocks_new_tasks:
+            display = describe_shared_data_state(self._shared_data_state)
+            InfoBar.warning(
+                "共享数据尚未就绪",
+                display.task_block_reason,
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+            )
+            return
         if self._selected_entity_ids["special"] and self._special_content_is_remote_unsupported():
             InfoBar.warning(
                 "无法同步特殊内容",

@@ -14,7 +14,6 @@ from lol_audio_unpack.gui.controllers.contracts import (
     EntityRowsPayload,
     GuiNotice,
     RuntimeLoggingConfig,
-    SharedDataLoadingState,
 )
 from lol_audio_unpack.gui.shared_data import (
     SharedDataPhase,
@@ -30,6 +29,7 @@ from lol_audio_unpack.gui.shared_data import (
 from lol_audio_unpack.gui.task_models import OutputStateRefreshRequest
 
 SHARED_CONTEXT_BUILD_TIMEOUT_MS = 15000
+SHARED_PROGRESS_REFRESH_INTERVAL_MS = 50
 
 
 def _resolve_source_mode(config, overrides: dict[str, str | bool] | None = None) -> str:
@@ -84,35 +84,10 @@ def build_shared_context_timeout_message(config) -> str:
     return "解析最新远端版本超时，请检查网络连接后重试。"
 
 
-def _state_message(state: SharedDataState, config=None) -> str:  # noqa: PLR0911
-    """在页面迁移期间把 typed state 投影成旧展示文案。"""
-    if state.phase is SharedDataPhase.BLOCKED:
-        return state.problem.message if state.problem is not None else "共享数据尚未配置。"
-    if state.phase is SharedDataPhase.CHECKING:
-        if state.progress is not None:
-            return "正在扫描英雄与地图数据…"
-        return build_shared_context_loading_message(config) if config is not None else "正在检查共享数据…"
-    if state.phase is SharedDataPhase.WAITING:
-        return "等待当前任务结束后刷新实体数据…"
-    if state.phase is SharedDataPhase.PREPARING:
-        return "正在刷新基础数据…"
-    if state.phase is SharedDataPhase.VERIFYING:
-        return "正在复检实体数据…"
-    if state.phase is SharedDataPhase.READY:
-        return "实体数据已就绪"
-    if state.phase is SharedDataPhase.PARTIAL:
-        return state.problem.message if state.problem is not None else "实体数据未完整，新任务已暂停。"
-    if state.phase is SharedDataPhase.CANCELLED:
-        return "实体数据准备已取消，请重试。"
-    message = state.problem.message if state.problem is not None else "共享数据准备失败。"
-    return f"加载失败: {message}"
-
-
 class SharedDataController(QObject):
     """持有共享目录单一状态，并编排检查、准备与复检。"""
 
     state_changed = Signal(object)
-    loading_state_changed = Signal(object)
     app_context_changed = Signal(object)
     shared_data_cleared = Signal()
     entity_data_replaced = Signal(object)
@@ -172,9 +147,9 @@ class SharedDataController(QObject):
         self._prepare_result: SharedDataPreparationResult | None = None
         self._trigger = SharedDataPrepareTrigger.INITIAL
         self._notice_keys: set[tuple[int, str]] = set()
+        self._pending_progress: tuple[int, object] | None = None
         self._closed = False
 
-        # P4 完成页面迁移前保留旧字段，避免阶段提交破坏窗口生命周期。
         self._champions_worker = None
         self._maps_worker = None
 
@@ -188,20 +163,21 @@ class SharedDataController(QObject):
         self.build_timeout_timer.setInterval(SHARED_CONTEXT_BUILD_TIMEOUT_MS)
         self.build_timeout_timer.timeout.connect(self.on_shared_context_build_timeout)
 
-    def _publish_state(self, state: SharedDataState, *, config=None) -> None:
-        """原子保存 typed state，并同步迁移期旧展示信号。"""
+        self.progress_refresh_timer = QTimer(self)
+        self.progress_refresh_timer.setSingleShot(True)
+        self.progress_refresh_timer.setInterval(SHARED_PROGRESS_REFRESH_INTERVAL_MS)
+        self.progress_refresh_timer.timeout.connect(self._flush_pending_progress)
+
+    def _publish_state(self, state: SharedDataState) -> None:
+        """原子保存并发布类型化共享数据状态。"""
         if self._closed or state.generation != self.generation:
             return
+        if not state.active or (state.phase is not self.state.phase and state.progress is None):
+            self._clear_pending_progress()
         self.state = state
         self.is_loading_shared_data = state.phase in {SharedDataPhase.CHECKING, SharedDataPhase.VERIFYING}
         self.is_preparing_shared_data = state.phase is SharedDataPhase.PREPARING
         self.state_changed.emit(state)
-        self.loading_state_changed.emit(
-            SharedDataLoadingState(
-                message=_state_message(state, config or self._get_config()),
-                active=state.active,
-            )
-        )
 
     def _replace_state(self, **changes) -> None:
         """在当前 generation 上发布部分字段变更。"""
@@ -303,6 +279,7 @@ class SharedDataController(QObject):
 
     def _next_generation(self, trigger: SharedDataPrepareTrigger) -> int:
         """使旧回调失效并初始化新 generation 的流程字段。"""
+        self._clear_pending_progress()
         self.generation += 1
         self._trigger = trigger
         self.auto_prepare_attempted = False
@@ -337,8 +314,7 @@ class SharedDataController(QObject):
                 source_mode=_resolve_source_mode(config),
                 prepare_attempted=self.auto_prepare_attempted,
                 prepare_trigger=trigger,
-            ),
-            config=config,
+            )
         )
 
         worker = self._task_worker_cls(lambda: self._create_app_context(settings=config.to_app_context_settings()))
@@ -454,7 +430,7 @@ class SharedDataController(QObject):
         """只接受当前 generation 的扫描进度。"""
         if generation != self.generation or getattr(progress, "generation", generation) != generation:
             return
-        self._replace_state(progress=progress)
+        self._publish_progress(generation, progress)
 
     def on_scan_error(self, generation: int, problem: SharedDataProblem) -> None:
         """处理无法形成 typed scan result 的 worker-level 异常。"""
@@ -627,7 +603,39 @@ class SharedDataController(QObject):
     def on_prepare_progress(self, generation: int, progress) -> None:
         """只接受当前准备 owner 的核心结构化进度。"""
         if generation == self.generation:
+            self._publish_progress(generation, progress)
+
+    def _publish_progress(self, generation: int, progress) -> None:
+        """立即保留阶段边界，并把普通进度刷新节流到固定间隔。"""
+        event = getattr(progress, "event", None)
+        if event in {"started", "finished"}:
+            self._clear_pending_progress()
             self._replace_state(progress=progress)
+            if event == "started":
+                self.progress_refresh_timer.start()
+            return
+        if not self.progress_refresh_timer.isActive():
+            self._replace_state(progress=progress)
+            self.progress_refresh_timer.start()
+            return
+        self._pending_progress = (generation, progress)
+
+    def _flush_pending_progress(self) -> None:
+        """发布节流窗口内最后一份有效进度，并继续下一窗口。"""
+        pending = self._pending_progress
+        self._pending_progress = None
+        if pending is None:
+            return
+        generation, progress = pending
+        if generation != self.generation or not self.state.active:
+            return
+        self._replace_state(progress=progress)
+        self.progress_refresh_timer.start()
+
+    def _clear_pending_progress(self) -> None:
+        """清除不能跨 generation 或阶段边界复用的进度。"""
+        self._pending_progress = None
+        self.progress_refresh_timer.stop()
 
     def on_prepare_finished(self, generation: int, result: SharedDataPreparationResult) -> None:
         """消费权威 StageResult；success/partial 进入复检，其他状态直接终止。"""
@@ -920,6 +928,7 @@ class SharedDataController(QObject):
         self.generation += 1
         self.runtime_entity_refresh_timer.stop()
         self.build_timeout_timer.stop()
+        self._clear_pending_progress()
         self.pending_runtime_entity_refresh = False
         self.pending_refresh_allow_prepare = False
         self.pending_refresh_notice = False

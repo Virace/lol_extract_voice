@@ -52,14 +52,6 @@ class GuiLogMessage:
 
 
 @dataclass(frozen=True, slots=True)
-class SharedDataLoadingState:
-    """共享数据加载状态。"""
-
-    message: str
-    active: bool
-
-
-@dataclass(frozen=True, slots=True)
 class EntityRowsPayload:
     """实体列表整体替换或增量更新载荷。"""
 

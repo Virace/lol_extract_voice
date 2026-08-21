@@ -27,8 +27,10 @@ from lol_audio_unpack.gui.controllers import (
     ExecutionQueueController,
     ExecutionSelectionController,
 )
-from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest, SharedDataLoadingState
+from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
 from lol_audio_unpack.gui.controllers.entity_data_store import EntityDataStore
+from lol_audio_unpack.gui.shared_data import SharedDataPhase, SharedDataState
+from lol_audio_unpack.gui.shared_data_view import describe_shared_data_state
 from lol_audio_unpack.gui.task_models import ExecutionTaskResult, QueuedExecutionTask
 from lol_audio_unpack.gui.theme import get_accent_text_color_pair
 from lol_audio_unpack.gui.view.execution.progress_state import build_global_progress_strip_state
@@ -58,8 +60,7 @@ class ExecutionPage(SmoothScrollArea):
         self._entity_data_store = EntityDataStore(entity_types=("champions", "maps", "special"))
         self._is_task_running = False
         self._is_task_queue_busy = False
-        self._shared_data_busy_message = ""
-        self._shared_data_block_reason = ""
+        self._shared_data_state = SharedDataState(SharedDataPhase.BLOCKED, 0, "local_path")
         self._current_global_progress_state = GlobalProgressStripState()
         self._selection_controller = ExecutionSelectionController()
         self._log_controller = ExecutionLogController(
@@ -194,17 +195,13 @@ class ExecutionPage(SmoothScrollArea):
         """清空当前已加载实体目录摘要。"""
         self._entity_data_store.clear()
 
-    def set_shared_data_loading_state(self, state: SharedDataLoadingState) -> None:
-        """同步共享数据加载状态到任务创建门禁。"""
-        message = str(state.message or "")
-        if state.active:
-            self._shared_data_busy_message = message
-            self._shared_data_block_reason = ""
-        else:
-            self._shared_data_busy_message = ""
-            self._shared_data_block_reason = (
-                f"共享数据暂不可用：{message}" if message and message != "实体数据已就绪" else ""
-            )
+    def set_shared_data_state(self, state: SharedDataState) -> None:
+        """同步共享数据事实快照到任务创建门禁。
+
+        Args:
+            state: 当前 generation 的类型化共享状态。
+        """
+        self._shared_data_state = state
         self._sync_primary_action_button()
 
     def attach_runtime_log_sink(self, level: str = "INFO") -> None:
@@ -380,13 +377,12 @@ class ExecutionPage(SmoothScrollArea):
         if self._is_task_running:
             self.create_task_btn.setText("取消")
             self.create_task_btn.setToolTip("取消当前运行中的任务。")
+            self.create_task_btn.setEnabled(True)
             return
-        if self._shared_data_busy_message:
-            self.create_task_btn.setText("准备数据中")
-            self.create_task_btn.setToolTip(f"后台数据准备中：{self._shared_data_busy_message} 完成后才能创建任务。")
-            return
-        self.create_task_btn.setText("创建任务")
-        self.create_task_btn.setToolTip(self._shared_data_block_reason)
+        display = describe_shared_data_state(self._shared_data_state)
+        self.create_task_btn.setText(display.task_action_text)
+        self.create_task_btn.setToolTip(display.task_block_reason)
+        self.create_task_btn.setEnabled(not self._shared_data_state.blocks_new_tasks)
 
     def _handle_primary_task_action(self) -> None:
         """根据当前运行态分派创建或取消行为。"""
@@ -418,23 +414,12 @@ class ExecutionPage(SmoothScrollArea):
 
     def _queue_task_draft(self) -> None:
         """将当前界面参数写入任务队列，并自动开始首个任务。"""
-        if self._shared_data_busy_message:
-            message = f"后台数据仍在准备：{self._shared_data_busy_message}，完成后再创建任务。"
-            self._log_gui_event("warning", f"[队列] {message}")
+        if self._shared_data_state.blocks_new_tasks:
+            display = describe_shared_data_state(self._shared_data_state)
+            self._log_gui_event("warning", f"[队列] {display.task_block_reason}")
             show_feedback_infobar(
-                title="后台数据准备中",
-                content=message,
-                parent=self._feedback_parent(),
-                level="warning",
-                position=InfoBarPosition.TOP,
-            )
-            return
-
-        if self._shared_data_block_reason:
-            self._log_gui_event("warning", f"[队列] {self._shared_data_block_reason}")
-            show_feedback_infobar(
-                title="无法创建任务",
-                content=self._shared_data_block_reason,
+                title="后台数据准备中" if self._shared_data_state.active else "无法创建任务",
+                content=display.task_block_reason,
                 parent=self._feedback_parent(),
                 level="warning",
                 position=InfoBarPosition.TOP,

@@ -8,9 +8,12 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
 from lol_audio_unpack.gui.components.global_progress_strip import (
+    GlobalProgressStripCoordinator,
     GlobalProgressStripHost,
     GlobalProgressStripState,
+    build_shared_data_progress_strip_state,
 )
+from lol_audio_unpack.gui.shared_data import SharedDataPhase, SharedDataProgress, SharedDataState
 
 RESUMED_PROGRESS_CURRENT = 2100
 HALF_PROGRESS = 0.5
@@ -112,3 +115,46 @@ def test_progress_strip_stop_button_emits_signal(qtbot) -> None:
     qtbot.mouseClick(strip.stop_button(), Qt.MouseButton.LeftButton)
 
     assert stop_events == [True]
+
+
+def test_shared_data_progress_state_distinguishes_unknown_and_measured_work() -> None:
+    """共享准备的未知阶段与可测阶段不能使用同一种伪百分比。"""
+    unknown = build_shared_data_progress_strip_state(SharedDataState(SharedDataPhase.CHECKING, 1, "local_path"))
+    measured = build_shared_data_progress_strip_state(
+        SharedDataState(
+            SharedDataPhase.PREPARING,
+            1,
+            "local_path",
+            progress=SharedDataProgress(
+                1,
+                "champion_banks",
+                "advanced",
+                current=42,
+                total=173,
+            ),
+        )
+    )
+
+    assert unknown.indeterminate is True
+    assert unknown.cancellable is False
+    assert measured.indeterminate is False
+    assert (measured.progress_current, measured.progress_total) == (42, 173)
+    assert measured.status_text == "英雄数据 · 42/173"
+
+
+def test_global_progress_coordinator_prioritizes_user_task_then_resumes_shared_state() -> None:
+    """用户任务短暂重叠时优先展示，结束后恢复最新 generation 的共享状态。"""
+    published = []
+    coordinator = GlobalProgressStripCoordinator(published.append)
+    task_state = _running_state()
+    coordinator.set_task_state(task_state)
+    coordinator.set_shared_data_state(SharedDataState(SharedDataPhase.CHECKING, 2, "local_path"))
+    coordinator.set_shared_data_state(SharedDataState(SharedDataPhase.CHECKING, 1, "local_path"))
+
+    assert coordinator.current_state() == task_state
+
+    coordinator.set_task_state(GlobalProgressStripState(title_text="任务已完成"))
+
+    assert coordinator.current_state().visible is True
+    assert coordinator.current_state().title_text == "正在检查实体数据…"
+    assert coordinator.current_state().indeterminate is True

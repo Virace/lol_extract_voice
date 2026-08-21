@@ -6,6 +6,7 @@ from lol_audio_unpack.gui.controllers.window_shell import (
     apply_task_queue_busy_state,
     bind_shared_data_controller_signals,
     confirm_force_close_running_tasks,
+    dispatch_shared_data_action,
     force_quit_application,
     forward_selection_sync_feedback,
 )
@@ -98,7 +99,7 @@ def test_bind_shared_data_controller_signals_wires_payload_consumers() -> None:
                 callback(value)
 
     class _FakeController:
-        loading_state_changed = _FakeSignal()
+        state_changed = _FakeSignal()
         shared_data_cleared = _FakeSignal()
         app_context_changed = _FakeSignal()
         entity_data_replaced = _FakeSignal()
@@ -107,12 +108,12 @@ def test_bind_shared_data_controller_signals_wires_payload_consumers() -> None:
         reconfigure_runtime_logging_requested = _FakeSignal()
 
     class _FakeHome:
-        def set_loading_state(self, message: str, *, active: bool) -> None:
-            events.append(("loading", (message, active)))
+        def set_shared_data_state(self, state) -> None:
+            events.append(("home_state", state.phase))
 
     class _FakeExecution:
-        def set_shared_data_loading_state(self, state) -> None:
-            events.append(("exec_loading", (state.message, state.active)))
+        def set_shared_data_state(self, state) -> None:
+            events.append(("exec_state", state.phase))
 
         def clear_entity_data(self) -> None:
             events.append(("exec_clear", None))
@@ -124,6 +125,9 @@ def test_bind_shared_data_controller_signals_wires_payload_consumers() -> None:
             events.append(("exec_update", (entity_type, tuple(rows))))
 
     class _FakeOverview:
+        def set_shared_data_state(self, state) -> None:
+            events.append(("overview_state", state.phase))
+
         def clear_data(self) -> None:
             events.append(("overview_clear", None))
 
@@ -147,15 +151,45 @@ def test_bind_shared_data_controller_signals_wires_payload_consumers() -> None:
         on_reconfigure_runtime_logging=lambda payload: events.append(("log", payload)),
     )
 
-    controller.loading_state_changed.emit(type("State", (), {"message": "loading", "active": True})())
+    controller.state_changed.emit(type("State", (), {"phase": "checking"})())
     controller.entity_data_replaced.emit(type("Payload", (), {"entity_type": "champions", "rows": ({"id": 1},)})())
     controller.notice_requested.emit(type("Notice", (), {"title": "ok", "content": "done", "level": "success"})())
 
-    assert ("loading", ("loading", True)) in events
-    assert ("exec_loading", ("loading", True)) in events
+    assert ("home_state", "checking") in events
+    assert ("exec_state", "checking") in events
+    assert ("overview_state", "checking") in events
     assert ("exec_replace", ("champions", ({"id": 1},))) in events
     assert ("overview_replace", ("champions", ({"id": 1},))) in events
     assert ("notice", ("ok", "done", "success")) in events
+
+
+def test_dispatch_shared_data_action_routes_stable_action_keys() -> None:
+    """恢复与导航动作必须按稳定 key 绑定真实窗口行为。"""
+    events = []
+
+    class _FakeController:
+        def request_shared_data_retry(self, *, force_update: bool = False) -> None:
+            events.append(("retry", force_update))
+
+    callbacks = {
+        "show_settings": lambda: events.append(("navigate", "settings")),
+        "show_execution": lambda: events.append(("navigate", "execution")),
+        "show_overview": lambda: events.append(("navigate", "overview")),
+    }
+    for action_key in ("retry", "regenerate", "open_settings", "view_execution", "view_overview"):
+        dispatch_shared_data_action(
+            action_key,
+            shared_data_controller=_FakeController(),
+            **callbacks,
+        )
+
+    assert events == [
+        ("retry", False),
+        ("retry", True),
+        ("navigate", "settings"),
+        ("navigate", "execution"),
+        ("navigate", "overview"),
+    ]
 
 
 def test_confirm_force_close_running_tasks_returns_true_for_close(monkeypatch) -> None:

@@ -67,9 +67,7 @@ def confirm_force_close_running_tasks(*, parent) -> bool:
     dialog.setWindowTitle("任务仍在运行")
     dialog.setText("当前仍有后台任务正在运行。")
     dialog.setInformativeText("关闭窗口会直接结束当前进程，正在运行的任务不会继续在后台执行。")
-    dialog.setStandardButtons(
-        QMessageBox.StandardButton.Close | QMessageBox.StandardButton.Cancel
-    )
+    dialog.setStandardButtons(QMessageBox.StandardButton.Close | QMessageBox.StandardButton.Cancel)
     dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
     dialog.button(QMessageBox.StandardButton.Close).setText("关闭")
     dialog.button(QMessageBox.StandardButton.Cancel).setText("取消")
@@ -145,6 +143,35 @@ def forward_selection_sync_feedback(
     )
 
 
+def dispatch_shared_data_action(
+    action_key: str,
+    *,
+    shared_data_controller,
+    show_settings: Callable[[], None],
+    show_execution: Callable[[], None],
+    show_overview: Callable[[], None],
+) -> None:
+    """把稳定共享数据动作 key 绑定到窗口层真实行为。
+
+    Args:
+        action_key: 页面发出的稳定动作 key。
+        shared_data_controller: 当前窗口的共享数据控制器。
+        show_settings: 导航到全局设置的回调。
+        show_execution: 导航到执行中心的回调。
+        show_overview: 导航到实体总览的回调。
+    """
+    if action_key == "retry":
+        shared_data_controller.request_shared_data_retry()
+    elif action_key == "regenerate":
+        shared_data_controller.request_shared_data_retry(force_update=True)
+    elif action_key == "view_execution":
+        show_execution()
+    elif action_key == "view_overview":
+        show_overview()
+    elif action_key in {"open_settings", "open_output_settings"}:
+        show_settings()
+
+
 def register_navigation_items(window, shared_data_controller) -> None:
     """注册主窗口导航项。"""
     window.addSubInterface(window.homeInterface, FIF.HOME, "主页")
@@ -194,10 +221,9 @@ def bind_shared_data_controller_signals(  # noqa: PLR0913
     on_reconfigure_runtime_logging: Callable[[RuntimeLoggingConfig], None],
 ) -> None:
     """把共享数据控制器的信号接到窗口壳层。"""
-    controller.loading_state_changed.connect(
-        lambda state: home_page.set_loading_state(state.message, active=state.active)
-    )
-    controller.loading_state_changed.connect(execution_page.set_shared_data_loading_state)
+    controller.state_changed.connect(home_page.set_shared_data_state)
+    controller.state_changed.connect(execution_page.set_shared_data_state)
+    controller.state_changed.connect(overview_page.set_shared_data_state)
     controller.shared_data_cleared.connect(execution_page.clear_entity_data)
     controller.shared_data_cleared.connect(overview_page.clear_data)
     controller.app_context_changed.connect(overview_page.set_app_context)

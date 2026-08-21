@@ -34,7 +34,11 @@ from lol_audio_unpack.gui.common import (
     show_feedback_infobar,
 )
 from lol_audio_unpack.gui.common.remote_mode_policy import normalize_app_context_settings
-from lol_audio_unpack.gui.components.global_progress_strip import GlobalProgressStripHost
+from lol_audio_unpack.gui.components.global_progress_strip import (
+    GlobalProgressStripCoordinator,
+    GlobalProgressStripHost,
+    GlobalProgressStripState,
+)
 from lol_audio_unpack.gui.components.log_drawer import (
     GlobalLogDrawer,
 )
@@ -55,6 +59,7 @@ from lol_audio_unpack.gui.controllers.window_shell import (
     apply_task_queue_busy_state,
     bind_shared_data_controller_signals,
     confirm_force_close_running_tasks,
+    dispatch_shared_data_action,
     force_quit_application,
     forward_selection_sync_feedback,
     register_navigation_items,
@@ -120,6 +125,7 @@ class MainWindow(FluentWindow):
         super().__init__()
         previous_mark = _log_window_stage("FluentWindow 基类初始化", startup_begin, previous_mark)
         self._progress_strip_host = GlobalProgressStripHost(self)
+        self._progress_strip_coordinator = GlobalProgressStripCoordinator(self._apply_global_progress_state)
         self._content_shell = QWidget(self)
         self._content_shell_layout = QVBoxLayout(self._content_shell)
         self._content_shell_layout.setContentsMargins(0, 0, 0, 0)
@@ -369,6 +375,20 @@ class MainWindow(FluentWindow):
         theme = Theme.LIGHT if qconfig.theme == Theme.DARK else Theme.DARK
         qconfig.set(qconfig.themeMode, theme)
 
+    def _apply_global_progress_state(self, state: GlobalProgressStripState) -> None:
+        """把协调后的单一全局进度状态应用到窗口宿主。"""
+        self._progress_strip_host.set_state(state, animate=True)
+
+    def _dispatch_shared_data_action(self, action_key: str) -> None:
+        """处理首页共享数据状态区发出的稳定动作。"""
+        dispatch_shared_data_action(
+            action_key,
+            shared_data_controller=self._shared_data_controller,
+            show_settings=lambda: self.switchTo(self.settingInterface),
+            show_execution=lambda: self.switchTo(self.executionInterface),
+            show_overview=lambda: self.switchTo(self.overviewInterface),
+        )
+
     def _connect_pages(self):
         """连接页面间的数据同步"""
         si = self.settingInterface
@@ -389,6 +409,7 @@ class MainWindow(FluentWindow):
                 execution_page=self.executionInterface,
             ),
         )
+        self._shared_data_controller.state_changed.connect(self._progress_strip_coordinator.set_shared_data_state)
 
         # 路径改变时实时同步到首页
         si.game_path_changed.connect(hi.update_game_dir)
@@ -397,6 +418,7 @@ class MainWindow(FluentWindow):
         si.vgmstream_path_changed.connect(hi.update_vgmstream)
         hi.navigate_to_execution_requested.connect(lambda: self.switchTo(self.executionInterface))
         hi.navigate_to_overview_requested.connect(lambda: self.switchTo(self.overviewInterface))
+        hi.shared_data_action_requested.connect(self._dispatch_shared_data_action)
 
         # 注入配置到各业务页面
         self.executionInterface.set_gui_config(cfg)
@@ -415,9 +437,7 @@ class MainWindow(FluentWindow):
         self.executionInterface.output_state_refresh_requested.connect(
             self._shared_data_controller.refresh_shared_output_state
         )
-        self.executionInterface.global_progress_state_changed.connect(
-            lambda state: self._progress_strip_host.set_state(state, animate=True)
-        )
+        self.executionInterface.global_progress_state_changed.connect(self._progress_strip_coordinator.set_task_state)
         self.executionInterface.task_queue_busy_changed.connect(
             lambda busy: apply_task_queue_busy_state(
                 busy=busy,
@@ -428,10 +448,7 @@ class MainWindow(FluentWindow):
         )
         self._progress_strip_host.strip_widget().stop_requested.connect(self.executionInterface.request_cancel_task)
         self.executionInterface.log_lines_appended.connect(self._log_drawer_controller.append_log_lines)
-        self._progress_strip_host.set_state(
-            self.executionInterface.current_global_progress_state(),
-            animate=False,
-        )
+        self._progress_strip_coordinator.set_task_state(self.executionInterface.current_global_progress_state())
         self.settingInterface.shared_context_input_changed.connect(
             self._shared_data_controller.on_context_input_changed
         )

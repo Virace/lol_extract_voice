@@ -18,6 +18,7 @@ from lol_audio_unpack.gui.controllers.overview_preview import (
     AudioPreviewToggleResult,
     OverviewPreviewLoadResult,
 )
+from lol_audio_unpack.gui.shared_data import SharedDataPhase, SharedDataState
 from lol_audio_unpack.gui.view.overview_page import OverviewPage
 
 
@@ -388,6 +389,7 @@ def test_overview_page_special_catalog_empty_and_unprepared_states_are_explicit(
     """本地目录应区分当前版本无 special 与需要更新实体数据。"""
     page = OverviewPage()
     qtbot.addWidget(page)
+    page.set_shared_data_state(SharedDataState(SharedDataPhase.READY, 1, "local_path"))
     page.nav_pivot.setCurrentItem("special")
     page.set_app_context(SimpleNamespace(config=SimpleNamespace(source_mode=SourceMode.LOCAL_PATH)))
 
