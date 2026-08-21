@@ -10,6 +10,7 @@ from lol_audio_unpack.gui.components.dev_console import DevConsoleWindow
 
 DEV_CONSOLE_COMMAND_MIN_PARTS = 2
 DEV_CONSOLE_QUEUE_FILL_PARTS = 3
+DEV_CONSOLE_QUEUE_RESULT_PARTS = 3
 
 
 class DevConsoleController:
@@ -21,6 +22,7 @@ class DevConsoleController:
         queue_fill: Callable[[int], str],
         queue_clear: Callable[[], str],
         queue_inspect: Callable[[], str],
+        queue_result: Callable[[str], str] | None = None,
         console_factory=DevConsoleWindow,
     ) -> None:
         """初始化开发控制台命令控制器。
@@ -29,10 +31,12 @@ class DevConsoleController:
             queue_fill: 填充 mock 队列的执行函数。
             queue_clear: 清空 mock 队列的执行函数。
             queue_inspect: 返回当前队列诊断文本的执行函数。
+            queue_result: 注入受控 typed terminal result 的可选执行函数。
         """
         self._queue_fill = queue_fill
         self._queue_clear = queue_clear
         self._queue_inspect = queue_inspect
+        self._queue_result = queue_result
         self._console_factory = console_factory
         self._console = None
 
@@ -61,6 +65,7 @@ class DevConsoleController:
                 "queue fill <n>",
                 "queue clear",
                 "queue inspect",
+                "queue result <success|partial|failed|cancelled>",
             )
 
         if keyword != "queue" or len(parts) < DEV_CONSOLE_COMMAND_MIN_PARTS:
@@ -75,6 +80,10 @@ class DevConsoleController:
             return (self._queue_clear(),)
         if action == "inspect":
             return tuple(self._queue_inspect().splitlines())
+        if action == "result":
+            if len(parts) != DEV_CONSOLE_QUEUE_RESULT_PARTS or self._queue_result is None:
+                raise ValueError("queue result 需要一个可用的终态参数。")
+            return (self._queue_result(parts[2].lower()),)
 
         raise ValueError("未知 queue 子命令，输入 help 查看可用命令。")
 

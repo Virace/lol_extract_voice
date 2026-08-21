@@ -70,8 +70,6 @@ from lol_audio_unpack.gui.view.item_lookup_page import ItemLookupPage
 from lol_audio_unpack.gui.view.overview_page import OverviewPage
 from lol_audio_unpack.gui.view.setting_page import SettingPage
 from lol_audio_unpack.gui.workers import TaskWorker
-from lol_audio_unpack.manager.data_reader import DataReader
-from lol_audio_unpack.utils.common import Singleton
 from lol_audio_unpack.utils.logging import setup_logging
 
 NAV_EXPANDED_WIDTH_THRESHOLD = 100
@@ -97,13 +95,6 @@ def _prepare_shared_entity_data(shared_settings: dict[str, str | bool]) -> None:
     app_context = create_app_context(settings=prepare_settings)
     app = LolAudioUnpackApp(app_context)
     app.update(OperationOptions(), target="all")
-
-
-def _reset_data_reader_singleton() -> None:
-    """重置 ``DataReader`` 单例，确保后续读取使用新的上下文。"""
-    if DataReader in Singleton._instances:
-        logger.debug("检测到共享实体数据读取上下文已变化，重置 DataReader 单例缓存")
-        del Singleton._instances[DataReader]
 
 
 class MainWindow(FluentWindow):
@@ -190,7 +181,6 @@ class MainWindow(FluentWindow):
             entity_data_loader_cls=EntityDataLoader,
             start_worker_fn=lambda worker: QThreadPool.globalInstance().start(worker),
             prepare_shared_entity_data_fn=_prepare_shared_entity_data,
-            reset_data_reader_singleton_fn=_reset_data_reader_singleton,
             app_context_block_reason_fn=get_block_reason,
             parent=self,
         )
@@ -339,6 +329,7 @@ class MainWindow(FluentWindow):
             queue_fill=self.executionInterface._debug_fill_mock_queue,
             queue_clear=self.executionInterface._debug_clear_mock_queue,
             queue_inspect=self.executionInterface._debug_inspect_queue,
+            queue_result=self.executionInterface._debug_simulate_terminal_result,
         )
 
     def _show_dev_console(self) -> None:

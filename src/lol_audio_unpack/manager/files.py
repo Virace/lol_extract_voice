@@ -2,20 +2,63 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from loguru import logger
 
-from lol_audio_unpack.utils.common import (
-    dump_json,
-    dump_msgpack,
-    dump_yaml,
-    format_duration,
-    load_json,
-    load_msgpack,
-    load_yaml,
-)
+from lol_audio_unpack.manager.errors import ArtifactWriteError
+from lol_audio_unpack.utils.common import dump_msgpack, dump_yaml, format_duration, load_json, load_msgpack, load_yaml
+
+
+def _replace_file(target: Path, writer: Callable[[Path], object], *, write_stage: str) -> Path:
+    """在目标同目录准备完整文件后执行原子替换。
+
+    Args:
+        target: 带后缀的正式目标路径。
+        writer: 只向所给临时路径写入完整内容的函数。
+        write_stage: writer 失败时写入语义异常的阶段名。
+
+    Returns:
+        成功替换的目标路径。
+
+    Raises:
+        ArtifactWriteError: 准备、写入、同步或替换失败。
+    """
+    temp_path: Path | None = None
+    stage = "prepare"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temp_name = tempfile.mkstemp(
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+        )
+        temp_path = Path(temp_name)
+        os.close(descriptor)
+
+        stage = write_stage
+        writer(temp_path)
+
+        # Windows 的 fsync 需要可写句柄；内容不再修改，只借此确保 replace 前完成文件同步。
+        stage = "fsync"
+        with temp_path.open("r+b") as file:
+            os.fsync(file.fileno())
+
+        stage = "replace"
+        os.replace(temp_path, target)
+        return target
+    except Exception as exc:
+        if temp_path is not None and temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                logger.opt(exception=True).warning(f"清理 artifact 临时文件失败: {temp_path}")
+        raise ArtifactWriteError(target, stage) from exc
 
 
 def find_data_file(path: Path, *, dev_mode: bool) -> Path | None:
@@ -110,26 +153,58 @@ def read_data(path: Path, *, dev_mode: bool = False) -> dict:
         return {}
 
 
-def write_data(data: dict, base_path: Path, *, dev_mode: bool) -> None:
-    """根据环境选择格式并写入数据文件。
+def write_data(data: dict, base_path: Path, *, dev_mode: bool) -> Path:
+    """根据环境选择格式并原子替换数据文件。
 
     Args:
         data: 要写入的数据。
         base_path: 不带后缀的基础文件路径。
         dev_mode: 是否启用开发模式。
+
+    Returns:
+        成功替换的实际目标路径。
+
+    Raises:
+        ArtifactWriteError: 无法完成序列化、同步或原子替换。
     """
     fmt = "yml" if dev_mode else "msgpack"
     path = base_path.with_suffix(f".{fmt}")
-    try:
-        if fmt == "yml":
-            dump_yaml(data, path)
-        elif fmt == "json":
-            dump_json(data, path)
-        else:
-            dump_msgpack(data, path)
-        logger.trace(f"成功写入数据到: {path}")
-    except Exception as exc:
-        logger.opt(exception=True).error(f"写入文件失败: {path}, 错误: {exc}")
+    serializer = dump_yaml if dev_mode else dump_msgpack
+    target = _replace_file(path, lambda temp: serializer(data, temp), write_stage="serialize")
+    logger.trace(f"成功写入数据到: {target}")
+    return target
+
+
+def write_bytes_atomic(data: bytes, path: Path) -> Path:
+    """以原子替换方式写入精确字节。
+
+    Args:
+        data: 要持久化的完整字节。
+        path: 带后缀的正式目标路径。
+
+    Returns:
+        成功替换的目标路径。
+
+    Raises:
+        ArtifactWriteError: 无法完成写入、同步或原子替换。
+    """
+    return _replace_file(path, lambda temp: temp.write_bytes(data), write_stage="write")
+
+
+def copy_file_atomic(source: Path, target: Path) -> Path:
+    """复制完整文件并以原子替换方式发布。
+
+    Args:
+        source: 要复制的源文件。
+        target: 带后缀的正式目标路径。
+
+    Returns:
+        成功替换的目标路径。
+
+    Raises:
+        ArtifactWriteError: 无法完成复制、同步或原子替换。
+    """
+    return _replace_file(target, lambda temp: shutil.copy2(source, temp), write_stage="copy")
 
 
 def needs_update(
@@ -176,8 +251,10 @@ def needs_update(
 
 
 __all__ = [
+    "copy_file_atomic",
     "find_data_file",
     "needs_update",
     "read_data",
+    "write_bytes_atomic",
     "write_data",
 ]

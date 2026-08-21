@@ -18,6 +18,9 @@ mapping 交给 `LolAudioUnpackApp`。
 GUI 只负责收集用户输入、展示状态和启动任务。可复用规则不得反向依赖控件；日志层、任务层和
 UI 层通过异步边界交接，UI 吞吐不能阻塞解包或 mapping。
 
+CLI、Python API、remote orchestration 与 GUI 共用 `ResultStatus`、`EntityResult`、`StageResult`
+和 `RunResult`。日志只负责诊断，不能替代 typed result 成为成功、失败或退出码的事实来源。
+
 ## 核心模块边界
 
 - `app/context.py` 把设置解析为不可混淆的 `AppConfig`、`AppPaths` 与 `AppContext`。
@@ -25,7 +28,7 @@ UI 层通过异步边界交接，UI 吞吐不能阻塞解包或 mapping。
 - `manager/data_updater.py` 从 LCU 资源建立版本化 `data.*`。
 - `manager/bin_updater.py` 组织英雄与地图处理器，生成 banks/events；local update 同时生成 v2 resource bindings。
 - `manager/resource_pack_discovery.py` 只扫描用户显式选定的 FINAL WAD，有界解析历史 `BANK_UNITS` 并生成独立 resource-pack artifact。
-- `manager/data_reader.py` 读取版本化结构化数据并维护单次运行缓存；精确 binding 消费可显式要求 v2。
+- `manager/data_reader.py` 读取版本化结构化数据；`LolAudioUnpackApp` 在自身 `AppContext` 生命周期内懒加载并复用 reader，update/discovery 写入边界后整体失效。直接构造的 reader 实例彼此独立；精确 binding 消费可显式要求 v2。
 - `model/binding.py` 固定 declared BIN、bank reference、物理 WAD 与完整度诊断合同。
 - `runtime/wad_index.py` 对 FINAL root/current-language WAD 建立进程内 TOC cache，并按目标 hash 解析容器。
 - `unpack/` 读取实体资源引用，从 WAD/BNK/WPK 落盘原始 WEM 与报告。
@@ -109,8 +112,14 @@ mapping 实际引用的路径；全量 WEM 枚举在首次进入“全部音频�
 文件格式、CLI 和配置的详细契约分别以 `docs/api/python_api.md`、`docs/api/cli_api.md`、
 `docs/api/config_api.md` 为准。
 
+`EntityResult.artifacts` 只记录本轮确认落盘的路径，是 GUI 增量刷新和 remote 完成回调的唯一
+产物证据；旧目录、日志文本、进度消息和原始目标选择均不能替代它。GUI 终态直接映射
+`RunResult.status`：success、partial、failed、cancelled 分别显示完成、部分完成、失败和已取消；
+只有 success 可以收口为 100%，强制取消因拿不到可靠产物快照而不触发输出刷新。
+
 ## 错误与恢复模型
 
 参数与稳定前置条件失败应尽早抛出明确异常。批量实体允许单项失败后继续，但必须记录单项影响、
 累计趋势和最终摘要。远端下载、fallback、重试、清理、WAV 熔断以及本地 BIN 回退均需要可观察
-日志。用户可恢复错误提供操作方向；完整异常上下文只进入内部日志。
+日志。用户可恢复错误提供操作方向；完整异常上下文只进入内部日志。结构化 artifact 通过
+`write_data(...)` 使用同目录临时文件和原子替换；该保证不泛化到 WEM、报告或远端 payload。

@@ -9,6 +9,8 @@ from datetime import datetime
 from loguru import logger
 from PySide6.QtCore import QObject, Signal
 
+from lol_audio_unpack.app.resource_pack import partition_special_targets
+from lol_audio_unpack.app.results import EntityResult, ResultStatus, RunResult, StageResult
 from lol_audio_unpack.gui.controllers.contracts import (
     GuiLogMessage,
     GuiNotice,
@@ -23,9 +25,11 @@ from lol_audio_unpack.gui.task_models import (
     TASK_STATUS_CANCELLED,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
+    TASK_STATUS_PARTIAL,
     TASK_STATUS_RUNNING,
     TASK_STATUS_WAITING,
     ExecutionTaskDraft,
+    ExecutionTaskParamsSnapshot,
     ExecutionTaskProgress,
     ExecutionTaskResult,
     OutputStateRefreshRequest,
@@ -36,29 +40,70 @@ from lol_audio_unpack.gui.task_models import (
 def _build_output_state_refresh_request(
     task: QueuedExecutionTask,
     task_result: ExecutionTaskResult,
-) -> OutputStateRefreshRequest:
-    """根据任务快照和执行结果推导输出状态刷新范围。"""
-    completed_steps = set(task_result.completed_steps)
-    if not ({"音频解包", "事件映射"} & completed_steps):
-        return OutputStateRefreshRequest(requires_full_refresh=True)
+) -> OutputStateRefreshRequest | None:
+    """从 typed artifact evidence 推导有界输出状态刷新范围。"""
+    artifact_entities = tuple(
+        entity
+        for stage in task_result.run_result.stages
+        if stage.stage in {"extract", "mapping"}
+        for entity in stage.entities
+        if entity.artifacts
+    )
+    if not artifact_entities:
+        return None
 
     task_params = task.draft.task_params
-    champion_ids = (
-        tuple(str(entity_id) for entity_id in task_params.champion_ids) if task_params.champion_ids is not None else ()
-    )
-    map_ids = tuple(str(entity_id) for entity_id in task_params.map_ids) if task_params.map_ids is not None else ()
-    special_targets = task_params.special_targets
-    resource_pack_wads = task_params.resource_pack_wads
+    partition = partition_special_targets(task_params.special_targets)
+    special_champion_by_id = {target.removeprefix("champion:"): target for target in partition.champion_targets}
+    champion_ids: list[str] = []
+    map_ids: list[str] = []
+    special_targets: list[str] = []
+    resource_pack_seen = False
+    for entity in artifact_entities:
+        entity_id = str(entity.entity_id)
+        if entity.entity_type == "champion":
+            special_target = special_champion_by_id.get(entity_id)
+            if special_target is not None:
+                special_targets.append(special_target)
+            else:
+                champion_ids.append(entity_id)
+        elif entity.entity_type == "map":
+            map_ids.append(entity_id)
+        elif entity.entity_type == "resource_pack":
+            special_targets.append(entity_id)
+            resource_pack_seen = True
 
-    if not champion_ids and not map_ids and not special_targets and not resource_pack_wads:
-        return OutputStateRefreshRequest(requires_full_refresh=True)
+    def unique(values: list[str]) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(values))
 
-    return OutputStateRefreshRequest(
-        champion_ids=champion_ids,
-        map_ids=map_ids,
-        special_targets=special_targets,
-        resource_pack_wads=resource_pack_wads,
+    request = OutputStateRefreshRequest(
+        champion_ids=unique(champion_ids),
+        map_ids=unique(map_ids),
+        special_targets=unique(special_targets),
+        resource_pack_wads=task_params.resource_pack_wads if resource_pack_seen else (),
     )
+    return request if request.has_incremental_targets() else None
+
+
+def _terminal_task_status(status: ResultStatus) -> str:
+    """把核心结果状态映射为稳定 GUI 终态。"""
+    return {
+        ResultStatus.SUCCESS: TASK_STATUS_COMPLETED,
+        ResultStatus.PARTIAL: TASK_STATUS_PARTIAL,
+        ResultStatus.FAILED: TASK_STATUS_FAILED,
+        ResultStatus.CANCELLED: TASK_STATUS_CANCELLED,
+    }[status]
+
+
+def _terminal_notice(status: ResultStatus, summary: str) -> GuiNotice:
+    """按核心结果状态构造终态通知。"""
+    if status is ResultStatus.SUCCESS:
+        return GuiNotice(title="任务执行完成", content=summary, level="success")
+    if status is ResultStatus.PARTIAL:
+        return GuiNotice(title="任务部分完成", content=summary, level="warning")
+    if status is ResultStatus.CANCELLED:
+        return GuiNotice(title="任务已取消", content=summary, level="warning")
+    return GuiNotice(title="任务执行失败", content=summary, level="error")
 
 
 class ExecutionQueueController(QObject):
@@ -103,11 +148,9 @@ class ExecutionQueueController(QObject):
         return bool(self._active_task_id is not None or self._active_worker is not None)
 
     def has_incomplete_tasks(self) -> bool:
-        """返回当前队列中是否仍有未完成任务。"""
+        """返回当前队列中是否仍有等待或运行中的任务。"""
         counts = self.queue_status_counts()
-        if self._single_task_mode:
-            return counts[TASK_STATUS_RUNNING] + counts[TASK_STATUS_WAITING] > 0
-        return counts[TASK_STATUS_RUNNING] + counts[TASK_STATUS_WAITING] + counts[TASK_STATUS_FAILED] > 0
+        return counts[TASK_STATUS_RUNNING] + counts[TASK_STATUS_WAITING] > 0
 
     def draft_queue_size(self) -> int:
         """返回当前任务队列中的真实任务数。"""
@@ -246,12 +289,18 @@ class ExecutionQueueController(QObject):
             progress_detail=progress,
         )
         if progress.stage_finished and progress.stage_key == "extract":
-            self._emit_extract_stage_notice(updated_task)
+            self._emit_extract_stage_notice(updated_task, progress)
         if self._active_task_id == task_id:
             self.progress_display_requested.emit(QueueProgressUpdate())
 
-    def _emit_extract_stage_notice(self, task: QueuedExecutionTask) -> None:
-        """在解包阶段结束时发出一次性提示。"""
+    def _emit_extract_stage_notice(
+        self,
+        task: QueuedExecutionTask,
+        progress: ExecutionTaskProgress,
+    ) -> None:
+        """仅在解包成功后发出一次性继续提示。"""
+        if progress.message != "音频解包完成":
+            return
         notification_key = (task.task_id, "extract")
         if notification_key in self._stage_completion_notifications:
             return
@@ -267,41 +316,55 @@ class ExecutionQueueController(QObject):
         self.feedback_requested.emit(GuiNotice(title=f"{stage_label}已结束", content=content, level="info"))
 
     def on_task_finished(self, task_id: int, result: object) -> None:
-        """处理后台任务成功完成后的状态收敛。"""
+        """根据后台 typed result 收敛任务终态。"""
         if task_id in self._ignored_task_ids:
             return
         task = self.find_task_by_id(task_id)
         if task is None:
             return
 
-        task_result = (
-            result
-            if isinstance(result, ExecutionTaskResult)
-            else ExecutionTaskResult(completed_steps=(), summary="任务执行完成。", duration_seconds=0.0)
-        )
-        completed_progress_detail = None
+        if not isinstance(result, ExecutionTaskResult) or not isinstance(result.run_result, RunResult):
+            self.on_task_failed(task_id, "后台任务没有返回有效的 RunResult。")
+            return
+
+        task_result = result
+        result_status = task_result.run_result.status
+        terminal_status = _terminal_task_status(result_status)
+        progress_total = max(task.progress_total, 1)
+        if result_status is ResultStatus.SUCCESS:
+            progress_current = progress_total
+        else:
+            progress_current = min(task.progress_current, progress_total - 1)
+        terminal_progress_detail = None
         if isinstance(task.progress_detail, ExecutionTaskProgress):
-            completed_progress_detail = replace(
+            terminal_progress_detail = replace(
                 task.progress_detail,
-                current=max(task.progress_detail.total, 1),
-                total=max(task.progress_detail.total, 1),
+                current=progress_current,
+                total=progress_total,
                 message=task_result.summary,
             )
 
         updated_task = self.update_task(
             task_id,
-            status=TASK_STATUS_COMPLETED,
+            status=terminal_status,
             finished_at=datetime.now(),
-            progress_current=max(task.progress_total, len(task_result.completed_steps), 1),
-            progress_total=max(task.progress_total, len(task_result.completed_steps), 1),
+            progress_current=progress_current,
+            progress_total=progress_total,
             progress_message=task_result.summary,
-            progress_detail=completed_progress_detail,
+            progress_detail=terminal_progress_detail,
             result_summary=task_result.summary,
-            error_message="",
+            error_message=task_result.summary if result_status is ResultStatus.FAILED else "",
         )
         self._after_task_stopped(task_id)
-        logger.success(f"[队列] 任务 #{task_id} 执行完成：{task_result.summary}")
+        log_message = f"[队列] 任务 #{task_id} {task_result.summary}"
+        if result_status is ResultStatus.SUCCESS:
+            logger.success(log_message)
+        elif result_status in {ResultStatus.PARTIAL, ResultStatus.CANCELLED}:
+            logger.warning(log_message)
+        else:
+            logger.error(log_message)
         self._advance_or_finish(updated_task, task_result)
+        self.feedback_requested.emit(_terminal_notice(result_status, task_result.summary))
 
     def on_task_failed(self, task_id: int, error: str) -> None:
         """处理后台任务失败后的状态收敛。"""
@@ -315,7 +378,7 @@ class ExecutionQueueController(QObject):
         if isinstance(task.progress_detail, ExecutionTaskProgress):
             failed_progress_detail = replace(task.progress_detail, message=error)
         progress_total = max(task.progress_total, 1)
-        progress_current = min(task.progress_current, progress_total)
+        progress_current = min(task.progress_current, progress_total - 1)
         updated_task = self.update_task(
             task_id,
             status=TASK_STATUS_FAILED,
@@ -328,10 +391,22 @@ class ExecutionQueueController(QObject):
         )
         self._after_task_stopped(task_id)
         logger.error(f"[队列] 任务 #{task_id} 执行失败：{error}")
-        self._advance_or_finish(
-            updated_task,
-            ExecutionTaskResult(completed_steps=(), summary=error, duration_seconds=0.0),
+        failed_result = ExecutionTaskResult(
+            completed_steps=(),
+            summary=error,
+            duration_seconds=0.0,
+            run_result=RunResult(
+                (
+                    StageResult(
+                        "run",
+                        status=ResultStatus.FAILED,
+                        error_type="WorkerError",
+                        error_message=error,
+                    ),
+                )
+            ),
         )
+        self._advance_or_finish(updated_task, failed_result)
         self.feedback_requested.emit(GuiNotice(title="任务执行失败", content=error, level="error"))
 
     def cancel_active_task(self) -> bool:
@@ -349,7 +424,7 @@ class ExecutionQueueController(QObject):
             cancelled_progress_detail = replace(task.progress_detail, message=cancelled_message)
 
         progress_total = max(task.progress_total, 1)
-        progress_current = min(task.progress_current, progress_total)
+        progress_current = min(task.progress_current, progress_total - 1)
         updated_task = self.update_task(
             task.task_id,
             status=TASK_STATUS_CANCELLED,
@@ -365,7 +440,6 @@ class ExecutionQueueController(QObject):
         logger.warning(f"[队列] 任务 #{task.task_id} 已被强制结束")
         self.task_queue_busy_changed.emit(self.has_incomplete_tasks())
         self.progress_display_requested.emit(QueueProgressUpdate())
-        self.output_state_refresh_requested.emit(OutputStateRefreshRequest(requires_full_refresh=True))
         self.feedback_requested.emit(
             GuiNotice(
                 title="任务已取消",
@@ -392,7 +466,6 @@ class ExecutionQueueController(QObject):
             self.progress_display_requested.emit(QueueProgressUpdate())
             return
 
-        refresh_request = _build_output_state_refresh_request(task, task_result)
         if task.status == TASK_STATUS_COMPLETED:
             self.progress_display_requested.emit(
                 QueueProgressUpdate(
@@ -409,7 +482,9 @@ class ExecutionQueueController(QObject):
                     progress_total=task.progress_total,
                 )
             )
-        self.output_state_refresh_requested.emit(refresh_request)
+        refresh_request = _build_output_state_refresh_request(task, task_result)
+        if refresh_request is not None:
+            self.output_state_refresh_requested.emit(refresh_request)
 
     def _clear_single_task_history(self) -> None:
         """在单任务模式下清理已结束的历史任务快照。"""
@@ -542,6 +617,117 @@ class ExecutionQueueController(QObject):
         self.progress_display_requested.emit(QueueProgressUpdate())
         return "已清空当前队列。"
 
+    def simulate_terminal_result(self, status: str) -> str:
+        """用 typed result 构造一个可人工验收的调试终态。
+
+        Args:
+            status: `success`、`partial`、`failed` 或 `cancelled`。
+
+        Returns:
+            开发控制台使用的完成说明。
+
+        Raises:
+            ValueError: 状态无效或仍有真实后台任务时抛出。
+        """
+        if self.has_active_background_work():
+            raise ValueError("真实后台任务运行时不能注入调试终态。")
+        try:
+            result_status = ResultStatus(status)
+        except ValueError as exc:
+            raise ValueError("queue result 仅支持 success、partial、failed、cancelled。") from exc
+
+        self._queue_store.clear_tasks()
+        self._ignored_task_ids.clear()
+        self._stage_completion_notifications.clear()
+        self._draft_count = 1
+        task = self._queue_store.append_task(
+            QueuedExecutionTask(
+                task_id=1,
+                draft=ExecutionTaskDraft(
+                    source="dev_console",
+                    source_summary="受控终态人工验收 fixture",
+                    task_params=ExecutionTaskParamsSnapshot(
+                        champion_ids=(1, 2),
+                        run_extract=True,
+                        run_mapping=False,
+                    ),
+                ),
+                summary=f"受控 {result_status.value} 终态",
+                status=TASK_STATUS_RUNNING,
+                started_at=datetime.now(),
+                progress_current=1,
+                progress_total=2,
+                progress_message="受控 fixture 正在收口…",
+                progress_detail=ExecutionTaskProgress(
+                    stage_key="extract",
+                    stage_label="音频解包",
+                    entity_scope_label="英雄",
+                    current=1,
+                    total=2,
+                    message="受控 fixture 正在收口…",
+                ),
+            )
+        )
+        self._active_task_id = task.task_id
+        self.task_running_changed.emit(True)
+        self.task_queue_busy_changed.emit(True)
+        self.progress_display_requested.emit(QueueProgressUpdate())
+
+        artifact = "debug-fixture/audios/champion-1/sample.wem"
+        if result_status is ResultStatus.SUCCESS:
+            stage_result = StageResult.from_entities(
+                "extract",
+                (EntityResult("champion", 1, ResultStatus.SUCCESS, artifacts=(artifact,)),),
+            )
+            summary = "已完成：音频解包（受控调试 fixture）"
+        elif result_status is ResultStatus.PARTIAL:
+            stage_result = StageResult.from_entities(
+                "extract",
+                (
+                    EntityResult("champion", 1, ResultStatus.SUCCESS, artifacts=(artifact,)),
+                    EntityResult(
+                        "champion",
+                        2,
+                        ResultStatus.FAILED,
+                        error_type="ControlledFailure",
+                        error_message="受控实体失败",
+                    ),
+                ),
+            )
+            summary = "部分完成：成功 1，失败 1；英雄 1 的产物应触发有界刷新（受控调试 fixture）"
+        elif result_status is ResultStatus.FAILED:
+            stage_result = StageResult.from_entities(
+                "extract",
+                (
+                    EntityResult(
+                        "champion",
+                        1,
+                        ResultStatus.FAILED,
+                        error_type="ControlledFailure",
+                        error_message="受控阶段失败",
+                    ),
+                ),
+            )
+            summary = (
+                "执行失败：这是用于检查错误通知层级、非 100% 终态以及长错误摘要截断的受控故障；"
+                "没有确认落盘的产物，因此不应触发实体输出刷新。"
+            )
+        else:
+            stage_result = StageResult.cancelled("extract", note="受控取消")
+            summary = "已取消：受控 fixture 未启动后续阶段，也没有可靠产物快照"
+
+        completed_steps = ("音频解包",) if result_status in {ResultStatus.SUCCESS, ResultStatus.PARTIAL} else ()
+        self.on_task_finished(
+            task.task_id,
+            ExecutionTaskResult(
+                completed_steps=completed_steps,
+                summary=summary,
+                duration_seconds=0.1,
+                run_result=RunResult((stage_result,)),
+            ),
+        )
+        return f"已注入 {result_status.value} 受控终态。"
+
     def shutdown(self) -> None:
         """清理执行中心后台任务引用。"""
         self._stop_active_worker()
@@ -561,7 +747,10 @@ class ExecutionQueueController(QObject):
                 (
                     f"running={counts[TASK_STATUS_RUNNING]} "
                     f"waiting={counts[TASK_STATUS_WAITING]} "
-                    f"completed={counts[TASK_STATUS_COMPLETED]}"
+                    f"completed={counts[TASK_STATUS_COMPLETED]} "
+                    f"partial={counts[TASK_STATUS_PARTIAL]} "
+                    f"failed={counts[TASK_STATUS_FAILED]} "
+                    f"cancelled={counts[TASK_STATUS_CANCELLED]}"
                 ),
             ]
         )

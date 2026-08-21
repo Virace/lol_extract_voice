@@ -13,7 +13,7 @@ from loguru import logger
 
 from lol_audio_unpack.app.game_version import resolve_game_version
 from lol_audio_unpack.app.types import SourceMode
-from lol_audio_unpack.manager.files import needs_update, read_data, write_data
+from lol_audio_unpack.manager.files import copy_file_atomic, needs_update, read_data, write_data
 from lol_audio_unpack.manager.utils import build_metadata_payload
 from lol_audio_unpack.utils.common import format_region, load_json
 from lol_audio_unpack.utils.logging import performance_monitor
@@ -221,7 +221,6 @@ class DataUpdater:
             return text
         return text.replace("\u00a0", " ")
 
-    @logger.catch
     @performance_monitor(level="INFO")
     def check_and_update(self) -> Path:
         """检查游戏版本并更新数据"""
@@ -255,21 +254,35 @@ class DataUpdater:
                 logger.warning(f"开发模式，临时目录未删除: {run_temp_path}")
 
     def _check_languages(self) -> bool:
-        """检查现有数据文件是否包含所有请求的语言"""
+        """检查 canonical metadata 是否包含所有请求语言。
+
+        writer 不保存隐含基础语言 ``default``，因此合法空列表表示仅包含该基础语言。
+
+        Returns:
+            metadata 完整且覆盖全部请求语言时返回 ``True``。
+        """
         data = read_data(self.data_file_base, dev_mode=self._is_dev_mode())
         if not data:
             return False
 
-        existing_languages = set(data.get("languages", []))
+        metadata = data.get("metadata")
+        languages = metadata.get("languages") if isinstance(metadata, dict) else None
+        if not isinstance(languages, (list, tuple)) or any(
+            not isinstance(language, str) or not language.strip() for language in languages
+        ):
+            logger.warning("现有数据缺少有效的 metadata.languages，需要重新更新")
+            return False
+
+        existing_languages = {language.strip() for language in languages}
         existing_languages.add("default")
-        requested_languages = set(self.process_languages)
+        requested_languages = {language.strip() for language in self.process_languages}
 
         if requested_languages.issubset(existing_languages):
             return True
-        else:
-            missing_langs = requested_languages - existing_languages
-            logger.info(f"需要更新数据文件，缺少语言: {missing_langs}")
-            return False
+
+        missing_languages = sorted(requested_languages - existing_languages)
+        logger.info(f"需要更新数据文件，缺少语言: {missing_languages}")
+        return False
 
     @performance_monitor(level="DEBUG")
     def _process_data(self, temp_path: Path) -> None:
@@ -291,9 +304,8 @@ class DataUpdater:
         source_file = temp_data_file_base.with_suffix(f".{fmt}")
 
         if source_file.exists():
-            self.version_manifest_path.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source_file, self.data_file_base.with_suffix(f".{fmt}"))
-            logger.debug(f"已复制合并数据到: {self.data_file_base.with_suffix(f'.{fmt}')}")
+            target = copy_file_atomic(source_file, self.data_file_base.with_suffix(f".{fmt}"))
+            logger.debug(f"已复制合并数据到: {target}")
         else:
             raise FileNotFoundError(f"未能创建合并数据文件: {source_file}")
 
@@ -339,7 +351,6 @@ class DataUpdater:
         logger.trace(f"多语言JSON加载完成，共 {len(loaded_data)} 种语言")
         return loaded_data
 
-    @logger.catch
     @performance_monitor(level="DEBUG")
     def _merge_and_build_data(self, temp_dir: Path) -> None:
         """聚合所有数据处理和合并逻辑"""
@@ -348,8 +359,7 @@ class DataUpdater:
         summaries = self._load_language_json(base_path, "champion-summary.json")
 
         if "default" not in summaries:
-            logger.error("未找到default语言的英雄概要数据，无法继续处理")
-            return
+            raise FileNotFoundError("未找到 default 语言的英雄概要数据，无法构建核心 data artifact")
 
         final_champions = {}
         skin_bin_count = 0

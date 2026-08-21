@@ -9,6 +9,7 @@
   - `app/context.py`
   - `app/facade.py`
   - `app/remote.py`
+  - `app/results.py`
   - `app/types.py`
 - 配置与 INI
   - `config/schema.py`
@@ -55,6 +56,7 @@
 5. `cli.runtime.initialize_app(...)` 构建 `AppContext`
 6. `LolAudioUnpackApp` 执行 `update / extract / wav / mapping`
 7. remote 模式下，若存在 `extract` 或 `mapping`，改走 `LolAudioUnpackApp.run_workflow(...)`
+8. CLI 顶层从 `RunResult` 映射统一结论与退出码
 
 ### 2.2 Python 主链
 
@@ -83,6 +85,13 @@
 
 - 开发模式：优先写 `.yml`
 - 非开发模式：优先写 `.msgpack`
+
+写入会先在目标同目录完成序列化与文件同步，再以原子替换发布正式文件，并返回实际目标路径。
+序列化、同步或替换失败时抛出 `manager.errors.ArtifactWriteError`；已有正式文件保持原样，
+本轮临时文件会尽力清理。
+同一基础路径下的其他格式 sibling 不会被自动删除。
+该保证只覆盖通过 `manager.utils.write_data(...)` 发布的结构化 artifact；WEM、报告、远端下载
+payload 等其他输出仍遵循各自写入路径，不能据此推断为全项目原子写入。
 
 `manager.utils.read_data(...)` 会按优先级自动寻找可读文件。
 

@@ -5,12 +5,15 @@ import pytest
 
 from lol_audio_unpack import mapping as m_mapping
 from lol_audio_unpack import unpack as m_unpack
-from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths, SourceMode
+from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths, RemoteSnapshotConfig, SourceMode
+from lol_audio_unpack.manager.data_reader import DataReader
+from lol_audio_unpack.manager.files import write_data
 from lol_audio_unpack.mapping import batch as mapping_batch
 from lol_audio_unpack.mapping import session as mapping_session
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.unpack import batch as unpack_batch
 from lol_audio_unpack.unpack import bp_vo as unpack_bp_vo
+from lol_audio_unpack.unpack.stats import StageResult as UnpackStageResult
 from lol_audio_unpack.utils.path_constants import format_entity_folder_name, format_sub_entity_folder_name
 
 pytestmark = pytest.mark.unit
@@ -24,6 +27,7 @@ def _build_ctx(  # noqa: PLR0913
     with_bp_vo: bool = False,
     wwiser_path: Path | None = None,
     source_mode: SourceMode = SourceMode.LOCAL_PATH,
+    remote_version: str = "16.3",
 ) -> AppContext:
     game_path = tmp_path / "game"
     output_path = tmp_path / "output"
@@ -35,6 +39,15 @@ def _build_ctx(  # noqa: PLR0913
         with_bp_vo=with_bp_vo,
         wwiser_path=wwiser_path,
         source_mode=source_mode,
+        remote_snapshot=(
+            RemoteSnapshotConfig(
+                version=remote_version,
+                lcu_manifest_url="https://example.com/lcu.manifest",
+                game_manifest_url="https://example.com/game.manifest",
+            )
+            if source_mode is SourceMode.REMOTE_SNAPSHOT
+            else None
+        ),
     )
     app_paths = AppPaths(
         audio_path=output_path / "audios",
@@ -51,6 +64,40 @@ def _build_ctx(  # noqa: PLR0913
         game_lcu_path=game_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data",
     )
     return AppContext(config=app_config, paths=app_paths)
+
+
+def _write_reader_data(ctx: AppContext, *, version: str, alias: str) -> None:
+    """为 reader 生命周期测试写入最小结构化数据。"""
+    write_data(
+        {
+            "metadata": {"gameVersion": version, "languages": []},
+            "champions": {"1": {"id": 1, "alias": alias}},
+            "maps": {},
+        },
+        ctx.paths.manifest_path / version / "data",
+        dev_mode=ctx.config.dev_mode,
+    )
+
+
+def test_data_reader_instances_are_isolated_by_app_context(tmp_path: Path) -> None:
+    """同进程 reader 必须按构造时的 context 读取各自 artifact。"""
+    ctx_a = _build_ctx(tmp_path / "a", source_mode=SourceMode.REMOTE_SNAPSHOT, remote_version="16.3")
+    ctx_b = _build_ctx(tmp_path / "b", source_mode=SourceMode.REMOTE_SNAPSHOT, remote_version="16.4")
+    _write_reader_data(ctx_a, version="16.3", alias="ContextA")
+    _write_reader_data(ctx_b, version="16.4", alias="ContextB")
+
+    reader_a = DataReader(ctx_a)
+    second_reader_a = DataReader(ctx_a)
+    reader_b = DataReader(ctx_b)
+
+    assert reader_a is not second_reader_a
+    assert reader_a is not reader_b
+    assert reader_a.ctx is ctx_a
+    assert reader_b.ctx is ctx_b
+    assert reader_a.version_manifest_path == ctx_a.paths.manifest_path / "16.3"
+    assert reader_b.version_manifest_path == ctx_b.paths.manifest_path / "16.4"
+    assert reader_a.get_champion(1)["alias"] == "ContextA"
+    assert reader_b.get_champion(1)["alias"] == "ContextB"
 
 
 def test_audio_entity_from_champion_uses_ctx_region_and_game_path(tmp_path: Path) -> None:
@@ -221,8 +268,11 @@ def test_unpack_batch_reports_partial_failures(monkeypatch: pytest.MonkeyPatch, 
         opt=_opt_logger,
     )
 
-    def _fake_unpack_champion(*_args, **_kwargs) -> None:
-        return None
+    def _fake_unpack_champion(*_args, **_kwargs) -> SimpleNamespace:
+        return SimpleNamespace(
+            overall_result=UnpackStageResult.SUCCESS,
+            get_simple_summary=lambda: "英雄解包成功",
+        )
 
     def _fail_unpack_map(*_args, **_kwargs) -> None:
         raise RuntimeError("map boom")

@@ -8,6 +8,7 @@ from lol_audio_unpack.gui.task_models import (
     TASK_STATUS_CANCELLED,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
+    TASK_STATUS_PARTIAL,
     TASK_STATUS_RUNNING,
     TASK_STATUS_WAITING,
     QueuedExecutionTask,
@@ -40,6 +41,7 @@ class TaskQueueStore:
             TASK_STATUS_RUNNING: 0,
             TASK_STATUS_WAITING: 0,
             TASK_STATUS_COMPLETED: 0,
+            TASK_STATUS_PARTIAL: 0,
             TASK_STATUS_FAILED: 0,
             TASK_STATUS_CANCELLED: 0,
         }

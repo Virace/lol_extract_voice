@@ -1,8 +1,10 @@
-"""`app.facade` 中 WAV 进度标签桥接的定向测试。"""
+"""应用门面的阶段结果与目标分派定向测试。"""
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier, BrokenBarrierError
 from types import SimpleNamespace
 
 import pytest
@@ -10,7 +12,208 @@ import pytest
 import lol_audio_unpack.app.facade as facade_module
 from lol_audio_unpack.app.facade import LolAudioUnpackApp
 from lol_audio_unpack.app.resource_pack import ResourcePackWadRef, build_resource_pack_key
+from lol_audio_unpack.app.results import EntityResult, ResultStatus, StageResult
 from lol_audio_unpack.app.types import OperationOptions, SourceMode, WavOutputOptions
+from lol_audio_unpack.manager.errors import ArtifactWriteError
+
+
+def _success_result(stage: str, entity_type: str = "champion", entity_id: int | str = 1) -> StageResult:
+    return StageResult.from_entities(
+        stage,
+        (EntityResult(entity_type, entity_id, ResultStatus.SUCCESS),),
+    )
+
+
+def test_facade_lazily_reuses_and_explicitly_resets_its_reader(monkeypatch) -> None:
+    """同一 app 复用 reader，显式失效后才创建新实例。"""
+    expected_reader_count = 3
+    ctx = SimpleNamespace()
+    created: list[SimpleNamespace] = []
+
+    def reader_factory(*, ctx) -> SimpleNamespace:  # noqa: ANN001
+        reader = SimpleNamespace(ctx=ctx, sequence=len(created))
+        created.append(reader)
+        return reader
+
+    monkeypatch.setattr(facade_module, "DataReader", reader_factory)
+    app = LolAudioUnpackApp(ctx)
+    other_app = LolAudioUnpackApp(ctx)
+
+    assert created == []
+    first = app._get_reader()
+    assert app._get_reader() is first
+    assert other_app._get_reader() is not first
+
+    app._reset_reader()
+    assert app._get_reader() is not first
+    assert len(created) == expected_reader_count
+
+
+def test_facade_reader_lazy_initialization_is_thread_safe(monkeypatch) -> None:
+    """并发首次读取也只能构造并返回一个 app-owned reader。"""
+    ctx = SimpleNamespace()
+    start_barrier = Barrier(3)
+    constructor_barrier = Barrier(2)
+    created: list[SimpleNamespace] = []
+
+    def reader_factory(*, ctx) -> SimpleNamespace:  # noqa: ANN001
+        reader = SimpleNamespace(ctx=ctx)
+        created.append(reader)
+        try:
+            # 无锁实现会让两个构造都到达；有锁实现只等待到超时后完成一次构造。
+            constructor_barrier.wait(timeout=0.2)
+        except BrokenBarrierError:
+            pass
+        return reader
+
+    def get_reader(app: LolAudioUnpackApp):  # noqa: ANN202
+        start_barrier.wait()
+        return app._get_reader()
+
+    monkeypatch.setattr(facade_module, "DataReader", reader_factory)
+    app = LolAudioUnpackApp(ctx)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(get_reader, app) for _ in range(2)]
+        start_barrier.wait()
+        readers = [future.result() for future in futures]
+
+    assert readers[0] is readers[1]
+    assert created == [readers[0]]
+
+
+@pytest.mark.parametrize("error_type", [None, OSError, RuntimeError])
+def test_prepare_update_data_invalidates_reader_on_every_write_capable_exit(
+    monkeypatch,
+    error_type: type[Exception] | None,
+) -> None:
+    """直接 prepare 成功或异常退出后都不能继续复用旧 reader。"""
+    ctx = SimpleNamespace(
+        config=SimpleNamespace(source_mode=SourceMode.LOCAL_PATH),
+        runtime_cache={},
+    )
+    created: list[SimpleNamespace] = []
+
+    def reader_factory(*, ctx) -> SimpleNamespace:  # noqa: ANN001
+        reader = SimpleNamespace(ctx=ctx, sequence=len(created))
+        created.append(reader)
+        return reader
+
+    class FakeUpdater:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def check_and_update(self) -> None:
+            if error_type is not None:
+                raise error_type("data write failed")
+
+    monkeypatch.setattr(facade_module, "DataReader", reader_factory)
+    monkeypatch.setattr(facade_module, "DataUpdater", FakeUpdater)
+    app = LolAudioUnpackApp(ctx)
+    stale_reader = app._get_reader()
+
+    if error_type is not None:
+        with pytest.raises(error_type, match="data write failed"):
+            app.prepare_update_data()
+    else:
+        app.prepare_update_data()
+
+    assert app._get_reader() is not stale_reader
+
+
+@pytest.mark.parametrize(
+    ("error_type", "expected_status"),
+    [
+        (None, ResultStatus.SUCCESS),
+        (OSError, ResultStatus.FAILED),
+        (RuntimeError, None),
+    ],
+)
+def test_update_invalidates_reader_after_success_or_expected_failure(
+    monkeypatch,
+    error_type: type[Exception] | None,
+    expected_status: ResultStatus | None,
+) -> None:
+    """BIN 写入路径无论成功或转为 failed result 都要失效 reader。"""
+    ctx = SimpleNamespace(
+        config=SimpleNamespace(source_mode=SourceMode.LOCAL_PATH),
+        runtime_cache={},
+    )
+    created: list[SimpleNamespace] = []
+
+    def reader_factory(*, ctx) -> SimpleNamespace:  # noqa: ANN001
+        reader = SimpleNamespace(ctx=ctx, sequence=len(created))
+        created.append(reader)
+        return reader
+
+    class FakeUpdater:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def update(self, **_kwargs) -> None:
+            if error_type is not None:
+                raise error_type("banks write failed")
+
+    monkeypatch.setattr(facade_module, "DataReader", reader_factory)
+    monkeypatch.setattr(facade_module, "BinUpdater", FakeUpdater)
+    app = LolAudioUnpackApp(ctx)
+    monkeypatch.setattr(app, "prepare_update_data", lambda **_kwargs: None)
+    stale_reader = app._get_reader()
+
+    if error_type is RuntimeError:
+        with pytest.raises(RuntimeError, match="banks write failed"):
+            app.update(OperationOptions())
+    else:
+        result = app.update(OperationOptions())
+        assert result.status is expected_status
+
+    assert app._get_reader() is not stale_reader
+
+
+@pytest.mark.parametrize("error_type", [None, OSError, RuntimeError])
+def test_resource_pack_discovery_invalidates_reader_on_every_exit(
+    monkeypatch,
+    tmp_path: Path,
+    error_type: type[Exception] | None,
+) -> None:
+    """独立 discovery 写入成功或失败后都要丢弃可能过期的资源 cache。"""
+    game_root = tmp_path / "game"
+    wad_path = game_root / "Game" / "DATA" / "FINAL" / "TFTCommon.wad.client"
+    wad_path.parent.mkdir(parents=True)
+    wad_path.write_bytes(b"selected")
+    ref = ResourcePackWadRef.from_path(game_root, wad_path)
+    ctx = SimpleNamespace(config=SimpleNamespace(source_mode=SourceMode.LOCAL_PATH, game_path=game_root))
+    created: list[SimpleNamespace] = []
+    discovery_readers: list[SimpleNamespace] = []
+
+    def reader_factory(*, ctx) -> SimpleNamespace:  # noqa: ANN001
+        reader = SimpleNamespace(ctx=ctx, version="16.16", sequence=len(created))
+        created.append(reader)
+        return reader
+
+    class FakeDiscovery:
+        def __init__(self, _ctx, *, reader) -> None:  # noqa: ANN001
+            discovery_readers.append(reader)
+
+        def discover(self, _refs, *, version):  # noqa: ANN001
+            assert version == "16.16"
+            if error_type is not None:
+                raise error_type("resource write failed")
+            return SimpleNamespace(status="complete", packs=(), cost={"candidateEntries": 0, "payloadReads": 0})
+
+    monkeypatch.setattr(facade_module, "DataReader", reader_factory)
+    monkeypatch.setattr(facade_module, "ResourcePackDiscovery", FakeDiscovery)
+    app = LolAudioUnpackApp(ctx)
+    stale_reader = app._get_reader()
+
+    if error_type is not None:
+        with pytest.raises(error_type, match="resource write failed"):
+            app.discover_resource_packs(OperationOptions(resource_pack_wads=(ref,)))
+    else:
+        app.discover_resource_packs(OperationOptions(resource_pack_wads=(ref,)))
+
+    assert discovery_readers[0] is not stale_reader
+    assert app._get_reader() is not discovery_readers[0]
 
 
 def test_transcode_wav_passes_entity_display_labels_to_runtime(
@@ -24,7 +227,7 @@ def test_transcode_wav_passes_entity_display_labels_to_runtime(
     audio_root.mkdir(parents=True, exist_ok=True)
     captured: dict[str, object] = {}
 
-    monkeypatch.setattr(app, "_create_reader", lambda: reader)
+    monkeypatch.setattr(app, "_get_reader", lambda: reader)
     monkeypatch.setattr(
         app,
         "_build_entity_data",
@@ -37,7 +240,7 @@ def test_transcode_wav_passes_entity_display_labels_to_runtime(
         lambda **kwargs: captured.update(kwargs) or {"status": "success"},
     )
 
-    app.transcode_wav(
+    result = app.transcode_wav(
         OperationOptions(
             champion_ids=(103,),
             wav_output=WavOutputOptions(enabled=True),
@@ -49,6 +252,67 @@ def test_transcode_wav_passes_entity_display_labels_to_runtime(
     assert len(audio_targets) == 1
     assert audio_targets[0].root_path == audio_root
     assert audio_targets[0].display_label == "阿狸·九尾妖狐"
+    assert result.status is ResultStatus.SUCCESS
+    assert result.entities == ()
+
+
+def test_transcode_wav_records_wav_root_when_files_are_processed(monkeypatch, tmp_path: Path) -> None:
+    """WAV runtime 处理过文件后，门面结果应提供稳定的批次产物证据。"""
+    app = LolAudioUnpackApp(SimpleNamespace())
+    wav_root = tmp_path / "wavs" / "15.8"
+    monkeypatch.setattr(app, "_get_reader", lambda: SimpleNamespace(version="15.8"))
+    monkeypatch.setattr(
+        facade_module,
+        "run_tree",
+        lambda **_kwargs: {
+            "status": "success",
+            "processed_file_count": 2,
+            "failed_file_count": 0,
+            "wav_root": str(wav_root),
+        },
+    )
+
+    result = app.transcode_wav(OperationOptions(wav_output=WavOutputOptions(enabled=True)))
+
+    assert result.status is ResultStatus.SUCCESS
+    assert result.entities == (EntityResult("wav", "batch", ResultStatus.SUCCESS, artifacts=(str(wav_root),)),)
+
+
+@pytest.mark.parametrize(
+    ("processed_count", "failed_count", "expected"),
+    [
+        (2, 1, ResultStatus.PARTIAL),
+        (0, 1, ResultStatus.FAILED),
+    ],
+)
+def test_transcode_wav_maps_runtime_warning_to_stage_result(
+    monkeypatch,
+    tmp_path: Path,
+    processed_count: int,
+    failed_count: int,
+    expected: ResultStatus,
+) -> None:
+    app = LolAudioUnpackApp(SimpleNamespace())
+    monkeypatch.setattr(app, "_get_reader", lambda: SimpleNamespace(version="15.8"))
+    monkeypatch.setattr(
+        facade_module,
+        "run_tree",
+        lambda **_kwargs: {
+            "status": "warning",
+            "processed_file_count": processed_count,
+            "failed_file_count": failed_count,
+            "wav_root": str(tmp_path / "wavs" / "15.8"),
+        },
+    )
+
+    result = app.transcode_wav(OperationOptions(wav_output=WavOutputOptions(enabled=True)))
+
+    assert result.status is expected
+    if processed_count:
+        assert result.entities[0].status is ResultStatus.PARTIAL
+        assert result.entities[0].artifacts == (str(tmp_path / "wavs" / "15.8"),)
+    else:
+        assert result.entities == ()
 
 
 def test_extract_runs_explicit_champions_and_maps_without_dropping_either_target(monkeypatch) -> None:
@@ -65,19 +329,25 @@ def test_extract_runs_explicit_champions_and_maps_without_dropping_either_target
     app = LolAudioUnpackApp(ctx)
     calls: list[tuple[str, list[int]]] = []
     reader = SimpleNamespace()
-    monkeypatch.setattr(app, "_create_reader", lambda: reader)
+    monkeypatch.setattr(app, "_get_reader", lambda: reader)
     monkeypatch.setattr(
         facade_module,
         "unpack_champions",
-        lambda **kwargs: calls.append(("champions", kwargs["champion_ids"])),
+        lambda **kwargs: calls.append(("champions", kwargs["champion_ids"])) or _success_result("extract"),
     )
     monkeypatch.setattr(
         facade_module,
         "unpack_maps",
-        lambda **kwargs: calls.append(("maps", kwargs["map_ids"])),
+        lambda **kwargs: (
+            calls.append(("maps", kwargs["map_ids"]))
+            or StageResult.from_entities(
+                "extract",
+                (EntityResult.from_error("map", 11, RuntimeError("map failed")),),
+            )
+        ),
     )
 
-    app.extract(
+    result = app.extract(
         OperationOptions(
             champion_ids=(1,),
             map_ids=(11,),
@@ -86,6 +356,8 @@ def test_extract_runs_explicit_champions_and_maps_without_dropping_either_target
     )
 
     assert calls == [("champions", [1, 66600]), ("maps", [11])]
+    assert result.status is ResultStatus.PARTIAL
+    assert tuple(entity.entity_id for entity in result.entities) == (1, 11)
 
 
 def test_mapping_runs_explicit_champions_and_maps_without_dropping_either_target(monkeypatch) -> None:
@@ -101,22 +373,24 @@ def test_mapping_runs_explicit_champions_and_maps_without_dropping_either_target
     calls: list[tuple[str, list[int]]] = []
     reader = SimpleNamespace()
     backend = "native"
-    monkeypatch.setattr(app, "_create_reader", lambda: reader)
+    monkeypatch.setattr(app, "_get_reader", lambda: reader)
     monkeypatch.setattr(app, "_describe_mapping_backend", lambda: backend)
     monkeypatch.setattr(
         facade_module,
         "build_champions",
-        lambda **kwargs: calls.append(("champions", kwargs["champion_ids"])),
+        lambda **kwargs: calls.append(("champions", kwargs["champion_ids"])) or _success_result("mapping"),
     )
     monkeypatch.setattr(
         facade_module,
         "build_maps",
-        lambda **kwargs: calls.append(("maps", kwargs["map_ids"])),
+        lambda **kwargs: calls.append(("maps", kwargs["map_ids"])) or _success_result("mapping", "map", 11),
     )
 
-    app.mapping(OperationOptions(champion_ids=(1,), map_ids=(11,)))
+    result = app.mapping(OperationOptions(champion_ids=(1,), map_ids=(11,)))
 
     assert calls == [("champions", [1]), ("maps", [11])]
+    assert result.status is ResultStatus.SUCCESS
+    assert tuple(entity.entity_id for entity in result.entities) == (1, 11)
 
 
 def test_facade_rejects_remote_special_targets_before_resource_preparation() -> None:
@@ -145,7 +419,7 @@ def test_update_with_resource_pack_wad_skips_default_entity_update_and_runs_disc
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(app, "prepare_update_data", lambda **_kwargs: None)
-    monkeypatch.setattr(app, "_create_reader", lambda: SimpleNamespace(version="16.16"))
+    monkeypatch.setattr(app, "_get_reader", lambda: SimpleNamespace(version="16.16"))
     monkeypatch.setattr(facade_module, "BinUpdater", lambda **_kwargs: pytest.fail("不得执行默认 BinUpdater.update"))
 
     class _Discovery:
@@ -159,9 +433,21 @@ def test_update_with_resource_pack_wad_skips_default_entity_update_and_runs_disc
 
     monkeypatch.setattr(facade_module, "ResourcePackDiscovery", _Discovery)
 
-    app.update(OperationOptions(resource_pack_wads=(ref,)))
+    result = app.update(OperationOptions(resource_pack_wads=(ref,)))
 
     assert captured == {"refs": (ref,), "version": "16.16"}
+    assert result.status is ResultStatus.SUCCESS
+
+
+def test_update_maps_artifact_write_failure_to_failed_stage(monkeypatch, tmp_path: Path) -> None:
+    app = LolAudioUnpackApp(SimpleNamespace(config=SimpleNamespace(source_mode=SourceMode.LOCAL_PATH)))
+    error = ArtifactWriteError(tmp_path / "data.msgpack", "replace")
+    monkeypatch.setattr(app, "prepare_update_data", lambda **_kwargs: (_ for _ in ()).throw(error))
+
+    result = app.update(OperationOptions())
+
+    assert result.status is ResultStatus.FAILED
+    assert result.error_type == "ArtifactWriteError"
 
 
 def test_update_runs_explicit_entity_update_and_resource_pack_discovery_together(
@@ -182,7 +468,7 @@ def test_update_runs_explicit_entity_update_and_resource_pack_discovery_together
     calls: list[str] = []
 
     monkeypatch.setattr(app, "prepare_update_data", lambda **_kwargs: None)
-    monkeypatch.setattr(app, "_create_reader", lambda: SimpleNamespace(version="16.16"))
+    monkeypatch.setattr(app, "_get_reader", lambda: SimpleNamespace(version="16.16"))
 
     class _Updater:
         def __init__(self, **_kwargs):
@@ -240,7 +526,7 @@ def test_facade_revalidates_resource_pack_wad_before_extract(monkeypatch, tmp_pa
         config=SimpleNamespace(source_mode=SourceMode.LOCAL_PATH, game_path=game_root),
     )
     app = LolAudioUnpackApp(ctx)
-    monkeypatch.setattr(app, "_create_reader", lambda: pytest.fail("stale WAD 不得进入 consumer"))
+    monkeypatch.setattr(app, "_get_reader", lambda: pytest.fail("stale WAD 不得进入 consumer"))
 
     with pytest.raises(ValueError, match="已变化"):
         app.extract(OperationOptions(resource_pack_wads=(ref,)))
@@ -260,8 +546,12 @@ def test_extract_resource_pack_only_uses_special_consumer_without_all_fallback(m
     )
     app = LolAudioUnpackApp(ctx)
     calls: list[list[str]] = []
-    monkeypatch.setattr(app, "_create_reader", SimpleNamespace)
-    monkeypatch.setattr(facade_module, "unpack_resource_packs", lambda **kwargs: calls.append(kwargs["keys"]))
+    monkeypatch.setattr(app, "_get_reader", SimpleNamespace)
+    monkeypatch.setattr(
+        facade_module,
+        "unpack_resource_packs",
+        lambda **kwargs: calls.append(kwargs["keys"]) or _success_result("extract", "resource_pack", kwargs["keys"][0]),
+    )
     monkeypatch.setattr(facade_module, "unpack_all", lambda **_kwargs: pytest.fail("不得回退 unpack_all"))
 
     app.extract(OperationOptions(special_targets=(key,)))
@@ -283,17 +573,24 @@ def test_extract_dispatches_champion_map_and_resource_pack_together(monkeypatch)
     )
     app = LolAudioUnpackApp(ctx)
     calls: list[tuple[str, list[object]]] = []
-    monkeypatch.setattr(app, "_create_reader", SimpleNamespace)
+    monkeypatch.setattr(app, "_get_reader", SimpleNamespace)
     monkeypatch.setattr(
         facade_module,
         "unpack_champions",
-        lambda **kwargs: calls.append(("champions", kwargs["champion_ids"])),
+        lambda **kwargs: calls.append(("champions", kwargs["champion_ids"])) or _success_result("extract"),
     )
-    monkeypatch.setattr(facade_module, "unpack_maps", lambda **kwargs: calls.append(("maps", kwargs["map_ids"])))
+    monkeypatch.setattr(
+        facade_module,
+        "unpack_maps",
+        lambda **kwargs: calls.append(("maps", kwargs["map_ids"])) or _success_result("extract", "map", 11),
+    )
     monkeypatch.setattr(
         facade_module,
         "unpack_resource_packs",
-        lambda **kwargs: calls.append(("resource_packs", kwargs["keys"])),
+        lambda **kwargs: (
+            calls.append(("resource_packs", kwargs["keys"]))
+            or _success_result("extract", "resource_pack", kwargs["keys"][0])
+        ),
     )
 
     app.extract(OperationOptions(champion_ids=(1,), map_ids=(11,), special_targets=(key,)))
@@ -310,9 +607,13 @@ def test_mapping_resource_pack_only_uses_special_consumer_without_all_fallback(m
     )
     app = LolAudioUnpackApp(ctx)
     calls: list[list[str]] = []
-    monkeypatch.setattr(app, "_create_reader", SimpleNamespace)
+    monkeypatch.setattr(app, "_get_reader", SimpleNamespace)
     monkeypatch.setattr(app, "_describe_mapping_backend", lambda: "native")
-    monkeypatch.setattr(facade_module, "build_resource_packs", lambda **kwargs: calls.append(kwargs["keys"]))
+    monkeypatch.setattr(
+        facade_module,
+        "build_resource_packs",
+        lambda **kwargs: calls.append(kwargs["keys"]) or _success_result("mapping", "resource_pack", kwargs["keys"][0]),
+    )
     monkeypatch.setattr(facade_module, "build_all", lambda **_kwargs: pytest.fail("不得回退 build_all"))
 
     app.mapping(OperationOptions(special_targets=(key,)))
@@ -329,18 +630,25 @@ def test_mapping_dispatches_champion_map_and_resource_pack_together(monkeypatch)
     )
     app = LolAudioUnpackApp(ctx)
     calls: list[tuple[str, list[object]]] = []
-    monkeypatch.setattr(app, "_create_reader", SimpleNamespace)
+    monkeypatch.setattr(app, "_get_reader", SimpleNamespace)
     monkeypatch.setattr(app, "_describe_mapping_backend", lambda: "native")
     monkeypatch.setattr(
         facade_module,
         "build_champions",
-        lambda **kwargs: calls.append(("champions", kwargs["champion_ids"])),
+        lambda **kwargs: calls.append(("champions", kwargs["champion_ids"])) or _success_result("mapping"),
     )
-    monkeypatch.setattr(facade_module, "build_maps", lambda **kwargs: calls.append(("maps", kwargs["map_ids"])))
+    monkeypatch.setattr(
+        facade_module,
+        "build_maps",
+        lambda **kwargs: calls.append(("maps", kwargs["map_ids"])) or _success_result("mapping", "map", 11),
+    )
     monkeypatch.setattr(
         facade_module,
         "build_resource_packs",
-        lambda **kwargs: calls.append(("resource_packs", kwargs["keys"])),
+        lambda **kwargs: (
+            calls.append(("resource_packs", kwargs["keys"]))
+            or _success_result("mapping", "resource_pack", kwargs["keys"][0])
+        ),
     )
 
     app.mapping(OperationOptions(champion_ids=(1,), map_ids=(11,), special_targets=(key,)))

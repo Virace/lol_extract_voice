@@ -13,6 +13,7 @@ from lol_audio_unpack.gui.components.global_progress_strip import (
 )
 
 RESUMED_PROGRESS_CURRENT = 2100
+HALF_PROGRESS = 0.5
 
 
 def _running_state() -> GlobalProgressStripState:
@@ -51,6 +52,27 @@ def test_progress_host_waits_before_hiding_after_completion(qtbot) -> None:
     qtbot.wait(300)
 
     assert host.current_state().visible is True
+    qtbot.waitUntil(lambda: not host.current_state().visible, timeout=2200)
+
+
+def test_progress_host_previews_terminal_progress_before_delayed_hide(qtbot) -> None:
+    """带摘要的隐藏态应先更新条带，再按既有延时自动隐藏。"""
+    _parent, host = _show_host(qtbot)
+    host.set_state(_running_state(), animate=False)
+    terminal_state = GlobalProgressStripState(
+        visible=False,
+        title_text="任务已结束",
+        detail_text="部分完成：成功 1，失败 1",
+        progress_current=1,
+        progress_total=2,
+        status_text="1/2",
+    )
+
+    host.set_state(terminal_state, animate=False)
+    qtbot.wait(100)
+
+    assert host.current_state().visible is True
+    assert host.strip_widget().target_progress_value() == HALF_PROGRESS
     qtbot.waitUntil(lambda: not host.current_state().visible, timeout=2200)
 
 

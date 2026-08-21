@@ -27,13 +27,17 @@ from lol_audio_unpack.app import (
     AppContext,
     AppContextValidationError,
     AppPaths,
+    EntityResult,
     LolAudioUnpackApp,
     OperationOptions,
     RemoteEntityCallbackPayload,
     RemoteEntityWorkItem,
     RemoteSnapshotConfig,
+    ResultStatus,
     ResourcePackWadRef,
+    RunResult,
     SourceMode,
+    StageResult,
     WavOutputOptions,
     create_app_context,
 )
@@ -73,6 +77,12 @@ def create_app_context(
   - 固定快照配置，包含 `version`、`lcu_manifest_url`、`game_manifest_url`
 - `SourceMode`
   - 当前支持 `local_path` 与 `remote_snapshot`
+- `ResultStatus` / `EntityResult` / `StageResult` / `RunResult`
+  - 统一描述实体、阶段和整轮工作流的 `success`、`partial`、`failed`、`cancelled` 事实；
+    状态与计数从子结果派生，异常对象和 traceback 不进入公共结果；`EntityResult.artifacts`
+    仅保存本轮已确认写入的真实产物路径。extract 包含 WEM 与大厅音频路径，mapping 包含最终
+    mapping 文件；实体落盘后再失败时仍保留已有路径。WAV 有处理结果时使用稳定的 `wav:batch`
+    实体指向 `wav_root`
 
 `special_targets` 可包含 GUI 特殊内容的 `champion:<id>`，也可保留已发现的
 `resource_pack:<wad-component>:<namespace-component>` key。应用门面只把前者归约为英雄数值 ID，
@@ -84,6 +94,15 @@ pack-only 选择不会回退到全量 champion/map 流程，混合选择会分�
 ### 2.3 `LolAudioUnpackApp`
 
 `LolAudioUnpackApp` 是应用编排入口，负责 update / extract / wav / mapping 与 remote 单位驱动。
+
+`update(...)`、`extract(...)`、`transcode_wav(...)`、`mapping(...)` 返回 `StageResult`；
+`run_workflow(...)` 返回 `RunResult`。调用方应检查返回状态，不能再以“没有抛异常”或返回 `None`
+推断成功。
+
+已知共享数据、下载和持久化错误会在常规阶段边界转换为 failed/partial 结果；参数与稳定合同错误
+（例如不支持的 target）仍可能抛出 `ValueError`，未被阶段边界声明为可恢复的编程错误也会继续
+上抛。remote `run_workflow(...)` 会把全局 update 的普通异常和单实体重试耗尽结果化，但
+`KeyboardInterrupt` / `SystemExit` 保持原样传播。
 
 `update(OperationOptions(resource_pack_wads=(ref,)))` 在准备共享数据后只扫描 selected WAD，
 不会因为英雄/地图 ID 为空而触发默认全量 `BinUpdater.update`。显式英雄或地图 target 与 selected WAD
@@ -110,7 +129,10 @@ pack-only 选择不会回退到全量 champion/map 流程，混合选择会分�
 - 可选先执行一次全局 `update`
 - 再按实体顺序执行 `extract` / `mapping`
 - 每个实体完成后立即清理远端资源
+- 单实体失败会保留为 failed 结果并继续后续实体
+- cleanup 失败会追加为独立失败阶段，不覆盖原始错误
 - 可挂接 `on_entity_complete` 与 `progress_callback`
+- `on_entity_complete` 只使用 `EntityResult.artifacts` 解析本轮真实产物，不从已有目录反推成功
 
 ## 3. 其他公开分域包
 
@@ -209,7 +231,11 @@ pack-only 选择不会回退到全量 champion/map 流程，混合选择会分�
   sub-entity，完整 key 保留在 payload/诊断中；输出、mapping hash 与 report 路径使用该 key 的
   Windows-safe component。
 
-这些类都要求显式传入 `ctx: AppContext`。
+这些类都要求显式传入 `ctx: AppContext`。`DataReader(ctx)` 每次构造都会得到独立实例，不存在
+进程级单例或跨 context registry。`LolAudioUnpackApp` 会为自己的 context 懒加载并复用一个 reader；
+`prepare_update_data()`、`update()` 或 selected-WAD discovery 可能改写结构化 artifact 后，门面会使
+该 reader 整体失效，下一次读取重新加载。直接使用 `DataReader` 的调用方若自行写入 artifact，也应
+丢弃旧实例并重新构造。
 
 ## 4. 快速示例
 
@@ -230,9 +256,9 @@ ctx = setup_app(
 )
 app = LolAudioUnpackApp(ctx)
 
-app.update(OperationOptions(force_update=False), target="all")
-app.extract(OperationOptions(max_workers=8, champion_ids=(1, 103)), include_maps=False)
-app.mapping(OperationOptions(max_workers=8, integrate_data=True), include_maps=False)
+update_result = app.update(OperationOptions(force_update=False), target="all")
+extract_result = app.extract(OperationOptions(max_workers=8, champion_ids=(1, 103)), include_maps=False)
+mapping_result = app.mapping(OperationOptions(max_workers=8, integrate_data=True), include_maps=False)
 ```
 
 ### 4.2 remote 模式
@@ -246,12 +272,11 @@ ctx = create_app_context(
         "OUTPUT_PATH": "./out",
         "GAME_REGION": "zh_CN",
         "REMOTE_LIVE_REGION": "EUW",
-        "WWISER_PATH": "./wwiser.pyz",
     }
 )
 app = LolAudioUnpackApp(ctx)
 
-app.run_workflow(
+run_result = app.run_workflow(
     update_options=OperationOptions(champion_ids=(1, 103)),
     extract_options=OperationOptions(champion_ids=(1, 103), max_workers=4),
     mapping_options=OperationOptions(champion_ids=(1, 103), max_workers=1, integrate_data=True),
@@ -259,6 +284,9 @@ app.run_workflow(
     mapping_include_champions=True,
 )
 ```
+
+`run_result.status` 是 remote 整轮工作的权威结论；`run_result.stages` 保留 update、extract、mapping
+以及失败 cleanup 的执行顺序与明细。
 
 ### 4.3 直接复用分域包
 
@@ -272,9 +300,10 @@ ctx = create_app_context(
         "GAME_PATH": "/path/to/League of Legends",
         "OUTPUT_PATH": "./output",
         "GAME_REGION": "zh_CN",
-        "WWISER_PATH": "./wwiser.pyz",
     }
 )
 reader = DataReader(ctx=ctx)
 payload = build_champion(1, reader, ctx=ctx)
 ```
+
+上述 mapping 默认使用 NativeHIRC；只有显式选择 WwiserHIRC 回退路径时才配置 `WWISER_PATH`。

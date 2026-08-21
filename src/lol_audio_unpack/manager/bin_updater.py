@@ -116,7 +116,6 @@ class BinUpdater:
         }
         return {**data, "champions": visible}
 
-    @logger.catch
     @performance_monitor(level="INFO")
     def update(
         self,

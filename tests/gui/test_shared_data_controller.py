@@ -101,7 +101,6 @@ def _build_controller(  # noqa: PLR0913
         entity_data_loader_cls=entity_data_loader_cls,
         start_worker_fn=start_worker_fn,
         prepare_shared_entity_data_fn=lambda _overrides: None,
-        reset_data_reader_singleton_fn=lambda: None,
         app_context_block_reason_fn=app_context_block_reason_fn,
     )
 
@@ -372,44 +371,31 @@ def test_shared_data_controller_on_shared_context_build_timeout_resets_state_and
     ]
 
 
-def test_shared_data_controller_reconfigures_logging_only_when_scan_signature_changes() -> None:
+def test_shared_data_controller_reloads_for_reader_and_scan_signature_changes() -> None:
+    """读取上下文或输出扫描配置变化时都应触发既有重载。"""
     cfg = _FakeConfig()
-    controller = SharedDataController(
-        get_config=lambda: cfg,
-        has_incomplete_tasks=lambda: False,
-        create_app_context_fn=lambda **_kwargs: object(),
-        data_load_worker_cls=object,
-        task_worker_cls=object,
-        entity_data_loader_cls=object,
-        start_worker_fn=lambda _worker: None,
-        prepare_shared_entity_data_fn=lambda _overrides: None,
-        reset_data_reader_singleton_fn=lambda: None,
-        app_context_block_reason_fn=lambda _cfg: None,
-    )
-    controller.reader_signature = (
-        cfg.to_app_context_settings()["SOURCE_MODE"],
-        cfg.to_app_context_settings()["GAME_PATH"],
-        cfg.to_app_context_settings()["GAME_REGION"],
-        cfg.to_app_context_settings()["REMOTE_LIVE_REGION"],
-        cfg.to_app_context_settings()["REMOTE_VERSION"],
-        cfg.to_app_context_settings()["REMOTE_LCU_MANIFEST_URL"],
-        cfg.to_app_context_settings()["REMOTE_GAME_MANIFEST_URL"],
-    )
-    controller.scan_signature = (
-        cfg.to_app_context_settings()["OUTPUT_PATH"],
-        cfg.to_app_context_settings()["GROUP_BY_TYPE"],
-    )
+    controller = _build_controller()
+    controller.reader_signature = build_shared_entity_reader_signature(cfg)
+    controller.scan_signature = (cfg.output_path, cfg.group_by_type)
     reconfigure_payloads = []
+    reload_calls = []
     controller.reconfigure_runtime_logging_requested.connect(reconfigure_payloads.append)
+    controller.request_shared_data_reload = lambda **kwargs: reload_calls.append(kwargs)
 
-    controller.on_context_input_changed()
-    assert reconfigure_payloads == []
+    cfg.game_path = "new-game"
+    controller.on_context_input_changed(cfg)
+    controller.flush_pending_runtime_entity_refresh()
 
     cfg.output_path = "new-output"
-    controller.on_context_input_changed()
+    controller.on_context_input_changed(cfg)
+    controller.flush_pending_runtime_entity_refresh()
 
     assert len(reconfigure_payloads) == 1
     assert reconfigure_payloads[0].log_dir == Path("logs/runtime")
+    assert reload_calls == [
+        {"show_notice": False, "allow_auto_prepare": True},
+        {"show_notice": False, "allow_auto_prepare": False},
+    ]
 
 
 def test_shared_data_controller_shutdown_background_work_stops_short_workers() -> None:

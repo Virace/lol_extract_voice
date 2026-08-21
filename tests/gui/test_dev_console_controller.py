@@ -21,6 +21,7 @@ def test_dev_console_controller_help_lists_available_commands() -> None:
         "queue fill <n>",
         "queue clear",
         "queue inspect",
+        "queue result <success|partial|failed|cancelled>",
     )
 
 
@@ -29,11 +30,13 @@ def test_dev_console_controller_dispatches_queue_actions() -> None:
         queue_fill=lambda count: f"fill {count}",
         queue_clear=lambda: "clear",
         queue_inspect=lambda: "first\nsecond",
+        queue_result=lambda status: f"result {status}",
     )
 
     assert controller.run_command("queue fill 3") == ("fill 3",)
     assert controller.run_command("queue clear") == ("clear",)
     assert controller.run_command("queue inspect") == ("first", "second")
+    assert controller.run_command("queue result partial") == ("result partial",)
 
 
 def test_dev_console_controller_rejects_unknown_command() -> None:

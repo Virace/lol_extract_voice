@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 from PySide6.QtCore import (
@@ -349,16 +349,16 @@ class GlobalProgressStrip(QWidget):
 
         action_layout.addWidget(self._pause_button)
         action_layout.addWidget(self._stop_button)
-        self._content_layout.addWidget(self._action_widget, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self._content_layout.addWidget(
+            self._action_widget, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
 
         self._progress_animation = QPropertyAnimation(self, b"displayProgress", self)
         self._progress_animation.setDuration(PROGRESS_STRIP_ANIMATION_MS)
         self._progress_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         self._sweep_animation = QPropertyAnimation(self, b"sweepPhase", self)
-        self._sweep_animation.setDuration(
-            DEFAULT_PROGRESS_SWEEP_ANIMATION_MS + DEFAULT_PROGRESS_SWEEP_IDLE_DELAY_MS
-        )
+        self._sweep_animation.setDuration(DEFAULT_PROGRESS_SWEEP_ANIMATION_MS + DEFAULT_PROGRESS_SWEEP_IDLE_DELAY_MS)
         self._sweep_animation.setStartValue(0.0)
         self._sweep_animation.setEndValue(1.0)
         self._sweep_animation.setLoopCount(-1)
@@ -475,9 +475,7 @@ class GlobalProgressStrip(QWidget):
         self._pause_button.setToolTip("继续" if state.paused else "暂停")
         self._configured_sweep_duration_ms = max(800, state.sweep_duration_ms)
         self._configured_sweep_idle_delay_ms = max(0, state.sweep_idle_delay_ms)
-        self._sweep_animation.setDuration(
-            self._configured_sweep_duration_ms + self._configured_sweep_idle_delay_ms
-        )
+        self._sweep_animation.setDuration(self._configured_sweep_duration_ms + self._configured_sweep_idle_delay_ms)
 
         self._progress_animation.stop()
         if not animate or (not was_visible and state.visible):
@@ -629,7 +627,9 @@ class GlobalProgressStrip(QWidget):
         if action_rect.isNull():
             return track_rect
         progress_right = max(track_rect.left(), action_rect.left() - PROGRESS_ACTION_GAP)
-        return QRectF(track_rect.left(), track_rect.top(), max(0.0, progress_right - track_rect.left()), track_rect.height())
+        return QRectF(
+            track_rect.left(), track_rect.top(), max(0.0, progress_right - track_rect.left()), track_rect.height()
+        )
 
     def _glow_rect(self, *, fill_rect: QRectF, phase: float) -> QRectF:
         """返回指定 phase 下的 glow sweep 矩形。"""
@@ -761,6 +761,8 @@ class GlobalProgressStripHost(QWidget):
 
         # 从可见态切到隐藏态时，保留当前进度条片刻，避免完成瞬间闪退。
         if self._state.visible and self._host_height > 0:
+            if state.title_text or state.detail_text or state.status_text:
+                self._strip.set_state(replace(state, visible=True), animate=animate)
             self._pending_hide_state = state
             self._pending_hide_animate = animate
             self._hide_timer.stop()
@@ -803,11 +805,7 @@ class GlobalProgressStripHost(QWidget):
 
     def _target_host_height(self) -> int:
         """返回显示态下宿主应占用的总高度。"""
-        return (
-            PROGRESS_STRIP_HOST_TOP_MARGIN
-            + PROGRESS_STRIP_HEIGHT
-            + PROGRESS_STRIP_HOST_BOTTOM_MARGIN
-        )
+        return PROGRESS_STRIP_HOST_TOP_MARGIN + PROGRESS_STRIP_HEIGHT + PROGRESS_STRIP_HOST_BOTTOM_MARGIN
 
     def _sync_strip_visibility(self, *, force: bool = False) -> None:
         """根据当前高度同步内部条带显隐。"""

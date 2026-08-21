@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 from loguru import logger
@@ -54,6 +53,10 @@ _ACTION_ENABLE_ATTRS: dict[str, str] = {
 }
 
 
+class CliInputError(ValueError):
+    """CLI 输入、配置或目标选择不满足已声明约束。"""
+
+
 def _validate_config_argv(argv: list[str]) -> None:
     """校验 `-c` 模式下的原始参数边界。
 
@@ -82,8 +85,9 @@ def _validate_config_argv(argv: list[str]) -> None:
             index += 1
             continue
 
-        logger.error("错误：-c/--config-file 模式下只能提供配置文件路径，动作与其他参数都必须写在配置文件里。")
-        sys.exit(1)
+        message = "-c/--config-file 模式下只能提供配置文件路径，动作与其他参数都必须写在配置文件里。"
+        logger.error(f"错误：{message}")
+        raise CliInputError(message)
 
 
 def _resolve_config_actions(section_options: dict[str, dict[str, object]]) -> list[str]:
@@ -129,10 +133,10 @@ def _apply_config_profile(args: argparse.Namespace) -> None:
 
     try:
         loaded_settings = load_settings(config_file, require_exists=True)
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         logger.error(f"配置文件不存在: {config_file}")
         logger.error("请先创建标准 INI 配置文件，或移除 -c 改为纯 CLI 显式参数模式。")
-        sys.exit(1)
+        raise CliInputError(f"配置文件不存在: {config_file}") from exc
 
     section_options = {
         ConfigSection.TARGETS: load_command_config(config_file, command=ConfigSection.TARGETS, require_exists=True),
@@ -152,11 +156,7 @@ def _apply_config_profile(args: argparse.Namespace) -> None:
     merged_options.update(section_options[ConfigSection.RUNTIME])
     for action in args.actions:
         merged_options.update(
-            {
-                attr_name: value
-                for attr_name, value in section_options[action].items()
-                if not attr_name.startswith("_")
-            }
+            {attr_name: value for attr_name, value in section_options[action].items() if not attr_name.startswith("_")}
         )
 
     for attr_name, value in merged_options.items():
@@ -171,26 +171,30 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         parser: 顶层参数解析器。
     """
     if not args.actions and args.config_file is None:
-        logger.error("错误：必须提供至少一个动作：update / extract / wav / mapping。")
+        message = "必须提供至少一个动作：update / extract / wav / mapping。"
+        logger.error(f"错误：{message}")
         parser.print_help()
-        sys.exit(1)
+        raise CliInputError(message)
 
     if not args.actions and args.config_file is not None:
-        logger.error("错误：当前配置文件未启用任何动作：update / extract / wav / mapping。")
+        message = "当前配置文件未启用任何动作：update / extract / wav / mapping。"
+        logger.error(f"错误：{message}")
         parser.print_help()
-        sys.exit(1)
+        raise CliInputError(message)
 
     invalid_actions = [action for action in args.actions if action not in {"update", "extract", "wav", "mapping"}]
     if invalid_actions:
-        logger.error(f"错误：存在不支持的动作: {invalid_actions}")
+        message = f"存在不支持的动作: {invalid_actions}"
+        logger.error(f"错误：{message}")
         parser.print_help()
-        sys.exit(1)
+        raise CliInputError(message)
 
     args.actions = list(dict.fromkeys(args.actions))
 
     if args.config_file is not None and any(getattr(args, attr) is not None for attr in CONTEXT_OPTION_ATTRS):
-        logger.error("错误：-c/--config-file 模式不能与共享配置参数同时使用。")
-        sys.exit(1)
+        message = "-c/--config-file 模式不能与共享配置参数同时使用。"
+        logger.error(f"错误：{message}")
+        raise CliInputError(message)
 
     try:
         validate_request(
@@ -199,7 +203,7 @@ def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         )
     except CliInvocationValidationError as exc:
         logger.error(f"错误：{exc}")
-        sys.exit(1)
+        raise CliInputError(str(exc)) from exc
 
     if args.integrate_data is True and "mapping" in args.actions:
         logger.info("检测到 --integrate-data 参数，将生成整合数据文件")
@@ -279,10 +283,10 @@ def initialize_app(args: argparse.Namespace) -> AppContext:
         if loaded_settings is None:
             try:
                 loaded_settings = load_settings(config_file, require_exists=True)
-            except FileNotFoundError:
+            except FileNotFoundError as exc:
                 logger.error(f"配置文件不存在: {config_file}")
                 logger.error("请先创建标准 INI 配置文件，或移除 -c 改为纯 CLI 显式参数模式。")
-                sys.exit(1)
+                raise CliInputError(f"配置文件不存在: {config_file}") from exc
         context_settings = dict(loaded_settings)
 
     try:
@@ -293,7 +297,7 @@ def initialize_app(args: argparse.Namespace) -> AppContext:
             logger.error(f"请检查当前命令使用的配置文件: {config_file}")
         else:
             logger.error("当前命令未启用 -c，请通过命令行显式传入缺失的共享配置。")
-        sys.exit(1)
+        raise CliInputError(str(exc)) from exc
 
     try:
         app_context = setup_app(dev_mode=args.dev, log_level=args.log_level.upper(), settings=context_settings)
@@ -303,17 +307,18 @@ def initialize_app(args: argparse.Namespace) -> AppContext:
             logger.error(f"请检查当前命令使用的配置文件: {config_file}")
         else:
             logger.error("当前命令未启用 -c，请通过命令行显式传入缺失的共享配置。")
-        sys.exit(1)
+        raise CliInputError(str(exc)) from exc
 
     logger.info("命令行工具启动...")
 
     if app_context.config.source_mode is SourceMode.LOCAL_PATH and not Path(app_context.config.game_path).exists():
-        logger.error("错误：未找到有效的游戏目录 (GAME_PATH)。")
+        message = "未找到有效的游戏目录 (GAME_PATH)。"
+        logger.error(f"错误：{message}")
         if config_file is not None:
             logger.error(f"请检查配置文件中的 game_path: {config_file}")
         else:
             logger.error("请通过 --game-path 显式指定游戏目录，或使用 -c 读取配置文件。")
-        sys.exit(1)
+        raise CliInputError(message)
 
     return app_context
 
@@ -418,6 +423,7 @@ def build_options(
 
 
 __all__ = [
+    "CliInputError",
     "_apply_config_profile",
     "_config_path",
     "_validate_config_argv",
@@ -430,6 +436,3 @@ __all__ = [
     "resolve_champion_ids",
     "validate_args",
 ]
-
-
-

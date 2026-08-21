@@ -98,7 +98,6 @@ class SharedDataController(QObject):
         entity_data_loader_cls,
         start_worker_fn: Callable[[object], None],
         prepare_shared_entity_data_fn: Callable[[dict[str, str | bool]], None],
-        reset_data_reader_singleton_fn: Callable[[], None],
         app_context_block_reason_fn: Callable[[object], str | None],
         parent=None,
     ) -> None:
@@ -111,7 +110,6 @@ class SharedDataController(QObject):
         self._entity_data_loader_cls = entity_data_loader_cls
         self._start_worker = start_worker_fn
         self._prepare_shared_entity_data = prepare_shared_entity_data_fn
-        self._reset_data_reader_singleton = reset_data_reader_singleton_fn
         self._get_app_context_block_reason = app_context_block_reason_fn
 
         self.app_context = None
@@ -120,7 +118,6 @@ class SharedDataController(QObject):
         self.pending_refresh_notice = False
         self.pending_runtime_entity_refresh = False
         self.pending_refresh_allow_prepare = False
-        self.pending_refresh_reset_reader = False
         self.allow_auto_prepare_on_reload = True
         self.auto_prepare_attempted = False
         self.shared_data_prepare_worker = None
@@ -448,7 +445,6 @@ class SharedDataController(QObject):
 
         self.pending_runtime_entity_refresh = True
         self.pending_refresh_allow_prepare = self.pending_refresh_allow_prepare or reader_changed
-        self.pending_refresh_reset_reader = self.pending_refresh_reset_reader or reader_changed
         self.schedule_runtime_entity_refresh()
 
     def schedule_runtime_entity_refresh(self) -> None:
@@ -470,12 +466,8 @@ class SharedDataController(QObject):
         if self.is_loading_shared_data or self.is_preparing_shared_data:
             return
         allow_auto_prepare = self.pending_refresh_allow_prepare
-        reset_reader = self.pending_refresh_reset_reader
         self.pending_runtime_entity_refresh = False
         self.pending_refresh_allow_prepare = False
-        self.pending_refresh_reset_reader = False
-        if reset_reader:
-            self._reset_data_reader_singleton()
         self.request_shared_data_reload(show_notice=False, allow_auto_prepare=allow_auto_prepare)
 
     def request_shared_data_reload(self, *, show_notice: bool, allow_auto_prepare: bool) -> None:
@@ -582,7 +574,6 @@ class SharedDataController(QObject):
         self.is_preparing_shared_data = False
         self.pending_runtime_entity_refresh = False
         self.pending_refresh_allow_prepare = False
-        self.pending_refresh_reset_reader = False
         self.pending_refresh_notice = False
         self._stop_thread(self._champions_worker)
         self._stop_thread(self._maps_worker)

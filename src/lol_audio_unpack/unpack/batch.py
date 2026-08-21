@@ -12,13 +12,79 @@ from typing import TYPE_CHECKING
 from league_tools.formats import WAD
 from loguru import logger
 
+from lol_audio_unpack.app.results import EntityResult, ResultStatus, StageResult
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.model import generate_champion_tasks, generate_map_tasks
 
 from .entity import unpack_champion, unpack_map, unpack_resource_pack
+from .stats import EntityUnpackStats
+from .stats import StageResult as UnpackStageResult
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
+
+
+_ENTITY_TYPES = frozenset({"champion", "map", "resource_pack"})
+
+
+def _validate_tasks(tasks: list[tuple[str, int | str, str]]) -> ValueError | None:
+    """在提交工作线程前确认任务属于当前解包阶段。"""
+    for task in tasks:
+        try:
+            entity_type, _, _ = task
+        except (TypeError, ValueError):
+            return ValueError("解包任务必须包含实体类型、ID 和说明")
+        if entity_type not in _ENTITY_TYPES:
+            return ValueError(f"未知的实体类型: {entity_type}")
+    return None
+
+
+def _result_from_stats(
+    entity_type: str,
+    entity_id: int | str,
+    description: str,
+    stats: EntityUnpackStats | None,
+    *,
+    artifacts: tuple[str, ...],
+) -> EntityResult:
+    """把保留旧报告语义的实体统计适配为公共结果。"""
+    if stats is None:
+        raise TypeError("解包实体未返回统计结果")
+
+    status_map = {
+        UnpackStageResult.SUCCESS: ResultStatus.SUCCESS,
+        UnpackStageResult.WARNING: ResultStatus.PARTIAL,
+        UnpackStageResult.ERROR: ResultStatus.FAILED,
+        UnpackStageResult.SKIPPED: ResultStatus.SUCCESS,
+    }
+    status = status_map[stats.overall_result]
+    if status is ResultStatus.SUCCESS:
+        return EntityResult(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            entity_name=description,
+            status=status,
+            artifacts=artifacts,
+        )
+
+    return EntityResult(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        entity_name=description,
+        status=status,
+        error_type=f"Unpack{stats.overall_result.name.title()}",
+        error_message=stats.get_simple_summary(),
+        artifacts=artifacts,
+    )
+
+
+def _describe_entity_result(result: EntityResult) -> tuple[str, str]:
+    """返回实体结果对应的进度文案与日志等级。"""
+    if result.status is ResultStatus.SUCCESS:
+        return f"{result.entity_name} 解包完成", "info"
+    if result.status is ResultStatus.PARTIAL:
+        return f"{result.entity_name} 解包部分完成", "warning"
+    return f"{result.entity_name} 解包失败", "warning"
 
 
 def execute_tasks(  # noqa: PLR0913
@@ -29,7 +95,7 @@ def execute_tasks(  # noqa: PLR0913
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-) -> None:
+) -> StageResult:
     """执行批量解包任务。
 
     Args:
@@ -39,10 +105,17 @@ def execute_tasks(  # noqa: PLR0913
         ctx: 运行时上下文。
         progress_callback: 每个实体处理结束后的可选进度回调。
         persisted_wem_callback: WEM 落盘后的附加回调。
+
+    Returns:
+        按输入任务顺序保存实体事实的解包阶段结果。
     """
     if not tasks:
-        logger.warning("没有任何任务需要执行")
-        return
+        logger.info("没有任何任务需要执行")
+        return StageResult.from_entities("extract", (), note="没有任何任务需要执行")
+
+    if error := _validate_tasks(tasks):
+        logger.error(str(error))
+        return StageResult.from_error("extract", error)
 
     start_time = time.time()
     total_tasks = len(tasks)
@@ -73,29 +146,51 @@ def execute_tasks(  # noqa: PLR0913
         f"模式: {'多线程' if max_workers > 1 else '单线程'} (workers: {max_workers})"
     )
 
-    failed_count = 0
     show_exception = bool(getattr(ctx.config, "dev_mode", False))
 
     # 解包阶段的 WAD 缓存以整轮 batch 为单位共享，
     # 这样同一个实体/多个实体命中同一 WAD 时都不会重复打开文件句柄。
     wad_cache: dict[Path, WAD] = {}
     cache_lock = threading.Lock() if max_workers > 1 else None
+    artifact_lock = threading.Lock()
+    artifact_paths: list[list[str]] = [[] for _ in tasks]
 
-    def unpack_one(entity_type: str, entity_id: int | str) -> None:
+    def capture_artifact(index: int, *, forward_wem: bool) -> Callable[[Path], None]:
+        """记录实体的真实音频路径，并按需转发既有 WEM 回调。"""
+
+        def _capture(path: Path) -> None:
+            # WEM 回调在工作线程触发；同一锁同时保护 artifact 与既有回调的共享消费边界。
+            with artifact_lock:
+                artifact_paths[index].append(str(path))
+                if forward_wem and persisted_wem_callback is not None:
+                    persisted_wem_callback(path)
+
+        return _capture
+
+    def get_artifacts(index: int) -> tuple[str, ...]:
+        """返回当前实体已确认落盘的 WEM 路径快照。"""
+        with artifact_lock:
+            return tuple(artifact_paths[index])
+
+    def unpack_one(index: int, entity_type: str, entity_id: int | str) -> EntityUnpackStats | None:
         common_kwargs: dict[str, object] = {
             "wad_cache": wad_cache,
             "cache_lock": cache_lock,
             "ctx": ctx,
-            "persisted_wem_callback": persisted_wem_callback,
+            "persisted_wem_callback": capture_artifact(index, forward_wem=True),
         }
         if entity_type == "champion":
-            unpack_champion(entity_id, reader, **common_kwargs)
-        elif entity_type == "map":
-            unpack_map(entity_id, reader, **common_kwargs)
-        elif entity_type == "resource_pack":
-            unpack_resource_pack(str(entity_id), reader, **common_kwargs)
-        else:
-            raise ValueError(f"未知的实体类型: {entity_type}")
+            return unpack_champion(
+                entity_id,
+                reader,
+                **common_kwargs,
+                persisted_artifact_callback=capture_artifact(index, forward_wem=False),
+            )
+        if entity_type == "map":
+            return unpack_map(entity_id, reader, **common_kwargs)
+        if entity_type == "resource_pack":
+            return unpack_resource_pack(str(entity_id), reader, **common_kwargs)
+        raise AssertionError(f"未经验证的实体类型: {entity_type}")
 
     def emit_running_progress(entity_type: str, description: str) -> None:
         if progress_callback is None:
@@ -116,31 +211,49 @@ def execute_tasks(  # noqa: PLR0913
         with progress_lock:
             _emit()
 
-    def unpack_one_with_progress(entity_type: str, entity_id: int | str, description: str) -> None:
+    def unpack_one_with_progress(
+        index: int,
+        entity_type: str,
+        entity_id: int | str,
+        description: str,
+    ) -> EntityUnpackStats | None:
         emit_running_progress(entity_type, description)
-        unpack_one(entity_type, entity_id)
+        return unpack_one(index, entity_type, entity_id)
+
+    entity_results: list[EntityResult | None] = [None] * total_tasks
 
     if max_workers > 1:
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_task = {
-                executor.submit(unpack_one_with_progress, entity_type, entity_id, description): (
-                    entity_type,
-                    description,
-                )
-                for entity_type, entity_id, description in tasks
+            future_to_index = {
+                executor.submit(unpack_one_with_progress, index, entity_type, entity_id, description): index
+                for index, (entity_type, entity_id, description) in enumerate(tasks)
             }
             finished_count = 0
-            for future in as_completed(future_to_task):
-                entity_type, description = future_to_task[future]
+            for future in as_completed(future_to_index):
+                index = future_to_index[future]
+                entity_type, entity_id, description = tasks[index]
                 finished_count += 1
                 finished_by_type[entity_type] = finished_by_type.get(entity_type, 0) + 1
 
                 try:
-                    future.result()
-                    progress_message = f"{description} 解包完成"
-                    logger.info(f"进度: {finished_count}/{total_tasks} - {progress_message}。")
+                    stats = future.result()
+                    entity_results[index] = _result_from_stats(
+                        entity_type,
+                        entity_id,
+                        description,
+                        stats,
+                        artifacts=get_artifacts(index),
+                    )
+                    progress_message, log_level = _describe_entity_result(entity_results[index])
+                    getattr(logger, log_level)(f"进度: {finished_count}/{total_tasks} - {progress_message}。")
                 except Exception as exc:  # noqa: BLE001
-                    failed_count += 1
+                    entity_results[index] = EntityResult.from_error(
+                        entity_type,
+                        entity_id,
+                        exc,
+                        entity_name=description,
+                        artifacts=get_artifacts(index),
+                    )
                     progress_message = f"{description} 解包失败"
                     logger.opt(exception=show_exception).warning(f"{description} 解包失败，将继续后续任务: {exc}")
 
@@ -153,14 +266,27 @@ def execute_tasks(  # noqa: PLR0913
                     )
     else:
         finished_count = 0
-        for entity_type, entity_id, description in tasks:
+        for index, (entity_type, entity_id, description) in enumerate(tasks):
             try:
                 emit_running_progress(entity_type, description)
-                unpack_one(entity_type, entity_id)
-                progress_message = f"{description} 解包完成"
-                logger.info(f"进度: {finished_count + 1}/{total_tasks} - {progress_message}。")
+                stats = unpack_one(index, entity_type, entity_id)
+                entity_results[index] = _result_from_stats(
+                    entity_type,
+                    entity_id,
+                    description,
+                    stats,
+                    artifacts=get_artifacts(index),
+                )
+                progress_message, log_level = _describe_entity_result(entity_results[index])
+                getattr(logger, log_level)(f"进度: {finished_count + 1}/{total_tasks} - {progress_message}。")
             except Exception as exc:  # noqa: BLE001
-                failed_count += 1
+                entity_results[index] = EntityResult.from_error(
+                    entity_type,
+                    entity_id,
+                    exc,
+                    entity_name=description,
+                    artifacts=get_artifacts(index),
+                )
                 progress_message = f"{description} 解包失败"
                 logger.opt(exception=show_exception).warning(f"{description} 解包失败，将继续后续任务: {exc}")
 
@@ -174,21 +300,26 @@ def execute_tasks(  # noqa: PLR0913
                     progress_message,
                 )
 
+    if any(entity_result is None for entity_result in entity_results):
+        raise RuntimeError("解包批处理没有为全部任务生成实体结果")
+    results = tuple(entity_result for entity_result in entity_results if entity_result is not None)
+    result = StageResult.from_entities("extract", results)
+    reader.write_unknown_categories()
+
     end_time = time.time()
     summary_message = (
-        f"解包完成: {' 和 '.join(summary_parts)}，"
-        f"成功 {total_tasks - failed_count} 个，失败 {failed_count} 个，"
+        f"解包结果: {' 和 '.join(summary_parts)}，"
+        f"成功 {result.success_count} 个，失败 {result.failed_count} 个，部分完成 {result.partial_count} 个，"
         f"耗时 {end_time - start_time:.2f}s"
     )
-    if failed_count == total_tasks:
+    if result.status is ResultStatus.FAILED:
         logger.error(summary_message)
-    elif failed_count > 0:
+    elif result.status is ResultStatus.PARTIAL:
         logger.warning(summary_message)
     else:
         logger.success(summary_message)
 
-    reader.write_unknown_categories()
-    return None
+    return result
 
 
 def unpack_all(  # noqa: PLR0913
@@ -200,11 +331,15 @@ def unpack_all(  # noqa: PLR0913
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-) -> None:
-    """解包全部实体音频。"""
+) -> StageResult:
+    """解包全部实体音频。
+
+    Returns:
+        解包阶段的聚合结果。
+    """
     champion_tasks = generate_champion_tasks(reader) if include_champions else []
     map_tasks = generate_map_tasks(reader) if include_maps else []
-    execute_tasks(
+    return execute_tasks(
         champion_tasks + map_tasks,
         reader,
         max_workers=max_workers,
@@ -222,10 +357,14 @@ def unpack_champions(  # noqa: PLR0913
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-) -> None:
-    """解包指定英雄音频。"""
+) -> StageResult:
+    """解包指定英雄音频。
+
+    Returns:
+        解包阶段的聚合结果。
+    """
     tasks = generate_champion_tasks(reader, champion_ids)
-    execute_tasks(
+    return execute_tasks(
         tasks,
         reader,
         max_workers=max_workers,
@@ -243,10 +382,14 @@ def unpack_maps(  # noqa: PLR0913
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-) -> None:
-    """解包指定地图音频。"""
+) -> StageResult:
+    """解包指定地图音频。
+
+    Returns:
+        解包阶段的聚合结果。
+    """
     tasks = generate_map_tasks(reader, map_ids)
-    execute_tasks(
+    return execute_tasks(
         tasks,
         reader,
         max_workers=max_workers,
@@ -264,7 +407,7 @@ def unpack_resource_packs(  # noqa: PLR0913
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-) -> None:
+) -> StageResult:
     """解包指定 resource-pack 音频。
 
     Args:
@@ -274,9 +417,12 @@ def unpack_resource_packs(  # noqa: PLR0913
         ctx: 运行时上下文。
         progress_callback: 每个实体完成后的可选进度回调。
         persisted_wem_callback: WEM 落盘后的附加回调。
+
+    Returns:
+        解包阶段的聚合结果。
     """
     tasks = [("resource_pack", key, f"资源包 {key}") for key in keys]
-    execute_tasks(
+    return execute_tasks(
         tasks,
         reader,
         max_workers=max_workers,
