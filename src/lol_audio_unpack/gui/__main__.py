@@ -27,6 +27,7 @@ from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
 from lol_audio_unpack.gui.controllers.runtime_logging_session import (
     apply_runtime_logging_session,
 )
+from lol_audio_unpack.gui.launch_options import parse_gui_launch_options
 from lol_audio_unpack.gui.single_instance import acquire_or_activate
 from lol_audio_unpack.gui.theme import apply_accent_preset, apply_shell_mode
 from lol_audio_unpack.gui.window import MainWindow
@@ -54,6 +55,8 @@ def _log_startup_stage(stage: str, startup_begin: float, previous_mark: float) -
 
 
 def main() -> None:
+    """启动 GUI 应用并按命令行选项选择真实或 mock 共享进度链路。"""
+    launch_options, qt_arguments = parse_gui_launch_options(sys.argv[1:])
     startup_begin = perf_counter()
     previous_mark = startup_begin
     cfg = GuiConfig()
@@ -77,7 +80,7 @@ def main() -> None:
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
     previous_mark = _log_startup_stage("Qt HighDPI 属性配置完成", startup_begin, previous_mark)
 
-    app = QApplication(sys.argv)
+    app = QApplication([sys.argv[0], *qt_arguments])
     previous_mark = _log_startup_stage("QApplication 创建完成", startup_begin, previous_mark)
     instance_guard = acquire_or_activate(parent=app)
     if instance_guard is None:
@@ -102,7 +105,9 @@ def main() -> None:
     previous_mark = _log_startup_stage("主题与主题色应用完成", startup_begin, previous_mark)
 
     # 获取桌面并应用大小
-    window = MainWindow()
+    window = MainWindow(
+        shared_progress_demo_interval_ms=launch_options.shared_progress_demo_interval_ms,
+    )
     instance_guard.set_window(window)
     remove_startup_log_buffer()
     previous_mark = _log_startup_stage("MainWindow 构建完成", startup_begin, previous_mark)

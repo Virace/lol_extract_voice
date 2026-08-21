@@ -12,6 +12,7 @@ from .overview_preview import OverviewPreviewController
 from .preview_playback import PreviewPlaybackController
 from .remote_source import RemoteSourceController
 from .shared_data import SharedDataController
+from .shared_data_demo import SharedDataProgressDemo
 
 __all__ = [
     "DevConsoleController",
@@ -25,4 +26,5 @@ __all__ = [
     "PreviewPlaybackController",
     "RemoteSourceController",
     "SharedDataController",
+    "SharedDataProgressDemo",
 ]

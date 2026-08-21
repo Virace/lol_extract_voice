@@ -141,3 +141,22 @@ initial partial/failed 各按 generation 去重。持久页面状态始终是主
 
 布局、颜色、缩放、键盘可达性和主观流畅度不使用像素或源码字面量测试。它们保留在原生 Windows
 GUI manual Review，通过标准入口 `uv run unpack-gui` 验收。
+
+### 共享进度 mock
+
+需要反复检查首页页内进度与其他页面底部全局进度时，可启动只作用于展示层的循环 mock：
+
+```bash
+uv run unpack-gui --mock-shared-progress
+```
+
+默认每 50 ms 前进一步，依次模拟 checking、英雄更新、地图更新、英雄复检、地图复检和 ready；
+一轮结束后自动重新开始。需要放慢观察时可指定 10–2000 ms 的步进间隔：
+
+```bash
+uv run unpack-gui --mock-shared-progress --mock-progress-interval 80
+```
+
+mock 模式不会读取、扫描、更新或写入真实实体数据，窗口标题会显示“共享进度 Mock”。它只覆盖首页
+共享状态和底部全局进度条，不改变执行中心的真实数据与任务门禁。受单实例守卫约束，运行命令前需先
+关闭已有 GUI 窗口。

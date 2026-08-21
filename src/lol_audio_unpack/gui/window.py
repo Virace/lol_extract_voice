@@ -46,6 +46,7 @@ from lol_audio_unpack.gui.controllers import (
     DevConsoleController,
     LogDrawerController,
     SharedDataController,
+    SharedDataProgressDemo,
 )
 from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
 from lol_audio_unpack.gui.controllers.onboarding import OnboardingTourController
@@ -68,7 +69,11 @@ from lol_audio_unpack.gui.controllers.window_shell import (
 from lol_audio_unpack.gui.resources import assets
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 from lol_audio_unpack.gui.service.worker import SharedDataScanWorker
-from lol_audio_unpack.gui.shared_data import SharedDataPreparationResult, SharedDataRepairScope
+from lol_audio_unpack.gui.shared_data import (
+    SharedDataPreparationResult,
+    SharedDataRepairScope,
+    SharedDataState,
+)
 from lol_audio_unpack.gui.view.about_page import AboutPage, get_minimum_shell_size
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 from lol_audio_unpack.gui.view.home_page import HomePage
@@ -118,10 +123,17 @@ def _prepare_shared_entity_data(
 class MainWindow(FluentWindow):
     """应用主窗口。"""
 
-    def __init__(self):
+    def __init__(self, *, shared_progress_demo_interval_ms: int | None = None):
+        """初始化应用窗口。
+
+        Args:
+            shared_progress_demo_interval_ms: 共享数据进度 mock 的刷新间隔；为空时使用真实数据链路。
+        """
         startup_begin = perf_counter()
         previous_mark = startup_begin
         self._log_drawer_controller = LogDrawerController()
+        self._shared_progress_demo_interval_ms = shared_progress_demo_interval_ms
+        self._shared_progress_demo: SharedDataProgressDemo | None = None
         super().__init__()
         previous_mark = _log_window_stage("FluentWindow 基类初始化", startup_begin, previous_mark)
         self._progress_strip_host = GlobalProgressStripHost(self)
@@ -385,6 +397,28 @@ class MainWindow(FluentWindow):
         current_page = self.stackedWidget.currentWidget()
         self._progress_strip_coordinator.set_shared_data_progress_suppressed(current_page is home_page)
 
+    def _show_shared_progress_demo_state(self, state: SharedDataState) -> None:
+        """把 mock 状态限制在首页与全局进度组件，避免改变真实任务门禁。"""
+        self.homeInterface.set_shared_data_state(state)
+        self._progress_strip_coordinator.set_shared_data_state(state)
+
+    def _start_shared_progress_demo(self, cfg) -> None:
+        """启动不接触真实实体数据的循环共享进度演示。"""
+        interval_ms = self._shared_progress_demo_interval_ms
+        if interval_ms is None:
+            return
+        source_mode = str(
+            getattr(cfg, "effective_source_mode", None) or getattr(cfg, "source_mode", "local_path") or "local_path"
+        )
+        self._shared_progress_demo = SharedDataProgressDemo(interval_ms=interval_ms, parent=self)
+        self._shared_progress_demo.state_changed.connect(self._show_shared_progress_demo_state)
+        self._shared_progress_demo.start(
+            generation=self._shared_data_controller.generation,
+            source_mode=source_mode,
+        )
+        self.setWindowTitle(f"Lol Audio Unpack  {__version__}  [共享进度 Mock]")
+        logger.info("共享数据进度 mock 已启动 | 间隔 {}ms | 不读取或修改真实实体数据", interval_ms)
+
     def _dispatch_shared_data_action(self, action_key: str) -> None:
         """处理首页共享数据状态区发出的稳定动作。"""
         dispatch_shared_data_action(
@@ -504,8 +538,11 @@ class MainWindow(FluentWindow):
         self._shared_data_controller.reader_signature = build_shared_entity_reader_signature(cfg)
         self._shared_data_controller.scan_signature = build_shared_entity_scan_signature(cfg)
 
-        # 首页初始化完成后加载数据
-        self._shared_data_controller.load_initial_data(cfg)
+        # mock 模式只驱动展示组件；普通模式继续使用真实扫描与自动准备链路。
+        if self._shared_progress_demo_interval_ms is None:
+            self._shared_data_controller.load_initial_data(cfg)
+        else:
+            self._start_shared_progress_demo(cfg)
 
     def _has_active_background_work(self) -> bool:
         """返回窗口关闭前是否仍存在后台工作。"""
