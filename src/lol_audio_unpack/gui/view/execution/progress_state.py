@@ -143,7 +143,19 @@ def build_global_progress_strip_state(  # noqa: PLR0913
     """根据当前队列状态构造底部全局进度条展示快照。"""
     has_visible_task = counts[TASK_STATUS_RUNNING] > 0 or counts[TASK_STATUS_WAITING] > 0
     if not has_visible_task:
-        return GlobalProgressStripState()
+        if not note_text:
+            return GlobalProgressStripState()
+
+        total = max(progress_total or 1, 1)
+        current = max(0, min(progress_current or 0, total))
+        return GlobalProgressStripState(
+            visible=False,
+            title_text="任务已结束",
+            detail_text=note_text,
+            progress_current=current,
+            progress_total=total,
+            status_text=f"{current}/{total}",
+        )
 
     running_progress = (
         running_task.progress_detail

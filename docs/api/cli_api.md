@@ -260,6 +260,16 @@ uv run unpack -c ./config/lol-audio-unpack.remote.ini
 
 ## 7. 退出语义
 
-- 参数或配置错误：`sys.exit(1)`
-- `KeyboardInterrupt`：`sys.exit(1)`
-- 正常完成：退出码 `0`
+CLI 顶层根据同一个 `RunResult` 统一决定主结论与进程退出码；dispatch/runtime 不会在深层直接退出：
+
+| 结果 | 退出码 | 含义 |
+| --- | ---: | --- |
+| `success` | `0` | 全部已尝试阶段成功，或合法 no-op |
+| `partial` | `3` | 有成功产物，也有实体或阶段失败 |
+| `failed` | `1` | 已尝试工作全部失败，或发生运行期全局失败 |
+| input / usage | `2` | 参数、配置或目标解析不满足约束 |
+| `cancelled` | `130` | 用户中断；未开始的后续阶段不会执行 |
+
+update 的共享数据、持久化或全局准备失败会阻断依赖阶段。extract partial 时，WAV 只接收
+success/partial 且 `artifacts` 非空的实体目标；mapping 不依赖 extract 产物时仍会继续。日志样本摘要用于诊断，
+不再作为退出状态的事实来源。

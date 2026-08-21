@@ -20,7 +20,7 @@ from lol_audio_unpack.app.resource_pack import (
     build_resource_pack_key_for_wad,
     resource_pack_path_component,
 )
-from lol_audio_unpack.manager.files import read_data, write_data
+from lol_audio_unpack.manager.files import read_data, write_bytes_atomic, write_data
 from lol_audio_unpack.model.binding import (
     BankBinding,
     BankReference,
@@ -542,8 +542,13 @@ class ResourcePackDiscovery:
         try:
             self._persist_and_validate(events_payload, events_base, artifact_name="events")
             self._persist_and_validate(banks_payload, banks_base, artifact_name="banks")
-        except Exception:
-            self._restore_artifacts(snapshots)
+        except Exception as write_error:
+            try:
+                self._restore_artifacts(snapshots)
+            except Exception as rollback_error:
+                raise OSError(
+                    f"resource-pack artifact 写入失败且回滚失败: 写入={write_error}; 回滚={rollback_error}"
+                ) from write_error
             raise
         return DiscoveredResourcePack(
             key=key,
@@ -575,8 +580,7 @@ class ResourcePackDiscovery:
                 if payload is None:
                     path.unlink(missing_ok=True)
                 else:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(payload)
+                    write_bytes_atomic(payload, path)
             except OSError as exc:
                 errors.append(exc)
         if errors:

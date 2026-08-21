@@ -121,13 +121,13 @@ def unpack_entity(
     *,
     ctx: AppContext,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-    wav_submitter: Callable[[Path], None] | None = None,
-) -> None
+) -> EntityUnpackStats
 ```
 
 ```python
-def unpack_champion(..., *, ctx: AppContext, ...) -> None
-def unpack_map(..., *, ctx: AppContext, ...) -> None
+def unpack_champion(..., *, ctx: AppContext, ...) -> EntityUnpackStats
+def unpack_map(..., *, ctx: AppContext, ...) -> EntityUnpackStats
+def unpack_resource_pack(..., *, ctx: AppContext, ...) -> EntityUnpackStats
 ```
 
 ### 1.2 批量入口
@@ -142,14 +142,20 @@ def unpack_all(
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-    wav_output: WavOutputOptions | None = None,
-) -> None
+) -> StageResult
 ```
 
 ```python
-def unpack_champions(..., *, ctx: AppContext, wav_output: WavOutputOptions | None = None) -> None
-def unpack_maps(..., *, ctx: AppContext, wav_output: WavOutputOptions | None = None) -> None
+def unpack_champions(..., *, ctx: AppContext, ...) -> StageResult
+def unpack_maps(..., *, ctx: AppContext, ...) -> StageResult
+def unpack_resource_packs(..., *, ctx: AppContext, ...) -> StageResult
 ```
+
+批量入口的 `stage` 固定为 `extract`。每个任务产生一个按输入顺序排列的 `EntityResult`；
+实体异常只使该实体 failed，并继续同批其他实体。既有 `EntityUnpackStats` 的 `warning` / `error`
+分别映射为公共 `partial` / `failed`，不会因为函数没有抛异常就升级为成功。空任务是带说明的
+success no-op；未知任务类型与批处理基础设施错误不会伪装成实体 partial。`EntityResult.artifacts`
+只记录 WEM 持久化成功回调中确认的真实路径；partial 或落盘后发生异常的实体仍保留此前路径。
 
 ### 1.3 输出路径规则
 
@@ -202,13 +208,18 @@ def build_entity(
     runtime_cache: RuntimeCache | None = None,
     *,
     ctx: AppContext,
+    persisted_mapping_callback: Callable[[Path], None] | None = None,
 ) -> dict[str, Any]
 ```
 
 ```python
-def build_champion(..., *, ctx: AppContext) -> dict[str, Any]
-def build_map(..., *, ctx: AppContext) -> dict[str, Any]
+def build_champion(..., *, ctx: AppContext, persisted_mapping_callback=None) -> dict[str, Any]
+def build_map(..., *, ctx: AppContext, persisted_mapping_callback=None) -> dict[str, Any]
+def build_resource_pack(..., *, ctx: AppContext, persisted_mapping_callback=None) -> dict[str, Any]
 ```
+
+`persisted_mapping_callback` 仅在 raw mapping 或 integrated 文件实际写入后接收对应 `Path`；它是
+向后兼容的观测钩子，四个单实体入口仍返回原有的 `dict[str, Any]`。
 
 ### 2.2 批量入口
 
@@ -221,14 +232,20 @@ def execute_tasks(
     *,
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
-) -> None
+) -> StageResult
 ```
 
 ```python
-def build_all(..., *, ctx: AppContext) -> None
-def build_champions(..., *, ctx: AppContext) -> None
-def build_maps(..., *, ctx: AppContext) -> None
+def build_all(..., *, ctx: AppContext) -> StageResult
+def build_champions(..., *, ctx: AppContext) -> StageResult
+def build_maps(..., *, ctx: AppContext) -> StageResult
+def build_resource_packs(..., *, ctx: AppContext) -> StageResult
 ```
+
+mapping 批量结果的 `stage` 固定为 `mapping`。单、多线程都保留输入顺序的实体结果；进度回调
+仍按实际完成顺序发送。单实体构建异常会记录 failed 并继续，空任务为 success no-op。每个
+`EntityResult.artifacts` 只包含实际写出的 mapping 或 integrated 路径；没有可写映射的成功实体
+保持空 artifact，异常在写入之后发生时仍保留已经确认的路径。
 
 ### 2.3 整合入口
 
@@ -283,6 +300,24 @@ remote v1 才继续按分类名选择语言 WAD / 根 WAD 的兼容分支。
 - `run_workflow(...)`
 - `cleanup_remote_artifacts()`
 
+`update(...)`、`extract(...)`、`transcode_wav(...)` 与 `mapping(...)` 都返回 `StageResult`；
+`run_workflow(...)` 返回 `RunResult`。公共结果模型从 `lol_audio_unpack.app` 导出：
+
+- `ResultStatus`：`success`、`partial`、`failed`、`cancelled`
+- `EntityResult`：稳定实体 identity、状态、错误摘要与可选 artifact paths
+- `StageResult`：阶段 key、实体结果、阶段错误与派生计数
+- `RunResult`：按执行顺序保存阶段，并派生整轮状态
+
+WAV runtime 实际处理至少一个文件时，`transcode_wav(...)` 会返回一个稳定的 `wav:batch`
+实体，其 `artifacts` 为 runtime 报告的真实 `wav_root`；零文件 success no-op 不创建实体。
+extract 的 artifacts 是本轮确认落盘的 WEM 或大厅音频路径，mapping 的 artifacts 是最终写入文件；
+即使实体随后失败，已落盘路径仍会保留，供调用方进行有界刷新或恢复判断。
+
+合法 no-op 是计数为 0 的 success。实体成功与失败并存时为 partial；全部失败为 failed；
+cancelled 在整轮聚合中优先。完整 traceback 只写日志，不进入公共结果。
+已知共享数据、下载与持久化异常会在 facade 阶段边界结果化；参数/合同 `ValueError` 与未声明为
+可恢复的编程错误仍可能直接抛出，调用方不能把 typed result 理解为“任何异常都不会传播”。
+
 ## 4. remote 模式执行顺序
 
 在 `remote_snapshot` 模式下，按实体拆批执行的主线是：
@@ -295,9 +330,15 @@ remote v1 才继续按分类名选择语言 WAD / 根 WAD 的兼容分支。
 6. 清理当前实体远端产物
 
 目标是降低磁盘峰值，而不是把 `extract + mapping` 合并成一个大步骤。
+单实体重试耗尽会写入 failed `EntityResult` 并继续后续实体；清理失败作为独立 `cleanup`
+阶段追加，不覆盖原始失败。实体完成回调只从 `EntityResult.artifacts` 解析本轮真实存在的路径；
+预先存在的旧输出目录不是证据。partial 只有仍有这种落盘证据时才会触发完成回调。
 
 ## 5. 上下文约束
 
-- `DataReader` 构造必须传入 `ctx: AppContext`
+- `DataReader` 构造必须传入 `ctx: AppContext`；每次构造都是独立实例，不跨 context 共享 cache
+- `LolAudioUnpackApp` 在单一 app/context 内懒加载复用 reader，并在 data、banks/events 或
+  resource-pack artifact 的写入边界后异常安全地整体失效
+- remote orchestrator 复用所属 app 的 reader；不同 app/context 不建立进程级共享 registry
 - `AudioEntityData.from_champion/from_map` 必须传入 `ctx`
 - 解包、映射、remote 准备相关主函数都要求显式上下文

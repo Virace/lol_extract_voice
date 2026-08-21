@@ -9,10 +9,12 @@ import pytest
 
 from lol_audio_unpack.app.path_layout import format_entity_folder_name, get_entity_path_component
 from lol_audio_unpack.app.resource_pack import build_resource_pack_key
+from lol_audio_unpack.app.results import ResultStatus
 from lol_audio_unpack.model import AudioBank, AudioEntityData
 from lol_audio_unpack.model.binding import BankBinding, BindingDiagnostics, BindingRole, BindingStatus, Completeness
 from lol_audio_unpack.unpack import batch as unpack_batch
 from lol_audio_unpack.unpack import entity as unpack_entity
+from lol_audio_unpack.unpack.stats import StageResult as UnpackStageResult
 
 
 class _FakeWad:
@@ -101,7 +103,7 @@ def test_bound_resource_pack_extracts_to_isolated_safe_output_and_report(
     monkeypatch.setattr(unpack_entity, "_get_wad_instance", lambda *_args, **_kwargs: _FakeWad())
     monkeypatch.setattr(unpack_entity, "BNK", _FakeBnk)
 
-    unpack_entity.unpack_entity(entity, reader, ctx=ctx)
+    stats = unpack_entity.unpack_entity(entity, reader, ctx=ctx)
 
     component = get_entity_path_component("resource_pack", key)
     entity_folder = format_entity_folder_name(component, entity.entity_alias, entity.entity_name)
@@ -110,6 +112,7 @@ def test_bound_resource_pack_extracts_to_isolated_safe_output_and_report(
     assert wem_path.read_bytes() == b"wem"
     assert report_path.is_file()
     assert ":" not in report_path.name
+    assert stats.overall_result.value == "success"
 
 
 def test_resource_pack_batch_dispatches_string_task(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -118,8 +121,19 @@ def test_resource_pack_batch_dispatches_string_task(monkeypatch: pytest.MonkeyPa
     calls: list[str] = []
     reader = SimpleNamespace(version="16.16", write_unknown_categories=lambda: None)
     ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False))
-    monkeypatch.setattr(unpack_batch, "unpack_resource_pack", lambda value, *_args, **_kwargs: calls.append(value))
+    monkeypatch.setattr(
+        unpack_batch,
+        "unpack_resource_pack",
+        lambda value, *_args, **_kwargs: (
+            calls.append(value),
+            SimpleNamespace(
+                overall_result=UnpackStageResult.SUCCESS,
+                get_simple_summary=lambda: "resource pack 解包成功",
+            ),
+        )[1],
+    )
 
-    unpack_batch.unpack_resource_packs(reader, [key], max_workers=1, ctx=ctx)
+    result = unpack_batch.unpack_resource_packs(reader, [key], max_workers=1, ctx=ctx)
 
     assert calls == [key]
+    assert result.status is ResultStatus.SUCCESS

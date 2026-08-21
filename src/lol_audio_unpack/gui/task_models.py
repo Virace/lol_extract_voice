@@ -6,12 +6,14 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from lol_audio_unpack.app.resource_pack import ResourcePackWadRef
+from lol_audio_unpack.app.results import RunResult
 from lol_audio_unpack.app.types import OperationOptions, WavOutputOptions
 from lol_audio_unpack.config import SettingKey
 
 TASK_STATUS_WAITING = "等待中"
 TASK_STATUS_RUNNING = "运行中"
 TASK_STATUS_COMPLETED = "已完成"
+TASK_STATUS_PARTIAL = "部分完成"
 TASK_STATUS_FAILED = "失败"
 TASK_STATUS_CANCELLED = "已取消"
 
@@ -178,7 +180,7 @@ class QueuedExecutionTask:
         progress_total: 总进度计数。
         progress_message: 当前进度提示文案。
         progress_detail: 当前阶段的结构化进度快照。
-        result_summary: 成功执行后的结果摘要。
+        result_summary: typed result 对应的终态摘要。
         error_message: 失败时的错误摘要。
     """
 
@@ -202,14 +204,16 @@ class ExecutionTaskResult:
     """后台任务完成后的结果摘要。
 
     Args:
-        completed_steps: 已成功完成的步骤名称。
-        summary: 展示给用户的完成摘要。
+        completed_steps: success/partial 且已确认产生产物的步骤名称。
+        summary: 展示给用户的终态摘要。
         duration_seconds: 本次任务耗时。
+        run_result: 后端返回的权威整轮执行结果。
     """
 
     completed_steps: tuple[str, ...]
     summary: str
     duration_seconds: float
+    run_result: RunResult
 
 
 @dataclass(slots=True, frozen=True)

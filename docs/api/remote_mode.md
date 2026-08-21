@@ -84,16 +84,17 @@ uv run unpack extract -c ./config/lol-audio-unpack.remote.ini
 
 ### 3.3 若要执行 mapping
 
-需要额外提供 `wwiser_path`：
+默认使用 NativeHIRC，不需要配置 `wwiser_path`：
 
 ```bash
 uv run unpack mapping \
   --output-path "/tmp/lol-remote" \
   --game-region zh_CN \
   --source-mode remote_snapshot \
-  --champions 1,103,555 \
-  --wwiser-path "/path/to/wwiser.pyz"
+  --champions 1,103,555
 ```
+
+只有主动使用 WwiserHIRC 回退路径时，才需要额外提供 `--wwiser-path`。
 
 ## 4. CLI 执行语义
 
@@ -105,6 +106,8 @@ uv run unpack mapping \
 4. 单实体完成后会清理当前实体远端产物
 5. 下载类错误默认重试 3 次
 6. 单实体完整流程默认最多重试 3 次
+7. 单实体失败重试耗尽后记录 failed 并继续后续实体，整轮返回 partial 或 failed
+8. 每次尝试都执行清理；清理失败追加为 `cleanup` 阶段，不覆盖原始失败
 
 保留现场、关闭自动清理：
 
@@ -132,12 +135,11 @@ ctx = create_app_context(
         "OUTPUT_PATH": "./out",
         "GAME_REGION": "zh_CN",
         "REMOTE_LIVE_REGION": "EUW",
-        "WWISER_PATH": "./wwiser.pyz",
     }
 )
 app = LolAudioUnpackApp(ctx)
 
-app.run_workflow(
+run_result = app.run_workflow(
     update_options=OperationOptions(champion_ids=(1, 103)),
     extract_options=OperationOptions(champion_ids=(1, 103), max_workers=4),
     mapping_options=OperationOptions(champion_ids=(1, 103), max_workers=1, integrate_data=True),
@@ -145,6 +147,12 @@ app.run_workflow(
     mapping_include_champions=True,
 )
 ```
+
+返回值是 `RunResult`。`run_result.status` 可能为 `success`、`partial`、`failed` 或
+`cancelled`；逐实体事实位于 `extract` / `mapping` 的 `StageResult.entities`。空工作项是带说明的
+success no-op。实体完成回调要求 typed result 中存在本轮产物；partial 还必须保留至少一个产物。
+完成回调只信任对应 `EntityResult.artifacts` 中本轮确认落盘且仍存在的路径；旧输出目录即使存在，
+也不能单独证明本轮产生了产物。
 
 ### 5.2 `build_work_items(...)`
 
@@ -190,6 +198,10 @@ preparer = RemotePreparer(ctx=ctx)
 - 全局 `update` 之后登记的 LCU bundle 与 BIN 输入
 - 单实体 `extract / mapping` 之后登记的 GAME WAD
 - `_prepared_game` 下的最小远端运行时产物
+
+清理会对全部登记组和空目录根执行 best-effort。成功删除或已不存在的路径会从登记表移除；任何
+删除失败都会保留登记表供后续重试，并在 `RunResult` 中追加独立的 failed `cleanup` 阶段，不覆盖
+update 或实体执行的原始失败。
 
 ## 7. 验证与测试
 

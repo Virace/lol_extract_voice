@@ -100,25 +100,45 @@ class RemotePreparer:
 
         Returns:
             各类产物删除数量统计。
+
+        Raises:
+            RemoteCleanupError: 所有清理工作均已尽力执行后，仍有文件或目录无法清理时抛出。
         """
         registry = self._load_cleanup_registry()
-        cleanup_counts = {
-            "prepared_lcu_wads": self._remove_paths(registry["prepared_lcu_wads"], dry_run=dry_run),
-            "cached_lcu_wads": self._remove_paths(registry["cached_lcu_wads"], dry_run=dry_run),
-            "bin_input_files": self._remove_paths(registry["bin_input_files"], dry_run=dry_run),
-            "bin_input_flags": self._remove_paths(registry["bin_input_flags"], dry_run=dry_run),
-            "prepared_game_wads": self._remove_paths(registry["prepared_game_wads"], dry_run=dry_run),
-            "cached_game_wads": self._remove_paths(registry["cached_game_wads"], dry_run=dry_run),
-        }
+        cleanup_counts: dict[str, int] = {}
+        failures: list[tuple[Path, OSError]] = []
+        for key in (
+            "prepared_lcu_wads",
+            "cached_lcu_wads",
+            "bin_input_files",
+            "bin_input_flags",
+            "prepared_game_wads",
+            "cached_game_wads",
+        ):
+            try:
+                cleanup_counts[key] = self._remove_paths(registry[key], dry_run=dry_run)
+            except remote_cleanup.RemoteCleanupError as exc:
+                failures.extend(exc.failures)
 
         if not dry_run:
-            self._prune_empty_tree(self.ctx.paths.manifest_path / self.snapshot.version / "bin_input")
-            self._prune_empty_tree(self.prepared_lcu_root)
-            self._prune_empty_tree(self.game_cache_root / "downloads")
-            self._prune_empty_tree(self.lcu_cache_root / "downloads")
-            self._prune_empty_tree(self.ctx.config.game_path / "Game" / "DATA" / "FINAL" / "Champions")
-            self._prune_empty_tree(self.ctx.config.game_path / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping")
-            self.ctx.runtime_cache.pop(CLEANUP_REGISTRY_KEY, None)
+            for root in (
+                self.ctx.paths.manifest_path / self.snapshot.version / "bin_input",
+                self.prepared_lcu_root,
+                self.game_cache_root / "downloads",
+                self.lcu_cache_root / "downloads",
+                self.ctx.config.game_path / "Game" / "DATA" / "FINAL" / "Champions",
+                self.ctx.config.game_path / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping",
+            ):
+                try:
+                    self._prune_empty_tree(root)
+                except remote_cleanup.RemoteCleanupError as exc:
+                    failures.extend(exc.failures)
+
+            if not failures:
+                self.ctx.runtime_cache.pop(CLEANUP_REGISTRY_KEY, None)
+
+        if failures:
+            raise remote_cleanup.RemoteCleanupError(failures)
 
         return cleanup_counts
 
@@ -404,5 +424,3 @@ class RemotePreparer:
     def _prune_empty_tree(root: Path) -> None:
         """删除根目录下的空目录。"""
         remote_cleanup.prune_empty_tree(root)
-
-

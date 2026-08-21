@@ -319,7 +319,7 @@ def unpack_entity(  # noqa: PLR0913
     *,
     ctx: AppContext,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-) -> None:
+) -> EntityUnpackStats:
     """解包单个实体音频。
 
     Args:
@@ -329,6 +329,9 @@ def unpack_entity(  # noqa: PLR0913
         cache_lock: 多线程场景下的缓存锁。
         ctx: 运行时上下文。
         persisted_wem_callback: WEM 落盘后的附加回调。
+
+    Returns:
+        保持现有报告 schema 的实体解包统计。
 
     Raises:
         ValueError: 实体数据无效时抛出。
@@ -364,7 +367,7 @@ def unpack_entity(  # noqa: PLR0913
                 persisted_wem_callback=persisted_wem_callback,
             )
         _finish_unpack_stats(entity_data, reader, stats, ctx=ctx)
-        return
+        return stats
 
     with stats_context as stats:
         logger.info(f"解包 {entity_data.entity_name} (ID:{entity_data.entity_id})")
@@ -418,7 +421,7 @@ def unpack_entity(  # noqa: PLR0913
             logger.warning(
                 f"{entity_data.entity_type} '{entity_data.entity_name}' 未找到任何需要解包的音频文件 (检查排除类型配置)。"
             )
-            return
+            return stats
 
         logger.debug("阶段 2: 开始批量解包WAD文件...")
         raw_by_path: dict[str, bytes] = {}
@@ -615,6 +618,8 @@ def unpack_entity(  # noqa: PLR0913
     except Exception as e:
         logger.debug(f"保存报告文件失败: {e}")
 
+    return stats
+
 
 def _generate_relative_path(entity_data: AudioEntityData, sub_id: str) -> Path:
     """生成不含音频类型的相对目录。
@@ -739,7 +744,8 @@ def unpack_champion(  # noqa: PLR0913
     *,
     ctx: AppContext,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-) -> None:
+    persisted_artifact_callback: Callable[[Path], None] | None = None,
+) -> EntityUnpackStats:
     """按英雄 ID 解包音频。
 
     Args:
@@ -749,6 +755,10 @@ def unpack_champion(  # noqa: PLR0913
         cache_lock: 多线程场景下的缓存锁。
         ctx: 运行时上下文。
         persisted_wem_callback: WEM 落盘后的附加回调。
+        persisted_artifact_callback: 非 WEM 解包产物落盘后的内部回调。
+
+    Returns:
+        保持现有报告 schema 的实体解包统计。
     """
     try:
         entity_data = AudioEntityData.from_entity(
@@ -757,7 +767,7 @@ def unpack_champion(  # noqa: PLR0913
             reader,
             ctx=ctx,
         )
-        unpack_entity(
+        stats = unpack_entity(
             entity_data,
             reader,
             wad_cache=wad_cache,
@@ -765,7 +775,13 @@ def unpack_champion(  # noqa: PLR0913
             ctx=ctx,
             persisted_wem_callback=persisted_wem_callback,
         )
-        attach_bp_vo(entity_data, reader, ctx=ctx)
+        attach_bp_vo(
+            entity_data,
+            reader,
+            ctx=ctx,
+            persisted_artifact_callback=persisted_artifact_callback,
+        )
+        return stats
     except ValueError as e:
         # 显式记录边界错误后向上抛出，交由 batch 统一计入失败计数；
         # 不在此处吞掉返回 None，否则失败会被误判为成功（见 AGENTS.project.md 日志硬规则）。
@@ -781,7 +797,7 @@ def unpack_map(  # noqa: PLR0913
     *,
     ctx: AppContext,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-) -> None:
+) -> EntityUnpackStats:
     """按地图 ID 解包音频。
 
     Args:
@@ -791,6 +807,9 @@ def unpack_map(  # noqa: PLR0913
         cache_lock: 多线程场景下的缓存锁。
         ctx: 运行时上下文。
         persisted_wem_callback: WEM 落盘后的附加回调。
+
+    Returns:
+        保持现有报告 schema 的实体解包统计。
     """
     try:
         entity_data = AudioEntityData.from_entity(
@@ -799,7 +818,7 @@ def unpack_map(  # noqa: PLR0913
             reader,
             ctx=ctx,
         )
-        unpack_entity(
+        stats = unpack_entity(
             entity_data,
             reader,
             wad_cache=wad_cache,
@@ -807,6 +826,7 @@ def unpack_map(  # noqa: PLR0913
             ctx=ctx,
             persisted_wem_callback=persisted_wem_callback,
         )
+        return stats
     except ValueError as e:
         # 显式记录边界错误后向上抛出，交由 batch 统一计入失败计数；
         # 不在此处吞掉返回 None，否则失败会被误判为成功（见 AGENTS.project.md 日志硬规则）。
@@ -822,7 +842,7 @@ def unpack_resource_pack(  # noqa: PLR0913
     *,
     ctx: AppContext,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-) -> None:
+) -> EntityUnpackStats:
     """按 resource-pack stable key 解包音频。
 
     Args:
@@ -832,6 +852,9 @@ def unpack_resource_pack(  # noqa: PLR0913
         cache_lock: 多线程场景下的缓存锁。
         ctx: 运行时上下文。
         persisted_wem_callback: WEM 落盘后的附加回调。
+
+    Returns:
+        保持现有报告 schema 的实体解包统计。
 
     Raises:
         ValueError: resource-pack artifact 或绑定无效时抛出。
@@ -843,7 +866,7 @@ def unpack_resource_pack(  # noqa: PLR0913
             reader,
             ctx=ctx,
         )
-        unpack_entity(
+        stats = unpack_entity(
             entity_data,
             reader,
             wad_cache=wad_cache,
@@ -851,6 +874,7 @@ def unpack_resource_pack(  # noqa: PLR0913
             ctx=ctx,
             persisted_wem_callback=persisted_wem_callback,
         )
+        return stats
     except ValueError as exc:
         logger.error(str(exc))
         raise

@@ -24,16 +24,16 @@ from lol_audio_unpack.manager.errors import (
 )
 from lol_audio_unpack.manager.files import read_data
 from lol_audio_unpack.model.binding import RESOURCE_SCHEMA_VERSION, ResourceBindings
-from lol_audio_unpack.utils.common import Singleton
 from lol_audio_unpack.utils.logging import performance_monitor
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
 
 
-class DataReader(metaclass=Singleton):
-    """
-    从合并后的数据文件读取游戏数据
+class DataReader:
+    """读取单一应用上下文的结构化游戏数据与分散资源 artifact。
+
+    每次构造都创建独立实例；实例内缓存只在其所属 app/context 生命周期内复用。
     """
 
     MAX_MINOR_DIFF = 2
@@ -50,9 +50,6 @@ class DataReader(metaclass=Singleton):
         Args:
             ctx: 运行时上下文。
         """
-        if hasattr(self, "initialized"):
-            return
-
         self.ctx = ctx
         self.game_path = Path(self.ctx.config.game_path)
         self.manifest_path = Path(self.ctx.paths.manifest_path)
@@ -90,7 +87,6 @@ class DataReader(metaclass=Singleton):
 
         # 防御性开发：记录未知的音频分类
         self.unknown_categories: set[str] = set()
-        self.initialized = True
 
     def _validate_data_version(self) -> None:
         """

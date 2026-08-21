@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import os
 import shutil
 import threading
@@ -10,6 +11,21 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from loguru import logger
+
+WINDOWS_DIR_NOT_EMPTY = 145
+
+
+class RemoteCleanupError(OSError):
+    """聚合远端准备产物清理期间未能删除的路径。
+
+    Args:
+        failures: 每个失败路径及其底层 ``OSError``。
+    """
+
+    def __init__(self, failures: list[tuple[Path, OSError]]) -> None:
+        self.failures = tuple(failures)
+        details = "；".join(f"{path}: {error}" for path, error in self.failures)
+        super().__init__(f"远端准备产物清理失败（{len(self.failures)} 项）: {details}")
 
 
 def run_sync(coroutine: Any) -> Any:
@@ -136,8 +152,12 @@ def remove_paths(paths: set[str], *, dry_run: bool) -> int:
 
     Returns:
         实际删除或将要删除的路径数量。
+
+    Raises:
+        RemoteCleanupError: 存在无法删除的路径时抛出；成功或已不存在的路径会从登记表移除。
     """
     removed_count = 0
+    failures: list[tuple[Path, OSError]] = []
     for raw_path in list(paths):
         path = Path(raw_path)
         if dry_run:
@@ -145,13 +165,17 @@ def remove_paths(paths: set[str], *, dry_run: bool) -> int:
                 removed_count += 1
             continue
         try:
-            if path.exists():
-                path.unlink()
-                removed_count += 1
-        except OSError:
-            logger.warning(f"清理远端产物失败: {path}")
-        finally:
+            path.unlink()
+        except FileNotFoundError:
             paths.discard(raw_path)
+        except OSError as exc:
+            logger.warning(f"清理远端产物失败: {path}（原因: {exc}）")
+            failures.append((path, exc))
+        else:
+            removed_count += 1
+            paths.discard(raw_path)
+    if failures:
+        raise RemoteCleanupError(failures)
     return removed_count
 
 
@@ -160,18 +184,45 @@ def prune_empty_tree(root: Path) -> None:
 
     Args:
         root: 需要向下清理的目录根。
-    """
-    if not root.exists():
-        return
 
-    for current_root, _, _ in os.walk(root, topdown=False):
+    Raises:
+        RemoteCleanupError: 存在无法读取或删除的空目录时抛出。
+    """
+    try:
+        root.stat()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        logger.warning(f"读取远端清理根目录失败: {root}（原因: {exc}）")
+        raise RemoteCleanupError([(root, exc)]) from exc
+
+    failures: list[tuple[Path, OSError]] = []
+
+    def on_error(error: OSError) -> None:
+        """收集 ``os.walk`` 无法遍历的目录错误。"""
+        path = Path(error.filename) if error.filename else root
+        logger.warning(f"遍历远端清理目录失败: {path}（原因: {error}）")
+        failures.append((path, error))
+
+    for current_root, _, _ in os.walk(root, topdown=False, onerror=on_error):
         current_path = Path(current_root)
         try:
             if any(current_path.iterdir()):
                 continue
-        except OSError:
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            logger.warning(f"读取远端清理目录失败: {current_path}（原因: {exc}）")
+            failures.append((current_path, exc))
             continue
         try:
             current_path.rmdir()
-        except OSError:
+        except FileNotFoundError:
             continue
+        except OSError as exc:
+            if exc.errno == errno.ENOTEMPTY or getattr(exc, "winerror", None) == WINDOWS_DIR_NOT_EMPTY:
+                continue
+            logger.warning(f"清理远端空目录失败: {current_path}（原因: {exc}）")
+            failures.append((current_path, exc))
+    if failures:
+        raise RemoteCleanupError(failures)

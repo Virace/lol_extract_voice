@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from queue import Empty
 
+from lol_audio_unpack.app.results import RunResult, StageResult
 from lol_audio_unpack.gui.service.execution_process_worker import ExecutionProcessWorker
 from lol_audio_unpack.gui.task_models import (
     ExecutionTaskDraft,
@@ -100,6 +101,7 @@ def test_execution_process_worker_forwards_child_events(qtbot) -> None:
         completed_steps=("音频解包",),
         summary="执行完成",
         duration_seconds=1.2,
+        run_result=RunResult((StageResult("extract"),)),
     )
     progress = ExecutionTaskProgress(
         stage_key="extract",

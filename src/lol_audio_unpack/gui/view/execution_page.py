@@ -315,7 +315,7 @@ class ExecutionPage(SmoothScrollArea):
         return self._queue_controller.has_active_background_work()
 
     def has_incomplete_tasks(self) -> bool:
-        """返回队列中是否仍存在等待、运行或失败任务。"""
+        """返回队列中是否仍存在等待或运行任务。"""
         return self._queue_controller.has_incomplete_tasks()
 
     def _build_task_item_tooltip(self, task: QueuedExecutionTask) -> str:
@@ -495,6 +495,10 @@ class ExecutionPage(SmoothScrollArea):
         return self._queue_controller.inspect_queue(
             builder_card_height=self.taskBuilderPanel.height(),
         )
+
+    def _debug_simulate_terminal_result(self, status: str) -> str:
+        """注入一个可人工验收的 typed terminal result。"""
+        return self._queue_controller.simulate_terminal_result(status)
 
     def shutdown_background_tasks(self) -> None:
         """在窗口关闭前清理执行中心后台任务引用。"""

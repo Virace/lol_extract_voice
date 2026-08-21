@@ -6,12 +6,14 @@ from pathlib import Path
 from threading import Event, Lock
 from types import SimpleNamespace
 
+import pytest
 from loguru import logger
 
 import lol_audio_unpack.mapping.batch as mapping_batch
 import lol_audio_unpack.mapping.entity as mapping_entity
 import lol_audio_unpack.mapping.session as mapping_session
 from lol_audio_unpack.app.path_layout import format_entity_folder_name, format_sub_entity_folder_name
+from lol_audio_unpack.app.results import ResultStatus, StageResult
 from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
 from lol_audio_unpack.mapping import build_entity
 from lol_audio_unpack.model import AudioBank, AudioEntityData
@@ -105,6 +107,16 @@ def _build_fake_ctx(
     )
 
 
+def _patch_batch_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """替换批处理测试不需要的 HIRC 运行时依赖。"""
+    monkeypatch.setattr(mapping_session, "_create_wwiser_manager", lambda _ctx: object())
+    monkeypatch.setattr(
+        mapping_session,
+        "RuntimeCache",
+        lambda cache_lock=None: SimpleNamespace(cache_lock=cache_lock),
+    )
+
+
 def test_build_entity_uses_single_success_summary(monkeypatch, tmp_path: Path) -> None:
     """类别级完成日志应降为 debug，实体级只保留一条统计 success。"""
     cache_dir = tmp_path / "cache"
@@ -115,7 +127,9 @@ def test_build_entity_uses_single_success_summary(monkeypatch, tmp_path: Path) -
 
     monkeypatch.setattr(mapping_session, "_get_wad", lambda _wad_path, runtime_cache=None: _FakeWad())
     monkeypatch.setattr(mapping_entity, "AudioEventMapper", _FakeAudioEventMapper)
-    monkeypatch.setattr(mapping_entity, "write_data", lambda *args, **kwargs: None)
+    mapping_path = hash_dir / "champions" / "1-test-entity.msgpack"
+    persisted: list[Path] = []
+    monkeypatch.setattr(mapping_entity, "write_data", lambda *args, **kwargs: mapping_path)
 
     def fake_get_cached_hirc(*, bnk_path: Path, **_kwargs) -> object:
         if bnk_path.name == "bad_events.bnk":
@@ -166,6 +180,7 @@ def test_build_entity_uses_single_success_summary(monkeypatch, tmp_path: Path) -
             integrate_data=False,
             runtime_cache=None,
             ctx=_build_fake_ctx(game_path=game_dir, cache_path=cache_dir, hash_path=hash_dir),
+            persisted_mapping_callback=persisted.append,
         )
     finally:
         logger.remove(sink_id)
@@ -182,6 +197,7 @@ def test_build_entity_uses_single_success_summary(monkeypatch, tmp_path: Path) -
     assert any("异常事件 1 个" in line for line in warning_lines)
     assert any("未映射跳过 1 个" in line for line in warning_lines)
     assert not any("SUCCESS|Test Entity 的事件映射统计" in line for line in log_lines)
+    assert persisted == [mapping_path]
 
 
 def test_resolve_wad_path_uses_language_wad_for_vo_and_root_wad_for_other_categories(tmp_path: Path) -> None:
@@ -226,18 +242,9 @@ def test_execute_tasks_emits_running_entity_progress_before_completion(monkeypat
         "_build_entity",
         lambda *_args, **_kwargs: None,
     )
-    monkeypatch.setattr(
-        mapping_session,
-        "_create_wwiser_manager",
-        lambda _ctx: object(),
-    )
-    monkeypatch.setattr(
-        mapping_session,
-        "RuntimeCache",
-        lambda cache_lock=None: SimpleNamespace(cache_lock=cache_lock),
-    )
+    _patch_batch_runtime(monkeypatch)
 
-    mapping_batch.execute_tasks(
+    result = mapping_batch.execute_tasks(
         [("champion", 1, "测试英雄")],
         _FakeReader(),
         max_workers=1,
@@ -252,6 +259,240 @@ def test_execute_tasks_emits_running_entity_progress_before_completion(monkeypat
         ("champion", 0, 1, "正在处理: 测试英雄"),
         ("champion", 1, 1, "测试英雄 映射完成"),
     ]
+    assert result.status is ResultStatus.SUCCESS
+    assert result.entities[0].entity_id == 1
+    assert result.entities[0].entity_name == "测试英雄"
+
+
+def test_execute_tasks_single_worker_keeps_success_and_failure_results(monkeypatch) -> None:
+    """单线程 batch 应继续处理并返回稳定的实体结果。"""
+    failed_entity_id = 2
+
+    def build_entity(_entity_type: str, entity_id: int | str, *_args, **_kwargs) -> None:
+        if entity_id == failed_entity_id:
+            raise RuntimeError("map mapping failed")
+
+    monkeypatch.setattr(mapping_batch, "_build_entity", build_entity)
+    _patch_batch_runtime(monkeypatch)
+
+    result = mapping_batch.execute_tasks(
+        [("champion", 1, "成功英雄"), ("map", 2, "失败地图")],
+        _FakeReader(),
+        max_workers=1,
+        ctx=_build_fake_ctx(),
+    )
+
+    assert result.status is ResultStatus.PARTIAL
+    assert [(entity.entity_type, entity.entity_id, entity.entity_name) for entity in result.entities] == [
+        ("champion", 1, "成功英雄"),
+        ("map", 2, "失败地图"),
+    ]
+    assert [entity.status for entity in result.entities] == [ResultStatus.SUCCESS, ResultStatus.FAILED]
+    assert result.entities[1].error_type == "RuntimeError"
+    assert result.entities[1].error_message == "map mapping failed"
+
+
+def test_execute_tasks_preserves_mapping_artifacts_for_success_and_late_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """mapping batch 应按输入顺序保留真实落盘路径，且不伪造空输出。"""
+    failed_entity_id = 2
+    empty_entity_id = 3
+
+    def build_entity(_entity_type: str, entity_id: int | str, *_args, **kwargs) -> None:
+        callback = kwargs["persisted_mapping_callback"]
+        if entity_id != empty_entity_id:
+            path = tmp_path / f"{entity_id}.msgpack"
+            path.write_bytes(b"mapping")
+            callback(path)
+        if entity_id == failed_entity_id:
+            raise OSError("write completed but summary failed")
+
+    monkeypatch.setattr(mapping_batch, "_build_entity", build_entity)
+    _patch_batch_runtime(monkeypatch)
+
+    result = mapping_batch.execute_tasks(
+        [
+            ("champion", 1, "成功英雄"),
+            ("map", failed_entity_id, "落盘后失败地图"),
+            ("champion", empty_entity_id, "空映射英雄"),
+        ],
+        _FakeReader(),
+        max_workers=3,
+        ctx=_build_fake_ctx(),
+    )
+
+    assert [entity.entity_id for entity in result.entities] == [1, 2, 3]
+    assert [entity.status for entity in result.entities] == [
+        ResultStatus.SUCCESS,
+        ResultStatus.FAILED,
+        ResultStatus.SUCCESS,
+    ]
+    assert [entity.artifacts for entity in result.entities] == [
+        (str(tmp_path / "1.msgpack"),),
+        (str(tmp_path / "2.msgpack"),),
+        (),
+    ]
+
+
+def test_mapping_write_helpers_return_actual_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """mapping 与 integrated 写入 helper 应返回实际落盘路径。"""
+    entity_data = SimpleNamespace(entity_type="champion", entity_id=1, entity_name="测试英雄")
+    ctx = _build_fake_ctx(hash_path=tmp_path / "hashes")
+    mapping_path = tmp_path / "hashes" / "champions" / "1.msgpack"
+    integrated_path = tmp_path / "hashes" / "integrated" / "champions" / "1.msgpack"
+    written_paths = iter((mapping_path, integrated_path))
+    monkeypatch.setattr(mapping_entity, "write_data", lambda *_args, **_kwargs: next(written_paths))
+
+    mapping_result = {"metadata": {}, "skins": {"1001": {"events": {"VO": {"evt": [1]}}}}}
+    integrated_result = {"data": {"skins": [{"id": 1001}]}}
+
+    assert (
+        mapping_entity._write_mapping_result(
+            mapping_result,
+            "skins",
+            tmp_path / "hashes" / "champions",
+            entity_data,
+            ctx=ctx,
+        )
+        == mapping_path
+    )
+    assert (
+        mapping_entity._write_integrated_result(entity_data, integrated_result, tmp_path / "hashes", ctx=ctx)
+        == integrated_path
+    )
+
+
+def test_execute_tasks_multi_worker_keeps_input_results_and_completion_progress(monkeypatch) -> None:
+    """多线程结果应保持输入顺序，而进度应保持实际完成顺序。"""
+    fast_entity_id = 2
+    started = Event()
+    release_slow_task = Event()
+    progress_events: list[tuple[str, int, int, str]] = []
+
+    def build_entity(_entity_type: str, entity_id: int | str, *_args, **_kwargs) -> None:
+        if entity_id == 1:
+            started.set()
+            assert release_slow_task.wait(timeout=2)
+            return
+        assert entity_id == fast_entity_id
+        assert started.wait(timeout=2)
+        raise RuntimeError("fast mapping failed")
+
+    def record_progress(entity_type: str, current: int, total: int, message: str) -> None:
+        progress_events.append((entity_type, current, total, message))
+        if message == "快速失败 映射失败":
+            release_slow_task.set()
+
+    monkeypatch.setattr(mapping_batch, "_build_entity", build_entity)
+    _patch_batch_runtime(monkeypatch)
+
+    result = mapping_batch.execute_tasks(
+        [("champion", 1, "缓慢成功"), ("map", fast_entity_id, "快速失败")],
+        _FakeReader(),
+        max_workers=2,
+        ctx=_build_fake_ctx(),
+        progress_callback=record_progress,
+    )
+
+    completed_messages = [message for *_details, message in progress_events if not message.startswith("正在处理:")]
+    assert completed_messages == ["快速失败 映射失败", "缓慢成功 映射完成"]
+    assert [entity.entity_id for entity in result.entities] == [1, 2]
+    assert [entity.status for entity in result.entities] == [ResultStatus.SUCCESS, ResultStatus.FAILED]
+    assert result.status is ResultStatus.PARTIAL
+
+
+def test_execute_tasks_returns_failed_stage_when_all_entities_fail(monkeypatch) -> None:
+    """全部实体失败时 stage 不得被错误聚合为成功。"""
+
+    def build_entity(*_args, **_kwargs) -> None:
+        raise RuntimeError("mapping failed")
+
+    monkeypatch.setattr(
+        mapping_batch,
+        "_build_entity",
+        build_entity,
+    )
+    _patch_batch_runtime(monkeypatch)
+
+    result = mapping_batch.execute_tasks(
+        [("champion", 1, "英雄一"), ("map", 2, "地图二")],
+        _FakeReader(),
+        max_workers=1,
+        ctx=_build_fake_ctx(),
+    )
+
+    assert result.status is ResultStatus.FAILED
+    assert result.failed_count == len(result.entities)
+    assert [entity.entity_id for entity in result.entities] == [1, 2]
+
+
+def test_execute_tasks_returns_successful_no_op_for_empty_tasks() -> None:
+    """空任务集是合法 no-op，应返回成功的 mapping stage。"""
+    result = mapping_batch.execute_tasks([], _FakeReader(), ctx=_build_fake_ctx())
+
+    assert isinstance(result, StageResult)
+    assert result.status is ResultStatus.SUCCESS
+    assert result.entities == ()
+    assert result.note == "没有任何任务需要执行"
+
+
+def test_execute_tasks_rejects_unknown_type_before_creating_runtime(monkeypatch) -> None:
+    """未知实体类型属于 stage 输入错误，不得降级为单项 partial。"""
+    monkeypatch.setattr(
+        mapping_session,
+        "_create_wwiser_manager",
+        lambda _ctx: pytest.fail("未知实体类型不应初始化 mapping 运行时"),
+    )
+
+    with pytest.raises(ValueError, match="未知的实体类型: unknown"):
+        mapping_batch.execute_tasks(
+            [("unknown", 1, "未知实体")],
+            _FakeReader(),
+            ctx=_build_fake_ctx(),
+        )
+
+
+def test_execute_tasks_reraises_keyboard_interrupt(monkeypatch) -> None:
+    """中断信号不属于可继续的实体失败，必须向调用边界上抛。"""
+
+    def build_entity(*_args, **_kwargs) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        mapping_batch,
+        "_build_entity",
+        build_entity,
+    )
+    _patch_batch_runtime(monkeypatch)
+
+    with pytest.raises(KeyboardInterrupt):
+        mapping_batch.execute_tasks(
+            [("champion", 1, "被中断英雄")],
+            _FakeReader(),
+            max_workers=1,
+            ctx=_build_fake_ctx(),
+        )
+
+
+def test_mapping_builders_return_stage_result_for_empty_tasks(monkeypatch) -> None:
+    """所有公开 mapping builder 均应在合法 no-op 时返回 stage 结果。"""
+    monkeypatch.setattr(mapping_batch, "generate_champion_tasks", lambda *_args: [])
+    monkeypatch.setattr(mapping_batch, "generate_map_tasks", lambda *_args: [])
+    reader = _FakeReader()
+    ctx = _build_fake_ctx()
+
+    results = (
+        mapping_batch.build_all(reader, include_champions=False, include_maps=False, ctx=ctx),
+        mapping_batch.build_champions(reader, [1], ctx=ctx),
+        mapping_batch.build_maps(reader, [1], ctx=ctx),
+        mapping_batch.build_resource_packs(reader, [], ctx=ctx),
+    )
+
+    assert all(isinstance(result, StageResult) for result in results)
+    assert all(result.status is ResultStatus.SUCCESS for result in results)
+    assert all(result.entities == () for result in results)
 
 
 def test_local_mapping_uses_binding_wad_namespace_and_path_level_audio_refs(
@@ -525,13 +766,20 @@ def test_integrated_local_mapping_keeps_failed_diagnostics_without_legacy_banks(
         get_champion_banks=lambda _id: {},
     )
     written: list[dict] = []
-    monkeypatch.setattr(mapping_entity, "write_data", lambda data, *_args, **_kwargs: written.append(data))
+    integrated_path = tmp_path / "hashes" / "integrated" / "champions" / "1.msgpack"
+    persisted: list[Path] = []
+    monkeypatch.setattr(
+        mapping_entity,
+        "write_data",
+        lambda data, *_args, **_kwargs: (written.append(data), integrated_path)[1],
+    )
 
     result = build_entity(
         entity_data,
         reader,
         integrate_data=True,
         ctx=_build_fake_ctx(cache_path=tmp_path / "cache", hash_path=tmp_path / "hashes"),
+        persisted_mapping_callback=persisted.append,
     )
 
     assert result["mappingDiagnostics"]["completeness"] == "failed"
@@ -539,6 +787,7 @@ def test_integrated_local_mapping_keeps_failed_diagnostics_without_legacy_banks(
         {"subEntity": "1001", "category": "CHARACTER_VO", "status": "missing"}
     ]
     assert written == [result]
+    assert persisted == [integrated_path]
 
 
 def test_hirc_memory_cache_key_includes_wad_identity_and_backend(tmp_path: Path, monkeypatch) -> None:

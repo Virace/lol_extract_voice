@@ -9,6 +9,7 @@ from lol_audio_unpack.gui.task_models import (
     TASK_STATUS_CANCELLED,
     TASK_STATUS_COMPLETED,
     TASK_STATUS_FAILED,
+    TASK_STATUS_PARTIAL,
     TASK_STATUS_RUNNING,
     TASK_STATUS_WAITING,
     AppContextInputSnapshot,
@@ -27,6 +28,7 @@ TARGET_DIRECTORY_PROGRESS_CURRENT = 2
 TARGET_DIRECTORY_PROGRESS_TOTAL = 6
 FALLBACK_PROGRESS_CURRENT = 1
 FALLBACK_PROGRESS_TOTAL = 3
+TERMINAL_PROGRESS_TOTAL = 2
 
 
 def _empty_counts() -> dict[str, int]:
@@ -35,6 +37,7 @@ def _empty_counts() -> dict[str, int]:
         TASK_STATUS_WAITING: 0,
         TASK_STATUS_COMPLETED: 0,
         TASK_STATUS_FAILED: 0,
+        TASK_STATUS_PARTIAL: 0,
         TASK_STATUS_CANCELLED: 0,
     }
 
@@ -56,6 +59,24 @@ def test_build_global_progress_strip_state_for_empty_queue() -> None:
     )
 
     assert state == GlobalProgressStripState()
+
+
+def test_build_global_progress_strip_state_preserves_terminal_summary_for_delayed_hide() -> None:
+    """队列结束后的摘要应随隐藏请求传给宿主，而不是丢弃最终进度。"""
+    state = build_global_progress_strip_state(
+        counts=_empty_counts(),
+        running_task=None,
+        note_text="部分完成：成功 1，失败 1",
+        progress_current=1,
+        progress_total=2,
+    )
+
+    assert state.visible is False
+    assert state.title_text == "任务已结束"
+    assert state.detail_text == "部分完成：成功 1，失败 1"
+    assert state.status_text == "1/2"
+    assert state.progress_current == 1
+    assert state.progress_total == TERMINAL_PROGRESS_TOTAL
 
 
 def test_build_global_progress_strip_state_for_running_stage_progress() -> None:
