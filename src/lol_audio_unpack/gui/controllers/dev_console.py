@@ -7,22 +7,31 @@ from collections.abc import Callable
 from PySide6.QtCore import QPoint
 
 from lol_audio_unpack.gui.components.dev_console import DevConsoleWindow
+from lol_audio_unpack.gui.controllers.shared_data_demo import (
+    DEFAULT_SHARED_DATA_DEMO_INTERVAL_MS,
+    MAX_SHARED_DATA_DEMO_INTERVAL_MS,
+    MIN_SHARED_DATA_DEMO_INTERVAL_MS,
+)
 
 DEV_CONSOLE_COMMAND_MIN_PARTS = 2
 DEV_CONSOLE_QUEUE_FILL_PARTS = 3
 DEV_CONSOLE_QUEUE_RESULT_PARTS = 3
+DEV_CONSOLE_SHARED_PROGRESS_MAX_PARTS = 3
 
 
 class DevConsoleController:
     """解析并执行开发控制台命令。"""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913
         self,
         *,
         queue_fill: Callable[[int], str],
         queue_clear: Callable[[], str],
         queue_inspect: Callable[[], str],
         queue_result: Callable[[str], str] | None = None,
+        shared_progress: Callable[[int], str] | None = None,
+        shared_stop: Callable[[], str] | None = None,
+        shared_inspect: Callable[[], str] | None = None,
         console_factory=DevConsoleWindow,
     ) -> None:
         """初始化开发控制台命令控制器。
@@ -32,11 +41,17 @@ class DevConsoleController:
             queue_clear: 清空 mock 队列的执行函数。
             queue_inspect: 返回当前队列诊断文本的执行函数。
             queue_result: 注入受控 typed terminal result 的可选执行函数。
+            shared_progress: 启动共享进度 mock 的可选执行函数。
+            shared_stop: 停止共享进度 mock 的可选执行函数。
+            shared_inspect: 返回共享进度 mock 状态的可选执行函数。
         """
         self._queue_fill = queue_fill
         self._queue_clear = queue_clear
         self._queue_inspect = queue_inspect
         self._queue_result = queue_result
+        self._shared_progress = shared_progress
+        self._shared_stop = shared_stop
+        self._shared_inspect = shared_inspect
         self._console_factory = console_factory
         self._console = None
 
@@ -66,9 +81,17 @@ class DevConsoleController:
                 "queue clear",
                 "queue inspect",
                 "queue result <success|partial|failed|cancelled>",
+                "shared progress [interval_ms]",
+                "shared stop",
+                "shared inspect",
             )
 
-        if keyword != "queue" or len(parts) < DEV_CONSOLE_COMMAND_MIN_PARTS:
+        if len(parts) < DEV_CONSOLE_COMMAND_MIN_PARTS:
+            raise ValueError("未知命令，输入 help 查看可用命令。")
+
+        if keyword == "shared":
+            return self._run_shared_command(parts)
+        if keyword != "queue":
             raise ValueError("未知命令，输入 help 查看可用命令。")
 
         action = parts[1].lower()
@@ -86,6 +109,30 @@ class DevConsoleController:
             return (self._queue_result(parts[2].lower()),)
 
         raise ValueError("未知 queue 子命令，输入 help 查看可用命令。")
+
+    def _run_shared_command(self, parts: list[str]) -> tuple[str, ...]:
+        """解析并执行共享进度 mock 子命令。"""
+        action = parts[1].lower()
+        if action == "progress":
+            if self._shared_progress is None or len(parts) > DEV_CONSOLE_SHARED_PROGRESS_MAX_PARTS:
+                raise ValueError("shared progress 当前不可用或参数格式错误。")
+            if len(parts) == DEV_CONSOLE_SHARED_PROGRESS_MAX_PARTS:
+                if not parts[2].isdigit():
+                    raise ValueError("shared progress 的间隔必须为正整数毫秒值。")
+                interval_ms = int(parts[2])
+            else:
+                interval_ms = DEFAULT_SHARED_DATA_DEMO_INTERVAL_MS
+            if not MIN_SHARED_DATA_DEMO_INTERVAL_MS <= interval_ms <= MAX_SHARED_DATA_DEMO_INTERVAL_MS:
+                raise ValueError(
+                    "shared progress 的间隔必须在 "
+                    f"{MIN_SHARED_DATA_DEMO_INTERVAL_MS}-{MAX_SHARED_DATA_DEMO_INTERVAL_MS} ms 之间。"
+                )
+            return (self._shared_progress(interval_ms),)
+        if action == "stop" and len(parts) == DEV_CONSOLE_COMMAND_MIN_PARTS and self._shared_stop is not None:
+            return (self._shared_stop(),)
+        if action == "inspect" and len(parts) == DEV_CONSOLE_COMMAND_MIN_PARTS and self._shared_inspect is not None:
+            return tuple(self._shared_inspect().splitlines())
+        raise ValueError("未知 shared 子命令，输入 help 查看可用命令。")
 
     def handle_submitted_command(self, console, command: str) -> None:
         """执行开发控制台命令并回写输出。

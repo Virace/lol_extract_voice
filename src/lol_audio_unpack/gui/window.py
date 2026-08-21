@@ -123,16 +123,11 @@ def _prepare_shared_entity_data(
 class MainWindow(FluentWindow):
     """应用主窗口。"""
 
-    def __init__(self, *, shared_progress_demo_interval_ms: int | None = None):
-        """初始化应用窗口。
-
-        Args:
-            shared_progress_demo_interval_ms: 共享数据进度 mock 的刷新间隔；为空时使用真实数据链路。
-        """
+    def __init__(self):
+        """初始化应用窗口。"""
         startup_begin = perf_counter()
         previous_mark = startup_begin
         self._log_drawer_controller = LogDrawerController()
-        self._shared_progress_demo_interval_ms = shared_progress_demo_interval_ms
         self._shared_progress_demo: SharedDataProgressDemo | None = None
         super().__init__()
         previous_mark = _log_window_stage("FluentWindow 基类初始化", startup_begin, previous_mark)
@@ -361,6 +356,9 @@ class MainWindow(FluentWindow):
             queue_clear=self.executionInterface._debug_clear_mock_queue,
             queue_inspect=self.executionInterface._debug_inspect_queue,
             queue_result=self.executionInterface._debug_simulate_terminal_result,
+            shared_progress=self._debug_start_shared_progress_demo,
+            shared_stop=self._debug_stop_shared_progress_demo,
+            shared_inspect=self._debug_inspect_shared_progress_demo,
         )
 
     def _show_dev_console(self) -> None:
@@ -402,22 +400,54 @@ class MainWindow(FluentWindow):
         self.homeInterface.set_shared_data_state(state)
         self._progress_strip_coordinator.set_shared_data_state(state)
 
-    def _start_shared_progress_demo(self, cfg) -> None:
-        """启动不接触真实实体数据的循环共享进度演示。"""
-        interval_ms = self._shared_progress_demo_interval_ms
-        if interval_ms is None:
-            return
-        source_mode = str(
-            getattr(cfg, "effective_source_mode", None) or getattr(cfg, "source_mode", "local_path") or "local_path"
-        )
+    def _debug_start_shared_progress_demo(self, interval_ms: int) -> str:
+        """从开发控制台启动或调速共享进度 mock。"""
+        shared_controller = self._shared_data_controller
+        if shared_controller is None:
+            return "共享数据控制器尚未就绪，无法启动 mock。"
+        if shared_controller.state.active:
+            return "真实共享数据流程正在运行，请等待结束后再启动 mock。"
+        if self._shared_progress_demo is not None:
+            self._shared_progress_demo.stop()
+            self._shared_progress_demo.deleteLater()
         self._shared_progress_demo = SharedDataProgressDemo(interval_ms=interval_ms, parent=self)
         self._shared_progress_demo.state_changed.connect(self._show_shared_progress_demo_state)
         self._shared_progress_demo.start(
-            generation=self._shared_data_controller.generation,
-            source_mode=source_mode,
+            generation=shared_controller.generation,
+            source_mode=shared_controller.state.source_mode,
         )
-        self.setWindowTitle(f"Lol Audio Unpack  {__version__}  [共享进度 Mock]")
         logger.info("共享数据进度 mock 已启动 | 间隔 {}ms | 不读取或修改真实实体数据", interval_ms)
+        return f"共享进度 mock 已启动：{interval_ms} ms/步；再次执行可调速。"
+
+    def _debug_stop_shared_progress_demo(self) -> str:
+        """停止共享进度 mock，并恢复最新真实状态。"""
+        if self._shared_progress_demo is None:
+            return "共享进度 mock 当前未运行。"
+        self._shared_progress_demo.stop()
+        self._shared_progress_demo.deleteLater()
+        self._shared_progress_demo = None
+        state = self._shared_data_controller.state
+        self.homeInterface.set_shared_data_state(state)
+        self._progress_strip_coordinator.set_shared_data_state(state)
+        logger.info("共享数据进度 mock 已停止，已恢复真实共享状态")
+        return "共享进度 mock 已停止，已恢复真实状态。"
+
+    def _debug_inspect_shared_progress_demo(self) -> str:
+        """返回共享进度 mock 的当前运行信息。"""
+        demo = self._shared_progress_demo
+        if demo is None or not demo.is_running:
+            return "共享进度 mock：stopped"
+        return f"共享进度 mock：running\n步进间隔：{demo.interval_ms} ms\n模式：循环整体更新"
+
+    def _cancel_shared_progress_demo_on_real_state(self, _state: SharedDataState) -> None:
+        """真实状态再次发布时自动结束 mock，避免遮蔽后台事实。"""
+        demo = self._shared_progress_demo
+        if demo is None:
+            return
+        demo.stop()
+        demo.deleteLater()
+        self._shared_progress_demo = None
+        logger.info("真实共享数据状态已更新，共享进度 mock 自动停止")
 
     def _dispatch_shared_data_action(self, action_key: str) -> None:
         """处理首页共享数据状态区发出的稳定动作。"""
@@ -450,6 +480,7 @@ class MainWindow(FluentWindow):
             ),
         )
         self._shared_data_controller.state_changed.connect(self._progress_strip_coordinator.set_shared_data_state)
+        self._shared_data_controller.state_changed.connect(self._cancel_shared_progress_demo_on_real_state)
         self.stackedWidget.currentChanged.connect(self._sync_shared_data_progress_visibility)
         self._sync_shared_data_progress_visibility()
 
@@ -538,11 +569,8 @@ class MainWindow(FluentWindow):
         self._shared_data_controller.reader_signature = build_shared_entity_reader_signature(cfg)
         self._shared_data_controller.scan_signature = build_shared_entity_scan_signature(cfg)
 
-        # mock 模式只驱动展示组件；普通模式继续使用真实扫描与自动准备链路。
-        if self._shared_progress_demo_interval_ms is None:
-            self._shared_data_controller.load_initial_data(cfg)
-        else:
-            self._start_shared_progress_demo(cfg)
+        # 首页初始化完成后加载真实数据；mock 仅由开发控制台按需覆盖展示层。
+        self._shared_data_controller.load_initial_data(cfg)
 
     def _has_active_background_work(self) -> bool:
         """返回窗口关闭前是否仍存在后台工作。"""

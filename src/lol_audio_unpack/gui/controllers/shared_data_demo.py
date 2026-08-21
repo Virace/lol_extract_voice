@@ -12,6 +12,9 @@ from lol_audio_unpack.gui.shared_data import (
 )
 from lol_audio_unpack.model.progress import OperationProgress, ProgressEvent
 
+DEFAULT_SHARED_DATA_DEMO_INTERVAL_MS = 50
+MIN_SHARED_DATA_DEMO_INTERVAL_MS = 10
+MAX_SHARED_DATA_DEMO_INTERVAL_MS = 2000
 DEMO_CHAMPION_TOTAL = 173
 DEMO_MAP_TOTAL = 9
 DEMO_CHECKING_TICKS = 20
@@ -132,6 +135,7 @@ class SharedDataProgressDemo(QObject):
         super().__init__(parent)
         self._states: tuple[SharedDataState, ...] = ()
         self._next_index = 0
+        self._interval_ms = interval_ms
         self._timer = QTimer(self)
         self._timer.setInterval(interval_ms)
         self._timer.timeout.connect(self._publish_next)
@@ -152,6 +156,16 @@ class SharedDataProgressDemo(QObject):
         """停止发布 mock 状态。"""
         self._timer.stop()
 
+    @property
+    def interval_ms(self) -> int:
+        """返回当前 mock 的步进间隔。"""
+        return self._interval_ms
+
+    @property
+    def is_running(self) -> bool:
+        """返回 mock 计时器是否正在运行。"""
+        return self._timer.isActive()
+
     def _publish_next(self) -> None:
         """发布下一个样本，并在抵达末尾时回到检查阶段。"""
         if not self._states:
@@ -162,6 +176,9 @@ class SharedDataProgressDemo(QObject):
 
 
 __all__ = [
+    "DEFAULT_SHARED_DATA_DEMO_INTERVAL_MS",
+    "MAX_SHARED_DATA_DEMO_INTERVAL_MS",
+    "MIN_SHARED_DATA_DEMO_INTERVAL_MS",
     "SharedDataProgressDemo",
     "build_shared_data_demo_states",
 ]

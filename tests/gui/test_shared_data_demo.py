@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from lol_audio_unpack.gui.controllers.shared_data_demo import build_shared_data_demo_states
+from lol_audio_unpack.gui.controllers.shared_data_demo import (
+    SharedDataProgressDemo,
+    build_shared_data_demo_states,
+)
 from lol_audio_unpack.gui.shared_data import SharedDataPhase
 from lol_audio_unpack.gui.shared_data_view import describe_shared_data_state
 from lol_audio_unpack.model.progress import OperationProgress
@@ -10,6 +13,7 @@ from lol_audio_unpack.model.progress import OperationProgress
 TEST_CHAMPION_TOTAL = 3
 TEST_MAP_TOTAL = 2
 TEST_CHAMPION_CURRENT = 2
+TEST_DEMO_INTERVAL_MS = 80
 
 
 def test_shared_data_demo_covers_complete_progress_flow() -> None:
@@ -56,3 +60,17 @@ def test_shared_data_demo_emits_normalized_stage_boundaries() -> None:
 
     assert all(item.current is not None and 0 <= item.current <= item.total for item in progress)
     assert {item.event for item in progress} == {"started", "advanced", "finished"}
+
+
+def test_shared_data_demo_exposes_runtime_status(qtbot) -> None:
+    demo = SharedDataProgressDemo(interval_ms=TEST_DEMO_INTERVAL_MS)
+
+    assert demo.interval_ms == TEST_DEMO_INTERVAL_MS
+    assert demo.is_running is False
+
+    demo.start(generation=1, source_mode="local_path")
+    qtbot.wait(1)
+
+    assert demo.is_running is True
+    demo.stop()
+    assert demo.is_running is False
