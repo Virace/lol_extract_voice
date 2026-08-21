@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from lol_audio_unpack.model.progress import OperationProgress
+
 from .context import create_app_context
 from .facade import LolAudioUnpackApp
 from .remote import RemoteEntityCallbackPayload, RemoteEntityWorkItem
@@ -26,6 +28,7 @@ __all__ = [
     "EntityResult",
     "LolAudioUnpackApp",
     "OperationOptions",
+    "OperationProgress",
     "RemoteEntityCallbackPayload",
     "RemoteEntityWorkItem",
     "RemoteSnapshotConfig",

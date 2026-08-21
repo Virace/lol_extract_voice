@@ -22,6 +22,7 @@ from lol_audio_unpack.manager import (
     ResourcePackDiscoveryResult,
 )
 from lol_audio_unpack.manager.errors import SharedDataNotReadyError
+from lol_audio_unpack.manager.update_result import UpdateEntityResult, UpdateStatus
 from lol_audio_unpack.mapping import (
     build_all,
     build_champions,
@@ -30,6 +31,7 @@ from lol_audio_unpack.mapping import (
     describe_hirc_backend,
 )
 from lol_audio_unpack.model import AudioEntityData
+from lol_audio_unpack.model.progress import OperationProgress
 from lol_audio_unpack.runtime.remote import RemotePreparer
 from lol_audio_unpack.runtime.wav import TranscodeTarget, run_tree
 from lol_audio_unpack.unpack import unpack_all, unpack_champions, unpack_maps, unpack_resource_packs
@@ -40,6 +42,7 @@ from .remote_workflow import RemoteWorkflowOrchestrator
 from .resource_pack import partition_special_targets
 from .results import EntityResult, ResultStatus, RunResult, StageResult
 from .special_content import is_special_content_supported, merge_champion_ids
+from .targets import with_common_map
 from .types import AppContext, OperationOptions, SourceMode
 
 UPDATE_PREPARED_KEY = "update_data_prepared_force"
@@ -177,6 +180,33 @@ class LolAudioUnpackApp:
                 )
             )
         return StageResult.from_entities("update", entities)
+
+    @staticmethod
+    def _adapt_update_results(results: Sequence[UpdateEntityResult] | None) -> StageResult:
+        """把 manager 逐实体结果适配为应用层阶段结果。"""
+        if results is None:
+            # 兼容仍按旧 ``None`` 合同实现的外部替身；生产 BinUpdater 已返回逐实体结果。
+            return StageResult("update")
+        status_map = {
+            UpdateStatus.SUCCESS: ResultStatus.SUCCESS,
+            UpdateStatus.PARTIAL: ResultStatus.PARTIAL,
+            UpdateStatus.FAILED: ResultStatus.FAILED,
+        }
+        return StageResult.from_entities(
+            "update",
+            (
+                EntityResult(
+                    entity_type=result.entity_type,
+                    entity_id=result.entity_id,
+                    entity_name=result.entity_name,
+                    status=status_map[result.status],
+                    error_type=result.error_type,
+                    error_message=result.error_message,
+                    artifacts=result.artifacts,
+                )
+                for result in results
+            ),
+        )
 
     @staticmethod
     def _adapt_wav_result(payload: dict[str, object]) -> StageResult:
@@ -408,17 +438,25 @@ class LolAudioUnpackApp:
         """按实体拆批执行 remote 流程（委托 RemoteWorkflowOrchestrator）。"""
         return self._remote_orchestrator().run_workflow(**kwargs)
 
-    def update(self, opts: OperationOptions, *, target: str = "all") -> StageResult:
+    def update(
+        self,
+        opts: OperationOptions,
+        *,
+        target: str = "all",
+        progress_callback: Callable[[OperationProgress], None] | None = None,
+    ) -> StageResult:
         """执行更新流程并返回权威阶段结果。
 
         Args:
             opts: 更新操作选项。
             target: 传给 BIN 更新器的目标范围。
+            progress_callback: 可选的结构化进度回调。
 
         Returns:
             update 阶段结果；已知共享数据或持久化错误会成为 failed。
         """
         opts = self._resolve_operation_options(opts)
+        opts = replace(opts, map_ids=with_common_map(opts.map_ids, 0))
         resource_pack_summary = f"，资源包 WAD {len(opts.resource_pack_wads)} 个" if opts.resource_pack_wads else ""
         logger.info(
             f"开始执行更新流程：target={target}，英雄 {len(opts.champion_ids or ())} 个，"
@@ -428,7 +466,11 @@ class LolAudioUnpackApp:
         self._reset_reader()
         try:
             try:
+                if progress_callback is not None:
+                    progress_callback(OperationProgress("update", "data", "started"))
                 remote_preparer = self.prepare_update_data(force_update=opts.force_update)
+                if progress_callback is not None:
+                    progress_callback(OperationProgress("update", "data", "finished"))
                 has_resource_pack_scope = self._has_resource_pack_targets(opts)
                 run_standard_update = (
                     not has_resource_pack_scope or opts.champion_ids is not None or opts.map_ids is not None
@@ -442,17 +484,22 @@ class LolAudioUnpackApp:
                         map_ids=opts.map_ids,
                     )
                 if run_standard_update:
+                    updater_kwargs = {
+                        "force_update": opts.force_update,
+                        "process_events": opts.process_events,
+                        "ctx": self.ctx,
+                    }
+                    if progress_callback is not None:
+                        updater_kwargs["progress_callback"] = progress_callback
                     updater = BinUpdater(
-                        force_update=opts.force_update,
-                        process_events=opts.process_events,
-                        ctx=self.ctx,
+                        **updater_kwargs,
                     )
-                    updater.update(
+                    update_results = updater.update(
                         target=target,
                         champion_ids=self._to_str_ids(opts.champion_ids),
                         map_ids=self._to_str_ids(opts.map_ids),
                     )
-                    child_results.append(StageResult("update"))
+                    child_results.append(self._adapt_update_results(update_results))
                 if opts.resource_pack_wads:
                     discovery_result = self.discover_resource_packs(opts)
                     logger.info(

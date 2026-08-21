@@ -232,7 +232,7 @@ def test_facade_update_logs_start_and_summary(monkeypatch: pytest.MonkeyPatch, t
         def update(self, *, target="all", champion_ids=None, map_ids=None) -> None:  # noqa: ANN001
             assert target == "all"
             assert champion_ids == ["1"]
-            assert map_ids == ["11"]
+            assert map_ids == ["0", "11"]
 
     def _format_log(message: str, *args) -> str:
         return message.format(*args) if args else message
@@ -254,8 +254,8 @@ def test_facade_update_logs_start_and_summary(monkeypatch: pytest.MonkeyPatch, t
 
     app.update(OperationOptions(champion_ids=(1,), map_ids=(11,)))
 
-    assert info_messages == ["开始执行更新流程：target=all，英雄 1 个，地图 1 个，事件处理=开启"]
-    assert success_messages == ["更新流程完成：target=all，英雄 1 个，地图 1 个"]
+    assert info_messages == ["开始执行更新流程：target=all，英雄 1 个，地图 2 个，事件处理=开启"]
+    assert success_messages == ["更新流程完成：target=all，英雄 1 个，地图 2 个"]
 
 
 def test_prepare_update_data_warms_remote_data_once_per_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

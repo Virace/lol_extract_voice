@@ -24,6 +24,7 @@ PUBLIC_SYMBOLS = [
             "EntityResult",
             "LolAudioUnpackApp",
             "OperationOptions",
+            "OperationProgress",
             "RemoteEntityCallbackPayload",
             "RemoteEntityWorkItem",
             "RemoteSnapshotConfig",

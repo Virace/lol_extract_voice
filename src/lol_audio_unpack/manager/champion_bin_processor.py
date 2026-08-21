@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +14,7 @@ from loguru import logger
 
 from lol_audio_unpack.manager.bin_source import BinBatch, BinSource
 from lol_audio_unpack.manager.files import needs_update, write_data
+from lol_audio_unpack.manager.update_result import UpdateEntityResult
 from lol_audio_unpack.model.binding import (
     RESOURCE_SCHEMA_VERSION,
     SUCCESS_STATUSES,
@@ -22,6 +24,7 @@ from lol_audio_unpack.model.binding import (
     ResourceBindings,
     build_diagnostics,
 )
+from lol_audio_unpack.model.progress import OperationProgress, ProgressEvent
 from lol_audio_unpack.utils.logging import performance_monitor
 
 if TYPE_CHECKING:
@@ -45,6 +48,7 @@ class ChampionBinProcessor:
         game_path: Path,
         champion_banks_dir: Path,
         champion_events_dir: Path,
+        progress_callback: Callable[[OperationProgress], None] | None = None,
     ):
         """初始化英雄 BIN 处理器。
 
@@ -65,6 +69,7 @@ class ChampionBinProcessor:
         self.game_path = game_path
         self.champion_banks_dir = champion_banks_dir
         self.champion_events_dir = champion_events_dir
+        self._progress_callback = progress_callback
 
     def _is_dev_mode(self) -> bool:
         """返回当前运行是否为开发模式。"""
@@ -75,12 +80,8 @@ class ChampionBinProcessor:
         logger.info(f"{stage_name}进度 {index}/{total}: {entity_id}")
 
     @performance_monitor(level="DEBUG")
-    def _update_champions(self, data: dict) -> None:
-        """
-        处理英雄数据，按英雄ID分别生成文件
-
-        :param data: 包含英雄数据的字典
-        """
+    def _update_champions(self, data: dict) -> tuple[UpdateEntityResult, ...]:
+        """按英雄 ID 更新 banks/events，并返回逐实体结果。"""
         logger.info("开始处理英雄音频数据...")
         self.champion_banks_dir.mkdir(parents=True, exist_ok=True)
         self.champion_events_dir.mkdir(parents=True, exist_ok=True)
@@ -89,15 +90,76 @@ class ChampionBinProcessor:
         sorted_champion_ids = sorted(champions.keys(), key=int)
 
         total_champions = len(sorted_champion_ids)
+        self._emit_progress("started", current=0, total=total_champions)
+        results: list[UpdateEntityResult] = []
+        first_error: BaseException | None = None
         for index, champion_id in enumerate(sorted_champion_ids, start=1):
             champion_data = champions[champion_id]
             self._log_simple_progress("处理英雄", index, total_champions, champion_id)
-            self._process_champion_skins(champion_data, champion_id)
+            try:
+                result = self._process_champion_skins(champion_data, champion_id)
+            except Exception as exc:  # noqa: BLE001
+                first_error = first_error or exc
+                result = UpdateEntityResult.from_error(
+                    "champion",
+                    champion_id,
+                    exc,
+                    entity_name=str(champion_data.get("alias", "")),
+                )
+            results.append(result)
+            self._emit_progress(
+                "advanced",
+                current=index,
+                total=total_champions,
+                entity_id=champion_id,
+            )
 
-        logger.success(f"英雄Banks数据更新完成，共处理 {total_champions} 个英雄")
+        self._emit_progress("finished", current=total_champions, total=total_champions)
+        failed_count = sum(result.status.value == "failed" for result in results)
+        partial_count = sum(result.status.value == "partial" for result in results)
+        if first_error is not None:
+            logger.opt(exception=first_error).error(
+                "英雄 Banks 更新出现未预期异常：总计 {}，失败 {}，部分成功 {}",
+                total_champions,
+                failed_count,
+                partial_count,
+            )
+        elif failed_count or partial_count:
+            logger.warning(
+                "英雄 Banks 更新未完整：总计 {}，失败 {}，部分成功 {}",
+                total_champions,
+                failed_count,
+                partial_count,
+            )
+        else:
+            logger.success(f"英雄Banks数据更新完成，共处理 {total_champions} 个英雄")
+        return tuple(results)
+
+    def _emit_progress(
+        self,
+        event: ProgressEvent,
+        *,
+        current: int,
+        total: int,
+        entity_id: str | None = None,
+    ) -> None:
+        """发送英雄 banks 阶段的结构化进度。"""
+        if self._progress_callback is None:
+            return
+        self._progress_callback(
+            OperationProgress(
+                operation_key="update",
+                stage_key="champion_banks",
+                event=event,
+                current=current,
+                total=total,
+                entity_type="champion" if entity_id is not None else None,
+                entity_id=entity_id,
+            )
+        )
 
     @performance_monitor(level="DEBUG")
-    def _process_champion_skins(self, champion_data: ChampionData, champion_id: str) -> None:
+    def _process_champion_skins(self, champion_data: ChampionData, champion_id: str) -> UpdateEntityResult:
         """
         处理单个英雄的所有皮肤，提取音频数据并生成独立文件
 
@@ -107,7 +169,7 @@ class ChampionBinProcessor:
         alias_raw = champion_data.get("alias", "")
         alias = alias_raw.lower()
         if not alias:
-            return
+            raise ValueError(f"英雄 {champion_id} 缺少 alias，无法准备 banks artifact")
 
         # 检查是否需要更新
         banks_file_base = self.champion_banks_dir / champion_id
@@ -130,7 +192,7 @@ class ChampionBinProcessor:
         )
         if not banks_need_update and not events_need_update:
             logger.trace(f"英雄 {champion_id} ({alias}) 的数据已是最新，跳过处理")
-            return
+            return UpdateEntityResult.success("champion", champion_id, entity_name=alias_raw)
 
         skin_id_by_path: dict[str, str] = {}
         skins_data = champion_data.get("skins", [])
@@ -150,30 +212,24 @@ class ChampionBinProcessor:
                     skin_id_by_path[bin_path] = chroma_id_str
 
         if not skin_id_by_path:
-            return
+            raise ValueError(f"英雄 {champion_id} 没有可处理的皮肤 BIN 路径")
 
         bin_paths = list(skin_id_by_path)
         local_required_dir = Path("data") / "characters" / alias_raw
-        try:
-            logger.trace(f"从 {alias} 提取 {len(bin_paths)} 个BIN文件")
-            batch = self._read_bin_batch(
-                champion_data,
-                bin_paths,
-                f"英雄 {champion_id} ({alias})",
-                local_required_dir=local_required_dir,
-            )
-        except (FileNotFoundError, ValueError):
-            logger.opt(exception=True).error(f"处理英雄 {alias} 的本地BIN时出错")
-            return
-        except Exception:
-            logger.opt(exception=True).error(f"处理英雄 {alias} 的WAD文件时出错")
-            return
+        logger.trace(f"从 {alias} 提取 {len(bin_paths)} 个BIN文件")
+        batch = self._read_bin_batch(
+            champion_data,
+            bin_paths,
+            f"英雄 {champion_id} ({alias})",
+            local_required_dir=local_required_dir,
+        )
 
         sorted_skin_ids = sorted(skin_id_by_path.values(), key=int)
         path_by_skin_id = {skin_id: path for path, skin_id in skin_id_by_path.items()}
 
         champion_skin_events = {}
         references: list[BankReference] = []
+        parse_failed = False
 
         for skin_id in sorted_skin_ids:
             path = path_by_skin_id[skin_id]
@@ -188,14 +244,14 @@ class ChampionBinProcessor:
 
             except Exception:
                 batch.mark_parse_failed(path, "BIN 内容解析失败")
-                logger.opt(exception=True).error(f"解析皮肤BIN失败: {path}")
+                parse_failed = True
                 if self._is_dev_mode():
                     raise
 
         bank_bindings = self.bin_source._resolve_bank_bindings(references) if batch.resource_v2 else []
         legacy_groups = self._binding_groups(bank_bindings) if batch.resource_v2 else self._reference_groups(references)
         if not batch.resource_v2 and not references:
-            return
+            raise ValueError(f"英雄 {champion_id} 未提取到可用 bank 引用")
         champion_banks_data = self.bin_source._create_base_data(
             champion_id,
             "champion",
@@ -203,6 +259,7 @@ class ChampionBinProcessor:
             **self._build_legacy_projection(legacy_groups),
         )
 
+        completeness = Completeness.COMPLETE
         if batch.resource_v2:
             index_metrics, index_errors = self.bin_source._resource_index_diagnostics()
             diagnostics = build_diagnostics(
@@ -220,18 +277,44 @@ class ChampionBinProcessor:
             )
             champion_banks_data.update(resource.to_payload())
             self._log_binding_summary(f"英雄 {champion_id} ({alias})", diagnostics.completeness, diagnostics.to_dict())
+            completeness = diagnostics.completeness
         self._optimize_champion_mappings(champion_banks_data)
 
         # 写入banks数据
+        artifacts: list[Path] = []
         if banks_need_update:
-            write_data(champion_banks_data, banks_file_base, dev_mode=self._is_dev_mode())
+            artifacts.append(write_data(champion_banks_data, banks_file_base, dev_mode=self._is_dev_mode()))
 
         # 写入events数据
         if champion_skin_events and events_need_update:
             final_event_data = self.bin_source._create_base_data(
                 champion_id, "champion", alias=alias, skins=champion_skin_events
             )
-            write_data(final_event_data, events_file_base, dev_mode=self._is_dev_mode())
+            artifacts.append(write_data(final_event_data, events_file_base, dev_mode=self._is_dev_mode()))
+
+        if completeness is Completeness.FAILED:
+            return UpdateEntityResult.incomplete(
+                "champion",
+                champion_id,
+                entity_name=alias_raw,
+                message="resource bindings 未形成可用结果",
+                failed=True,
+                artifacts=tuple(artifacts),
+            )
+        if completeness is Completeness.PARTIAL or parse_failed:
+            return UpdateEntityResult.incomplete(
+                "champion",
+                champion_id,
+                entity_name=alias_raw,
+                message="部分 BIN 或 bank binding 未能解析",
+                artifacts=tuple(artifacts),
+            )
+        return UpdateEntityResult.success(
+            "champion",
+            champion_id,
+            entity_name=alias_raw,
+            artifacts=tuple(artifacts),
+        )
 
     def _read_bin_batch(
         self,

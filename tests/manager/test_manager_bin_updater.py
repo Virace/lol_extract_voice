@@ -7,6 +7,7 @@ from lol_audio_unpack.manager import bin_source as m_bin_source
 from lol_audio_unpack.manager import bin_updater as m_bin_updater
 from lol_audio_unpack.manager import champion_bin_processor as m_champion_processor
 from lol_audio_unpack.manager import map_bin_processor as m_map_processor
+from lol_audio_unpack.manager.update_result import UpdateEntityResult, UpdateStatus
 from lol_audio_unpack.utils.run_summary import get_or_create_run_summary
 
 pytestmark = pytest.mark.unit
@@ -195,8 +196,8 @@ def test_extract_bin_raws_allows_partial_missing_and_keeps_order(tmp_path):
     assert result == [b"first", None, b"third"]
 
 
-def test_process_champion_skins_skips_when_first_bin_missing(tmp_path, monkeypatch):
-    """验证首个皮肤 BIN 缺失时会跳过整组英雄皮肤处理。"""
+def test_process_champion_skins_reports_missing_bin_as_failure_input(tmp_path, monkeypatch):
+    """验证没有可用 bank 引用时不再静默返回成功。"""
     processor = m_champion_processor.ChampionBinProcessor.__new__(m_champion_processor.ChampionBinProcessor)
     processor.ctx = SimpleNamespace(config=SimpleNamespace(game_path=tmp_path, dev_mode=False), paths=SimpleNamespace())
     processor.force_update = False
@@ -221,7 +222,8 @@ def test_process_champion_skins_skips_when_first_bin_missing(tmp_path, monkeypat
         "wad": {"root": "Game/DATA/FINAL/Champions/Annie.wad.client"},
     }
 
-    processor._process_champion_skins(champion_data, "1")
+    with pytest.raises(ValueError, match="未提取到可用 bank 引用"):
+        processor._process_champion_skins(champion_data, "1")
 
     assert write_calls == []
 
@@ -254,8 +256,8 @@ def test_load_map_bin_file_reads_local_bin_when_available(tmp_path, monkeypatch)
     assert result.raw == b"map-bin"
 
 
-def test_update_records_note_when_targeted_maps_exclude_common_map(tmp_path, monkeypatch):
-    """验证精确地图更新未包含公共地图时会记录说明信息。"""
+def test_update_includes_common_map_in_targeted_scope(tmp_path, monkeypatch):
+    """验证精确地图更新由核心层自动包含 Map 0。"""
     updater = m_bin_updater.BinUpdater.__new__(m_bin_updater.BinUpdater)
     updater.ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False), runtime_cache={}, paths=SimpleNamespace())
     updater.force_update = False
@@ -264,18 +266,27 @@ def test_update_records_note_when_targeted_maps_exclude_common_map(tmp_path, mon
     updater.data_file_base = tmp_path / "data"
     updater.languages = []
     updater.bin_source = SimpleNamespace(languages=[], _is_local_bin_mode_enabled=lambda: False)
-    updater._map_processor = SimpleNamespace(languages=[], _update_maps=lambda data: data)
+    map_updates: list[dict] = []
+
+    def update_maps(data: dict) -> tuple[UpdateEntityResult, ...]:
+        map_updates.append(data)
+        return tuple(UpdateEntityResult.success("map", map_id) for map_id in data["maps"])
+
+    updater._map_processor = SimpleNamespace(languages=[], _update_maps=update_maps)
 
     monkeypatch.setattr(
         m_bin_updater,
         "read_data",
-        lambda *args, **kwargs: {"metadata": {"languages": ["zh_CN"]}, "maps": {"33": {"id": 33}}},
+        lambda *args, **kwargs: {
+            "metadata": {"languages": ["zh_CN"]},
+            "maps": {"0": {"id": 0}, "33": {"id": 33}},
+        },
     )
 
-    updater.update(target="map", map_ids=["33"])
+    results = updater.update(target="map", map_ids=["33"])
 
-    summary = get_or_create_run_summary(updater.ctx.runtime_cache)
-    assert any("未包含 Common 地图 0" in note for note in summary.stages["update"].notes)
+    assert list(map_updates[0]["maps"]) == ["0", "33"]
+    assert [result.entity_id for result in results] == ["0", "33"]
 
 
 def test_update_logs_stage_start_and_summary_for_targeted_mode(tmp_path, monkeypatch):
@@ -288,8 +299,16 @@ def test_update_logs_stage_start_and_summary_for_targeted_mode(tmp_path, monkeyp
     updater.data_file_base = tmp_path / "data"
     updater.languages = []
     updater.bin_source = SimpleNamespace(languages=[], _is_local_bin_mode_enabled=lambda: True)
-    updater._champion_processor = SimpleNamespace(_update_champions=lambda _data: None)
-    updater._map_processor = SimpleNamespace(languages=[], _update_maps=lambda _data: None)
+    updater._champion_processor = SimpleNamespace(
+        _update_champions=lambda _data: (UpdateEntityResult.success("champion", "1"),)
+    )
+    updater._map_processor = SimpleNamespace(
+        languages=[],
+        _update_maps=lambda _data: (
+            UpdateEntityResult.success("map", "0"),
+            UpdateEntityResult.success("map", "11"),
+        ),
+    )
 
     info_messages: list[str] = []
     success_messages: list[str] = []
@@ -300,7 +319,7 @@ def test_update_logs_stage_start_and_summary_for_targeted_mode(tmp_path, monkeyp
         lambda *args, **kwargs: {
             "metadata": {"languages": ["zh_CN"]},
             "champions": {"1": {"alias": "Annie"}},
-            "maps": {"11": {"id": 11}},
+            "maps": {"0": {"id": 0}, "11": {"id": 11}},
         },
     )
     monkeypatch.setattr(
@@ -311,12 +330,34 @@ def test_update_logs_stage_start_and_summary_for_targeted_mode(tmp_path, monkeyp
             success=lambda message: success_messages.append(str(message)),
         ),
     )
-    monkeypatch.setattr(updater, "_record_map_event_scope_note", lambda _map_ids: None)
-
     updater.update(target="all", champion_ids=["1"], map_ids=["11"])
 
-    assert info_messages == ["开始更新 BIN 数据（精确模式）：英雄 1 个，地图 1 个，事件处理=开启，本地BIN模式=开启"]
-    assert success_messages == ["BinUpdater 更新完成（精确模式）：英雄 1 个，地图 1 个"]
+    assert info_messages == ["开始更新 BIN 数据（精确模式）：英雄 1 个，地图 2 个，事件处理=开启，本地BIN模式=开启"]
+    assert success_messages == ["BinUpdater 更新完成（精确模式）：英雄 1 个，地图 2 个"]
+
+
+def test_bin_updater_completion_does_not_report_partial_as_success(monkeypatch) -> None:
+    """逐实体不完整时只能记录 warning 摘要。"""
+    warning_messages: list[str] = []
+    success_messages: list[str] = []
+    monkeypatch.setattr(
+        m_bin_updater,
+        "logger",
+        SimpleNamespace(
+            warning=warning_messages.append,
+            success=success_messages.append,
+        ),
+    )
+
+    m_bin_updater.BinUpdater._log_completion(
+        [UpdateEntityResult.incomplete("map", "11", message="事件绑定不完整")],
+        mode="精确模式",
+        champion_count=0,
+        map_count=1,
+    )
+
+    assert success_messages == []
+    assert warning_messages == ["BinUpdater 更新完成（精确模式）：英雄 0 个，地图 1 个，部分成功 1 个，失败 0 个"]
 
 
 def test_update_filters_hidden_champions_only_in_batch_mode(tmp_path, monkeypatch):
@@ -332,8 +373,17 @@ def test_update_filters_hidden_champions_only_in_batch_mode(tmp_path, monkeypatc
 
     champion_updates: list[dict] = []
     map_updates: list[dict] = []
-    updater._champion_processor = SimpleNamespace(_update_champions=champion_updates.append)
-    updater._map_processor = SimpleNamespace(languages=[], _update_maps=map_updates.append)
+
+    def update_champions(data: dict) -> tuple[UpdateEntityResult, ...]:
+        champion_updates.append(data)
+        return tuple(UpdateEntityResult.success("champion", champion_id) for champion_id in data["champions"])
+
+    def update_maps(data: dict) -> tuple[UpdateEntityResult, ...]:
+        map_updates.append(data)
+        return tuple(UpdateEntityResult.success("map", map_id) for map_id in data["maps"])
+
+    updater._champion_processor = SimpleNamespace(_update_champions=update_champions)
+    updater._map_processor = SimpleNamespace(languages=[], _update_maps=update_maps)
 
     monkeypatch.setattr(
         m_bin_updater,
@@ -394,10 +444,18 @@ def test_process_single_map_records_note_when_common_dedup_removes_all_events(tm
         ],
     )
 
-    processor.bin_source = SimpleNamespace(_load_map_bin_file=lambda *_args, **_kwargs: fake_bin)
+    processor.bin_source = SimpleNamespace(
+        _load_map_bin_file=lambda *_args, **_kwargs: fake_bin,
+        _create_base_data=lambda _id, _type, **payload: payload,
+    )
 
     monkeypatch.setattr(m_map_processor, "needs_update", lambda *args, **kwargs: True)
-    monkeypatch.setattr(m_map_processor, "write_data", lambda *args, **kwargs: None)
+    monkeypatch.setattr(m_map_processor, "write_data", lambda *args, **kwargs: tmp_path / "artifact.msgpack")
+    monkeypatch.setattr(
+        processor,
+        "_reference_map_banks",
+        lambda _references: {"AMB_SFX": [["assets/sounds/wwise2016/amb.bnk"]]},
+    )
 
     processor._process_single_map(
         "33",
@@ -426,6 +484,8 @@ def test_update_champions_logs_simple_progress_messages(tmp_path, monkeypatch):
     )
     processor.champion_banks_dir = tmp_path / "banks" / "champions"
     processor.champion_events_dir = tmp_path / "events" / "champions"
+    progress_events = []
+    processor._progress_callback = progress_events.append
     processed_ids: list[str] = []
     info_messages: list[str] = []
     success_messages: list[str] = []
@@ -441,7 +501,10 @@ def test_update_champions_logs_simple_progress_messages(tmp_path, monkeypatch):
     monkeypatch.setattr(
         processor,
         "_process_champion_skins",
-        lambda _champion_data, champion_id: processed_ids.append(champion_id),
+        lambda _champion_data, champion_id: (
+            processed_ids.append(champion_id),
+            UpdateEntityResult.success("champion", champion_id),
+        )[1],
     )
 
     processor._update_champions({"champions": {"2": {}, "1": {}}})
@@ -450,6 +513,12 @@ def test_update_champions_logs_simple_progress_messages(tmp_path, monkeypatch):
     assert "处理英雄进度 1/2: 1" in info_messages
     assert "处理英雄进度 2/2: 2" in info_messages
     assert success_messages == ["英雄Banks数据更新完成，共处理 2 个英雄"]
+    assert [(event.event, event.current, event.total) for event in progress_events] == [
+        ("started", 0, 2),
+        ("advanced", 1, 2),
+        ("advanced", 2, 2),
+        ("finished", 2, 2),
+    ]
 
 
 def test_update_maps_logs_simple_progress_messages(tmp_path, monkeypatch):
@@ -462,6 +531,8 @@ def test_update_maps_logs_simple_progress_messages(tmp_path, monkeypatch):
     )
     processor.map_banks_dir = tmp_path / "banks" / "maps"
     processor.map_events_dir = tmp_path / "events" / "maps"
+    progress_events = []
+    processor._progress_callback = progress_events.append
     processed_ids: list[str] = []
     info_messages: list[str] = []
     success_messages: list[str] = []
@@ -479,7 +550,10 @@ def test_update_maps_logs_simple_progress_messages(tmp_path, monkeypatch):
     monkeypatch.setattr(
         processor,
         "_process_single_map",
-        lambda map_id, *_args: processed_ids.append(map_id),
+        lambda map_id, *_args: (
+            processed_ids.append(map_id),
+            UpdateEntityResult.success("map", map_id),
+        )[1],
     )
 
     processor._update_maps({"maps": {"11": {"name": "Map11"}, "12": {"name": "Map12"}}})
@@ -488,3 +562,30 @@ def test_update_maps_logs_simple_progress_messages(tmp_path, monkeypatch):
     assert "处理地图进度 1/2: 11" in info_messages
     assert "处理地图进度 2/2: 12" in info_messages
     assert success_messages == ["地图Banks数据更新完成，共处理 2 个地图"]
+    assert [(event.event, event.current, event.total) for event in progress_events] == [
+        ("started", 0, 2),
+        ("advanced", 1, 2),
+        ("advanced", 2, 2),
+        ("finished", 2, 2),
+    ]
+
+
+def test_update_champions_keeps_processing_after_one_entity_fails(tmp_path, monkeypatch):
+    """验证逐实体失败进入 typed result，后续英雄仍会继续处理。"""
+    processor = m_champion_processor.ChampionBinProcessor.__new__(m_champion_processor.ChampionBinProcessor)
+    processor.ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False))
+    processor.champion_banks_dir = tmp_path / "banks" / "champions"
+    processor.champion_events_dir = tmp_path / "events" / "champions"
+    processor._progress_callback = None
+
+    def process(_data: dict, champion_id: str) -> UpdateEntityResult:
+        if champion_id == "1":
+            raise ValueError("missing bank")
+        return UpdateEntityResult.success("champion", champion_id)
+
+    monkeypatch.setattr(processor, "_process_champion_skins", process)
+
+    results = processor._update_champions({"champions": {"1": {}, "2": {}}})
+
+    assert [result.status for result in results] == [UpdateStatus.FAILED, UpdateStatus.SUCCESS]
+    assert results[0].error_message == "missing bank"

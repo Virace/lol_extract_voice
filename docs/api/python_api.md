@@ -29,6 +29,7 @@ from lol_audio_unpack.app import (
     AppPaths,
     EntityResult,
     LolAudioUnpackApp,
+    OperationProgress,
     OperationOptions,
     RemoteEntityCallbackPayload,
     RemoteEntityWorkItem,
@@ -83,6 +84,10 @@ def create_app_context(
     仅保存本轮已确认写入的真实产物路径。extract 包含 WEM 与大厅音频路径，mapping 包含最终
     mapping 文件；实体落盘后再失败时仍保留已有路径。WAV 有处理结果时使用稳定的 `wav:batch`
     实体指向 `wav_root`
+- `OperationProgress`
+  - update 的可选结构化进度事件，稳定字段为 `operation_key`、`stage_key`、`event`、
+    `current`、`total`、`entity_type`、`entity_id`；`event` 取值为 `started`、`advanced`、
+    `finished`。进度只描述处理位置，最终业务成功与否仍以 `StageResult` 为准
 
 `special_targets` 可包含 GUI 特殊内容的 `champion:<id>`，也可保留已发现的
 `resource_pack:<wad-component>:<namespace-component>` key。应用门面只把前者归约为英雄数值 ID，
@@ -108,10 +113,25 @@ pack-only 选择不会回退到全量 champion/map 流程，混合选择会分�
 不会因为英雄/地图 ID 为空而触发默认全量 `BinUpdater.update`。显式英雄或地图 target 与 selected WAD
 同时存在时，两条 update 路径会各自执行。
 
+显式地图 update 会自动把 Map 0 放在目标范围首位并去重，以保证 Common 音频事件参与去重；
+调用方无需自行补齐。可通过 `progress_callback` 订阅 `data`、`champion_banks`、
+`map_banks` 三类阶段事件：
+
+```python
+progress_events: list[OperationProgress] = []
+result = app.update(
+    OperationOptions(map_ids=(11,)),
+    progress_callback=progress_events.append,
+)
+```
+
+BIN 更新会保留每个英雄或地图的 `success` / `partial` / `failed` 事实并继续处理后续实体；
+门面据此派生最终 `StageResult`，不会把部分完成误报为整体成功。
+
 当前公开方法可按职责分为三组：
 
 - 常规主链
-  - `update(opts, *, target="all")`
+  - `update(opts, *, target="all", progress_callback=None)`
   - `discover_resource_packs(opts)`
   - `extract(opts, *, include_champions=True, include_maps=True, prepare_remote=True, ...)`
   - `transcode_wav(opts, *, progress_callback=None, job_label=None)`

@@ -15,6 +15,8 @@ from lol_audio_unpack.app.resource_pack import ResourcePackWadRef, build_resourc
 from lol_audio_unpack.app.results import EntityResult, ResultStatus, StageResult
 from lol_audio_unpack.app.types import OperationOptions, SourceMode, WavOutputOptions
 from lol_audio_unpack.manager.errors import ArtifactWriteError
+from lol_audio_unpack.manager.update_result import UpdateEntityResult
+from lol_audio_unpack.model.progress import OperationProgress
 
 
 def _success_result(stage: str, entity_type: str = "champion", entity_id: int | str = 1) -> StageResult:
@@ -168,6 +170,56 @@ def test_update_invalidates_reader_after_success_or_expected_failure(
         assert result.status is expected_status
 
     assert app._get_reader() is not stale_reader
+
+
+def test_update_adapts_entity_outcomes_and_forwards_structured_progress(monkeypatch) -> None:
+    """更新门面保留逐实体真相，并透传稳定的结构化进度。"""
+    ctx = SimpleNamespace(
+        config=SimpleNamespace(source_mode=SourceMode.LOCAL_PATH),
+        runtime_cache={},
+    )
+    app = LolAudioUnpackApp(ctx)
+    progress_events: list[OperationProgress] = []
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(app, "prepare_update_data", lambda **_kwargs: None)
+
+    class FakeUpdater:
+        def __init__(self, **kwargs) -> None:
+            captured["callback"] = kwargs["progress_callback"]
+
+        def update(self, **kwargs) -> tuple[UpdateEntityResult, ...]:
+            captured["map_ids"] = kwargs["map_ids"]
+            callback = captured["callback"]
+            assert callable(callback)
+            callback(OperationProgress("update", "map", "started", current=0, total=2))
+            callback(OperationProgress("update", "map", "advanced", current=1, total=2, entity_id="0"))
+            callback(OperationProgress("update", "map", "finished", current=2, total=2))
+            return (
+                UpdateEntityResult.success("map", "0"),
+                UpdateEntityResult.incomplete("map", "11", message="事件绑定不完整"),
+            )
+
+    monkeypatch.setattr(facade_module, "BinUpdater", FakeUpdater)
+
+    result = app.update(
+        OperationOptions(map_ids=(11,)),
+        progress_callback=progress_events.append,
+    )
+
+    assert captured["map_ids"] == ["0", "11"]
+    assert result.status is ResultStatus.PARTIAL
+    assert tuple(entity.status for entity in result.entities) == (
+        ResultStatus.SUCCESS,
+        ResultStatus.PARTIAL,
+    )
+    assert [(event.stage_key, event.event) for event in progress_events] == [
+        ("data", "started"),
+        ("data", "finished"),
+        ("map", "started"),
+        ("map", "advanced"),
+        ("map", "finished"),
+    ]
 
 
 @pytest.mark.parametrize("error_type", [None, OSError, RuntimeError])
