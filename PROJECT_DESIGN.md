@@ -74,6 +74,21 @@ audios/hashes/reports 均隔离在 `resource_packs` 分组；默认 update 不�
 
 ## GUI 数据与预览
 
+`SharedDataController` 是 GUI 共享目录的单一状态 owner。它为每次上下文建立递增
+`generation`，通过 `SharedDataScanWorker` 和 `EntityDataLoader.scan_catalog()` 原子扫描英雄、
+地图与可选特殊内容，并发布 `SharedDataState`。只有当前 generation 的必需普通英雄和地图在
+完整复检后均可读，状态才是 `ready`；`partial`、`failed`、`cancelled`、配置阻断以及所有活跃
+阶段都阻止创建新任务。日志、worker 的 `finished` 信号和进度到达 total 都不能替代扫描结果或
+`StageResult`。
+
+扫描发现缺失、过期、旧 schema、Map 0 缺失或可修复损坏时，每个 generation 最多自动执行一次
+普通 update，默认不 force、不删除旧 artifact。update 的 `StageResult` 为 success/partial 时进入
+完整复检，failed/cancelled 直接进入对应终态；普通更新后仍存在同类可修复问题时，用户可以显式
+选择“重新生成实体数据”。主页、执行中心、实体总览和主窗口全局进度条都从同一
+`SharedDataState` 派生文案、计数、动作与门禁。已知总量显示真实 current/total，未知总量才使用
+不确定动画；普通进度在 GUI 边界节流，阶段边界与终态立即发布。全局进度短暂重叠时，用户创建的
+执行任务优先，共享准备状态保留并在任务结束后按有效 generation 恢复。
+
 实体总览左侧是英雄、地图、特殊内容三个目录；特殊内容使用一层 group 树，
 同时容纳结构化的 `champion:<id>` 与显式发现的 `resource_pack:...` key。列表和
 预览只读共享 artifact；selected-WAD 发现在后台任务中运行，不阻塞 UI 线程。

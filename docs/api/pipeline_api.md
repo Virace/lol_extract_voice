@@ -292,7 +292,7 @@ remote v1 才继续按分类名选择语言 WAD / 根 WAD 的兼容分支。
 
 常用方法：
 
-- `update(opts, *, target="all")`
+- `update(opts, *, target="all", progress_callback=None)`
 - `extract(opts, *, include_champions=True, include_maps=True, prepare_remote=True, ...)`
 - `transcode_wav(opts, *, progress_callback=None, job_label=None)`
 - `mapping(opts, *, include_champions=True, include_maps=True, prepare_remote=True, ...)`
@@ -307,6 +307,10 @@ remote v1 才继续按分类名选择语言 WAD / 根 WAD 的兼容分支。
 - `EntityResult`：稳定实体 identity、状态、错误摘要与可选 artifact paths
 - `StageResult`：阶段 key、实体结果、阶段错误与派生计数
 - `RunResult`：按执行顺序保存阶段，并派生整轮状态
+
+`update(...)` 的可选 `progress_callback` 接收 `OperationProgress`，目前覆盖 `data`、
+`champion_banks` 与 `map_banks` 阶段。进度只描述阶段内处理位置；即使 current 到达 total，调用方
+仍必须以最终 `StageResult` 判断成功、部分完成、失败或取消。
 
 WAV runtime 实际处理至少一个文件时，`transcode_wav(...)` 会返回一个稳定的 `wav:batch`
 实体，其 `artifacts` 为 runtime 报告的真实 `wav_root`；零文件 success no-op 不创建实体。

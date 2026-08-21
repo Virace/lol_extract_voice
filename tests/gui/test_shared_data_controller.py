@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import lol_audio_unpack.gui.window as window_module
 from lol_audio_unpack.app.resource_pack import ResourcePackWadRef, build_resource_pack_key
 from lol_audio_unpack.app.results import ResultStatus, StageResult
 from lol_audio_unpack.gui.controllers.contracts import GuiNotice
@@ -16,6 +17,7 @@ from lol_audio_unpack.gui.controllers.shared_data import (
     build_shared_context_loading_message,
     build_shared_entity_reader_signature,
 )
+from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 from lol_audio_unpack.gui.shared_data import (
     SharedDataFailure,
     SharedDataPhase,
@@ -24,13 +26,18 @@ from lol_audio_unpack.gui.shared_data import (
     SharedDataProblem,
     SharedDataProblemCode,
     SharedDataProgress,
+    SharedDataReadiness,
     SharedDataRepairScope,
     SharedDataScanResult,
     SharedDataSectionResult,
 )
 from lol_audio_unpack.gui.task_models import OutputStateRefreshRequest
+from lol_audio_unpack.manager.files import write_data
+from lol_audio_unpack.model.binding import RESOURCE_SCHEMA_VERSION
+from lol_audio_unpack.model.progress import OperationProgress
 
 EXPECTED_SCAN_COUNT_AFTER_VERIFICATION = 2
+EXPECTED_FIXTURE_MAP_COUNT = 2
 CURRENT_GENERATION = 2
 
 
@@ -765,6 +772,128 @@ def test_shared_data_controller_throttles_ordinary_progress_but_keeps_latest(qtb
 
     assert controller.state.progress is first
     qtbot.waitUntil(lambda: controller.state.progress is latest, timeout=1000)
+
+
+def test_legacy_schema_fixture_uses_normal_update_adapter_then_verifies_ready(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """旧 schema 必须经非 force update adapter 和真实扫描复检后才进入 ready。"""
+    _FakeScanWorker.instances.clear()
+    started_workers = []
+    update_options = []
+    champion_banks_dir = tmp_path / "champion-banks"
+    map_banks_dir = tmp_path / "map-banks"
+    resource_pack_banks_dir = tmp_path / "resource-pack-banks"
+    champion_banks_dir.mkdir()
+    map_banks_dir.mkdir()
+    resource_pack_banks_dir.mkdir()
+
+    legacy_payload = {"metadata": {"gameVersion": "16.16"}}
+    for base_path in (
+        champion_banks_dir / "1",
+        map_banks_dir / "0",
+        map_banks_dir / "11",
+    ):
+        write_data(legacy_payload, base_path, dev_mode=True)
+
+    context = SimpleNamespace(
+        config=SimpleNamespace(
+            source_mode="local_path",
+            effective_source_mode="local_path",
+            dev_mode=True,
+            game_path=tmp_path / "game",
+        ),
+        game_region="zh_CN",
+    )
+    champions = [
+        {
+            "id": 1,
+            "alias": "Annie",
+            "names": {"zh_CN": "安妮"},
+            "wad": {"root": "Champions/Annie.wad.client"},
+        }
+    ]
+    maps = [
+        {"id": entity_id, "names": {"zh_CN": name}, "wad": {"root": f"Maps/{entity_id}.wad.client"}}
+        for entity_id, name in ((0, "Common"), (11, "召唤师峡谷"))
+    ]
+
+    def scan_fixture(generation: int) -> SharedDataScanResult:
+        """使用真实 catalog 扫描逻辑读取当前 fixture artifact。"""
+        loader = EntityDataLoader.__new__(EntityDataLoader)
+        loader.ctx = context
+        loader.data_reader = SimpleNamespace(
+            version="16.16",
+            champion_banks_dir=champion_banks_dir,
+            map_banks_dir=map_banks_dir,
+            resource_pack_banks_dir=resource_pack_banks_dir,
+            _champion_banks_cache={},
+            _map_banks_cache={},
+            get_champions=lambda: champions,
+            get_maps=lambda: maps,
+        )
+        loader._build_entity_row = lambda entity_type, entity, _version: {
+            "id": str(entity["id"]),
+            "name": str(entity.get("alias") or entity["names"]["zh_CN"]),
+            "entity_type": entity_type,
+        }
+        loader.load_resource_pack_rows = lambda **_kwargs: []
+        return loader.scan_catalog(generation)
+
+    class _FixtureApp:
+        """用原子写入模拟核心 update 完成 schema 迁移。"""
+
+        def __init__(self, app_context) -> None:
+            """绑定 adapter 创建的当前测试上下文。"""
+            assert app_context is context
+
+        def update(self, options, *, target: str, progress_callback) -> StageResult:
+            """以普通更新参数把旧 artifact 原子替换为 v2。"""
+            update_options.append(options)
+            assert target == "all"
+            assert options.force_update is False
+            progress_callback(OperationProgress("update", "champion_banks", "started", 0, 1))
+            ready_payload = {
+                "resourceSchemaVersion": RESOURCE_SCHEMA_VERSION,
+                "diagnostics": {"completeness": "complete"},
+            }
+            for base_path in (
+                champion_banks_dir / "1",
+                map_banks_dir / "0",
+                map_banks_dir / "11",
+            ):
+                write_data(ready_payload, base_path, dev_mode=True)
+            progress_callback(OperationProgress("update", "champion_banks", "finished", 1, 1))
+            return StageResult("update", status=ResultStatus.SUCCESS)
+
+    monkeypatch.setattr(window_module, "create_app_context", lambda **_kwargs: context)
+    monkeypatch.setattr(window_module, "LolAudioUnpackApp", _FixtureApp)
+    controller = _build_controller(
+        create_app_context_fn=lambda **_kwargs: context,
+        task_worker_cls=_FakeTaskWorker,
+        data_load_worker_cls=_FakeScanWorker,
+        start_worker_fn=started_workers.append,
+        prepare_shared_entity_data_fn=window_module._prepare_shared_entity_data,
+    )
+
+    controller.load_initial_data()
+    started_workers[0].run()
+    initial_scan = scan_fixture(controller.generation)
+    _FakeScanWorker.instances[-1].finished.emit(initial_scan)
+
+    assert initial_scan.readiness is SharedDataReadiness.FAILED
+    assert {problem.code for problem in initial_scan.problems} == {SharedDataProblemCode.RESOURCE_SCHEMA_MISMATCH}
+
+    started_workers[1].run()
+    verified_scan = scan_fixture(controller.generation)
+    _FakeScanWorker.instances[-1].finished.emit(verified_scan)
+
+    assert len(update_options) == 1
+    assert verified_scan.readiness is SharedDataReadiness.COMPLETE
+    assert controller.state.phase is SharedDataPhase.READY
+    assert controller.state.summary.champion_loaded == 1
+    assert controller.state.summary.map_loaded == EXPECTED_FIXTURE_MAP_COUNT
 
 
 def test_shared_data_controller_waits_for_busy_queue_then_resumes_checking() -> None:
