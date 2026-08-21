@@ -79,6 +79,7 @@ class GlobalProgressStripState:
         paused: 是否为暂停态。
         indeterminate: 是否为未知总量的阶段。
         cancellable: 是否显示用户任务取消入口。
+        reserve_space: 隐藏条带时是否保留宿主布局占位。
         accent_color: 主色；为空时使用默认颜色。
     """
 
@@ -92,6 +93,7 @@ class GlobalProgressStripState:
     paused: bool = False
     indeterminate: bool = False
     cancellable: bool = True
+    reserve_space: bool = False
     accent_color: QColor | None = None
     theme_mode: ThemeMode = "auto"
     sweep_duration_ms: int = DEFAULT_PROGRESS_SWEEP_ANIMATION_MS
@@ -171,12 +173,12 @@ class GlobalProgressStripCoordinator:
             return
         if task_was_visible and self._shared_update_deferred:
             self._shared_update_deferred = False
-            self._publish(state if self._shared_progress_suppressed else self._shared_state)
+            self._publish(self._reserve_for_shared(state) if self._shared_progress_suppressed else self._shared_state)
             return
         if self._shared_state.visible and not self._shared_progress_suppressed:
             self._publish(self._shared_state)
             return
-        self._publish(state)
+        self._publish(self._reserve_for_shared(state))
 
     def set_shared_data_state(self, state: SharedDataState) -> None:
         """更新共享准备状态，并拒绝回退到旧 generation。
@@ -192,7 +194,7 @@ class GlobalProgressStripCoordinator:
             self._shared_update_deferred = True
             return
         if self._shared_progress_suppressed:
-            self._publish(GlobalProgressStripState(cancellable=False))
+            self._publish(self._suppressed_shared_state())
             return
         self._publish(self._shared_state)
 
@@ -208,9 +210,22 @@ class GlobalProgressStripCoordinator:
         if self._task_state.visible:
             return
         if suppressed:
-            self._publish(GlobalProgressStripState(cancellable=False))
+            self._publish(self._suppressed_shared_state())
             return
         self._publish(self._shared_state)
+
+    def _suppressed_shared_state(self) -> GlobalProgressStripState:
+        """隐藏共享条带，并在其运行期间保留底部布局占位。"""
+        return GlobalProgressStripState(
+            cancellable=False,
+            reserve_space=self._shared_state.visible,
+        )
+
+    def _reserve_for_shared(self, state: GlobalProgressStripState) -> GlobalProgressStripState:
+        """在首页仍有共享进度时让用户任务终态保留同一布局高度。"""
+        if not self._shared_progress_suppressed or not self._shared_state.visible:
+            return state
+        return replace(state, reserve_space=True)
 
     def current_state(self) -> GlobalProgressStripState:
         """返回最近一次实际发布到宿主的状态。
@@ -923,11 +938,13 @@ class GlobalProgressStripHost(QWidget):
         self._state = state
         self._strip.set_state(state, animate=animate)
         self._sync_strip_visibility(force=True)
-        target_height = self._target_host_height() if state.visible else 0
-        visibility_changed = previous_state.visible != state.visible
+        target_height = self._target_host_height() if state.visible or state.reserve_space else 0
+        space_changed = (previous_state.visible or previous_state.reserve_space) != (
+            state.visible or state.reserve_space
+        )
 
         self._height_animation.stop()
-        if animate and visibility_changed and target_height != self._host_height:
+        if animate and space_changed and target_height != self._host_height:
             self._height_animation.setStartValue(self._host_height)
             self._height_animation.setEndValue(target_height)
             self._height_animation.start()

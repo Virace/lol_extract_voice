@@ -140,6 +140,22 @@ def test_progress_strip_stop_button_emits_signal(qtbot) -> None:
     assert stop_events == [True]
 
 
+def test_progress_host_hides_strip_without_releasing_reserved_space(qtbot) -> None:
+    """首页抑制共享条带时应保持宿主高度，避免切页期间触发布局重排。"""
+    _parent, host = _show_host(qtbot)
+    host.set_state(_running_state(), animate=False)
+    visible_height = host.get_host_height()
+
+    host.set_state(
+        GlobalProgressStripState(cancellable=False, reserve_space=True),
+        animate=True,
+    )
+    qtbot.wait(300)
+
+    assert host.get_host_height() == visible_height
+    assert host.strip_widget().isVisible() is False
+
+
 def test_shared_data_progress_state_distinguishes_unknown_and_measured_work() -> None:
     """共享准备的未知阶段与可测阶段不能使用同一种伪百分比。"""
     unknown = build_shared_data_progress_strip_state(SharedDataState(SharedDataPhase.CHECKING, 1, "local_path"))
@@ -192,6 +208,7 @@ def test_global_progress_coordinator_suppresses_only_shared_progress_on_home() -
     coordinator.set_shared_data_progress_suppressed(True)
 
     assert coordinator.current_state().visible is False
+    assert coordinator.current_state().reserve_space is True
     coordinator.set_task_state(_running_state())
     assert coordinator.current_state().visible is True
     assert coordinator.current_state().cancellable is True
