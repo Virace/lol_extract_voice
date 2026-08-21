@@ -51,6 +51,10 @@ class SharedDataMissingError(SharedDataNotReadyError, FileNotFoundError):
     """
 
 
+class SharedDataCorruptError(SharedDataNotReadyError, ValueError):
+    """共享数据 artifact 已存在，但无法反序列化或缺少必要结构。"""
+
+
 class DataVersionMismatchError(SharedDataNotReadyError, ValueError):
     """数据文件版本与当前游戏版本严重不匹配。
 
@@ -85,6 +89,7 @@ __all__ = [
     "ArtifactWriteError",
     "DataVersionMismatchError",
     "ResourceSchemaMismatchError",
+    "SharedDataCorruptError",
     "SharedDataMissingError",
     "SharedDataNotReadyError",
     "is_shared_data_not_ready",

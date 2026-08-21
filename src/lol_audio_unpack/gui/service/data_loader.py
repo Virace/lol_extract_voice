@@ -38,15 +38,113 @@ from lol_audio_unpack.app.targets import (
     get_default_visible_champions,
     should_hide_champion_by_default,
 )
+from lol_audio_unpack.gui.shared_data import (
+    SharedDataFailure,
+    SharedDataProblem,
+    SharedDataProblemCode,
+    SharedDataProgress,
+    SharedDataReadiness,
+    SharedDataScanResult,
+    SharedDataSectionResult,
+)
 from lol_audio_unpack.manager.data_reader import DataReader
-from lol_audio_unpack.manager.errors import SharedDataMissingError
-from lol_audio_unpack.manager.files import read_data
+from lol_audio_unpack.manager.errors import (
+    DataVersionMismatchError,
+    ResourceSchemaMismatchError,
+    SharedDataCorruptError,
+    SharedDataMissingError,
+)
+from lol_audio_unpack.manager.files import find_data_file, read_data
 from lol_audio_unpack.model import AudioEntityData
+from lol_audio_unpack.model.binding import RESOURCE_SCHEMA_VERSION
+from lol_audio_unpack.utils.common import sanitize_filename
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
 
 GuiEntityType = Literal["champions", "maps", "resource_packs"]
+
+
+class _ArtifactCorruptError(ValueError):
+    """表示已存在的共享 artifact 无法形成有效数据。"""
+
+
+class _ResourceBindingIncompleteError(ValueError):
+    """表示 v2 artifact 的 binding diagnostics 尚未完整。"""
+
+
+_PROBLEM_MESSAGES = {
+    SharedDataProblemCode.DATASET_MISSING: "当前版本的实体基础数据不存在。",
+    SharedDataProblemCode.DATASET_STALE: "实体基础数据与当前版本不兼容。",
+    SharedDataProblemCode.DATASET_EMPTY: "实体基础数据没有形成必需目录。",
+    SharedDataProblemCode.BANK_ARTIFACT_MISSING: "共享 banks artifact 缺失或尚未生成。",
+    SharedDataProblemCode.RESOURCE_SCHEMA_MISMATCH: "共享 banks artifact 仍使用旧版资源结构。",
+    SharedDataProblemCode.RESOURCE_BINDING_INCOMPLETE: "共享 banks artifact 的资源绑定尚未完整。",
+    SharedDataProblemCode.MAP_COMMON_MISSING: "地图目录缺少 Common 地图 0。",
+    SharedDataProblemCode.ARTIFACT_CORRUPT: "共享 artifact 无法读取或缺少必要字段。",
+    SharedDataProblemCode.OUTPUT_NOT_WRITABLE: "输出目录不可访问。",
+    SharedDataProblemCode.SOURCE_UNAVAILABLE: "当前数据来源不可用。",
+    SharedDataProblemCode.UNEXPECTED: "扫描共享实体数据时发生未分类错误。",
+}
+
+
+def _source_mode_value(ctx: AppContext) -> str:
+    """返回当前上下文实际生效的来源模式值。"""
+    mode = getattr(ctx.config, "effective_source_mode", None) or getattr(ctx.config, "source_mode", "local_path")
+    return str(getattr(mode, "value", mode))
+
+
+def _classify_scan_error(error: BaseException, *, dataset: bool = False) -> tuple[SharedDataProblemCode, str]:
+    """把扫描异常映射为不依赖文案的稳定问题分类。"""
+    if isinstance(error, ResourceSchemaMismatchError):
+        code = SharedDataProblemCode.RESOURCE_SCHEMA_MISMATCH
+    elif isinstance(error, _ResourceBindingIncompleteError):
+        code = SharedDataProblemCode.RESOURCE_BINDING_INCOMPLETE
+    elif isinstance(error, DataVersionMismatchError):
+        code = SharedDataProblemCode.DATASET_STALE
+    elif isinstance(error, SharedDataMissingError | FileNotFoundError):
+        code = SharedDataProblemCode.DATASET_MISSING if dataset else SharedDataProblemCode.BANK_ARTIFACT_MISSING
+    elif isinstance(error, PermissionError):
+        code = SharedDataProblemCode.OUTPUT_NOT_WRITABLE
+    elif isinstance(
+        error, SharedDataCorruptError | _ArtifactCorruptError | KeyError | AttributeError | TypeError | ValueError
+    ):
+        code = SharedDataProblemCode.ARTIFACT_CORRUPT
+    elif isinstance(error, OSError):
+        code = SharedDataProblemCode.SOURCE_UNAVAILABLE
+    else:
+        code = SharedDataProblemCode.UNEXPECTED
+    return code, _PROBLEM_MESSAGES[code]
+
+
+def build_scan_failure_result(
+    ctx: AppContext,
+    generation: int,
+    error: BaseException,
+) -> SharedDataScanResult:
+    """把 reader 初始化阶段的预期失败转换为 typed 扫描结果。
+
+    Args:
+        ctx: 当前应用上下文。
+        generation: 扫描所属上下文代数。
+        error: reader 初始化失败。
+
+    Returns:
+        不包含任何可信目录行的失败扫描结果。
+    """
+    code, message = _classify_scan_error(error, dataset=True)
+    empty_champions = SharedDataSectionResult("champions", ())
+    empty_maps = SharedDataSectionResult("maps", ())
+    empty_special = SharedDataSectionResult("special", (), required=False)
+    return SharedDataScanResult(
+        generation=generation,
+        source_mode=_source_mode_value(ctx),
+        version="",
+        champions=empty_champions,
+        maps=empty_maps,
+        special=empty_special,
+        problems=(SharedDataProblem(code, "dataset", message),),
+    )
 
 
 def _mapping_audio_paths(mapping_data: dict | None) -> tuple[str, ...]:
@@ -352,11 +450,369 @@ class EntityDataLoader:
 
         raise SharedDataMissingError(f"{entity_type} 共享 bank 数据目录不存在，请先运行更新程序。path={bank_root}")
 
-    def _build_entity_row(self, entity_type: GuiEntityType, entity_dict: dict, version: str) -> dict:
-        """将单个原始实体字典转换为 GUI 行数据。"""
-        entity_id = str(entity_dict["id"])
-        entity_data = self._build_entity_data(entity_type, entity_id)
+    def _preload_bank_artifact(self, entity_type: Literal["champions", "maps"], entity_id: str) -> None:
+        """静默校验并缓存扫描所需的单实体 banks artifact。
 
+        预期的缺失、旧 schema 与损坏由完整扫描统一聚合；这里不在逐实体边界打印 traceback。
+        """
+        is_champion = entity_type == "champions"
+        bank_root = self.data_reader.champion_banks_dir if is_champion else self.data_reader.map_banks_dir
+        cache = self.data_reader._champion_banks_cache if is_champion else self.data_reader._map_banks_cache
+        numeric_id = int(entity_id)
+        if numeric_id in cache:
+            payload = cache[numeric_id]
+        else:
+            base_path = bank_root / entity_id
+            dev_mode = bool(getattr(self.ctx.config, "dev_mode", False))
+            if find_data_file(base_path, dev_mode=dev_mode) is None:
+                raise SharedDataMissingError(f"{entity_type} {entity_id} 缺少 banks artifact")
+            payload = read_data(base_path, dev_mode=dev_mode, log_errors=False)
+            if not isinstance(payload, dict) or not payload:
+                raise _ArtifactCorruptError(f"{entity_type} {entity_id} banks artifact 无法读取")
+            cache[numeric_id] = payload
+
+        if _source_mode_value(self.ctx) != "local_path":
+            return
+        if payload.get("resourceSchemaVersion") != RESOURCE_SCHEMA_VERSION:
+            raise ResourceSchemaMismatchError(f"{entity_type} {entity_id} banks artifact 缺少 resource schema v2")
+        diagnostics = payload.get("diagnostics")
+        if not isinstance(diagnostics, dict):
+            raise _ArtifactCorruptError(f"{entity_type} {entity_id} banks artifact 缺少 diagnostics")
+        if diagnostics.get("completeness") != "complete":
+            raise _ResourceBindingIncompleteError(f"{entity_type} {entity_id} resource bindings 未完整")
+
+    @staticmethod
+    def _emit_scan_progress(  # noqa: PLR0913
+        callback: Callable[[SharedDataProgress], None] | None,
+        *,
+        generation: int,
+        stage_key: str,
+        event: Literal["started", "advanced", "finished"],
+        current: int,
+        total: int | None,
+        entity_id: str | None = None,
+    ) -> None:
+        """向调用方发送单调的目录扫描进度。"""
+        if callback is None:
+            return
+        callback(
+            SharedDataProgress(
+                generation=generation,
+                stage_key=stage_key,
+                event=event,
+                current=current,
+                total=total,
+                entity_type=stage_key if entity_id is not None else None,
+                entity_id=entity_id,
+            )
+        )
+
+    def _failure_from_error(self, entity_id: str, error: BaseException) -> SharedDataFailure:
+        """把逐实体错误转换为稳定失败条目，并保留首个未预期根因。"""
+        code, message = _classify_scan_error(error)
+        if code is SharedDataProblemCode.UNEXPECTED and self._first_scan_unexpected is None:
+            self._first_scan_unexpected = error
+        return SharedDataFailure(entity_id, code, message)
+
+    def _scan_required_section(
+        self,
+        entity_type: Literal["champions", "maps"],
+        raw_entities: list[dict],
+        *,
+        version: str,
+        generation: int,
+        progress: Callable[[SharedDataProgress], None] | None,
+    ) -> SharedDataSectionResult:
+        """扫描一个必需普通目录并保留全部成功与失败事实。"""
+        entities_by_id: dict[str, dict] = {}
+        duplicate_ids: list[str] = []
+        missing_id_markers: list[str] = []
+        for raw_index, entity in enumerate(raw_entities, start=1):
+            entity_id = str(entity.get("id", "")).strip()
+            if not entity_id:
+                missing_id_markers.append(f"unknown:{raw_index}")
+                continue
+            if entity_id in entities_by_id:
+                duplicate_ids.append(entity_id)
+                continue
+            entities_by_id[entity_id] = entity
+
+        expected_ids = tuple(entities_by_id)
+        total = len(expected_ids)
+        self._emit_scan_progress(
+            progress,
+            generation=generation,
+            stage_key=entity_type,
+            event="started",
+            current=0,
+            total=total,
+        )
+        rows: list[dict] = []
+        failures = [
+            SharedDataFailure(entity_id, SharedDataProblemCode.ARTIFACT_CORRUPT, "基础数据中存在重复实体 ID。")
+            for entity_id in duplicate_ids
+        ]
+        failures.extend(
+            SharedDataFailure(marker, SharedDataProblemCode.ARTIFACT_CORRUPT, "基础数据条目缺少实体 ID。")
+            for marker in missing_id_markers
+        )
+
+        root_error: BaseException | None = None
+        if _source_mode_value(self.ctx) == "local_path":
+            try:
+                self._ensure_bank_dataset_ready(entity_type)
+            except Exception as exc:  # noqa: BLE001
+                root_error = exc
+
+        for index, (entity_id, entity) in enumerate(entities_by_id.items(), start=1):
+            try:
+                if root_error is not None:
+                    raise root_error
+                if _source_mode_value(self.ctx) == "local_path":
+                    self._preload_bank_artifact(entity_type, entity_id)
+                    row = self._build_entity_row(entity_type, entity, version)
+                else:
+                    row = self._build_remote_metadata_row(entity_type, entity, version)
+                if str(row.get("id", "")) != entity_id:
+                    raise _ArtifactCorruptError(f"{entity_type} {entity_id} 行身份不一致")
+                rows.append(row)
+            except Exception as exc:  # noqa: BLE001
+                failures.append(self._failure_from_error(entity_id, exc))
+            self._emit_scan_progress(
+                progress,
+                generation=generation,
+                stage_key=entity_type,
+                event="advanced",
+                current=index,
+                total=total,
+                entity_id=entity_id,
+            )
+
+        self._emit_scan_progress(
+            progress,
+            generation=generation,
+            stage_key=entity_type,
+            event="finished",
+            current=total,
+            total=total,
+        )
+        return SharedDataSectionResult(
+            section=entity_type,
+            expected_ids=expected_ids,
+            rows=tuple(rows),
+            failures=tuple(failures),
+        )
+
+    def _scan_special_section(
+        self,
+        champions: list[dict],
+        *,
+        version: str,
+        generation: int,
+        progress: Callable[[SharedDataProgress], None] | None,
+    ) -> SharedDataSectionResult:
+        """扫描可选特殊内容，并把未准备状态与阻断失败分开。"""
+        ordinary_names = self._localized_ordinary_names(champions)
+        candidates = []
+        for champion in champions:
+            if not is_structured_special_champion(champion):
+                continue
+            item = build_special_content_item(champion)
+            if item is not None:
+                candidates.append((champion, item))
+
+        self._emit_scan_progress(
+            progress,
+            generation=generation,
+            stage_key="special",
+            event="started",
+            current=0,
+            total=None,
+        )
+        rows: list[dict] = []
+        failures: list[SharedDataFailure] = []
+        expected_ids: list[str] = []
+        processed_count = 0
+        for champion, item in candidates:
+            expected_ids.append(item.key)
+            try:
+                display_name = ordinary_names.get(item.base_alias.casefold(), "")
+                row = self._build_special_row(champion, version, display_name=display_name)
+                if row is None:
+                    raise _ArtifactCorruptError(f"特殊内容 {item.key} 无法构造目录行")
+                rows.append(row)
+            except Exception as exc:  # noqa: BLE001
+                failures.append(self._failure_from_error(item.key, exc))
+            processed_count += 1
+            self._emit_scan_progress(
+                progress,
+                generation=generation,
+                stage_key="special",
+                event="advanced",
+                current=processed_count,
+                total=None,
+                entity_id=item.key,
+            )
+
+        try:
+            resource_pack_rows = self.load_resource_pack_rows(ordinary_names=ordinary_names)
+        except Exception as exc:  # noqa: BLE001
+            failures.append(self._failure_from_error("resource_packs", exc))
+            resource_pack_rows = []
+        for row in resource_pack_rows:
+            identity = str(row.get("key", "")).strip()
+            if identity and identity not in expected_ids:
+                expected_ids.append(identity)
+                rows.append(row)
+                processed_count += 1
+                self._emit_scan_progress(
+                    progress,
+                    generation=generation,
+                    stage_key="special",
+                    event="advanced",
+                    current=processed_count,
+                    total=None,
+                    entity_id=identity,
+                )
+
+        total = len(expected_ids)
+        unprepared_ids = tuple(
+            str(row.get("key") or row.get("id"))
+            for row in rows
+            if row.get("audio") == "未准备" or row.get("mapping") == "未准备"
+        )
+        self._emit_scan_progress(
+            progress,
+            generation=generation,
+            stage_key="special",
+            event="finished",
+            current=total,
+            total=total,
+        )
+        return SharedDataSectionResult(
+            section="special",
+            expected_ids=tuple(expected_ids),
+            rows=tuple(rows),
+            failures=tuple(failures),
+            unprepared_ids=unprepared_ids,
+            required=False,
+        )
+
+    @staticmethod
+    def _group_section_problems(section: SharedDataSectionResult) -> tuple[SharedDataProblem, ...]:
+        """把逐实体失败按稳定问题码聚合为页面诊断。"""
+        grouped: dict[tuple[SharedDataProblemCode, str], list[str]] = {}
+        for failure in section.failures:
+            grouped.setdefault((failure.code, failure.message), []).append(failure.entity_id)
+        return tuple(
+            SharedDataProblem(
+                code=code,
+                scope=section.section,
+                message=message,
+                entity_ids=tuple(dict.fromkeys(entity_ids)),
+                blocking=section.required,
+            )
+            for (code, message), entity_ids in grouped.items()
+        )
+
+    def scan_catalog(
+        self,
+        generation: int,
+        *,
+        progress: Callable[[SharedDataProgress], None] | None = None,
+    ) -> SharedDataScanResult:
+        """在一个 generation 内完整扫描普通与可选实体目录。
+
+        Args:
+            generation: 当前共享上下文代数。
+            progress: 可选结构化扫描进度回调。
+
+        Returns:
+            同时包含英雄、地图、特殊内容和聚合问题的原子快照。
+        """
+        self._first_scan_unexpected: BaseException | None = None
+        version = self.data_reader.version
+        champions = self.data_reader.get_champions()
+        maps = self.data_reader.get_maps()
+        ordinary_champions = [
+            champion
+            for champion in champions
+            if not is_structured_special_champion(champion) and not should_hide_champion_by_default(champion)
+        ]
+        champion_result = self._scan_required_section(
+            "champions",
+            ordinary_champions,
+            version=version,
+            generation=generation,
+            progress=progress,
+        )
+        special_result = self._scan_special_section(
+            champions,
+            version=version,
+            generation=generation,
+            progress=progress,
+        )
+        map_result = self._scan_required_section(
+            "maps",
+            maps,
+            version=version,
+            generation=generation,
+            progress=progress,
+        )
+
+        problems: list[SharedDataProblem] = []
+        if not champion_result.expected_ids or not map_result.expected_ids:
+            problems.append(
+                SharedDataProblem(
+                    SharedDataProblemCode.DATASET_EMPTY,
+                    "dataset",
+                    _PROBLEM_MESSAGES[SharedDataProblemCode.DATASET_EMPTY],
+                )
+            )
+        if "0" not in map_result.expected_ids:
+            problems.append(
+                SharedDataProblem(
+                    SharedDataProblemCode.MAP_COMMON_MISSING,
+                    "maps",
+                    _PROBLEM_MESSAGES[SharedDataProblemCode.MAP_COMMON_MISSING],
+                )
+            )
+        problems.extend(self._group_section_problems(champion_result))
+        problems.extend(self._group_section_problems(map_result))
+        problems.extend(self._group_section_problems(special_result))
+        result = SharedDataScanResult(
+            generation=generation,
+            source_mode=_source_mode_value(self.ctx),
+            version=version,
+            champions=champion_result,
+            maps=map_result,
+            special=special_result,
+            problems=tuple(problems),
+        )
+        summary = result.summary
+        log_message = (
+            f"共享实体目录扫描完成: readiness={result.readiness.value}; "
+            f"champions expected={summary.champion_expected} loaded={summary.champion_loaded} "
+            f"failed={summary.champion_failed}; maps expected={summary.map_expected} "
+            f"loaded={summary.map_loaded} failed={summary.map_failed}; "
+            f"special discovered={summary.special_discovered} unprepared={summary.special_unprepared}"
+        )
+        if self._first_scan_unexpected is not None:
+            logger.opt(exception=self._first_scan_unexpected).error(log_message)
+        elif result.readiness is SharedDataReadiness.COMPLETE or result.all_blocking_problems_repairable:
+            logger.info(log_message)
+        else:
+            logger.warning(log_message)
+        return result
+
+    def _build_row_from_entity_data(
+        self,
+        entity_type: GuiEntityType,
+        entity_data: AudioEntityData,
+        version: str,
+    ) -> dict:
+        """把已验证实体投影成 GUI 目录行。"""
+        entity_id = str(entity_data.entity_id)
         audio_status, mapping_status = check_entity_status(self.ctx, entity_data, version)
         mapping_path = resolve_mapping_file_path(
             self.ctx,
@@ -379,6 +835,67 @@ class EntityDataLoader:
             "entity_type": entity_type,
             "mapping_file": str(mapping_path) if mapping_path else "",
         }
+
+    def _build_entity_row(self, entity_type: GuiEntityType, entity_dict: dict, version: str) -> dict:
+        """将单个原始实体字典转换为 GUI 行数据。"""
+        entity_data = self._build_entity_data(entity_type, str(entity_dict["id"]))
+        return self._build_row_from_entity_data(entity_type, entity_data, version)
+
+    def _build_remote_metadata_row(
+        self,
+        entity_type: Literal["champions", "maps"],
+        entity: dict,
+        version: str,
+    ) -> dict:
+        """仅凭 remote metadata 构造目录行，不扩大为全量 per-entity 下载。"""
+        entity_id = str(entity["id"])
+        names = entity.get("names", {})
+        if not isinstance(names, dict):
+            raise _ArtifactCorruptError(f"{entity_type} {entity_id} 缺少 names")
+        name = sanitize_filename(str(names.get(self.ctx.game_region, names.get("default", ""))))
+        wad = entity.get("wad", {})
+        if not isinstance(wad, dict) or not wad.get("root"):
+            raise _ArtifactCorruptError(f"{entity_type} {entity_id} 缺少根 WAD metadata")
+
+        if entity_type == "champions":
+            alias = sanitize_filename(str(entity.get("alias", "")).lower())
+            titles = entity.get("titles", {})
+            title_raw = titles.get(self.ctx.game_region, titles.get("default", "")) if isinstance(titles, dict) else ""
+            sub_entities = {}
+            for skin in entity.get("skins", []):
+                skin_id = str(skin.get("id", ""))
+                if not skin_id:
+                    continue
+                skin_names = skin.get("skinNames", {})
+                skin_name = (
+                    "基础皮肤"
+                    if skin.get("isBase")
+                    else str(skin_names.get(self.ctx.game_region, skin_names.get("default", "")))
+                )
+                sub_entities[skin_id] = {"name": sanitize_filename(skin_name), "categories": {}}
+            entity_data = AudioEntityData(
+                entity_id=entity_id,
+                entity_name=name,
+                entity_alias=alias,
+                entity_title=sanitize_filename(str(title_raw)) if title_raw else None,
+                entity_type="champion",
+                sub_entities=sub_entities,
+                wad_root=str(wad["root"]),
+                wad_language=wad.get(self.ctx.game_region),
+            )
+        else:
+            alias_raw = "common" if entity_id == "0" else str(entity.get("mapStringId", "")).lower()
+            entity_data = AudioEntityData(
+                entity_id=entity_id,
+                entity_name=name,
+                entity_alias=sanitize_filename(alias_raw),
+                entity_title=None,
+                entity_type="map",
+                sub_entities={entity_id: {"name": name, "categories": {}}},
+                wad_root=str(wad["root"]),
+                wad_language=wad.get(self.ctx.game_region),
+            )
+        return self._build_row_from_entity_data(entity_type, entity_data, version)
 
     def _localized_champion_name(self, champion: dict) -> str:
         """读取当前区域的英雄名，缺失时交由 special profile 回退基础 alias。"""
@@ -412,8 +929,9 @@ class EntityDataLoader:
             audio_status, mapping_status = check_entity_status(self.ctx, entity_data, version)
             mapping_path = resolve_mapping_file_path(self.ctx, "champions", str(item.champion_id), version)
             mapping_file = str(mapping_path) if mapping_path else ""
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("特殊内容 {} 尚未准备可用 banks，将保留在目录中: {}", item.key, exc)
+        except Exception:  # noqa: BLE001
+            # 特殊内容按需准备；目录扫描只保留未准备状态，不逐项制造异常日志。
+            pass
 
         return {
             "id": str(item.champion_id),
@@ -528,8 +1046,9 @@ class EntityDataLoader:
             audio_status, mapping_status = check_entity_status(self.ctx, entity_data, version)
             mapping_path = resolve_mapping_file_path(self.ctx, "resource_packs", key, version)
             mapping_file = str(mapping_path) if mapping_path else ""
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("资源包 {} 尚未准备可用 banks，将保留在目录中: {}", key, exc)
+        except Exception:  # noqa: BLE001
+            # 可选 resource pack 缺少 consumer artifact 不影响普通目录就绪。
+            pass
 
         cost_text = ""
         if isinstance(discovery, dict):

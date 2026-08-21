@@ -188,6 +188,31 @@ def test_read_data_logs_error_with_exception_when_loader_fails(tmp_path, monkeyp
     assert errors == [f"读取文件时出错: {actual_file}, 错误: boom"]
 
 
+def test_read_data_can_defer_deserialization_logging_to_aggregate_boundary(tmp_path, monkeypatch) -> None:
+    """完整扫描可关闭逐 artifact traceback，由上层统一记录摘要。"""
+    base = tmp_path / "broken"
+    actual_file = base.with_suffix(".json")
+    actual_file.write_text("{}", encoding="utf-8")
+    opt_calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr(mfiles, "find_data_file", lambda _path, dev_mode=False: actual_file)
+    monkeypatch.setattr(mfiles, "load_json", lambda _path: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        mfiles,
+        "logger",
+        SimpleNamespace(
+            trace=lambda _message: None,
+            debug=lambda _message: None,
+            opt=lambda **kwargs: opt_calls.append(kwargs) or SimpleNamespace(error=lambda _message: None),
+        ),
+    )
+
+    result = mfiles.read_data(base, dev_mode=False, log_errors=False)
+
+    assert result == {}
+    assert opt_calls == []
+
+
 def test_write_data_preserves_existing_file_when_serialize_fails(tmp_path, monkeypatch):
     base = tmp_path / "out" / "data"
     target = base.with_suffix(".msgpack")

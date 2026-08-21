@@ -86,12 +86,13 @@ def find_data_file(path: Path, *, dev_mode: bool) -> Path | None:
     return None
 
 
-def read_data(path: Path, *, dev_mode: bool = False) -> dict:
+def read_data(path: Path, *, dev_mode: bool = False, log_errors: bool = True) -> dict:
     """按环境优先级读取数据文件。
 
     Args:
         path: 文件路径，可带或不带后缀。
         dev_mode: 是否启用开发模式。
+        log_errors: 反序列化失败时是否在当前边界记录 traceback。
 
     Returns:
         读取到的数据字典；读取失败时返回空字典。
@@ -147,7 +148,8 @@ def read_data(path: Path, *, dev_mode: bool = False) -> dict:
         return result
 
     except Exception as exc:
-        logger.opt(exception=True).error(f"读取文件时出错: {actual_file}, 错误: {exc}")
+        if log_errors:
+            logger.opt(exception=True).error(f"读取文件时出错: {actual_file}, 错误: {exc}")
         total_time_ms = (time.time() - start_time) * 1000
         logger.debug(f"read_data 总耗时: {format_duration(total_time_ms)}")
         return {}

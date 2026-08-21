@@ -1,3 +1,5 @@
+"""提供 GUI 共享目录与轻量实体数据的后台扫描线程。"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -8,8 +10,48 @@ from PySide6.QtCore import QThread, Signal
 if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
 
-from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
+from lol_audio_unpack.gui.service.data_loader import EntityDataLoader, build_scan_failure_result
+from lol_audio_unpack.gui.shared_data import SharedDataProblemCode
 from lol_audio_unpack.manager.errors import is_shared_data_not_ready
+
+
+class SharedDataScanWorker(QThread):
+    """在单一 generation 中生成完整类型化共享目录快照。"""
+
+    finished = Signal(object)
+    progress = Signal(object)
+    error = Signal(object)
+
+    def __init__(self, app_context: AppContext, generation: int):
+        """初始化完整目录扫描线程。
+
+        Args:
+            app_context: 当前有效应用上下文。
+            generation: 结果所属的上下文代数。
+        """
+        super().__init__()
+        self.app_context = app_context
+        self.generation = generation
+
+    def run(self) -> None:
+        """执行完整扫描；预期数据问题仍通过 finished 返回 typed result。"""
+        logger.debug(f"SharedDataScanWorker 线程启动: generation={self.generation}")
+        try:
+            loader = EntityDataLoader(self.app_context)
+            result = loader.scan_catalog(self.generation, progress=self.progress.emit)
+        except Exception as exc:  # noqa: BLE001
+            result = build_scan_failure_result(self.app_context, self.generation, exc)
+            problem = result.problems[0]
+            if problem.code is SharedDataProblemCode.UNEXPECTED:
+                logger.opt(exception=exc).error(f"共享实体目录扫描发生未预期失败: generation={self.generation}")
+                self.error.emit(problem)
+                return
+            logger.info(
+                "共享实体目录当前不可用: generation={} code={}",
+                self.generation,
+                problem.code.value,
+            )
+        self.finished.emit(result)
 
 
 class DataLoadWorker(QThread):

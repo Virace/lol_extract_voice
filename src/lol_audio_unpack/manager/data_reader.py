@@ -20,9 +20,10 @@ from lol_audio_unpack.app.types import SourceMode
 from lol_audio_unpack.manager.errors import (
     DataVersionMismatchError,
     ResourceSchemaMismatchError,
+    SharedDataCorruptError,
     SharedDataMissingError,
 )
-from lol_audio_unpack.manager.files import read_data
+from lol_audio_unpack.manager.files import find_data_file, read_data
 from lol_audio_unpack.model.binding import RESOURCE_SCHEMA_VERSION, ResourceBindings
 from lol_audio_unpack.utils.logging import performance_monitor
 
@@ -60,10 +61,25 @@ class DataReader:
         self.version: str = resolve_game_version(self.ctx)
         self.version_manifest_path: Path = self.manifest_path / self.version
 
-        # 使用不带后缀的基础路径，让read_data自动寻找最佳格式
-        self.data = read_data(self.version_manifest_path / "data", dev_mode=self.ctx.config.dev_mode)
+        # 使用不带后缀的基础路径，让 read_data 自动寻找最佳格式；
+        # 当前边界负责把缺失与损坏分类，避免底层和 GUI 重复记录 traceback。
+        data_file_base = self.version_manifest_path / "data"
+        actual_data_file = find_data_file(data_file_base, dev_mode=self.ctx.config.dev_mode)
+        self.data = read_data(
+            data_file_base,
+            dev_mode=self.ctx.config.dev_mode,
+            log_errors=False,
+        )
         if not self.data:
+            if actual_data_file is not None:
+                raise SharedDataCorruptError(f"核心数据文件无法读取或内容为空: {actual_data_file}")
             raise SharedDataMissingError("核心数据文件 (data.yml/json/msgpack) 不存在，请先运行更新程序。")
+        if (
+            not isinstance(self.data, dict)
+            or not isinstance(self.data.get("champions"), dict)
+            or not isinstance(self.data.get("maps"), dict)
+        ):
+            raise SharedDataCorruptError("核心数据文件缺少有效的 champions 或 maps 目录。")
 
         # 校验数据版本
         self._validate_data_version()
