@@ -19,14 +19,14 @@
 
 - 默认保留原始 WEM 文件及游戏数据中的 ID，不做语义重命名。
 - 生产结构化数据使用 MessagePack，开发模式使用 YAML。
-- 远端模式信任 `RiotGameData.resolve_live_manifest_pair()` 提供对齐的 LCU/GAME 快照。
-- 远端模式优化峰值磁盘而非总耗时；失败时不得静默使用不对齐清单。
-- `local_path` 的 resource schema v2 以逐条 WAD/entry binding 为物理资源事实；
-  `remote_snapshot` 继续使用 v1 root/language 投影，不构建本地 WAD index。
+- 应用只消费 `game_path` 指向的本地文件系统目录；该目录可以是真实客户端，也可以由外部工具
+  预先准备，但应用不负责下载、拼装或更新远端快照。
+- 创建 `AppContext` 时必须先验证 GAME/LCU 基础结构与版本元数据；验证失败不得初始化输出产物。
+- resource schema v2 以逐条 WAD/entry binding 为唯一物理资源事实；解包与映射不回退到
+  alias、分类名、`.use_local_bin` 或 `bin_input` 猜测资源。
 - 历史 resource-pack 发现只能扫描用户显式选定且位于 `Game/DATA/FINAL` 的
-  WAD；默认 update 不得扫描全部顶层 WAD，remote 不接受该能力。
-- 结构化特殊内容和 resource pack 是 local-only；拒绝它们不得改变普通英雄/地图
-  的 remote v1 范围。
+  WAD；默认 update 不得扫描全部顶层 WAD。
+- 外部准备器是独立上游，不属于本仓库的运行时依赖；本应用不得在本地资源缺失时静默访问网络。
 - 上游库的内部算法由上游维护；本项目只负责并验证自己的适配、编排、产物和恢复边界。
 
 ## 安全、隐私与文件系统
@@ -40,7 +40,7 @@
 
 - GUI 测试不进入默认离线门禁；精选 pytest-qt 状态测试显式执行，视觉与正式可执行文件由
   人工验收。
-- 本地客户端、远端 live 和多进程兼容测试位于 `tests/system/`，默认 pytest 不发现它们。
+- 真实本地数据源和多进程兼容测试位于 `tests/system/`，默认 pytest 不发现它们。
 - 不通过读取源码字符串来证明运行时、GUI、CI 或发布行为正确。
 - 默认分支为 `main`，开发分支为 `v3-test`；远端 push、PR、tag、Release 和 merge 均需单独授权。
 - 维护变更不隐含版本号、release notes、tag 或发布操作。

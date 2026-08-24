@@ -8,8 +8,7 @@
 共享目录流程必须与另外两类状态分开：
 
 - **任务快照**：执行中心创建任务时冻结的参数。后续修改设置不会改写已入队任务。
-- **运行时配置**：用于构造后续 `AppContext` 的游戏目录、输出目录、来源模式、区域和 remote
-  快照设置。
+- **运行时配置**：用于构造后续 `AppContext` 的游戏目录、输出目录和区域等共享设置。
 - **共享实体数据**：英雄、地图与可选特殊内容的结构化目录，供主页、执行中心和实体总览共同
   使用。
 
@@ -23,7 +22,7 @@
 一次完整扫描由 `SharedDataScanWorker` 在后台运行，内部调用
 `EntityDataLoader.scan_catalog()`，返回一个 `SharedDataScanResult`。该结果同时包含：
 
-- 当前 `generation`、effective source mode 和版本；
+- 当前 `generation` 和版本；
 - 英雄、地图、特殊内容三个 section；
 - 每个 section 的权威 expected IDs、成功 rows、失败项与未准备项；
 - 按稳定问题码聚合的 `problems`；
@@ -32,7 +31,7 @@
 逐实体异常可以被扫描器收集后继续扫描，但不能只写日志并丢弃。英雄或地图 expected 集合为空、
 Map 0 缺失、任一必需 ID 未形成有效行，都不能进入 `ready`。
 
-结构化特殊内容和显式 resource pack 是可选、local-only 目录。它们未准备不会降低普通英雄/地图的
+结构化特殊内容和显式 resource pack 是可选目录。它们未准备不会降低普通英雄/地图的
 readiness；默认共享扫描也不会遍历全部历史 FINAL WAD。
 
 ## 3. 状态机

@@ -88,18 +88,12 @@ uv run unpack -c ./config/custom.ini
 
 以下参数属于“共享配置”，只允许在纯 CLI 模式下显式传入：
 
-- `--source-mode {local_path,remote_snapshot}`
 - `--game-path PATH`
 - `--output-path PATH`
 - `--game-region REGION`
 - `--exclude-type TYPES`
 - `--wwiser-path PATH`
 - `--group-by-type` / `--no-group-by-type`
-- `--remote-live-region REGION`
-- `--cleanup-remote` / `--no-cleanup-remote`
-- `--remote-version VERSION`
-- `--remote-lcu-manifest-url URL`
-- `--remote-game-manifest-url URL`
 - `--with-bp-vo` / `--no-with-bp-vo`
 
 通用参数：
@@ -235,28 +229,30 @@ integrate_data = true
 - `-c` 模式下，必须在配置文件里启用至少一个动作
 - `--wav*` 仅允许和 `wav` 动作一起使用
 - `--integrate-data` 仅允许和 `mapping` 一起使用
-- `local_path` 模式会校验 `game_path` 是否存在
-- `remote_snapshot` 模式下：
-  - 默认按 `remote_live_region` 自动解析最新 live 快照
-  - 若显式指定 `remote_version` / `remote_lcu_manifest_url` / `remote_game_manifest_url`，三者必须同时提供
+- `game_path` 必须满足已准备本地数据源的共享结构；缺失或损坏会在输出初始化前失败
+- 程序不会下载资源，也不会在本地文件缺失时回退到网络来源
 
-## 6. Remote 模式示例
+## 6. 已准备本地目录示例
 
-纯 CLI 显式参数：
+外部工具准备的目录与已安装客户端使用同一命令：
 
 ```bash
 uv run unpack update extract \
-  --output-path "/tmp/lol-remote" \
+  --game-path "/path/to/prepared/lol-client" \
+  --output-path "./output" \
   --game-region zh_CN \
-  --source-mode remote_snapshot \
   --champions 1,103,555
 ```
 
-配置文件模式：
+配置文件模式只需填写同一个 `game_path`：
 
-```bash
-uv run unpack -c ./config/lol-audio-unpack.remote.ini
+```ini
+[app]
+game_path = /path/to/prepared/lol-client
+output_path = ./output
 ```
+
+完整结构与迁移说明见 [已准备本地数据源合同](./prepared_source.md)。
 
 ## 7. 退出语义
 

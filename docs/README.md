@@ -11,7 +11,7 @@
 - [CLI 参数与执行语义](./api/cli_api.md)
 - [配置与上下文 API](./api/config_api.md)
 - [解包与映射 API](./api/pipeline_api.md)
-- [Remote 模式（运行与接入）](./api/remote_mode.md)
+- [已准备本地数据源合同](./api/prepared_source.md)
 - [基准测试与性能参考](./api/benchmarking_and_performance.md)
 - [GUI 共享实体数据刷新说明](./gui/shared_entity_data_refresh.md)
 
@@ -23,7 +23,7 @@
 - CLI：`src/lol_audio_unpack/cli/`
 - 解包：`src/lol_audio_unpack/unpack/`
 - 映射：`src/lol_audio_unpack/mapping/`
-- 运行时支持：`src/lol_audio_unpack/runtime/remote/`、`src/lol_audio_unpack/runtime/wav/`
+- 运行时支持：`src/lol_audio_unpack/runtime/wad_index.py`、`src/lol_audio_unpack/runtime/wav/`
 - 数据准备与读取：`src/lol_audio_unpack/manager/`
 - 共享实体模型：`src/lol_audio_unpack/model/`
 - GUI：`src/lol_audio_unpack/gui/`
@@ -49,7 +49,7 @@ GUI 保留四个独立标签页的职责。执行中心仍在同一页面完成�
 处理全部英雄与地图；任意一项填写后，只处理已输入的 ID。实体总览使用“英雄 / 地图 / 特殊内容”三类
 左侧目录和右侧具体信息，并用 `A` / `M` 分别表示音频产物和事件映射产物。结构化特殊内容按“旧版英雄、
 末日人机、无尽狂潮”分组展示，普通英雄目录不会重复这些条目；发送到执行中心后仍按对应英雄数值 ID 执行。
-特殊内容只支持本地客户端资源：remote 模式保留目录与说明，但不能选择或发送。事件映射存在时默认显示事件树；
+特殊内容直接使用当前 `game_path` 的本地资源。事件映射存在时默认显示事件树；
 尚未生成映射时会默认显示全部已解包音频，同一 WEM ID 的不同路径会作为独立条目保留。大型实体的全量 WEM
 在首次进入“全部音频”时后台加载并使用分批布局；摘要卡显示计数进度，离开总览页后只继续填充缓存，不构建
 隐藏列表。返回同一实体时复用已加载的事件树与全部音频模型，不再次装填数万条记录。事件预览只解析 mapping
@@ -58,28 +58,27 @@ GUI 保留四个独立标签页的职责。执行中心仍在同一页面完成�
 历史资源包不是自动全盘扫描：在“特殊内容”标签中使用“添加/扫描历史资源包”，只选择当前游戏
 `Game/DATA/FINAL` 下需要处理的 `.wad.client`。扫描在后台执行，目录会显示每个已持久化资源包的来源、
 命名空间、发现状态和 `A` / `M` 输出状态；解包产物位于 `audios/<version>/resource_packs/`，映射位于
-`hashes/<version>/resource_packs/`。资源包仅支持本地模式，且当前不支持 WAV 转码；即使映射尚未生成，
+`hashes/<version>/resource_packs/`。资源包当前不支持 WAV 转码；即使映射尚未生成，
 “全部音频”仍可按精确 WEM 路径试听。
 
-## 4. Remote 模式
+## 4. 已准备本地数据源
 
-Remote 模式适合：
+程序只消费 `game_path` 指向的本地目录。该目录可以是已安装客户端，也可以由外部工具预先准备；
+两者使用同一结构预检、update 与 resource schema v2 流程。
 
-- 没有本地完整游戏客户端
-- 运行环境磁盘受限（CI、容器、临时服务器）
-- 只想处理少量英雄 / 地图
+最小共享结构包括：
 
-Remote 模式的当前主线：
+- `Game/content-metadata.json`
+- `Game/DATA/FINAL`
+- `LeagueClient/Plugins/rcp-be-lol-game-data/description.json`
+- 当前目标实际引用的 LCU 与 GAME WAD 资源
 
-- 使用上游 `RiotManifest` 提供的一对已对齐 LCU / GAME manifest
-- `update` 先全局执行一次
-- `extract / mapping` 通过 `LolAudioUnpackApp.run_workflow(...)` 按实体顺序执行
-- 单实体完成后会清理当前远端 WAD
-- remote 模式主要优化磁盘峰值，不优化总耗时
+程序不内置下载、远端清单解析或网络回退；`LeagueClient.exe` 不是必需项。外部准备工具完成目录
+后，直接把该目录作为 `game_path` 使用即可。
 
 详细说明见：
 
-- [Remote 模式（运行与接入）](./api/remote_mode.md)
+- [已准备本地数据源合同](./api/prepared_source.md)
 
 ## 5. 基准测试与性能参考
 

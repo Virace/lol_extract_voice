@@ -2,7 +2,7 @@
 
 ## 0. 本地 resource binding artifact
 
-`local_path` 模式的 `update` 会对 declared BIN 与其引用的 BNK/WPK 做目标 hash 查询，
+`update` 会对 declared BIN 与其引用的 BNK/WPK 做目标 hash 查询，
 只扫描 `Game/DATA/FINAL` 下 root WAD 与当前 `game_region` 的 WAD TOC。命中位置写入
 `manifest/<version>/banks/**`，不会持久化本机绝对路径。
 
@@ -40,17 +40,16 @@ diagnostics:
 `complete`、`partial` 或 `failed`。同 hash 多候选只在歧义时读取 payload；内容不同不会
 静默选择首项。
 
-`DataReader.get_champion_banks(...)` 与 `get_map_banks(...)` 默认仍可读取旧 artifact；
-需要精确 binding 的调用方传入 `require_bindings=True`，或使用
-`get_champion_resource_bindings(...)` / `get_map_resource_bindings(...)`。旧 local artifact
-会提示重新运行 `update`；`remote_snapshot` 继续使用既有 `.use_local_bin` 与 v1 投影，
-不会实例化本地 WAD 索引。
+`DataReader.get_champion_banks(...)` 与 `get_map_banks(...)` 默认仍可读取旧 artifact，供迁移检查；
+需要物理资源的调用方必须传入 `require_bindings=True`，或使用
+`get_champion_resource_bindings(...)` / `get_map_resource_bindings(...)`。旧 artifact 会提示重新
+运行 `update`。历史 `.use_local_bin` 与 `manifest/<version>/bin_input` 不参与解析，也不能绕过本地
+WAD 索引。
 
-`AudioEntityData` 在 local v2 会把每条 `BankBinding` 投影为 `AudioBank`：它只补充
+`AudioEntityData` 会把每条 v2 `BankBinding` 投影为 `AudioBank`：它只补充
 逻辑子实体 ID 与音频类型，保留原始 binding 作为唯一物理资源事实。旧 local artifact 在
 创建解包或 mapping 实体时会明确提示重新运行 `update`；不会退回 alias、分类名或旧投影猜测
-WAD。`remote_snapshot` 仍保留 v1 root/language 投影，`resource_banks` 为空且
-`binding_diagnostics` 为 `None`，不会创建本地 WAD index。
+WAD。
 
 数据关系固定为：
 
@@ -68,7 +67,7 @@ logical entity -> declared BIN -> BinBinding -> BANK_UNITS path
 本地 API 可在 `OperationOptions.resource_pack_wads` 传入由
 `ResourcePackWadRef.from_path(game_root, path)` 创建的显式选择。每个 ref 只持久化游戏根相对
 WAD identity 与 `st_size` / `st_mtime_ns`；选择和执行阶段均严格解析、确认仍在
-`Game/DATA/FINAL` 下且为 `.wad.client`。remote 模式在应用门面拒绝该能力。
+`Game/DATA/FINAL` 下且为 `.wad.client`。
 
 发现只打开 selected WAD 的 TOC，只读取 storage type 为 `0`、`1` 或 `3` 的非零 candidate。解压前
 强制单 WAD 上限：4096 个 candidate、单 entry 4 MiB 未压缩尺寸、64 MiB candidate 压缩字节。候选
@@ -183,9 +182,8 @@ def generate_output_path(
 
 1. local v2 按每条成功 binding 的物理 WAD identity 与 entry 提取原始 bank；同一逻辑实体内
    只复用相同 `(wad identity, entry hash)` 的 raw 数据，仍分别写回各自子实体和音频类型。
-2. remote v1 继续按语言 WAD / 根 WAD 的兼容投影提取。
-3. 解析 `BNK` / `WPK` 并输出原始 ID 命名的 `.wem`；同一最终相对输出路径只写入一次。
-4. 记录旧报告字段，并为 local v2 追加 `bindingDiagnostics`（逐 binding、逐 WAD 与
+2. 解析 `BNK` / `WPK` 并输出原始 ID 命名的 `.wem`；同一最终相对输出路径只写入一次。
+3. 记录兼容报告字段，并追加 `bindingDiagnostics`（逐 binding、逐 WAD 与
    `complete` / `partial` / `failed`）；报告不写入绝对 WAD 路径。
 
 若当前工作流启用了 WAV，则由独立 `WAV 转码` stage 直接消费当前版本的 `audios/<version>` 输出树，
@@ -270,9 +268,8 @@ def integrate_entity(
 
 ### 2.5 当前映射语义
 
-local v2 映射只遍历成功 binding 中的 `_events.bnk`，并直接使用 binding 指向的 WAD；同一
+映射只遍历成功的 v2 binding 中的 `_events.bnk`，并直接使用 binding 指向的 WAD；同一
 分类/路径位于多个 WAD 时会分别处理并合并原有 `events: category -> event -> WEM ID[]` 结构。
-remote v1 才继续按分类名选择语言 WAD / 根 WAD 的兼容分支。
 
 映射输出额外包含：
 
@@ -293,15 +290,16 @@ remote v1 才继续按分类名选择语言 WAD / 根 WAD 的兼容分支。
 常用方法：
 
 - `update(opts, *, target="all", progress_callback=None)`
-- `extract(opts, *, include_champions=True, include_maps=True, prepare_remote=True, ...)`
+- `discover_resource_packs(opts)`
+- `extract(opts, *, include_champions=True, include_maps=True, progress_callback=None, persisted_wem_callback=None)`
 - `transcode_wav(opts, *, progress_callback=None, job_label=None)`
-- `mapping(opts, *, include_champions=True, include_maps=True, prepare_remote=True, ...)`
-- `build_work_items(...)`
-- `run_workflow(...)`
-- `cleanup_remote_artifacts()`
+- `mapping(opts, *, include_champions=True, include_maps=True, progress_callback=None)`
+- `prepare_update_data(*, force_update=False)`
+- `resolve_champion_ids(selectors)`
 
-`update(...)`、`extract(...)`、`transcode_wav(...)` 与 `mapping(...)` 都返回 `StageResult`；
-`run_workflow(...)` 返回 `RunResult`。公共结果模型从 `lol_audio_unpack.app` 导出：
+`update(...)`、`extract(...)`、`transcode_wav(...)` 与 `mapping(...)` 都返回 `StageResult`。
+CLI 与 GUI 可以按执行顺序把这些阶段聚合为 `RunResult`。公共结果模型从
+`lol_audio_unpack.app` 导出：
 
 - `ResultStatus`：`success`、`partial`、`failed`、`cancelled`
 - `EntityResult`：稳定实体 identity、状态、错误摘要与可选 artifact paths
@@ -323,30 +321,28 @@ extract 的 artifacts 是本轮确认落盘的 WEM 或大厅音频路径，mappi
 
 合法 no-op 是计数为 0 的 success。实体成功与失败并存时为 partial；全部失败为 failed；
 cancelled 在整轮聚合中优先。完整 traceback 只写日志，不进入公共结果。
-已知共享数据、下载与持久化异常会在 facade 阶段边界结果化；参数/合同 `ValueError` 与未声明为
+已知共享数据与持久化异常会在 facade 阶段边界结果化；参数/合同 `ValueError` 与未声明为
 可恢复的编程错误仍可能直接抛出，调用方不能把 typed result 理解为“任何异常都不会传播”。
 
-## 4. remote 模式执行顺序
+## 4. 本地数据源执行顺序
 
-在 `remote_snapshot` 模式下，按实体拆批执行的主线是：
+真实客户端与外部准备目录共用以下主线：
 
-1. 可选先执行一次全局 `update`
-2. 通过 `build_work_items(...)` 构建实体工作项队列
-3. 单实体依次准备所需 WAD
-4. 执行 `extract`
-5. 执行 `mapping`
-6. 清理当前实体远端产物
+1. `create_app_context(...)` 验证 `game_path` 的共享 GAME/LCU 结构。
+2. `update` 读取本地数据，并为目标生成 v2 resource bindings 与 events。
+3. `extract` 按 binding 指向的 WAD/entry 解包原始 WEM。
+4. 可选执行独立 WAV stage。
+5. `mapping` 按同一 binding 和 events 生成映射。
 
-目标是降低磁盘峰值，而不是把 `extract + mapping` 合并成一个大步骤。
-单实体重试耗尽会写入 failed `EntityResult` 并继续后续实体；清理失败作为独立 `cleanup`
-阶段追加，不覆盖原始失败。实体完成回调只从 `EntityResult.artifacts` 解析本轮真实存在的路径；
-预先存在的旧输出目录不是证据。partial 只有仍有这种落盘证据时才会触发完成回调。
+基础预检不枚举或推断所有目标资源。缺失的 LCU 引用、WAD、BIN 或 bank 由 update 和对应消费者
+按目标报告；预先存在的旧输出目录不能替代本轮 `EntityResult.artifacts` 成为成功证据。完整目录
+合同见 [已准备本地数据源合同](./prepared_source.md)。
 
 ## 5. 上下文约束
 
 - `DataReader` 构造必须传入 `ctx: AppContext`；每次构造都是独立实例，不跨 context 共享 cache
 - `LolAudioUnpackApp` 在单一 app/context 内懒加载复用 reader，并在 data、banks/events 或
   resource-pack artifact 的写入边界后异常安全地整体失效
-- remote orchestrator 复用所属 app 的 reader；不同 app/context 不建立进程级共享 registry
+- 不同 app/context 不建立进程级共享 reader registry
 - `AudioEntityData.from_champion/from_map` 必须传入 `ctx`
-- 解包、映射、remote 准备相关主函数都要求显式上下文
+- 解包与映射相关主函数都要求显式上下文

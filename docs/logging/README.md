@@ -109,7 +109,7 @@
 - 风险决策点：fallback、重试、自动准备、自动回退、忽略输入、分支选择。
 - 错误吞掉点：`except ...: continue`、记录错误后继续、单项失败但整体继续。
 - worker / thread 边界：启动、完成、失败，以及主线程接收结果并切阶段。
-- 外部系统边界：文件、manifest、remote snapshot、WAD / BNK、第三方桥接入口。
+- 外部系统边界：本地文件、manifest、WAD / BNK、第三方桥接入口。
 - 读取入口边界：如果方法约定以 `None` / 空字典 / falsey 结果表示失败，异常日志必须在方法体内显式补齐。
 
 ## 第三方桥接原则
@@ -183,14 +183,14 @@ Qt 与 `pyvgmstream` 默认归入第三方桥接轨道。桥接层应尽量轻�
 
 ### 日志不是结果事实源
 
-业务层使用 `EntityResult`、`StageResult` 和 `RunResult` 表达权威状态。CLI 退出码、remote 回调和
+业务层使用 `EntityResult`、`StageResult` 和 `RunResult` 表达权威状态。CLI 退出码和
 GUI 终态必须读取 typed result，不能通过是否出现 `SUCCESS` 日志、异常文案或最后一条消息反推。
 日志可以保留 traceback、重试和性能细节；公共结果只保留稳定状态、计数、错误摘要与已确认落盘路径。
 
 ## 当前已验证的收口模式
 
 - 配置加载默认缺失文件若属于正常缺省路径，可降到 `DEBUG`，避免长期占用 `WARNING` 观察面。
-- `REMOTE_SNAPSHOT` 自动解析最新 live 清单这类模式切换提示，继续保留在业务 `INFO`。
+- 本地源预检、自动准备和阶段切换提示保留在业务 `INFO`；具体资源诊断按风险使用 `WARNING` 或 `ERROR`。
 - 忽略未知配置项属于风险决策，仍应保留 `WARNING` 可见性。
 - 读取入口若约定“读取失败返回空值并继续”，优先在方法体内显式 `try/except`，记录带上下文的异常日志，再返回约定空值。
 
