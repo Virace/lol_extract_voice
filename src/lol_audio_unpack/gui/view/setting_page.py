@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 from time import perf_counter
@@ -25,18 +25,14 @@ from qfluentwidgets import (
 from lol_audio_unpack.gui.common import (
     GuiConfig,
     apply_smooth_scroll_enabled,
-    available_source_mode_labels,
     format_default_relative_path,
     format_path_for_display,
-    is_remote_panel_visible,
-    needs_remote_mode_fallback,
     show_feedback_infobar,
 )
 from lol_audio_unpack.gui.common.page_style import (
     apply_page_content_margins,
     configure_transparent_scroll_page,
 )
-from lol_audio_unpack.gui.controllers import RemoteSourceController
 from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
 from lol_audio_unpack.gui.controllers.game_path_resolver import resolve_game_path as resolve_selected_game_path
 from lol_audio_unpack.gui.controllers.onboarding_state import GUIDE_VERSION
@@ -47,7 +43,6 @@ from lol_audio_unpack.gui.controllers.path_picker import (
     pick_directory,
     pick_file,
 )
-from lol_audio_unpack.gui.controllers.remote_source import RemoteSourceDraft
 from lol_audio_unpack.gui.theme import (
     apply_accent_preset,
     apply_shell_mode,
@@ -55,14 +50,10 @@ from lol_audio_unpack.gui.theme import (
 )
 from lol_audio_unpack.gui.view.settings.appearance_panel import AppearancePanel
 from lol_audio_unpack.gui.view.settings.cards import (
-    ComboRowSettingCard,
-    LocalizedSwitchSettingCard,
     LogLevelSettingCard,
     SliderSettingCard,
     SmoothScrollSettingCard,
 )
-from lol_audio_unpack.gui.view.settings.remote_source_panel import RemoteSourcePanel
-from lol_audio_unpack.gui.view.settings.source_mode_panel import SourceModePanel
 from lol_audio_unpack.gui.view.settings.tool_path_panel import (
     BaseSettingsPanel,
     ToolPathPanel,
@@ -118,6 +109,7 @@ def _log_setting_stage(stage: str, startup_begin: float, previous_mark: float) -
 # SettingPage
 # ---------------------------------------------------------------------------
 
+
 class SettingPage(SmoothScrollArea):
     """Settings Page — all persistent config in one scrollable view."""
 
@@ -148,7 +140,6 @@ class SettingPage(SmoothScrollArea):
 
         # 配置对象：先建好再构建 UI，确保 load() 后可立即应用
         self._cfg = GuiConfig()
-        self._remote_source_controller = RemoteSourceController()
         self._theme_persistence_listener = None
         self._applying_theme_config = False
         previous_mark = _log_setting_stage("GuiConfig 实例创建完成", startup_begin, previous_mark)
@@ -162,10 +153,8 @@ class SettingPage(SmoothScrollArea):
         self.destroyed.connect(self._disconnect_theme_persistence_signals)
         previous_mark = _log_setting_stage("_connect_signals 完成", startup_begin, previous_mark)
 
-        # 初始化时根据当前模式刷新动态显隐
-        self._on_source_mode_changed(self.sourceModeCard.displayValue(), persist=False)
         self.set_runtime_config_locked(False)
-        _log_setting_stage("_on_source_mode_changed 完成", startup_begin, previous_mark)
+        _log_setting_stage("运行时配置锁初始化完成", startup_begin, previous_mark)
 
     # ------------------------------------------------------------------
     # UI 建造
@@ -196,42 +185,32 @@ class SettingPage(SmoothScrollArea):
         build_begin = perf_counter()
         build_mark = build_begin
 
-        self._build_source_group()   # 数据来源（动态显隐子组）
+        self._build_source_group()  # 本地游戏目录
         build_mark = _log_setting_stage("_build_source_group 完成", build_begin, build_mark)
-        self._build_base_group()     # 基础设置
+        self._build_base_group()  # 基础设置
         build_mark = _log_setting_stage("_build_base_group 完成", build_begin, build_mark)
-        self._build_tools_group()    # 工具配置
+        self._build_tools_group()  # 工具配置
         build_mark = _log_setting_stage("_build_tools_group 完成", build_begin, build_mark)
-        self._build_wav_group()      # WAV 默认参数
+        self._build_wav_group()  # WAV 默认参数
         build_mark = _log_setting_stage("_build_wav_group 完成", build_begin, build_mark)
-        self._build_personal_group() # 个性化
+        self._build_personal_group()  # 个性化
         _log_setting_stage("_build_personal_group 完成", build_begin, build_mark)
 
     # 数据来源 ----------------------------------------------------------
 
-    # 来源模式：显示文字 → 实际 env 值的映射
-    _SOURCE_MODE_MAP = {
-        "本地模式": "local_path",
-        "远程模式": "remote_snapshot",
-    }
     def _build_source_group(self):
+        """构建唯一的本地游戏目录设置。"""
         group_begin = perf_counter()
-        group_mark = group_begin
-        available_mode_labels = available_source_mode_labels()
-        source_mode_map = {label: self._SOURCE_MODE_MAP[label] for label in available_mode_labels}
-
-        self.sourceModePanel = SourceModePanel(
-            parent=self.content_widget,
-            source_mode_map=source_mode_map,
+        self.localGroup = SettingCardGroup("游戏目录", self.content_widget)
+        self.gamePathCard = PushSettingCard(
+            "选择文件夹",
+            FIF.FOLDER,
+            "游戏根目录",
+            "当前: 未设置",
         )
-        self.sourceModeGroup = self.sourceModePanel.sourceModeGroup
-        self.sourceModeCard = self.sourceModePanel.sourceModeCard
-        self.localGroup = self.sourceModePanel.localGroup
-        self.gamePathCard = self.sourceModePanel.gamePathCard
-        self.remoteSourcePanel = self.sourceModePanel.remoteSourcePanel
-        group_mark = _log_setting_stage("source: sourceModePanel 创建完成", group_begin, group_mark)
-        self.sourceModePanel.add_to_layout(self.expandLayout)
-        _log_setting_stage("source: remoteGroup.addWidget 完成", group_begin, group_mark)
+        self.localGroup.addSettingCard(self.gamePathCard)
+        self.expandLayout.addWidget(self.localGroup)
+        _log_setting_stage("source: localGroup 创建完成", group_begin, group_begin)
 
     # 基础设置 ----------------------------------------------------------
 
@@ -297,19 +276,9 @@ class SettingPage(SmoothScrollArea):
         """从 GuiConfig 读取保存的配置并应用到各控件。"""
         cfg = self._cfg
         cfg.load()
-        if needs_remote_mode_fallback(cfg.source_mode):
-            logger.warning("检测到当前为打包版本，远程模式已临时禁用，本次运行将使用本地模式。")
-
-        # 来源模式
-        self.sourceModeCard.setValue(cfg.effective_source_mode)
 
         # 游戏路径
         apply_path_card_label(self.gamePathCard, cfg.game_path)
-
-        # 远程配置
-        remote_draft = self._remote_source_controller.draft_from_config(cfg)
-        self.remoteSourcePanel.set_source_mode(cfg.effective_source_mode)
-        self.remoteSourcePanel.apply_draft(remote_draft)
 
         # 基础设置
         apply_path_card_label(self.outputPathCard, cfg.output_path, f"./{get_default_output_relative_path()}")
@@ -336,23 +305,14 @@ class SettingPage(SmoothScrollArea):
             console_level=cfg.console_log_level,
             file_level=cfg.file_log_level,
         )
-        self._refresh_remote_runtime_summary()
 
     def _save_config(
         self,
         *_args,
         emit_shared_context_input_change: bool = True,
-        persist_remote_source_mode: bool = True,
     ) -> None:
         """将各控件当前值写入 GuiConfig 并持久化。"""
         cfg = self._cfg
-
-        remote_draft = self.remoteSourcePanel.build_draft(source_mode=self.sourceModeCard.value())
-        self._remote_source_controller.apply_draft_to_config(
-            cfg,
-            remote_draft,
-            persist_remote_source_mode=persist_remote_source_mode,
-        )
         cfg.game_region = self.gameRegionCard.value()
         cfg.group_by_type = self.groupByTypeCard.isChecked()
         cfg.wav_workers = int(self.wavWorkersCard.value())
@@ -365,20 +325,8 @@ class SettingPage(SmoothScrollArea):
         cfg.file_log_level = self.logLevelCard.fileValue()
 
         cfg.save()
-        self._refresh_remote_runtime_summary()
         if emit_shared_context_input_change:
             self.shared_context_input_changed.emit()
-
-    def _save_remote_draft_config(self, draft: RemoteSourceDraft | None = None, *_args) -> None:
-        """保存远程配置草稿，但不立即切换共享 runtime 上下文。"""
-        remote_draft = draft or self.remoteSourcePanel.current_draft()
-        self._remote_source_controller.apply_draft_to_config(
-            self._cfg,
-            remote_draft,
-            persist_remote_source_mode=False,
-        )
-        self._cfg.save()
-        self._refresh_remote_runtime_summary(remote_draft)
 
     def _save_theme_config(self) -> None:
         """保存主题配置到 GuiConfig。"""
@@ -415,9 +363,6 @@ class SettingPage(SmoothScrollArea):
 
     def _connect_signals(self) -> None:
         """连接所有控件的变更信号，实现即时持久化。"""
-        # 来源模式 — Local 立即生效，Remote 进入草稿态
-        self.sourceModeCard.comboBox.currentTextChanged.connect(self._on_source_mode_changed)
-
         # 目录 / 文件选择按钮
         self.gamePathCard.clicked.connect(self._pick_game_path)
         self.outputPathCard.clicked.connect(
@@ -461,22 +406,12 @@ class SettingPage(SmoothScrollArea):
         )
         self.onboardingResetCard.clicked.connect(self._reset_onboarding_state)
 
-        # 远程配置草稿
-        self.remoteSourcePanel.draft_changed.connect(self._save_remote_draft_config)
-        self.remoteSourcePanel.apply_requested.connect(self._apply_remote_runtime_config)
-
         # 基础设置
         self.gameRegionCard.comboBox.currentTextChanged.connect(self._save_config)
         self.groupByTypeCard.checkedChanged.connect(self._save_config)
-        self.wavWorkersCard.comboBox.currentTextChanged.connect(
-            lambda _value: self._save_wav_defaults()
-        )
-        self.wavTimeoutCard.comboBox.currentTextChanged.connect(
-            lambda _value: self._save_wav_defaults()
-        )
-        self.wavRetriesCard.comboBox.currentTextChanged.connect(
-            lambda _value: self._save_wav_defaults()
-        )
+        self.wavWorkersCard.comboBox.currentTextChanged.connect(lambda _value: self._save_wav_defaults())
+        self.wavTimeoutCard.comboBox.currentTextChanged.connect(lambda _value: self._save_wav_defaults())
+        self.wavRetriesCard.comboBox.currentTextChanged.connect(lambda _value: self._save_wav_defaults())
         self.smoothScrollCard.pageSwitchButton.checkedChanged.connect(self._on_smooth_scroll_changed)
         self.smoothScrollCard.widgetSwitchButton.checkedChanged.connect(self._on_smooth_scroll_changed)
         self.previewAudioOutputDeviceCard.comboBox.currentTextChanged.connect(
@@ -486,13 +421,9 @@ class SettingPage(SmoothScrollArea):
             lambda value: self._save_preview_audio_volume(int(value))
         )
         self.accentPresetCard.comboBox.currentTextChanged.connect(self._on_accent_preset_changed)
-        self.logDrawerAutoCollapseCard.checkedChanged.connect(
-            lambda _checked: self._save_log_drawer_auto_collapse()
-        )
+        self.logDrawerAutoCollapseCard.checkedChanged.connect(lambda _checked: self._save_log_drawer_auto_collapse())
         self.consoleLogLevelCard.comboBox.currentTextChanged.connect(self._on_console_log_level_changed)
-        self.fileLogLevelCard.comboBox.currentTextChanged.connect(
-            lambda _value: self._save_file_log_level()
-        )
+        self.fileLogLevelCard.comboBox.currentTextChanged.connect(lambda _value: self._save_file_log_level())
 
         # 个性化 — 主题变更时保存
         if self._theme_persistence_listener is None:
@@ -578,51 +509,6 @@ class SettingPage(SmoothScrollArea):
         )
 
     # ------------------------------------------------------------------
-    # 动态显隐
-    # ------------------------------------------------------------------
-
-    def _on_source_mode_changed(self, label: str, persist: bool = True) -> None:
-        """根据来源模式（显示文字）切换 local / remote 子组的可见性。"""
-        is_local = not is_remote_panel_visible(self.sourceModeCard.value())
-        self.localGroup.setVisible(is_local)
-        self.remoteSourcePanel.group.setVisible(not is_local)
-        self.remoteSourcePanel.set_source_mode(self.sourceModeCard.value())
-        self.remoteSourcePanel.set_snapshot_strategy_visibility(self.remoteSourcePanel.snapshotStrategyCard.value())
-        self._refresh_remote_runtime_summary()
-        self.set_runtime_config_locked(self._runtime_config_locked)
-
-        if not persist:
-            return
-        if is_local:
-            self._save_config()
-        else:
-            self._save_remote_draft_config()
-
-    def _refresh_remote_runtime_summary(self, draft: RemoteSourceDraft | None = None) -> None:
-        """刷新远端版本提示与确认按钮可用性。"""
-        remote_draft = draft or self.remoteSourcePanel.current_draft()
-        version_text, action_text, apply_enabled = self._remote_source_controller.build_runtime_summary(remote_draft)
-        self.remoteSourcePanel.update_runtime_summary(
-            version_text=version_text,
-            action_text=action_text,
-            apply_enabled=apply_enabled,
-        )
-
-    def _apply_remote_runtime_config(self, draft: RemoteSourceDraft | None = None) -> None:
-        """确认远端配置，并触发一次共享上下文刷新。"""
-        if draft is not None:
-            self._remote_source_controller.apply_draft_to_config(
-                self._cfg,
-                draft,
-                persist_remote_source_mode=True,
-            )
-            self._cfg.save()
-            self._refresh_remote_runtime_summary(draft)
-            self.shared_context_input_changed.emit()
-            return
-        self._save_config()
-
-    # ------------------------------------------------------------------
     # 辅助
     # ------------------------------------------------------------------
 
@@ -641,9 +527,7 @@ class SettingPage(SmoothScrollArea):
         """按分层策略锁定或解锁后端上下文相关配置。"""
         self._runtime_config_locked = locked
         enabled = not locked
-        self.sourceModeGroup.setEnabled(enabled)
         self.localGroup.setEnabled(enabled)
-        self.remoteSourcePanel.set_runtime_config_locked(locked)
         self.baseGroup.setEnabled(enabled)
         self.wwiserCard.setEnabled(enabled)
         self.vgmstreamCard.setEnabled(True)
@@ -711,7 +595,3 @@ class SettingPage(SmoothScrollArea):
     def config(self) -> GuiConfig:
         """返回当前已加载的 GuiConfig 对象（调用前请确保已 load()）。"""
         return self._cfg
-
-    def source_mode_value(self) -> str:
-        """返回来源模式的实际 env 值（local_path / remote_snapshot）。"""
-        return self.sourceModeCard.value()

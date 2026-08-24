@@ -215,7 +215,6 @@ class SharedDataScanResult:
     """描述同一上下文与 generation 的原子目录扫描快照。"""
 
     generation: int
-    source_mode: str
     version: str
     champions: SharedDataSectionResult
     maps: SharedDataSectionResult
@@ -312,7 +311,6 @@ class SharedDataState:
 
     phase: SharedDataPhase
     generation: int
-    source_mode: str
     summary: SharedDataSummary | None = None
     progress: SharedDataProgress | OperationProgress | None = None
     problem: SharedDataProblem | None = None

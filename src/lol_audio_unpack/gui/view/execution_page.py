@@ -60,7 +60,7 @@ class ExecutionPage(SmoothScrollArea):
         self._entity_data_store = EntityDataStore(entity_types=("champions", "maps", "special"))
         self._is_task_running = False
         self._is_task_queue_busy = False
-        self._shared_data_state = SharedDataState(SharedDataPhase.BLOCKED, 0, "local_path")
+        self._shared_data_state = SharedDataState(SharedDataPhase.BLOCKED, 0)
         self._current_global_progress_state = GlobalProgressStripState()
         self._selection_controller = ExecutionSelectionController()
         self._log_controller = ExecutionLogController(

@@ -104,10 +104,6 @@ def test_gui_config_load_reads_gui_section_from_project_ini(tmp_path: Path) -> N
         (
             "[gui]\n"
             "vgmstream_path = tools/vgmstream/vgmstream-cli.exe\n"
-            "remote_snapshot_strategy = custom\n"
-            "remote_snapshot_version = 16.12\n"
-            "remote_snapshot_lcu_url = https://example.com/lcu.manifest\n"
-            "remote_snapshot_game_url = https://example.com/game.manifest\n"
             "theme_mode = Dark\n"
             "accent_preset_id = purple\n"
             "page_smooth_scroll_enabled = true\n"
@@ -126,10 +122,6 @@ def test_gui_config_load_reads_gui_section_from_project_ini(tmp_path: Path) -> N
     cfg.load()
 
     assert cfg.vgmstream_path == "tools/vgmstream/vgmstream-cli.exe"
-    assert cfg.remote_snapshot_strategy == "custom"
-    assert cfg.snapshot_version == "16.12"
-    assert cfg.snapshot_lcu_url == "https://example.com/lcu.manifest"
-    assert cfg.snapshot_game_url == "https://example.com/game.manifest"
     assert cfg.theme_mode == "Dark"
     assert cfg.accent_preset_id == "purple"
     assert cfg.theme_color.lower() == get_accent_preset("purple").primary_hex.lower()
@@ -148,10 +140,6 @@ def test_gui_config_save_persists_gui_state_to_project_ini(tmp_path: Path) -> No
     cfg = GuiConfig()
     cfg._config_file = config_file
     cfg.vgmstream_path = "tools/vgmstream/vgmstream-cli.exe"
-    cfg.remote_snapshot_strategy = "custom"
-    cfg.snapshot_version = "16.12"
-    cfg.snapshot_lcu_url = "https://example.com/lcu.manifest"
-    cfg.snapshot_game_url = "https://example.com/game.manifest"
     cfg.theme_mode = "Dark"
     cfg.accent_preset_id = "orange"
     cfg.page_smooth_scroll_enabled = True
@@ -169,10 +157,6 @@ def test_gui_config_save_persists_gui_state_to_project_ini(tmp_path: Path) -> No
     reloaded.load()
 
     assert reloaded.vgmstream_path == "tools/vgmstream/vgmstream-cli.exe"
-    assert reloaded.remote_snapshot_strategy == "custom"
-    assert reloaded.snapshot_version == "16.12"
-    assert reloaded.snapshot_lcu_url == "https://example.com/lcu.manifest"
-    assert reloaded.snapshot_game_url == "https://example.com/game.manifest"
     assert reloaded.theme_mode == "Dark"
     assert reloaded.accent_preset_id == "orange"
     assert reloaded.theme_color.lower() == get_accent_preset("orange").primary_hex.lower()

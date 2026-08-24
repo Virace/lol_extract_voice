@@ -44,29 +44,17 @@ CURRENT_GENERATION = 2
 class _FakeConfig:
     """最小可用的 GUI 配置替身。"""
 
-    source_mode = "local_path"
-    effective_source_mode = "local_path"
-    remote_snapshot_strategy = "latest"
     output_path = "output"
     game_path = "game"
     game_region = "zh_CN"
-    remote_live_region = "EUW"
-    snapshot_version = ""
-    snapshot_lcu_url = ""
-    snapshot_game_url = ""
     group_by_type = False
     console_log_level = "INFO"
     file_log_level = "DEBUG"
 
     def to_app_context_settings(self) -> dict[str, str | bool]:
         return {
-            "SOURCE_MODE": self.source_mode,
             "GAME_PATH": self.game_path,
             "GAME_REGION": self.game_region,
-            "REMOTE_LIVE_REGION": self.remote_live_region,
-            "REMOTE_VERSION": self.snapshot_version,
-            "REMOTE_LCU_MANIFEST_URL": self.snapshot_lcu_url,
-            "REMOTE_GAME_MANIFEST_URL": self.snapshot_game_url,
             "OUTPUT_PATH": self.output_path,
             "GROUP_BY_TYPE": self.group_by_type,
         }
@@ -170,7 +158,6 @@ def _scan_result(
         )
     return SharedDataScanResult(
         generation,
-        "local_path",
         "16.16",
         champions,
         maps,
@@ -355,14 +342,12 @@ def test_shared_data_controller_refresh_shared_output_state_emits_notice_when_re
     assert controller.pending_refresh_notice is False
 
 
-def test_shared_data_uses_effective_local_mode_when_packaged() -> None:
+def test_shared_data_reader_signature_tracks_local_inputs() -> None:
     cfg = _FakeConfig()
-    cfg.source_mode = "remote_snapshot"
-    cfg.effective_source_mode = "local_path"
 
     signature = build_shared_entity_reader_signature(cfg)
 
-    assert signature[0] == "local_path"
+    assert signature == ("game", "zh_CN")
     assert build_shared_context_loading_message(cfg) == "正在读取本地共享数据…"
 
 
@@ -396,7 +381,7 @@ def test_shared_data_controller_load_initial_data_starts_worker_and_emits_typed_
     worker.func()
 
     assert len(create_calls) == 1
-    assert create_calls[0]["settings"]["SOURCE_MODE"] == "local_path"
+    assert create_calls[0]["settings"]["GAME_PATH"] == "game"
     assert create_calls[0]["settings"]["OUTPUT_PATH"] == "output"
 
 
@@ -799,8 +784,6 @@ def test_legacy_schema_fixture_uses_normal_update_adapter_then_verifies_ready(
 
     context = SimpleNamespace(
         config=SimpleNamespace(
-            source_mode="local_path",
-            effective_source_mode="local_path",
             dev_mode=True,
             game_path=tmp_path / "game",
         ),

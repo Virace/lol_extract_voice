@@ -12,14 +12,10 @@ from lol_audio_unpack.app.context import create_app_context
 from lol_audio_unpack.app.facade import LolAudioUnpackApp
 from lol_audio_unpack.app.resource_pack import partition_special_targets
 from lol_audio_unpack.app.results import ResultStatus, RunResult, StageResult
-from lol_audio_unpack.app.special_content import (
-    is_special_content_supported,
-    merge_champion_ids,
-)
+from lol_audio_unpack.app.special_content import merge_champion_ids
 from lol_audio_unpack.app.targets import resolve_scope
 from lol_audio_unpack.app.types import OperationOptions
 from lol_audio_unpack.config import SettingKey
-from lol_audio_unpack.gui.common.remote_mode_policy import normalize_app_context_settings
 from lol_audio_unpack.gui.task_models import (
     ExecutionTaskProgress,
     ExecutionTaskResult,
@@ -201,15 +197,11 @@ def _resolve_task_options(task: QueuedExecutionTask) -> OperationOptions:
     return task.draft.task_params.to_operation_options()
 
 
-def _ensure_special_targets_supported(task: QueuedExecutionTask, source_mode: object) -> None:
-    """在创建任何 AppContext 前拒绝远端特殊内容任务。"""
+def _validate_special_targets(task: QueuedExecutionTask) -> None:
+    """在创建 AppContext 前验证特殊内容的阶段兼容边界。"""
     task_params = task.draft.task_params
-    if task_params.special_targets and not is_special_content_supported(source_mode):
-        raise ValueError("特殊内容仅支持本地客户端资源。")
     partition = partition_special_targets(task_params.special_targets)
     has_resource_pack_scope = bool(partition.resource_pack_targets or task_params.resource_pack_wads)
-    if has_resource_pack_scope and not is_special_content_supported(source_mode):
-        raise ValueError("资源包发现仅支持本地客户端资源。")
     if has_resource_pack_scope and task_params.wav_enabled:
         raise ValueError("resource pack 当前不支持 WAV 转码；请先只执行 extract 或 mapping。")
 
@@ -232,7 +224,7 @@ def _build_runtime_settings(
     settings.update(task.draft.task_params.to_runtime_overrides())
     if force_bp_vo:
         settings[SettingKey.WITH_BP_VO] = True
-    return normalize_app_context_settings(settings)
+    return settings
 
 
 def _build_scope_label(
@@ -340,12 +332,11 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     runtime_app: LolAudioUnpackApp | None = None
     map_banks_checked = False
     runtime_settings = _build_runtime_settings(task)
-    source_mode = runtime_settings.get(SettingKey.SOURCE_MODE, "local_path")
-    _ensure_special_targets_supported(task, source_mode)
+    _validate_special_targets(task)
 
     try:
         logger.info(f"[执行中心] 任务 #{task.task_id} 开始执行: {' -> '.join(steps)}")
-        logger.debug(f"[执行中心] 任务 #{task.task_id} 范围={task_scope_label}, source_mode={source_mode}")
+        logger.debug(f"[执行中心] 任务 #{task.task_id} 范围={task_scope_label}")
         logger.debug(f"[执行中心] 任务 #{task.task_id} 共享上下文快照={task.draft.context_input.to_settings()}")
         logger.debug(
             f"[执行中心] 任务 #{task.task_id} 参数快照 "

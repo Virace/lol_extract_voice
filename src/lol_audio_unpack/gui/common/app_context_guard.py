@@ -16,13 +16,6 @@ def get_block_reason(cfg: object | None) -> str | None:
     if cfg is None:
         return None
 
-    source_mode = getattr(cfg, "effective_source_mode", None)
-    if not source_mode:
-        source_mode = getattr(cfg, "source_mode", "local_path")
-
-    if source_mode != "local_path":
-        return None
-
     raw_game_path = str(getattr(cfg, "game_path", "") or "").strip()
     if not raw_game_path:
         return "请先在「全局设置」中配置游戏目录。"

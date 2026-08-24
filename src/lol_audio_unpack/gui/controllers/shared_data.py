@@ -32,28 +32,12 @@ SHARED_CONTEXT_BUILD_TIMEOUT_MS = 15000
 SHARED_PROGRESS_REFRESH_INTERVAL_MS = 50
 
 
-def _resolve_source_mode(config, overrides: dict[str, str | bool] | None = None) -> str:
-    """返回共享数据控制器当前应使用的来源模式。"""
-    configured_mode = getattr(config, "effective_source_mode", None)
-    if configured_mode:
-        return str(configured_mode)
-    if overrides is not None:
-        return str(overrides.get(SettingKey.SOURCE_MODE, "local_path") or "local_path")
-    return str(getattr(config, "source_mode", "local_path") or "local_path")
-
-
 def build_shared_entity_reader_signature(config) -> tuple[str | bool, ...]:
     """构建影响共享实体数据读取上下文的配置签名。"""
     overrides = config.to_app_context_settings()
-    source_mode = _resolve_source_mode(config, overrides)
     return (
-        source_mode,
         overrides[SettingKey.GAME_PATH],
         overrides[SettingKey.GAME_REGION],
-        overrides[SettingKey.REMOTE_LIVE_REGION],
-        overrides[SettingKey.REMOTE_VERSION],
-        overrides[SettingKey.REMOTE_LCU_MANIFEST_URL],
-        overrides[SettingKey.REMOTE_GAME_MANIFEST_URL],
     )
 
 
@@ -66,22 +50,14 @@ def build_shared_entity_scan_signature(config) -> tuple[str | bool, ...]:
     )
 
 
-def build_shared_context_loading_message(config) -> str:
-    """根据当前模式生成首页共享数据加载阶段文案。"""
-    if _resolve_source_mode(config) != "remote_snapshot":
-        return "正在读取本地共享数据…"
-    if getattr(config, "remote_snapshot_strategy", "latest") == "custom":
-        return "正在校验固定远端快照…"
-    return "正在解析最新远端版本…"
+def build_shared_context_loading_message(_config) -> str:
+    """返回本地共享数据加载阶段文案。"""
+    return "正在读取本地共享数据…"
 
 
-def build_shared_context_timeout_message(config) -> str:
-    """根据当前模式生成共享数据加载超时提示。"""
-    if config is None or _resolve_source_mode(config) != "remote_snapshot":
-        return "读取共享数据超时，请重试。"
-    if getattr(config, "remote_snapshot_strategy", "latest") == "custom":
-        return "校验固定远端快照超时，请检查配置后重试。"
-    return "解析最新远端版本超时，请检查网络连接后重试。"
+def build_shared_context_timeout_message(_config) -> str:
+    """返回本地共享数据加载超时提示。"""
+    return "读取共享数据超时，请重试。"
 
 
 class SharedDataController(QObject):
@@ -123,7 +99,7 @@ class SharedDataController(QObject):
 
         self.generation = 0
         self.app_context = None
-        self.state = SharedDataState(SharedDataPhase.BLOCKED, 0, "local_path")
+        self.state = SharedDataState(SharedDataPhase.BLOCKED, 0)
         self.is_loading_shared_data = False
         self.is_preparing_shared_data = False
         self.pending_refresh_notice = False
@@ -311,7 +287,6 @@ class SharedDataController(QObject):
             SharedDataState(
                 phase=SharedDataPhase.CHECKING,
                 generation=generation,
-                source_mode=_resolve_source_mode(config),
                 prepare_attempted=self.auto_prepare_attempted,
                 prepare_trigger=trigger,
             )
@@ -472,7 +447,6 @@ class SharedDataController(QObject):
                 SharedDataState(
                     SharedDataPhase.READY,
                     generation,
-                    scan.source_mode,
                     summary=scan.summary,
                     prepare_attempted=self.auto_prepare_attempted,
                     prepare_trigger=self._trigger,
@@ -696,7 +670,6 @@ class SharedDataController(QObject):
             SharedDataState(
                 phase,
                 self.generation,
-                scan.source_mode if scan is not None else _resolve_source_mode(self._get_config()),
                 summary=scan.summary if scan is not None else None,
                 problem=problem,
                 prepare_attempted=self.auto_prepare_attempted,
@@ -799,7 +772,6 @@ class SharedDataController(QObject):
             SharedDataState(
                 SharedDataPhase.WAITING,
                 generation,
-                _resolve_source_mode(config),
                 prepare_trigger=SharedDataPrepareTrigger.CONTEXT_CHANGE,
             )
         )
@@ -847,7 +819,6 @@ class SharedDataController(QObject):
                 SharedDataState(
                     SharedDataPhase.WAITING,
                     generation,
-                    _resolve_source_mode(config or self._get_config()),
                     prepare_trigger=trigger,
                 )
             )
@@ -888,7 +859,6 @@ class SharedDataController(QObject):
             SharedDataState(
                 SharedDataPhase.BLOCKED,
                 generation,
-                _resolve_source_mode(self._get_config()),
                 problem=problem,
                 prepare_trigger=trigger,
             )

@@ -53,7 +53,7 @@ def _build_loader(monkeypatch, *, champions: list[dict], maps: list[dict]) -> En
     """构造只保留目录扫描边界的轻量 loader。"""
     loader = EntityDataLoader.__new__(EntityDataLoader)
     loader.ctx = SimpleNamespace(
-        config=SimpleNamespace(source_mode="local_path", dev_mode=False, game_path=Path("C:/Game")),
+        config=SimpleNamespace(dev_mode=False, game_path=Path("C:/Game")),
         game_region="zh_CN",
     )
     loader.data_reader = SimpleNamespace(
@@ -123,32 +123,6 @@ def test_scan_catalog_complete_ignores_unprepared_optional_special(monkeypatch) 
         ("maps", "advanced", 2, 2),
         ("maps", "finished", 2, 2),
     ]
-
-
-def test_remote_scan_uses_metadata_without_preparing_all_entity_banks(monkeypatch) -> None:
-    """remote 目录检查不能把稀疏 per-entity 工作流扩大为全量 banks 下载。"""
-    loader = _build_loader(
-        monkeypatch,
-        champions=[_champion(1, "Annie")],
-        maps=[_map(0), _map(11)],
-    )
-    loader.ctx.config.source_mode = "remote_snapshot"
-    monkeypatch.setattr(
-        loader,
-        "_preload_bank_artifact",
-        lambda *_args: pytest.fail("remote scan 不应读取逐实体 banks artifact"),
-    )
-    monkeypatch.setattr(
-        loader,
-        "_build_remote_metadata_row",
-        lambda entity_type, entity, _version: {"id": str(entity["id"]), "entity_type": entity_type},
-    )
-
-    result = loader.scan_catalog(13)
-
-    assert result.readiness is SharedDataReadiness.COMPLETE
-    assert result.summary.champion_loaded == 1
-    assert result.summary.map_loaded == EXPECTED_REQUIRED_COUNT
 
 
 def test_scan_catalog_single_schema_failure_is_partial_and_aggregated(monkeypatch) -> None:
@@ -263,9 +237,7 @@ def test_scan_catalog_empty_required_metadata_is_failed(monkeypatch) -> None:
 
 def test_scan_failure_result_classifies_corrupt_dataset_without_text_matching() -> None:
     """reader 初始化损坏应保留 artifact_corrupt typed code。"""
-    ctx = SimpleNamespace(config=SimpleNamespace(source_mode="local_path"))
-
-    result = build_scan_failure_result(ctx, 9, SharedDataCorruptError("broken"))
+    result = build_scan_failure_result(9, SharedDataCorruptError("broken"))
 
     assert result.readiness is SharedDataReadiness.FAILED
     assert result.problems[0].code is SharedDataProblemCode.ARTIFACT_CORRUPT
@@ -274,7 +246,7 @@ def test_scan_failure_result_classifies_corrupt_dataset_without_text_matching() 
 def test_preload_bank_artifact_suppresses_per_item_read_traceback(monkeypatch, tmp_path: Path) -> None:
     """逐实体预检由扫描层聚合，read_data 必须关闭当前边界错误日志。"""
     loader = EntityDataLoader.__new__(EntityDataLoader)
-    loader.ctx = SimpleNamespace(config=SimpleNamespace(source_mode="local_path", dev_mode=False))
+    loader.ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False))
     loader.data_reader = SimpleNamespace(
         champion_banks_dir=tmp_path,
         map_banks_dir=tmp_path,
@@ -298,8 +270,8 @@ def test_preload_bank_artifact_suppresses_per_item_read_traceback(monkeypatch, t
 
 def test_scan_worker_emits_one_typed_result_and_progress(monkeypatch) -> None:
     """完整扫描 worker 应把结果与进度保持在同一 generation。"""
-    ctx = SimpleNamespace(config=SimpleNamespace(source_mode="local_path"))
-    expected = build_scan_failure_result(ctx, WORKER_GENERATION, SharedDataMissingError("missing"))
+    ctx = SimpleNamespace()
+    expected = build_scan_failure_result(WORKER_GENERATION, SharedDataMissingError("missing"))
 
     class FakeLoader:
         def __init__(self, _ctx) -> None:
@@ -327,7 +299,7 @@ def test_scan_worker_emits_one_typed_result_and_progress(monkeypatch) -> None:
 
 def test_scan_worker_returns_typed_result_for_expected_init_failure(monkeypatch) -> None:
     """缺失 dataset 仍走 finished typed result，不退化为字符串 error。"""
-    ctx = SimpleNamespace(config=SimpleNamespace(source_mode="local_path"))
+    ctx = SimpleNamespace()
 
     class FakeLoader:
         def __init__(self, _ctx) -> None:
@@ -348,7 +320,7 @@ def test_scan_worker_returns_typed_result_for_expected_init_failure(monkeypatch)
 
 def test_scan_worker_emits_typed_problem_for_unexpected_failure(monkeypatch) -> None:
     """无法形成扫描结果的程序错误才使用 worker-level typed error。"""
-    ctx = SimpleNamespace(config=SimpleNamespace(source_mode="local_path"))
+    ctx = SimpleNamespace()
 
     class FakeLoader:
         def __init__(self, _ctx) -> None:

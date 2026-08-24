@@ -40,7 +40,7 @@ class SharedDataScanWorker(QThread):
             loader = EntityDataLoader(self.app_context)
             result = loader.scan_catalog(self.generation, progress=self.progress.emit)
         except Exception as exc:  # noqa: BLE001
-            result = build_scan_failure_result(self.app_context, self.generation, exc)
+            result = build_scan_failure_result(self.generation, exc)
             problem = result.problems[0]
             if problem.code is SharedDataProblemCode.UNEXPECTED:
                 logger.opt(exception=exc).error(f"共享实体目录扫描发生未预期失败: generation={self.generation}")

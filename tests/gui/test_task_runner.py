@@ -1,4 +1,4 @@
-"""执行中心运行时 settings 归一测试。"""
+"""执行中心本地任务编排回归测试。"""
 
 from __future__ import annotations
 
@@ -56,7 +56,6 @@ def _entity_stage(
 
 def _build_task(  # noqa: PLR0913
     *,
-    source_mode: str,
     run_update: bool = False,
     run_extract: bool = True,
     run_mapping: bool = True,
@@ -73,7 +72,6 @@ def _build_task(  # noqa: PLR0913
             source_summary="manual",
             context_input=AppContextInputSnapshot(
                 settings=(
-                    ("SOURCE_MODE", source_mode),
                     ("GAME_PATH", "game"),
                     ("OUTPUT_PATH", "output"),
                     ("GAME_REGION", "zh_CN"),
@@ -121,20 +119,7 @@ def _install_fake_runtime(monkeypatch, tmp_path: Path, app_cls: type) -> None:
     monkeypatch.setattr(task_runner, "LolAudioUnpackApp", app_cls)
 
 
-def test_build_runtime_settings_forces_local_path_when_packaged(monkeypatch) -> None:
-    monkeypatch.setattr(
-        task_runner,
-        "normalize_app_context_settings",
-        lambda settings: {**settings, "SOURCE_MODE": "local_path"},
-        raising=False,
-    )
-
-    settings = task_runner._build_runtime_settings(_build_task(source_mode="remote_snapshot"))
-
-    assert settings["SOURCE_MODE"] == "local_path"
-
-
-def test_prepare_shared_entity_data_normalizes_source_mode_before_app_context(monkeypatch) -> None:
+def test_prepare_shared_entity_data_passes_local_settings_to_app_context(monkeypatch) -> None:
     captured: dict[str, str | bool] = {}
     update_calls = []
 
@@ -150,12 +135,6 @@ def test_prepare_shared_entity_data_normalizes_source_mode_before_app_context(mo
         captured.update(settings)
         return object()
 
-    monkeypatch.setattr(
-        window_module,
-        "normalize_app_context_settings",
-        lambda settings: {**settings, "SOURCE_MODE": "local_path"},
-        raising=False,
-    )
     monkeypatch.setattr(window_module, "create_app_context", _fake_create_app_context)
     monkeypatch.setattr(window_module, "LolAudioUnpackApp", _FakeApp)
 
@@ -163,14 +142,14 @@ def test_prepare_shared_entity_data_normalizes_source_mode_before_app_context(mo
         pass
 
     result = _prepare_shared_entity_data(
-        {"SOURCE_MODE": "remote_snapshot"},
+        {"GAME_PATH": "game"},
         generation=PREPARE_GENERATION,
         scope=SharedDataRepairScope(full=False, champion_ids=(1,)),
         force_update=True,
         progress_callback=progress_callback,
     )
 
-    assert captured["SOURCE_MODE"] == "local_path"
+    assert captured == {"GAME_PATH": "game"}
     options, target, callback = update_calls[0]
     assert target == "all"
     assert options.champion_ids == (1,)
@@ -183,7 +162,7 @@ def test_prepare_shared_entity_data_normalizes_source_mode_before_app_context(mo
 
 def test_run_execution_task_runs_stages_in_order_and_reuses_runtime_context(monkeypatch, tmp_path: Path) -> None:
     """完整任务应隔离强制更新，并让后续阶段复用同一运行时上下文。"""
-    task = _build_task(source_mode="remote_snapshot", run_update=True, wav_enabled=True)
+    task = _build_task(run_update=True, wav_enabled=True)
     events: list[object] = []
     context_settings: list[dict[str, object]] = []
     app_instances = []
@@ -203,12 +182,6 @@ def test_run_execution_task_runs_stages_in_order_and_reuses_runtime_context(monk
         config=SimpleNamespace(),
     )
 
-    monkeypatch.setattr(
-        task_runner,
-        "normalize_app_context_settings",
-        lambda settings: {**settings, "SOURCE_MODE": "local_path"},
-        raising=False,
-    )
     monkeypatch.setattr(
         task_runner,
         "logger",
@@ -266,7 +239,7 @@ def test_run_execution_task_runs_stages_in_order_and_reuses_runtime_context(monk
     assert reader_owners == [app_instances[-1]]
     assert reader.requested_map_ids == [11]
     assert len(context_settings) == EXPECTED_CONTEXT_COUNT_WITH_UPDATE
-    assert all(settings["SOURCE_MODE"] == "local_path" for settings in context_settings)
+    assert all(settings["GAME_PATH"] == "game" for settings in context_settings)
 
 
 def test_run_execution_task_reports_partial_and_only_completes_productive_stages(
@@ -275,7 +248,6 @@ def test_run_execution_task_reports_partial_and_only_completes_productive_stages
 ) -> None:
     """部分成功必须保留 warning 终态，且只记录有落盘证据的阶段。"""
     task = _build_task(
-        source_mode="local_path",
         run_mapping=False,
         champion_ids=(1, 2),
     )
@@ -306,7 +278,7 @@ def test_run_execution_task_reports_partial_and_only_completes_productive_stages
 
 def test_run_execution_task_stops_dependencies_after_failed_update(monkeypatch, tmp_path: Path) -> None:
     """前置更新失败后不得再启动依赖的解包与映射阶段。"""
-    task = _build_task(source_mode="local_path", run_update=True, champion_ids=(1,))
+    task = _build_task(run_update=True, champion_ids=(1,))
     events: list[str] = []
 
     class FakeApp:
@@ -342,7 +314,6 @@ def test_run_execution_task_does_not_complete_partial_update_without_artifacts(
 ) -> None:
     """强制更新只有 success 可免产物证据，partial 不能伪装为已完成步骤。"""
     task = _build_task(
-        source_mode="local_path",
         run_update=True,
         run_extract=False,
         run_mapping=False,
@@ -372,7 +343,6 @@ def test_run_execution_task_skips_wav_after_failed_extract_but_runs_mapping(
 ) -> None:
     """解包全失败只阻止 WAV，独立 mapping 仍应继续并使整轮保持 partial。"""
     task = _build_task(
-        source_mode="local_path",
         wav_enabled=True,
         champion_ids=(1,),
     )
@@ -410,7 +380,6 @@ def test_run_execution_task_skips_wav_after_failed_extract_but_runs_mapping(
 def test_run_execution_task_limits_wav_to_successful_extract_artifacts(monkeypatch, tmp_path: Path) -> None:
     """解包部分成功后，WAV 只消费有落盘证据的成功实体。"""
     task = _build_task(
-        source_mode="local_path",
         run_mapping=False,
         wav_enabled=True,
         champion_ids=(1, 2),
@@ -448,7 +417,7 @@ def test_run_execution_task_successful_no_op_has_no_completed_product_stage(
     tmp_path: Path,
 ) -> None:
     """合法 no-op 是 success，但不能伪造已产生产物的步骤。"""
-    task = _build_task(source_mode="local_path", run_mapping=False, champion_ids=(1,))
+    task = _build_task(run_mapping=False, champion_ids=(1,))
 
     class FakeApp:
         def __init__(self, app_context) -> None:
@@ -468,7 +437,7 @@ def test_run_execution_task_successful_no_op_has_no_completed_product_stage(
 
 
 def test_run_execution_task_allows_wav_stage_without_extract(monkeypatch, tmp_path: Path) -> None:
-    task = _build_task(source_mode="remote_snapshot", run_extract=False, run_mapping=False, wav_enabled=True)
+    task = _build_task(run_extract=False, run_mapping=False, wav_enabled=True)
     events: list[str] = []
 
     def _fail_exception(message: str) -> None:
@@ -484,12 +453,6 @@ def test_run_execution_task_allows_wav_stage_without_extract(monkeypatch, tmp_pa
         config=SimpleNamespace(),
     )
 
-    monkeypatch.setattr(
-        task_runner,
-        "normalize_app_context_settings",
-        lambda settings: {**settings, "SOURCE_MODE": "local_path"},
-        raising=False,
-    )
     monkeypatch.setattr(
         task_runner,
         "logger",
@@ -531,7 +494,7 @@ def test_run_execution_task_rejects_missing_map_banks_before_runtime_steps(
     tmp_path: Path,
 ) -> None:
     """地图 banks 尚未生成时，GUI 任务不应静默跳过地图输出。"""
-    task = _build_task(source_mode="local_path", run_mapping=False)
+    task = _build_task(run_mapping=False)
     runtime_context = SimpleNamespace(
         paths=SimpleNamespace(
             manifest_path=tmp_path / "manifest",
@@ -578,33 +541,9 @@ def test_run_execution_task_rejects_missing_map_banks_before_runtime_steps(
         task_runner.run_execution_task(task, signals)
 
 
-def test_run_execution_task_rejects_remote_special_targets_before_app_context(monkeypatch) -> None:
-    """远端 special key 必须在任何运行时上下文与 stage 前失败。"""
-    task = _build_task(source_mode="remote_snapshot", special_targets=("champion:66600",))
-    calls: list[str] = []
-    signals = SimpleNamespace(progress=SimpleNamespace(emit=lambda _payload: None))
-
-    monkeypatch.setattr(
-        task_runner,
-        "create_app_context",
-        lambda **_kwargs: calls.append("context") or pytest.fail("不应创建 AppContext"),
-    )
-    monkeypatch.setattr(
-        task_runner,
-        "LolAudioUnpackApp",
-        lambda *_args: calls.append("app") or pytest.fail("不应创建运行 App"),
-    )
-
-    with pytest.raises(ValueError, match="特殊内容仅支持本地客户端资源"):
-        task_runner.run_execution_task(task, signals)
-
-    assert calls == []
-
-
 def test_run_execution_task_preserves_special_targets_for_app_facade(monkeypatch, tmp_path: Path) -> None:
     """GUI runner 不得把异构 special key 错当作普通英雄 ID。"""
     task = _build_task(
-        source_mode="local_path",
         run_mapping=False,
         champion_ids=(1, 66600),
         special_targets=("champion:66600", "champion:77702"),
@@ -639,7 +578,7 @@ def test_run_execution_task_preserves_special_targets_for_app_facade(monkeypatch
 def test_resource_pack_only_task_excludes_champion_and_map_runtime_scope(monkeypatch, tmp_path: Path) -> None:
     """仅资源包任务不得退化为全量英雄/地图，也不能触发地图 banks 检查。"""
     key = build_resource_pack_key("Legacy.wad.client", "MODE_LEGACY")
-    task = _build_task(source_mode="local_path", run_mapping=False, special_targets=(key,))
+    task = _build_task(run_mapping=False, special_targets=(key,))
     runtime_context = SimpleNamespace(
         paths=SimpleNamespace(audio_path=tmp_path / "audios", wav_path=tmp_path / "wavs"),
         runtime_cache={},
@@ -672,25 +611,14 @@ def test_resource_pack_only_task_excludes_champion_and_map_runtime_scope(monkeyp
     assert calls == [(False, False)]
 
 
-@pytest.mark.parametrize(
-    ("source_mode", "wav_enabled", "error"),
-    [
-        ("remote_snapshot", False, "资源包发现仅支持本地客户端资源"),
-        ("local_path", True, "resource pack 当前不支持 WAV 转码"),
-    ],
-)
 def test_resource_pack_wad_snapshot_is_rejected_before_app_context(
     monkeypatch,
-    source_mode: str,
-    wav_enabled: bool,
-    error: str,
 ) -> None:
-    """直接构造的 WAD snapshot 也必须在创建上下文前通过 local/WAV 边界。"""
+    """直接构造的 WAD snapshot 必须在创建上下文前通过 WAV 边界。"""
     ref = ResourcePackWadRef("Game/DATA/FINAL/Legacy.wad.client", size=12, mtime_ns=34)
     task = _build_task(
-        source_mode=source_mode,
         run_mapping=False,
-        wav_enabled=wav_enabled,
+        wav_enabled=True,
         resource_pack_wads=(ref,),
     )
     calls: list[str] = []
@@ -701,7 +629,7 @@ def test_resource_pack_wad_snapshot_is_rejected_before_app_context(
         lambda **_kwargs: calls.append("context") or pytest.fail("不应创建 AppContext"),
     )
 
-    with pytest.raises(ValueError, match=error):
+    with pytest.raises(ValueError, match="resource pack 当前不支持 WAV 转码"):
         task_runner.run_execution_task(task, signals)
 
     assert calls == []

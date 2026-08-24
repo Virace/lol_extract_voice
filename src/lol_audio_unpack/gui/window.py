@@ -33,7 +33,6 @@ from lol_audio_unpack.gui.common import (
     get_block_reason,
     show_feedback_infobar,
 )
-from lol_audio_unpack.gui.common.remote_mode_policy import normalize_app_context_settings
 from lol_audio_unpack.gui.components.global_progress_strip import (
     GlobalProgressStripCoordinator,
     GlobalProgressStripHost,
@@ -108,8 +107,7 @@ def _prepare_shared_entity_data(
     progress_callback: Callable[[OperationProgress], None],
 ) -> SharedDataPreparationResult:
     """按扫描证据执行一次后端共享数据准备并保留 typed result。"""
-    prepare_settings = normalize_app_context_settings(dict(shared_settings))
-    app_context = create_app_context(settings=prepare_settings)
+    app_context = create_app_context(settings=dict(shared_settings))
     app = LolAudioUnpackApp(app_context)
     options = OperationOptions(
         force_update=force_update,
@@ -414,7 +412,6 @@ class MainWindow(FluentWindow):
         self._shared_progress_demo.state_changed.connect(self._show_shared_progress_demo_state)
         self._shared_progress_demo.start(
             generation=shared_controller.generation,
-            source_mode=shared_controller.state.source_mode,
         )
         logger.info("共享数据进度 mock 已启动 | 间隔 {}ms | 不读取或修改真实实体数据", interval_ms)
         return f"共享进度 mock 已启动：{interval_ms} ms/步；再次执行可调速。"

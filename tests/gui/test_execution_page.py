@@ -118,7 +118,7 @@ def test_execution_page_primary_button_cancels_running_task(qtbot, monkeypatch) 
     _setting_page, execution_page = _build_linked_pages(qtbot)
     monkeypatch.setattr("lol_audio_unpack.gui.view.execution_page.get_block_reason", lambda _cfg: None)
     monkeypatch.setattr(execution_page._queue_controller, "start_task_worker", lambda _task: None)
-    execution_page.set_shared_data_state(SharedDataState(SharedDataPhase.READY, 1, "local_path"))
+    execution_page.set_shared_data_state(SharedDataState(SharedDataPhase.READY, 1))
 
     execution_page._queue_task_draft()
 
@@ -144,7 +144,7 @@ def test_execution_page_blocks_tasks_across_shared_data_states(qtbot, monkeypatc
     monkeypatch.setattr("lol_audio_unpack.gui.view.execution_page.get_block_reason", lambda _cfg: None)
     monkeypatch.setattr(execution_page._queue_controller, "start_task_worker", started_tasks.append)
 
-    execution_page.set_shared_data_state(SharedDataState(SharedDataPhase.PREPARING, 1, "local_path"))
+    execution_page.set_shared_data_state(SharedDataState(SharedDataPhase.PREPARING, 1))
     execution_page._queue_task_draft()
 
     assert execution_page.create_task_btn.text() == "准备数据中"
@@ -156,7 +156,6 @@ def test_execution_page_blocks_tasks_across_shared_data_states(qtbot, monkeypatc
         SharedDataState(
             SharedDataPhase.FAILED,
             1,
-            "local_path",
             problem=SharedDataProblem(
                 SharedDataProblemCode.BANK_ARTIFACT_MISSING,
                 "maps",
@@ -177,14 +176,14 @@ def test_execution_page_only_enables_task_creation_when_shared_data_is_ready(qtb
     """等待、部分可用与就绪三态必须由 phase 直接决定按钮门禁。"""
     _setting_page, execution_page = _build_linked_pages(qtbot)
 
-    execution_page.set_shared_data_state(SharedDataState(SharedDataPhase.WAITING, 2, "local_path"))
+    execution_page.set_shared_data_state(SharedDataState(SharedDataPhase.WAITING, 2))
     assert execution_page.create_task_btn.text() == "等待当前任务结束"
     assert execution_page.create_task_btn.isEnabled() is False
 
-    execution_page.set_shared_data_state(SharedDataState(SharedDataPhase.PARTIAL, 2, "local_path"))
+    execution_page.set_shared_data_state(SharedDataState(SharedDataPhase.PARTIAL, 2))
     assert execution_page.create_task_btn.text() == "创建任务"
     assert execution_page.create_task_btn.isEnabled() is False
 
-    execution_page.set_shared_data_state(SharedDataState(SharedDataPhase.READY, 2, "local_path"))
+    execution_page.set_shared_data_state(SharedDataState(SharedDataPhase.READY, 2))
     assert execution_page.create_task_btn.isEnabled() is True
     assert execution_page.create_task_btn.toolTip() == ""

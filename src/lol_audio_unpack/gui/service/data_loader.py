@@ -88,12 +88,6 @@ _PROBLEM_MESSAGES = {
 }
 
 
-def _source_mode_value(ctx: AppContext) -> str:
-    """返回当前上下文实际生效的来源模式值。"""
-    mode = getattr(ctx.config, "effective_source_mode", None) or getattr(ctx.config, "source_mode", "local_path")
-    return str(getattr(mode, "value", mode))
-
-
 def _classify_scan_error(error: BaseException, *, dataset: bool = False) -> tuple[SharedDataProblemCode, str]:
     """把扫描异常映射为不依赖文案的稳定问题分类。"""
     if isinstance(error, ResourceSchemaMismatchError):
@@ -118,14 +112,12 @@ def _classify_scan_error(error: BaseException, *, dataset: bool = False) -> tupl
 
 
 def build_scan_failure_result(
-    ctx: AppContext,
     generation: int,
     error: BaseException,
 ) -> SharedDataScanResult:
     """把 reader 初始化阶段的预期失败转换为 typed 扫描结果。
 
     Args:
-        ctx: 当前应用上下文。
         generation: 扫描所属上下文代数。
         error: reader 初始化失败。
 
@@ -138,7 +130,6 @@ def build_scan_failure_result(
     empty_special = SharedDataSectionResult("special", (), required=False)
     return SharedDataScanResult(
         generation=generation,
-        source_mode=_source_mode_value(ctx),
         version="",
         champions=empty_champions,
         maps=empty_maps,
@@ -471,8 +462,6 @@ class EntityDataLoader:
                 raise _ArtifactCorruptError(f"{entity_type} {entity_id} banks artifact 无法读取")
             cache[numeric_id] = payload
 
-        if _source_mode_value(self.ctx) != "local_path":
-            return
         if payload.get("resourceSchemaVersion") != RESOURCE_SCHEMA_VERSION:
             raise ResourceSchemaMismatchError(f"{entity_type} {entity_id} banks artifact 缺少 resource schema v2")
         diagnostics = payload.get("diagnostics")
@@ -558,21 +547,17 @@ class EntityDataLoader:
         )
 
         root_error: BaseException | None = None
-        if _source_mode_value(self.ctx) == "local_path":
-            try:
-                self._ensure_bank_dataset_ready(entity_type)
-            except Exception as exc:  # noqa: BLE001
-                root_error = exc
+        try:
+            self._ensure_bank_dataset_ready(entity_type)
+        except Exception as exc:  # noqa: BLE001
+            root_error = exc
 
         for index, (entity_id, entity) in enumerate(entities_by_id.items(), start=1):
             try:
                 if root_error is not None:
                     raise root_error
-                if _source_mode_value(self.ctx) == "local_path":
-                    self._preload_bank_artifact(entity_type, entity_id)
-                    row = self._build_entity_row(entity_type, entity, version)
-                else:
-                    row = self._build_remote_metadata_row(entity_type, entity, version)
+                self._preload_bank_artifact(entity_type, entity_id)
+                row = self._build_entity_row(entity_type, entity, version)
                 if str(row.get("id", "")) != entity_id:
                     raise _ArtifactCorruptError(f"{entity_type} {entity_id} 行身份不一致")
                 rows.append(row)
@@ -782,7 +767,6 @@ class EntityDataLoader:
         problems.extend(self._group_section_problems(special_result))
         result = SharedDataScanResult(
             generation=generation,
-            source_mode=_source_mode_value(self.ctx),
             version=version,
             champions=champion_result,
             maps=map_result,
@@ -839,62 +823,6 @@ class EntityDataLoader:
     def _build_entity_row(self, entity_type: GuiEntityType, entity_dict: dict, version: str) -> dict:
         """将单个原始实体字典转换为 GUI 行数据。"""
         entity_data = self._build_entity_data(entity_type, str(entity_dict["id"]))
-        return self._build_row_from_entity_data(entity_type, entity_data, version)
-
-    def _build_remote_metadata_row(
-        self,
-        entity_type: Literal["champions", "maps"],
-        entity: dict,
-        version: str,
-    ) -> dict:
-        """仅凭 remote metadata 构造目录行，不扩大为全量 per-entity 下载。"""
-        entity_id = str(entity["id"])
-        names = entity.get("names", {})
-        if not isinstance(names, dict):
-            raise _ArtifactCorruptError(f"{entity_type} {entity_id} 缺少 names")
-        name = sanitize_filename(str(names.get(self.ctx.game_region, names.get("default", ""))))
-        wad = entity.get("wad", {})
-        if not isinstance(wad, dict) or not wad.get("root"):
-            raise _ArtifactCorruptError(f"{entity_type} {entity_id} 缺少根 WAD metadata")
-
-        if entity_type == "champions":
-            alias = sanitize_filename(str(entity.get("alias", "")).lower())
-            titles = entity.get("titles", {})
-            title_raw = titles.get(self.ctx.game_region, titles.get("default", "")) if isinstance(titles, dict) else ""
-            sub_entities = {}
-            for skin in entity.get("skins", []):
-                skin_id = str(skin.get("id", ""))
-                if not skin_id:
-                    continue
-                skin_names = skin.get("skinNames", {})
-                skin_name = (
-                    "基础皮肤"
-                    if skin.get("isBase")
-                    else str(skin_names.get(self.ctx.game_region, skin_names.get("default", "")))
-                )
-                sub_entities[skin_id] = {"name": sanitize_filename(skin_name), "categories": {}}
-            entity_data = AudioEntityData(
-                entity_id=entity_id,
-                entity_name=name,
-                entity_alias=alias,
-                entity_title=sanitize_filename(str(title_raw)) if title_raw else None,
-                entity_type="champion",
-                sub_entities=sub_entities,
-                wad_root=str(wad["root"]),
-                wad_language=wad.get(self.ctx.game_region),
-            )
-        else:
-            alias_raw = "common" if entity_id == "0" else str(entity.get("mapStringId", "")).lower()
-            entity_data = AudioEntityData(
-                entity_id=entity_id,
-                entity_name=name,
-                entity_alias=sanitize_filename(alias_raw),
-                entity_title=None,
-                entity_type="map",
-                sub_entities={entity_id: {"name": name, "categories": {}}},
-                wad_root=str(wad["root"]),
-                wad_language=wad.get(self.ctx.game_region),
-            )
         return self._build_row_from_entity_data(entity_type, entity_data, version)
 
     def _localized_champion_name(self, champion: dict) -> str:

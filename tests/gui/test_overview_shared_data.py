@@ -17,7 +17,6 @@ def test_overview_partial_keeps_verified_rows_but_disables_sync(qtbot) -> None:
         SharedDataState(
             SharedDataPhase.PARTIAL,
             2,
-            "local_path",
             summary=SharedDataSummary(2, 1, 1, 1, 1, 0, 0, 0, 0),
         )
     )
@@ -29,7 +28,7 @@ def test_overview_partial_keeps_verified_rows_but_disables_sync(qtbot) -> None:
     assert page.sync_selection_btn.isEnabled() is False
     assert "新任务已暂停" in page.sync_selection_btn.toolTip()
 
-    page.set_shared_data_state(SharedDataState(SharedDataPhase.READY, 2, "local_path"))
+    page.set_shared_data_state(SharedDataState(SharedDataPhase.READY, 2))
 
     assert page.shared_data_status.isHidden() is True
     assert page.sync_selection_btn.isEnabled() is True
@@ -40,7 +39,7 @@ def test_overview_active_state_uses_loading_placeholder_instead_of_empty_catalog
     page = OverviewPage()
     qtbot.addWidget(page)
 
-    page.set_shared_data_state(SharedDataState(SharedDataPhase.VERIFYING, 3, "local_path"))
+    page.set_shared_data_state(SharedDataState(SharedDataPhase.VERIFYING, 3))
 
     assert page.shared_data_status.statusLabel.text() == "正在完整复检英雄与地图目录。"
     assert "验证实体数据" in page.text_preview.toPlainText()

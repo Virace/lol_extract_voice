@@ -272,8 +272,8 @@ def test_special_content_tree_keeps_hidden_search_selection_state_restorable(qtb
     assert special_tree.currentIndex().data(Qt.ItemDataRole.UserRole)["key"] == "champion:77702"
 
 
-def test_special_content_tree_disables_item_selection_for_remote_mode(qtbot) -> None:
-    """远端模式仍可浏览特殊目录，但子项不再可选。"""
+def test_special_content_tree_disables_selection_until_shared_data_is_ready(qtbot) -> None:
+    """共享数据未就绪时特殊目录可浏览但不可选择。"""
     tree = SpecialContentTreeView()
     qtbot.addWidget(tree)
     tree.set_rows(
@@ -291,7 +291,7 @@ def test_special_content_tree_disables_item_selection_for_remote_mode(qtbot) -> 
     item = tree.model().index(0, 0, group)
 
     assert not bool(item.flags() & Qt.ItemFlag.ItemIsSelectable)
-    assert "仅支持本地客户端资源" in tree.toolTip()
+    assert tree.toolTip() == "共享数据就绪后可选择特殊内容。"
 
 
 def test_resource_pack_catalog_uses_safe_display_name_and_selectable_snapshot(monkeypatch, tmp_path: Path) -> None:

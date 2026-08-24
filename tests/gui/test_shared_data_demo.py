@@ -19,7 +19,6 @@ TEST_DEMO_INTERVAL_MS = 80
 def test_shared_data_demo_covers_complete_progress_flow() -> None:
     states = build_shared_data_demo_states(
         generation=7,
-        source_mode="local_path",
         champion_total=TEST_CHAMPION_TOTAL,
         map_total=TEST_MAP_TOTAL,
     )
@@ -51,7 +50,6 @@ def test_shared_data_demo_covers_complete_progress_flow() -> None:
 def test_shared_data_demo_emits_normalized_stage_boundaries() -> None:
     states = build_shared_data_demo_states(
         generation=2,
-        source_mode="remote_snapshot",
         champion_total=2,
         map_total=1,
     )
@@ -68,7 +66,7 @@ def test_shared_data_demo_exposes_runtime_status(qtbot) -> None:
     assert demo.interval_ms == TEST_DEMO_INTERVAL_MS
     assert demo.is_running is False
 
-    demo.start(generation=1, source_mode="local_path")
+    demo.start(generation=1)
     qtbot.wait(1)
 
     assert demo.is_running is True

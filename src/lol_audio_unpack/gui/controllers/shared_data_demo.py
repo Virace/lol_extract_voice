@@ -33,7 +33,6 @@ def _progress_event(current: int, total: int) -> ProgressEvent:
 def build_shared_data_demo_states(
     *,
     generation: int,
-    source_mode: str,
     champion_total: int = DEMO_CHAMPION_TOTAL,
     map_total: int = DEMO_MAP_TOTAL,
 ) -> tuple[SharedDataState, ...]:
@@ -41,7 +40,6 @@ def build_shared_data_demo_states(
 
     Args:
         generation: 供展示协调器识别的状态代次。
-        source_mode: 当前 GUI 配置的数据来源模式。
         champion_total: 模拟的英雄总量。
         map_total: 模拟的地图总量。
 
@@ -54,7 +52,7 @@ def build_shared_data_demo_states(
     if champion_total <= 0 or map_total <= 0:
         raise ValueError("mock 实体总量必须为正整数")
 
-    checking = SharedDataState(SharedDataPhase.CHECKING, generation, source_mode)
+    checking = SharedDataState(SharedDataPhase.CHECKING, generation)
     states = [checking] * DEMO_CHECKING_TICKS
 
     for stage_key, total, entity_type in (
@@ -66,7 +64,6 @@ def build_shared_data_demo_states(
                 SharedDataState(
                     SharedDataPhase.PREPARING,
                     generation,
-                    source_mode,
                     progress=OperationProgress(
                         operation_key="update",
                         stage_key=stage_key,
@@ -84,7 +81,6 @@ def build_shared_data_demo_states(
                 SharedDataState(
                     SharedDataPhase.VERIFYING,
                     generation,
-                    source_mode,
                     progress=SharedDataProgress(
                         generation=generation,
                         stage_key=stage_key,
@@ -98,7 +94,6 @@ def build_shared_data_demo_states(
     ready = SharedDataState(
         SharedDataPhase.READY,
         generation,
-        source_mode,
         summary=SharedDataSummary(
             champion_expected=champion_total,
             champion_loaded=champion_total,
@@ -140,14 +135,13 @@ class SharedDataProgressDemo(QObject):
         self._timer.setInterval(interval_ms)
         self._timer.timeout.connect(self._publish_next)
 
-    def start(self, *, generation: int, source_mode: str) -> None:
+    def start(self, *, generation: int) -> None:
         """从检查阶段开始循环发布一轮完整状态。
 
         Args:
             generation: 供展示协调器识别的状态代次。
-            source_mode: 当前 GUI 配置的数据来源模式。
         """
-        self._states = build_shared_data_demo_states(generation=generation, source_mode=source_mode)
+        self._states = build_shared_data_demo_states(generation=generation)
         self._next_index = 0
         self._publish_next()
         self._timer.start()

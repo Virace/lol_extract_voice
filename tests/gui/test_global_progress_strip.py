@@ -158,12 +158,11 @@ def test_progress_host_hides_strip_without_releasing_reserved_space(qtbot) -> No
 
 def test_shared_data_progress_state_distinguishes_unknown_and_measured_work() -> None:
     """共享准备的未知阶段与可测阶段不能使用同一种伪百分比。"""
-    unknown = build_shared_data_progress_strip_state(SharedDataState(SharedDataPhase.CHECKING, 1, "local_path"))
+    unknown = build_shared_data_progress_strip_state(SharedDataState(SharedDataPhase.CHECKING, 1))
     measured = build_shared_data_progress_strip_state(
         SharedDataState(
             SharedDataPhase.PREPARING,
             1,
-            "local_path",
             progress=SharedDataProgress(
                 1,
                 "champion_banks",
@@ -187,8 +186,8 @@ def test_global_progress_coordinator_prioritizes_user_task_then_resumes_shared_s
     coordinator = GlobalProgressStripCoordinator(published.append)
     task_state = _running_state()
     coordinator.set_task_state(task_state)
-    coordinator.set_shared_data_state(SharedDataState(SharedDataPhase.CHECKING, 2, "local_path"))
-    coordinator.set_shared_data_state(SharedDataState(SharedDataPhase.CHECKING, 1, "local_path"))
+    coordinator.set_shared_data_state(SharedDataState(SharedDataPhase.CHECKING, 2))
+    coordinator.set_shared_data_state(SharedDataState(SharedDataPhase.CHECKING, 1))
 
     assert coordinator.current_state() == task_state
 
@@ -203,7 +202,7 @@ def test_global_progress_coordinator_suppresses_only_shared_progress_on_home() -
     """首页只隐藏同源共享进度，用户任务仍保持全局可见。"""
     published = []
     coordinator = GlobalProgressStripCoordinator(published.append)
-    coordinator.set_shared_data_state(SharedDataState(SharedDataPhase.CHECKING, 2, "local_path"))
+    coordinator.set_shared_data_state(SharedDataState(SharedDataPhase.CHECKING, 2))
 
     coordinator.set_shared_data_progress_suppressed(True)
 

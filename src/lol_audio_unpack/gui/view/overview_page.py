@@ -59,7 +59,6 @@ from qfluentwidgets import (
 from lol_audio_unpack.app.artifacts import AudioIndexProgress, AudioRef
 from lol_audio_unpack.app.facade import LolAudioUnpackApp
 from lol_audio_unpack.app.resource_pack import ResourcePackSelectionError, ResourcePackWadRef
-from lol_audio_unpack.app.special_content import is_special_content_supported
 from lol_audio_unpack.app.types import OperationOptions
 from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled
 from lol_audio_unpack.gui.common.page_style import apply_page_content_margins
@@ -158,7 +157,7 @@ class OverviewPage(QWidget):
         self.gui_config = None
         self._app_context = None
         self._loader = None
-        self._shared_data_state = SharedDataState(SharedDataPhase.BLOCKED, 0, "local_path")
+        self._shared_data_state = SharedDataState(SharedDataPhase.BLOCKED, 0)
         self._entity_data_store = EntityDataStore(entity_types=("champions", "maps", "special"))
         self._preview_controller = OverviewPreviewController()
         self._selected_entity_ids: dict[str, set[str]] = {"champions": set(), "maps": set(), "special": set()}
@@ -291,17 +290,9 @@ class OverviewPage(QWidget):
             self._show_placeholder("当前配置尚未完成初始化，暂时无法读取预览内容。")
             return
 
-        special_supported = is_special_content_supported(app_context.config.source_mode)
-        self.entityListPanel.set_special_interaction_enabled(special_supported)
-        self.entityListPanel.set_resource_pack_scan_enabled(
-            special_supported and self._resource_pack_scan_worker is None
-        )
-        self.entityListPanel.set_special_availability_message(
-            None if special_supported else "特殊内容仅支持本地客户端资源。"
-        )
-        if not special_supported:
-            self._selected_entity_ids["special"] = set()
-            self._current_preview_ids["special"] = None
+        self.entityListPanel.set_special_interaction_enabled(True)
+        self.entityListPanel.set_resource_pack_scan_enabled(self._resource_pack_scan_worker is None)
+        self.entityListPanel.set_special_availability_message(None)
         self._update_catalog_subtitle()
 
         current_index = self._current_entity_list().currentIndex()
@@ -571,13 +562,6 @@ class OverviewPage(QWidget):
         self.entityListPanel.set_current_entity_type(entity_type)
         list_widget = self._current_entity_list()
 
-        if entity_type == "special" and self._special_content_is_remote_unsupported():
-            self.entityListPanel.set_special_catalog_notice(None)
-            self._set_splitter_sizes_evenly()
-            self._show_placeholder("特殊内容仅支持本地客户端资源。")
-            self._update_selection_summary()
-            return
-
         if entity_type == "special" and self._app_context is None:
             self.entityListPanel.set_special_catalog_notice(None)
             self._set_splitter_sizes_evenly()
@@ -665,14 +649,6 @@ class OverviewPage(QWidget):
                 position=InfoBarPosition.TOP,
             )
             return
-        if self._selected_entity_ids["special"] and self._special_content_is_remote_unsupported():
-            InfoBar.warning(
-                "无法同步特殊内容",
-                "特殊内容仅支持本地客户端资源。",
-                parent=self.window(),
-                position=InfoBarPosition.TOP,
-            )
-            return
         payload = self.entityListPanel.build_selection_sync_request(
             selected_champion_ids=self._selected_entity_ids["champions"],
             selected_map_ids=self._selected_entity_ids["maps"],
@@ -708,8 +684,8 @@ class OverviewPage(QWidget):
 
     def _select_resource_pack_wads(self) -> None:
         """选择 FINAL 内 WAD 并在后台启动显式资源包扫描。"""
-        if not self._special_content_supported() or self._app_context is None:
-            self.entityListPanel.set_special_catalog_notice("资源包扫描仅支持本地客户端资源。")
+        if self._app_context is None:
+            self.entityListPanel.set_special_catalog_notice("游戏目录尚未就绪，暂时无法扫描资源包。")
             return
 
         game_root = Path(self._app_context.config.game_path)
@@ -768,7 +744,7 @@ class OverviewPage(QWidget):
     def _on_resource_pack_scan_finished(self, result: object) -> None:
         """合并最新已持久化 resource-pack 行，并展示聚合成本与状态。"""
         self._resource_pack_scan_worker = None
-        self.entityListPanel.set_resource_pack_scan_enabled(self._special_content_supported())
+        self.entityListPanel.set_resource_pack_scan_enabled(self._app_context is not None)
         loader = self._ensure_loader()
         if loader is not None:
             resource_rows = loader.load_resource_pack_rows()
@@ -781,7 +757,7 @@ class OverviewPage(QWidget):
     def _on_resource_pack_scan_failed(self, error: str) -> None:
         """恢复扫描入口，并保留后台 discovery 的失败说明。"""
         self._resource_pack_scan_worker = None
-        self.entityListPanel.set_resource_pack_scan_enabled(self._special_content_supported())
+        self.entityListPanel.set_resource_pack_scan_enabled(self._app_context is not None)
         self.entityListPanel.set_special_catalog_notice(f"历史资源包扫描失败: {error}")
 
     @staticmethod
@@ -1328,20 +1304,9 @@ class OverviewPage(QWidget):
         right_width = max(total_width - left_width, 0)
         self.splitter.setSizes([left_width, right_width])
 
-    def _special_content_supported(self) -> bool:
-        """返回当前上下文是否允许选择并执行特殊内容。"""
-        return self._app_context is not None and is_special_content_supported(self._app_context.config.source_mode)
-
-    def _special_content_is_remote_unsupported(self) -> bool:
-        """判断当前已初始化上下文是否明确禁止特殊内容。"""
-        return self._app_context is not None and not self._special_content_supported()
-
     def _update_catalog_subtitle(self) -> None:
         """按当前一级目录更新总览说明，避免隐藏特殊内容可用性边界。"""
         entity_type = self._current_entity_type()
-        if entity_type == "special" and self._special_content_is_remote_unsupported():
-            self.subtitle_label.setText("特殊内容仅支持本地客户端资源。")
-            return
         if entity_type == "special" and self._app_context is None:
             self.subtitle_label.setText("正在准备特殊内容数据。")
             return

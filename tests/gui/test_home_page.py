@@ -88,7 +88,6 @@ def test_home_page_switches_between_determinate_progress_and_terminal_summary(qt
         SharedDataState(
             SharedDataPhase.CHECKING,
             1,
-            "local_path",
             progress=SharedDataProgress(
                 1,
                 "champions",
@@ -108,7 +107,6 @@ def test_home_page_switches_between_determinate_progress_and_terminal_summary(qt
         SharedDataState(
             SharedDataPhase.READY,
             1,
-            "local_path",
             summary=SharedDataSummary(173, 173, 0, 9, 9, 0, 63, 0, 63),
         )
     )
@@ -127,7 +125,6 @@ def test_home_page_emits_stable_recovery_action_key(qtbot, monkeypatch) -> None:
         SharedDataState(
             SharedDataPhase.BLOCKED,
             1,
-            "local_path",
             problem=SharedDataProblem(
                 SharedDataProblemCode.CONFIGURATION_REQUIRED,
                 "context",
