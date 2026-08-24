@@ -44,8 +44,8 @@ class AudioEntityData:
         wad_root: 根 WAD 相对路径，用于 SFX/MUSIC。
         wad_language: 语言 WAD 相对路径，用于 VO；缺失时为 ``None``。
         events: 事件数据，仅映射流程需要；缺失时为 ``None``。
-        resource_banks: local v2 使用的逐条 bank binding 消费投影。
-        binding_diagnostics: local v2 artifact 的 binding 诊断；remote v1 为 ``None``。
+        resource_banks: resource schema v2 使用的逐条 bank binding 消费投影。
+        binding_diagnostics: resource schema v2 artifact 的 binding 诊断；未提供时为 ``None``。
     """
 
     entity_id: str

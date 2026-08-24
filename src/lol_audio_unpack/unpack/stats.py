@@ -333,7 +333,7 @@ class EntityUnpackStats:
             self.total_skipped_files += sub_stats.empty_containers + sub_stats.empty_subfiles
 
         # binding 驱动阶段需要用实体级 complete/partial/failed 覆盖旧双 WAD 结论；
-        # remote/legacy 分支仍保持原有统计语义。
+        # 未提供 binding 诊断的兼容调用方仍保持原有统计语义。
         if self.binding_completeness == "failed":
             self.overall_result = StageResult.ERROR
         elif self.binding_completeness == "partial":

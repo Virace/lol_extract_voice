@@ -195,9 +195,6 @@ class SharedDataController(QObject):
             "ResourceSchemaMismatchError": SharedDataProblemCode.RESOURCE_SCHEMA_MISMATCH,
             "SharedDataCorruptError": SharedDataProblemCode.ARTIFACT_CORRUPT,
             "SharedDataMissingError": SharedDataProblemCode.BANK_ARTIFACT_MISSING,
-            "DecompressError": SharedDataProblemCode.SOURCE_UNAVAILABLE,
-            "DownloadBatchError": SharedDataProblemCode.SOURCE_UNAVAILABLE,
-            "DownloadError": SharedDataProblemCode.SOURCE_UNAVAILABLE,
         }
         code = code_by_error_type.get(result.error_type or "", SharedDataProblemCode.UNEXPECTED)
         message_by_code = {
@@ -206,7 +203,6 @@ class SharedDataController(QObject):
             SharedDataProblemCode.RESOURCE_SCHEMA_MISMATCH: "实体数据仍使用旧版资源结构；请重试更新。",
             SharedDataProblemCode.ARTIFACT_CORRUPT: "实体数据文件无法读取；请重试更新。",
             SharedDataProblemCode.BANK_ARTIFACT_MISSING: "实体 banks 数据未生成；请重试更新。",
-            SharedDataProblemCode.SOURCE_UNAVAILABLE: "当前数据来源不可用；请检查连接或游戏目录后重试。",
         }
         return SharedDataProblem(
             code,

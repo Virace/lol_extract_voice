@@ -414,7 +414,7 @@ class OnboardingTourController:
                 page_name="settings",
                 target=lambda: getattr(self._setting_page, "gamePathCard", None),
                 title="游戏位置",
-                content="这里选择英雄联盟安装相关位置，不需要精确理解根目录。可以选安装目录、Game 目录或 LeagueClient 目录，程序会自动识别真正的游戏目录。",
+                content="这里选择英雄联盟游戏数据位置。可以选已安装客户端或外部准备目录的根、Game 目录或 LeagueClient 目录，程序会自动识别真正的数据根目录。",
             ),
             TourStep(
                 key="output-path",

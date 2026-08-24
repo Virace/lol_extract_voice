@@ -1313,7 +1313,7 @@ class OverviewPage(QWidget):
         labels = {
             "champions": "查看英雄状态，选好后可直接发送到执行中心。",
             "maps": "查看地图状态，选好后可直接发送到执行中心。",
-            "special": "查看本地客户端支持的特殊内容，选好后可直接发送到执行中心。",
+            "special": "查看当前游戏数据支持的特殊内容，选好后可直接发送到执行中心。",
         }
         self.subtitle_label.setText(labels.get(entity_type, "查看实体状态，选好后可直接发送到执行中心。"))
 

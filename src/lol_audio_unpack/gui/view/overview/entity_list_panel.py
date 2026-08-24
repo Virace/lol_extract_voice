@@ -119,7 +119,7 @@ class OverviewEntityListPanel(QWidget):
         apply_line_edit_safe_font(self.search_input)
         layout.addWidget(self.search_input)
 
-        self.special_availability_label = CaptionLabel("特殊内容仅支持本地客户端资源。", self)
+        self.special_availability_label = CaptionLabel("特殊内容需要可用的本地游戏数据。", self)
         self.special_availability_label.setWordWrap(True)
         self.special_availability_label.setVisible(False)
         layout.addWidget(self.special_availability_label)
@@ -335,7 +335,7 @@ class OverviewEntityListPanel(QWidget):
         self.scan_resource_packs_btn.setEnabled(enabled)
 
     def set_special_interaction_enabled(self, enabled: bool) -> None:
-        """根据来源模式切换特殊内容目录的选择能力。"""
+        """根据应用上下文就绪状态切换特殊内容目录的选择能力。"""
         special_list = self.entity_lists["special"]
         special_list.set_interaction_enabled(enabled)
 

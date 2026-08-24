@@ -445,7 +445,7 @@ class SettingPage(SmoothScrollArea):
         """选择并归一化本地游戏目录。"""
 
         selected = pick_directory(
-            title="选择英雄联盟安装位置",
+            title="选择英雄联盟游戏数据位置",
             host=self,
             current=str(self._cfg.resolve_game_path() or ""),
         )
@@ -457,14 +457,14 @@ class SettingPage(SmoothScrollArea):
             if result.reason == "ambiguous":
                 self._show_feedback(
                     title="找到多个可能的游戏目录",
-                    content="请选择更具体的英雄联盟安装位置，例如具体游戏目录下的 Game 或 LeagueClient。",
+                    content="请选择更具体的游戏数据位置，例如某个客户端或外部准备目录下的 Game 或 LeagueClient。",
                     level="warning",
                 )
                 return
 
             self._show_feedback(
                 title="未识别到游戏目录",
-                content="请选择英雄联盟安装相关位置，例如安装目录、Game 目录或 LeagueClient 目录。",
+                content="请选择英雄联盟游戏数据位置，例如已安装客户端或外部准备目录的根、Game 目录或 LeagueClient 目录。",
                 level="warning",
             )
             return
