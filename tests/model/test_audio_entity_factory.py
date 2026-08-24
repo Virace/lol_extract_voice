@@ -7,7 +7,6 @@ from types import SimpleNamespace
 import pytest
 
 from lol_audio_unpack.app.resource_pack import build_resource_pack_key
-from lol_audio_unpack.app.types import SourceMode
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.model.binding import (
     BankBinding,
@@ -151,7 +150,7 @@ def test_resource_pack_factory_preserves_string_sub_entity_and_v2_bindings() -> 
         get_audio_type=lambda _category: "SFX",
     )
     ctx = SimpleNamespace(
-        config=SimpleNamespace(source_mode=SourceMode.LOCAL_PATH),
+        config=SimpleNamespace(),
         game_region="zh_CN",
     )
 
@@ -200,7 +199,7 @@ def test_local_factory_uses_typed_v2_bindings_without_loading_events() -> None:
         get_audio_type=lambda _category: "VO",
     )
     ctx = SimpleNamespace(
-        config=SimpleNamespace(source_mode=SourceMode.LOCAL_PATH),
+        config=SimpleNamespace(),
         game_region="zh_CN",
     )
 
@@ -211,29 +210,3 @@ def test_local_factory_uses_typed_v2_bindings_without_loading_events() -> None:
     assert entity.resource_banks[0].audio_type == "VO"
     assert entity.binding_diagnostics is resources.diagnostics
     assert entity.events is None
-
-
-def test_remote_factory_keeps_v1_projection_without_local_binding_api() -> None:
-    """remote v1 不应实例化 local binding 读取或合成伪 projection。"""
-    reader = SimpleNamespace(
-        get_champion=lambda _id: {
-            "id": 1,
-            "alias": "Annie",
-            "names": {"zh_CN": "安妮"},
-            "titles": {},
-            "skins": [{"id": 1000, "isBase": True, "skinNames": {"zh_CN": "基础皮肤"}}],
-            "wad": {"root": "Game/root.wad.client"},
-        },
-        get_champion_banks=lambda _id: {"skins": {"1000": {"CHARACTER_VO": [["voice.bnk"]]}}},
-        get_champion_resource_bindings=lambda _id: pytest.fail("remote v1 不应读取 local binding"),
-    )
-    ctx = SimpleNamespace(
-        config=SimpleNamespace(source_mode=SourceMode.REMOTE_SNAPSHOT),
-        game_region="zh_CN",
-    )
-
-    entity = AudioEntityData.from_champion(1, reader, ctx=ctx)
-
-    assert entity.resource_banks == ()
-    assert entity.binding_diagnostics is None
-    assert entity.sub_entities["1000"]["categories"] == {"CHARACTER_VO": [["voice.bnk"]]}

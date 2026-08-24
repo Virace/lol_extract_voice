@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from lol_audio_unpack.manager.bin_source import BinBatch, BinSource, LoadedBin
+from lol_audio_unpack.manager.bin_source import BinSource, LoadedBin
 from lol_audio_unpack.manager.files import needs_update, write_data
 from lol_audio_unpack.manager.update_result import UpdateEntityResult
 from lol_audio_unpack.model.binding import (
@@ -200,14 +200,12 @@ class MapBinProcessor:
         banks_file_base = self.map_banks_dir / map_id
         events_file_base = self.map_events_dir / map_id
 
-        resource_v2 = getattr(self.bin_source, "_uses_resource_v2", lambda: False)()
-        resource_schema = RESOURCE_SCHEMA_VERSION if resource_v2 else None
         banks_need_update = needs_update(
             banks_file_base,
             self.version,
             self.force_update,
             dev_mode=self._is_dev_mode(),
-            resource_schema=resource_schema,
+            resource_schema=RESOURCE_SCHEMA_VERSION,
         )
         events_need_update = self.process_events and needs_update(
             events_file_base,
@@ -227,48 +225,40 @@ class MapBinProcessor:
         batch = loaded.batch
 
         references = self._collect_bank_references(bin_file, map_data["binPath"], map_id) if bin_file else []
-        bank_bindings = self.bin_source._resolve_bank_bindings(references) if batch.resource_v2 else []
-        if batch.resource_v2:
-            map_banks = self._binding_map_banks(bank_bindings)
-        else:
-            map_banks = self._reference_map_banks(references)
+        bank_bindings = self.bin_source._resolve_bank_bindings(references)
+        map_banks = self._binding_map_banks(bank_bindings)
 
         # 写入Banks数据
         completeness = Completeness.COMPLETE
         artifacts: list[Path] = []
-        if banks_need_update and (map_banks or batch.resource_v2):
+        if banks_need_update:
             map_banks_data = self.bin_source._create_base_data(
                 map_id, "map", name=self._get_map_name(map_data), banks=map_banks
             )
 
-            if batch.resource_v2:
-                index_metrics, index_errors = self.bin_source._resource_index_diagnostics()
-                diagnostics = build_diagnostics(
-                    batch.bindings,
-                    bank_bindings,
-                    index=index_metrics,
-                    index_errors=index_errors,
-                )
-                resource = ResourceBindings(
-                    entity_type="map",
-                    entity_id=map_id,
-                    bin_bindings=tuple(batch.bindings),
-                    bank_bindings=tuple(bank_bindings),
-                    diagnostics=diagnostics,
-                )
-                map_banks_data.update(resource.to_payload())
-                self._log_binding_summary(f"地图 {map_id}", diagnostics.completeness, diagnostics.to_dict())
-                completeness = diagnostics.completeness
+            index_metrics, index_errors = self.bin_source._resource_index_diagnostics()
+            diagnostics = build_diagnostics(
+                batch.bindings,
+                bank_bindings,
+                index=index_metrics,
+                index_errors=index_errors,
+            )
+            resource = ResourceBindings(
+                entity_type="map",
+                entity_id=map_id,
+                bin_bindings=tuple(batch.bindings),
+                bank_bindings=tuple(bank_bindings),
+                diagnostics=diagnostics,
+            )
+            map_banks_data.update(resource.to_payload())
+            self._log_binding_summary(f"地图 {map_id}", diagnostics.completeness, diagnostics.to_dict())
+            completeness = diagnostics.completeness
 
             # 对非公共地图进行去重处理
             if map_id != "0" and common_banks_set:
                 self._deduplicate_single_map_banks(map_banks_data, common_banks_set)
 
-            # 去重后检查是否还有数据需要写入
-            if map_banks_data.get("banks") or batch.resource_v2:
-                artifacts.append(write_data(map_banks_data, banks_file_base, dev_mode=self._is_dev_mode()))
-            else:
-                logger.trace(f"地图 {map_id} 去重后无独有Banks数据，跳过写入")
+            artifacts.append(write_data(map_banks_data, banks_file_base, dev_mode=self._is_dev_mode()))
 
         # 处理Events数据，只有在启用事件处理时才提取
         if events_need_update and bin_file is not None:
@@ -284,8 +274,6 @@ class MapBinProcessor:
                 )
                 artifacts.append(write_data(final_event_data, events_file_base, dev_mode=self._is_dev_mode()))
 
-        if not batch.resource_v2 and not map_banks:
-            raise ValueError(f"地图 {map_id} 未提取到可用 bank 引用")
         if completeness is Completeness.FAILED:
             return UpdateEntityResult.incomplete(
                 "map",
@@ -311,10 +299,8 @@ class MapBinProcessor:
         )
 
     def _load_map_resource(self, map_id: str, map_data: dict) -> LoadedBin:
-        """加载地图 BIN，并兼容旧测试边界。"""
-        if hasattr(self.bin_source, "_load_map_bin_resource"):
-            return self.bin_source._load_map_bin_resource(map_id, map_data)
-        return LoadedBin(self.bin_source._load_map_bin_file(map_id, map_data), BinBatch({}, [], False))
+        """通过本地 FINAL WAD 索引加载地图 BIN。"""
+        return self.bin_source._load_map_bin_resource(map_id, map_data)
 
     @staticmethod
     def _collect_bank_references(bin_file, source_bin: str, map_id: str) -> list[BankReference]:
@@ -337,15 +323,6 @@ class MapBinProcessor:
                 )
                 group_index += 1
         return references
-
-    @staticmethod
-    def _reference_map_banks(references: list[BankReference]) -> dict[str, list[list[str]]]:
-        """从 remote 旧合同声明派生 map banks 投影。"""
-        groups: dict[tuple[str, str, int | None], list[str]] = {}
-        for reference in references:
-            key = (reference.category, reference.source_bin, reference.group)
-            groups.setdefault(key, []).append(reference.path)
-        return MapBinProcessor._group_map_banks(groups)
 
     @staticmethod
     def _binding_map_banks(bindings: list[BankBinding]) -> dict[str, list[list[str]]]:

@@ -8,196 +8,14 @@ from lol_audio_unpack.manager import bin_updater as m_bin_updater
 from lol_audio_unpack.manager import champion_bin_processor as m_champion_processor
 from lol_audio_unpack.manager import map_bin_processor as m_map_processor
 from lol_audio_unpack.manager.update_result import UpdateEntityResult, UpdateStatus
+from lol_audio_unpack.model.binding import BankBinding, BinBinding, BindingRole, BindingStatus
 from lol_audio_unpack.utils.run_summary import get_or_create_run_summary
 
 pytestmark = pytest.mark.unit
 
 
-def _build_bin_source(tmp_path: Path) -> m_bin_source.BinSource:
-    """构造用于单测的最小 `BinSource` 实例。
-
-    Args:
-        tmp_path: pytest 提供的临时目录。
-
-    Returns:
-        仅初始化当前测试所需字段的 `BinSource` 对象。
-    """
-    source = m_bin_source.BinSource.__new__(m_bin_source.BinSource)
-    source.ctx = SimpleNamespace(config=SimpleNamespace(game_path=tmp_path, dev_mode=False), paths=SimpleNamespace())
-    source.game_path = tmp_path
-    source.use_local_bin_flag_file = tmp_path / ".use_local_bin"
-    source.local_bin_input_dir = tmp_path / "bin_input"
-    source.local_bin_input_dir.mkdir(parents=True, exist_ok=True)
-    return source
-
-
-def test_extract_bin_raws_prefers_wad_when_wad_exists(tmp_path, monkeypatch):
-    """验证存在 WAD 文件时优先从 WAD 提取 BIN 原始数据。"""
-    source = _build_bin_source(tmp_path)
-    source.use_local_bin_flag_file.write_text("", encoding="utf-8")
-
-    calls = []
-
-    class FakeWAD:
-        def __init__(self, path):
-            self.path = Path(path)
-
-        def extract(self, bin_paths, raw):
-            calls.append((self.path, list(bin_paths), raw))
-            return [b"from-wad"]
-
-    monkeypatch.setattr(m_bin_source, "WAD", FakeWAD)
-
-    wad_path = tmp_path / "Annie.wad.client"
-    wad_path.write_bytes(b"")
-
-    result = source._extract_bin_raws(
-        wad_path=wad_path,
-        bin_paths=["data/characters/Annie/skins/skin0001.bin"],
-        entity_label="英雄 1 (annie)",
-        local_required_dir=Path("data/characters/Annie"),
-    )
-
-    assert calls == [(wad_path, ["data/characters/Annie/skins/skin0001.bin"], True)]
-    assert result == [b"from-wad"]
-
-
-def test_extract_bin_raws_reads_local_files_when_flag_enabled(tmp_path):
-    """验证启用本地 BIN 模式后会直接读取本地文件。"""
-    source = _build_bin_source(tmp_path)
-    source.use_local_bin_flag_file.write_text("", encoding="utf-8")
-
-    target_file = source.local_bin_input_dir / "data/characters/Annie/skins/skin0001.bin"
-    target_file.parent.mkdir(parents=True, exist_ok=True)
-    target_file.write_bytes(b"from-local")
-
-    result = source._extract_bin_raws(
-        wad_path=tmp_path / "missing.wad.client",
-        bin_paths=["data/characters/Annie/skins/skin0001.bin"],
-        entity_label="英雄 1 (annie)",
-        local_required_dir=Path("data/characters/Annie"),
-    )
-
-    assert result == [b"from-local"]
-
-
-def test_extract_bin_raws_logs_fallback_to_local_bin_when_wad_missing(tmp_path, monkeypatch):
-    """验证 WAD 缺失但启用本地 BIN 模式时会输出回退诊断日志。"""
-    source = _build_bin_source(tmp_path)
-    source.use_local_bin_flag_file.write_text("", encoding="utf-8")
-
-    target_file = source.local_bin_input_dir / "data/characters/Annie/skins/skin0001.bin"
-    target_file.parent.mkdir(parents=True, exist_ok=True)
-    target_file.write_bytes(b"from-local")
-
-    debug_messages: list[str] = []
-    trace_messages: list[str] = []
-    monkeypatch.setattr(
-        m_bin_source,
-        "logger",
-        SimpleNamespace(
-            debug=lambda message: debug_messages.append(str(message)),
-            trace=lambda message: trace_messages.append(str(message)),
-            warning=lambda _message: None,
-        ),
-    )
-
-    missing_wad = tmp_path / "missing.wad.client"
-    result = source._extract_bin_raws(
-        wad_path=missing_wad,
-        bin_paths=["data/characters/Annie/skins/skin0001.bin"],
-        entity_label="英雄 1 (annie)",
-        local_required_dir=Path("data/characters/Annie"),
-    )
-
-    assert result == [b"from-local"]
-    assert debug_messages == [f"英雄 1 (annie) 的WAD文件不可用，回退到本地BIN模式: {missing_wad}"]
-    assert any(str(source.local_bin_input_dir) in message for message in trace_messages)
-
-
-def test_extract_bin_raws_raises_when_flag_enabled_but_entity_dir_missing(tmp_path):
-    """验证启用本地 BIN 模式但实体目录缺失时会抛出异常。"""
-    source = _build_bin_source(tmp_path)
-    source.use_local_bin_flag_file.write_text("", encoding="utf-8")
-
-    with pytest.raises(FileNotFoundError, match="本地BIN实体目录不存在"):
-        source._extract_bin_raws(
-            wad_path=tmp_path / "missing.wad.client",
-            bin_paths=["data/characters/Annie/skins/skin0001.bin"],
-            entity_label="英雄 1 (annie)",
-            local_required_dir=Path("data/characters/Annie"),
-        )
-
-
-def test_extract_bin_raws_returns_empty_when_local_mode_disabled(tmp_path):
-    """验证未启用本地 BIN 模式时缺失 WAD 会返回空结果。"""
-    source = _build_bin_source(tmp_path)
-
-    result = source._extract_bin_raws(
-        wad_path=tmp_path / "missing.wad.client",
-        bin_paths=["data/characters/Annie/skins/skin0001.bin"],
-        entity_label="英雄 1 (annie)",
-        local_required_dir=Path("data/characters/Annie"),
-    )
-
-    assert result == []
-
-
-def test_extract_bin_raws_raises_when_local_bin_root_missing(tmp_path):
-    """验证本地 BIN 根目录缺失时会抛出异常。"""
-    source = _build_bin_source(tmp_path)
-    source.use_local_bin_flag_file.write_text("", encoding="utf-8")
-    source.local_bin_input_dir.rmdir()
-
-    with pytest.raises(FileNotFoundError, match="目录不存在"):
-        source._extract_bin_raws(
-            wad_path=tmp_path / "missing.wad.client",
-            bin_paths=["data/characters/Annie/skins/skin0001.bin"],
-            entity_label="英雄 1 (annie)",
-            local_required_dir=Path("data/characters/Annie"),
-        )
-
-
-def test_extract_bin_raws_raises_for_path_traversal(tmp_path):
-    """验证越界路径会被拒绝处理。"""
-    source = _build_bin_source(tmp_path)
-    source.use_local_bin_flag_file.write_text("", encoding="utf-8")
-
-    with pytest.raises(ValueError, match="越界"):
-        source._extract_bin_raws(
-            wad_path=tmp_path / "missing.wad.client",
-            bin_paths=["../../outside.bin"],
-            entity_label="英雄 1 (annie)",
-            local_required_dir=Path("."),
-        )
-
-
-def test_extract_bin_raws_allows_partial_missing_and_keeps_order(tmp_path):
-    """验证部分 BIN 缺失时仍保持原始顺序返回结果。"""
-    source = _build_bin_source(tmp_path)
-    source.use_local_bin_flag_file.write_text("", encoding="utf-8")
-
-    base_dir = source.local_bin_input_dir / "data/characters/Annie/skins"
-    base_dir.mkdir(parents=True, exist_ok=True)
-    (base_dir / "skin0001.bin").write_bytes(b"first")
-    (base_dir / "skin0003.bin").write_bytes(b"third")
-
-    result = source._extract_bin_raws(
-        wad_path=tmp_path / "missing.wad.client",
-        bin_paths=[
-            "data/characters/Annie/skins/skin0001.bin",
-            "data/characters/Annie/skins/skin0002.bin",
-            "data/characters/Annie/skins/skin0003.bin",
-        ],
-        entity_label="英雄 1 (annie)",
-        local_required_dir=Path("data/characters/Annie"),
-    )
-
-    assert result == [b"first", None, b"third"]
-
-
 def test_process_champion_skins_reports_missing_bin_as_failure_input(tmp_path, monkeypatch):
-    """验证没有可用 bank 引用时不再静默返回成功。"""
+    """验证所有 declared BIN 缺失时会返回失败的 v2 结果。"""
     processor = m_champion_processor.ChampionBinProcessor.__new__(m_champion_processor.ChampionBinProcessor)
     processor.ctx = SimpleNamespace(config=SimpleNamespace(game_path=tmp_path, dev_mode=False), paths=SimpleNamespace())
     processor.force_update = False
@@ -206,26 +24,52 @@ def test_process_champion_skins_reports_missing_bin_as_failure_input(tmp_path, m
     processor.game_path = tmp_path
     processor.champion_banks_dir = tmp_path / "banks" / "champions"
     processor.champion_events_dir = tmp_path / "events" / "champions"
-    processor.bin_source = SimpleNamespace(_extract_bin_raws=lambda *args, **kwargs: [None, b"fallback"])
+    missing_path = "data/characters/Annie/skins/skin0001.bin"
+    batch = m_bin_source.BinBatch(
+        raws={},
+        bindings=[
+            BinBinding(
+                path=missing_path,
+                normalized_path=missing_path.casefold(),
+                wad=None,
+                entry_hash="0000000000000001",
+                status=BindingStatus.MISSING,
+                role=BindingRole.ROOT,
+            )
+        ],
+    )
+    processor.bin_source = SimpleNamespace(
+        _resolve_bin_resources=lambda *_args, **_kwargs: batch,
+        _resolve_bank_bindings=lambda _references: [],
+        _resource_index_diagnostics=lambda: ({"requests": 1}, []),
+        _create_base_data=lambda entity_id, _entity_type, **payload: {
+            "metadata": {"gameVersion": "16.3"},
+            "championId": entity_id,
+            **payload,
+        },
+    )
 
     monkeypatch.setattr(m_champion_processor, "needs_update", lambda *args, **kwargs: True)
 
-    write_calls = []
-    monkeypatch.setattr(m_champion_processor, "write_data", lambda *args, **kwargs: write_calls.append(True))
+    write_calls: list[dict] = []
+    monkeypatch.setattr(
+        m_champion_processor,
+        "write_data",
+        lambda data, *_args, **_kwargs: write_calls.append(data) or tmp_path / "banks.msgpack",
+    )
 
     champion_data = {
         "alias": "Annie",
         "skins": [
-            {"id": "1", "isBase": True, "binPath": "data/characters/Annie/skins/skin0001.bin"},
-            {"id": "2", "isBase": False, "binPath": "data/characters/Annie/skins/skin0002.bin"},
+            {"id": "1", "isBase": True, "binPath": missing_path},
         ],
         "wad": {"root": "Game/DATA/FINAL/Champions/Annie.wad.client"},
     }
 
-    with pytest.raises(ValueError, match="未提取到可用 bank 引用"):
-        processor._process_champion_skins(champion_data, "1")
+    result = processor._process_champion_skins(champion_data, "1")
 
-    assert write_calls == []
+    assert result.status is UpdateStatus.FAILED
+    assert write_calls[0]["diagnostics"]["completeness"] == "failed"
 
 
 def test_champion_bank_migration_does_not_reparse_fresh_events(tmp_path, monkeypatch) -> None:
@@ -239,7 +83,22 @@ def test_champion_bank_migration_does_not_reparse_fresh_events(tmp_path, monkeyp
     processor.champion_banks_dir = tmp_path / "banks" / "champions"
     processor.champion_events_dir = tmp_path / "events" / "champions"
     processor.bin_source = SimpleNamespace(
-        _uses_resource_v2=lambda: False,
+        _resolve_bank_bindings=lambda _references: [
+            BankBinding(
+                category="Characters/Annie/Skins/Skin1/VO",
+                path="assets/sounds/wwise2016/vo/annie_audio.bnk",
+                normalized_path="",
+                kind="BNK",
+                wad="Game/DATA/FINAL/Champions/Annie.wad.client",
+                entry_hash="0000000000000002",
+                source_bin="data/characters/Annie/skins/skin0001.bin",
+                role=BindingRole.ROOT,
+                status=BindingStatus.RESOLVED,
+                sub_entity="1",
+                group=0,
+            )
+        ],
+        _resource_index_diagnostics=lambda: ({"requests": 2}, []),
         _create_base_data=lambda entity_id, _entity_type, **payload: {
             "metadata": {"gameVersion": "16.16"},
             "championId": entity_id,
@@ -267,8 +126,16 @@ def test_champion_bank_migration_does_not_reparse_fresh_events(tmp_path, monkeyp
         "_read_bin_batch",
         lambda *_args, **_kwargs: m_bin_source.BinBatch(
             raws={bin_path: b"bin"},
-            bindings=[],
-            resource_v2=False,
+            bindings=[
+                BinBinding(
+                    path=bin_path,
+                    normalized_path="",
+                    wad="Game/DATA/FINAL/Champions/Annie.wad.client",
+                    entry_hash="0000000000000001",
+                    status=BindingStatus.RESOLVED,
+                    role=BindingRole.ROOT,
+                )
+            ],
         ),
     )
     monkeypatch.setattr(m_champion_processor, "BIN", lambda _raw: fake_bin)
@@ -311,7 +178,7 @@ def test_skip_events_ignores_missing_champion_event_artifact(tmp_path, monkeypat
     processor.game_path = tmp_path
     processor.champion_banks_dir = tmp_path / "banks" / "champions"
     processor.champion_events_dir = tmp_path / "events" / "champions"
-    processor.bin_source = SimpleNamespace(_uses_resource_v2=lambda: False)
+    processor.bin_source = SimpleNamespace()
     monkeypatch.setattr(
         m_champion_processor,
         "needs_update",
@@ -338,7 +205,7 @@ def test_skip_events_ignores_missing_map_event_artifact(tmp_path, monkeypatch) -
     processor.languages = []
     processor.map_banks_dir = tmp_path / "banks" / "maps"
     processor.map_events_dir = tmp_path / "events" / "maps"
-    processor.bin_source = SimpleNamespace(_uses_resource_v2=lambda: False)
+    processor.bin_source = SimpleNamespace()
     monkeypatch.setattr(
         m_map_processor,
         "needs_update",
@@ -358,34 +225,6 @@ def test_skip_events_ignores_missing_map_event_artifact(tmp_path, monkeypatch) -
     assert result.status is UpdateStatus.SUCCESS
 
 
-def test_load_map_bin_file_reads_local_bin_when_available(tmp_path, monkeypatch):
-    """验证地图 BIN 可用时优先读取本地文件内容。"""
-    source = _build_bin_source(tmp_path)
-    source.game_path = tmp_path
-    source.use_local_bin_flag_file.write_text("", encoding="utf-8")
-
-    local_file = source.local_bin_input_dir / "data/maps/shipping/map11/map11.bin"
-    local_file.parent.mkdir(parents=True, exist_ok=True)
-    local_file.write_bytes(b"map-bin")
-
-    class FakeBIN:
-        def __init__(self, raw):
-            self.raw = raw
-
-    monkeypatch.setattr(m_bin_source, "BIN", FakeBIN)
-
-    result = source._load_map_bin_file(
-        "11",
-        {
-            "binPath": "data/maps/shipping/map11/map11.bin",
-            "wad": {"root": "Game/DATA/Maps/Map11.wad.client"},
-        },
-    )
-
-    assert isinstance(result, FakeBIN)
-    assert result.raw == b"map-bin"
-
-
 def test_update_includes_common_map_in_targeted_scope(tmp_path, monkeypatch):
     """验证精确地图更新由核心层自动包含 Map 0。"""
     updater = m_bin_updater.BinUpdater.__new__(m_bin_updater.BinUpdater)
@@ -395,7 +234,7 @@ def test_update_includes_common_map_in_targeted_scope(tmp_path, monkeypatch):
     updater.version = "16.3"
     updater.data_file_base = tmp_path / "data"
     updater.languages = []
-    updater.bin_source = SimpleNamespace(languages=[], _is_local_bin_mode_enabled=lambda: False)
+    updater.bin_source = SimpleNamespace(languages=[])
     map_updates: list[dict] = []
 
     def update_maps(data: dict) -> tuple[UpdateEntityResult, ...]:
@@ -428,7 +267,7 @@ def test_update_logs_stage_start_and_summary_for_targeted_mode(tmp_path, monkeyp
     updater.version = "16.3"
     updater.data_file_base = tmp_path / "data"
     updater.languages = []
-    updater.bin_source = SimpleNamespace(languages=[], _is_local_bin_mode_enabled=lambda: True)
+    updater.bin_source = SimpleNamespace(languages=[])
     updater._champion_processor = SimpleNamespace(
         _update_champions=lambda _data: (UpdateEntityResult.success("champion", "1"),)
     )
@@ -462,7 +301,7 @@ def test_update_logs_stage_start_and_summary_for_targeted_mode(tmp_path, monkeyp
     )
     updater.update(target="all", champion_ids=["1"], map_ids=["11"])
 
-    assert info_messages == ["开始更新 BIN 数据（精确模式）：英雄 1 个，地图 2 个，事件处理=开启，本地BIN模式=开启"]
+    assert info_messages == ["开始更新 BIN 数据（精确模式）：英雄 1 个，地图 2 个，事件处理=开启"]
     assert success_messages == ["BinUpdater 更新完成（精确模式）：英雄 1 个，地图 2 个"]
 
 
@@ -499,7 +338,7 @@ def test_update_filters_hidden_champions_only_in_batch_mode(tmp_path, monkeypatc
     updater.version = "16.16"
     updater.data_file_base = tmp_path / "data"
     updater.languages = []
-    updater.bin_source = SimpleNamespace(languages=[], _is_local_bin_mode_enabled=lambda: False)
+    updater.bin_source = SimpleNamespace(languages=[])
 
     champion_updates: list[dict] = []
     map_updates: list[dict] = []
@@ -574,23 +413,33 @@ def test_process_single_map_records_note_when_common_dedup_removes_all_events(tm
         ],
     )
 
+    bin_path = "data/maps/shipping/map33/map33.bin"
+    batch = m_bin_source.BinBatch(
+        raws={bin_path: b"map-bin"},
+        bindings=[
+            BinBinding(
+                path=bin_path,
+                normalized_path="",
+                wad="Game/DATA/FINAL/Maps/Shipping/Map33.wad.client",
+                entry_hash="0000000000000033",
+                status=BindingStatus.RESOLVED,
+                role=BindingRole.ROOT,
+            )
+        ],
+    )
     processor.bin_source = SimpleNamespace(
-        _load_map_bin_file=lambda *_args, **_kwargs: fake_bin,
+        _load_map_bin_resource=lambda *_args, **_kwargs: m_bin_source.LoadedBin(fake_bin, batch),
+        _resolve_bank_bindings=lambda _references: [],
+        _resource_index_diagnostics=lambda: ({"requests": 1}, []),
         _create_base_data=lambda _id, _type, **payload: payload,
     )
 
     monkeypatch.setattr(m_map_processor, "needs_update", lambda *args, **kwargs: True)
     monkeypatch.setattr(m_map_processor, "write_data", lambda *args, **kwargs: tmp_path / "artifact.msgpack")
-    monkeypatch.setattr(
-        processor,
-        "_reference_map_banks",
-        lambda _references: {"AMB_SFX": [["assets/sounds/wwise2016/amb.bnk"]]},
-    )
-
     processor._process_single_map(
         "33",
         {
-            "binPath": "data/maps/shipping/map33/map33.bin",
+            "binPath": bin_path,
             "names": {"default": "Map33"},
         },
         {"Play_Map33_SFX_Start": {"地图 0/AMB_SFX"}},

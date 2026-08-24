@@ -10,7 +10,6 @@ dependencies = [
     "msgpack>=1.2.1",
     "ruamel-yaml>=0.18.14",
     "league-tools>=1.2.0",
-    "riotmanifest>=2.10.0",
     "pyvgmstream>=0.1.0",
 ]
 readme = "README.md"
@@ -120,7 +119,6 @@ markers = [
     "gui: 显式运行的 Qt 逻辑、状态切换与异步边界测试",
     "system: 跨组件真实系统链路，默认不收集，必须显式指定 tests/system",
     "local_game: 依赖本地英雄联盟实体资源的只读验证测试",
-    "remote_live: 基于最新 live 清单与真实远端下载的长耗时系统测试",
 ]
 
 [[tool.uv.index]]

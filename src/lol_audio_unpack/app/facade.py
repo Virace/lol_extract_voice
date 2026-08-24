@@ -12,7 +12,6 @@ from pathlib import Path
 from threading import Lock
 
 from loguru import logger
-from riotmanifest import DecompressError, DownloadBatchError, DownloadError
 
 from lol_audio_unpack.manager import (
     BinUpdater,
@@ -32,26 +31,20 @@ from lol_audio_unpack.mapping import (
 )
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.model.progress import OperationProgress
-from lol_audio_unpack.runtime.remote import RemotePreparer
 from lol_audio_unpack.runtime.wav import TranscodeTarget, run_tree
 from lol_audio_unpack.unpack import unpack_all, unpack_champions, unpack_maps, unpack_resource_packs
 
 from .artifacts import resolve_audio_paths
-from .remote import RemoteEntityCallbackPayload, RemoteEntityWorkItem
-from .remote_workflow import RemoteWorkflowOrchestrator
 from .resource_pack import partition_special_targets
-from .results import EntityResult, ResultStatus, RunResult, StageResult
-from .special_content import is_special_content_supported, merge_champion_ids
+from .results import EntityResult, ResultStatus, StageResult
+from .special_content import merge_champion_ids
 from .targets import with_common_map
-from .types import AppContext, OperationOptions, SourceMode
+from .types import AppContext, OperationOptions
 
 UPDATE_PREPARED_KEY = "update_data_prepared_force"
 EXPECTED_STAGE_ERRORS = (
     SharedDataNotReadyError,
     OSError,
-    DownloadError,
-    DecompressError,
-    DownloadBatchError,
 )
 
 
@@ -92,10 +85,6 @@ class LolAudioUnpackApp:
 
     def _resolve_operation_options(self, opts: OperationOptions) -> OperationOptions:
         """分区 special target，避免 resource pack 进入数值英雄归约。"""
-        if opts.special_targets and not is_special_content_supported(self.ctx.config.source_mode):
-            raise ValueError("特殊内容仅支持本地客户端资源。")
-        if opts.resource_pack_wads and not is_special_content_supported(self.ctx.config.source_mode):
-            raise ValueError("资源包发现仅支持本地客户端资源。")
         for wad_ref in opts.resource_pack_wads:
             # 任务可能在文件选择后排队较久；所有执行入口都必须重新验证 FINAL containment 与 stat。
             wad_ref.resolve(Path(self.ctx.config.game_path))
@@ -241,16 +230,6 @@ class LolAudioUnpackApp:
             )
         raise RuntimeError(f"未知 WAV 转码汇总状态: {raw_status}")
 
-    def _prepare_remote_update(self) -> RemotePreparer | None:
-        """在远端快照模式下准备更新流程所需的远端资源。"""
-        if self.ctx.config.source_mode is not SourceMode.REMOTE_SNAPSHOT:
-            return None
-
-        logger.info("检测到 remote_snapshot 模式，开始准备 LCU 最小运行环境...")
-        preparer = RemotePreparer(ctx=self.ctx)
-        preparer.prepare_lcu_data()
-        return preparer
-
     def _is_update_prepared(self, *, force_update: bool) -> bool:
         """判断当前上下文是否已完成数据预热。"""
         cached_force_update = self.ctx.runtime_cache.get(UPDATE_PREPARED_KEY)
@@ -260,22 +239,18 @@ class LolAudioUnpackApp:
             return True
         return False
 
-    def prepare_update_data(self, *, force_update: bool = False) -> RemotePreparer | None:
+    def prepare_update_data(self, *, force_update: bool = False) -> None:
         """预热 update 所需结构化数据，并复用当前运行中的缓存状态。
 
         Args:
             force_update: 是否强制刷新数据文件。
 
-        Returns:
-            remote 模式下返回远端准备器，否则返回 ``None``。
         """
         self._reset_reader()
         try:
-            remote_preparer = self._prepare_remote_update()
             if not self._is_update_prepared(force_update=force_update):
                 DataUpdater(force_update=force_update, ctx=self.ctx).check_and_update()
                 self.ctx.runtime_cache[UPDATE_PREPARED_KEY] = force_update
-            return remote_preparer
         finally:
             # DataUpdater 即使失败也可能已替换部分 artifact，不能复用调用前的缓存。
             self._reset_reader()
@@ -289,8 +264,6 @@ class LolAudioUnpackApp:
         Returns:
             各 selected-WAD 的发现状态、成本与已生成 pack rows。
 
-        Raises:
-            ValueError: remote 模式或 special target 不满足本地边界时抛出。
         """
         opts = self._resolve_operation_options(opts)
         if not opts.resource_pack_wads:
@@ -367,12 +340,6 @@ class LolAudioUnpackApp:
 
         return tuple(resolved_ids)
 
-    def _create_remote_preparer(self) -> RemotePreparer | None:
-        """按需创建远端准备器。"""
-        if self.ctx.config.source_mode is not SourceMode.REMOTE_SNAPSHOT:
-            return None
-        return RemotePreparer(ctx=self.ctx)
-
     def _build_entity_data(
         self,
         reader: DataReader,
@@ -400,43 +367,6 @@ class LolAudioUnpackApp:
         if entity_data.entity_title:
             return f"{entity_data.entity_name}·{entity_data.entity_title}"
         return entity_data.entity_name
-
-    def cleanup_remote_artifacts(self) -> None:
-        """在 remote 模式下按配置清理已登记的远端产物。"""
-        if self.ctx.config.source_mode is not SourceMode.REMOTE_SNAPSHOT:
-            return
-        if not self.ctx.config.cleanup_remote:
-            logger.info("remote_snapshot 模式已显式关闭自动清理，保留远端准备产物。")
-            return
-
-        preparer = self._create_remote_preparer()
-        if preparer is None:
-            return
-        cleanup_result = preparer.cleanup_artifacts()
-        if cleanup_result:
-            logger.info(f"远端准备产物清理完成: {cleanup_result}")
-
-    def _remote_orchestrator(self) -> RemoteWorkflowOrchestrator:
-        """构造远端工作流编排器，注入标准操作与实体解析回调。"""
-        return RemoteWorkflowOrchestrator(
-            self.ctx,
-            update_fn=self.update,
-            extract_fn=self.extract,
-            mapping_fn=self.mapping,
-            cleanup_fn=self.cleanup_remote_artifacts,
-            build_entity_data_fn=self._build_entity_data,
-            resolve_audio_paths_fn=self._resolve_audio_paths,
-            get_reader_fn=self._get_reader,
-            remote_preparer_factory=lambda: RemotePreparer(ctx=self.ctx),
-        )
-
-    def build_work_items(self, **kwargs) -> list[RemoteEntityWorkItem]:
-        """构建 remote 模式下的实体工作项队列（委托 RemoteWorkflowOrchestrator）。"""
-        return self._remote_orchestrator().build_work_items(**kwargs)
-
-    def run_workflow(self, **kwargs) -> RunResult:
-        """按实体拆批执行 remote 流程（委托 RemoteWorkflowOrchestrator）。"""
-        return self._remote_orchestrator().run_workflow(**kwargs)
 
     def update(
         self,
@@ -468,7 +398,7 @@ class LolAudioUnpackApp:
             try:
                 if progress_callback is not None:
                     progress_callback(OperationProgress("update", "data", "started"))
-                remote_preparer = self.prepare_update_data(force_update=opts.force_update)
+                self.prepare_update_data(force_update=opts.force_update)
                 if progress_callback is not None:
                     progress_callback(OperationProgress("update", "data", "finished"))
                 has_resource_pack_scope = self._has_resource_pack_targets(opts)
@@ -476,13 +406,6 @@ class LolAudioUnpackApp:
                     not has_resource_pack_scope or opts.champion_ids is not None or opts.map_ids is not None
                 )
                 child_results: list[StageResult] = []
-                if remote_preparer is not None and run_standard_update:
-                    remote_preparer.prepare_bin_inputs(
-                        reader=self._get_reader(),
-                        target=target,
-                        champion_ids=opts.champion_ids,
-                        map_ids=opts.map_ids,
-                    )
                 if run_standard_update:
                     updater_kwargs = {
                         "force_update": opts.force_update,
@@ -601,7 +524,6 @@ class LolAudioUnpackApp:
         *,
         include_champions: bool = True,
         include_maps: bool = True,
-        prepare_remote: bool = True,
         progress_callback: Callable[[str, int, int, str], None] | None = None,
         persisted_wem_callback: Callable[[Path], None] | None = None,
     ) -> StageResult:
@@ -611,7 +533,6 @@ class LolAudioUnpackApp:
             opts: 解包操作选项。
             include_champions: 是否包含英雄。
             include_maps: 是否包含地图。
-            prepare_remote: 是否在 remote 模式下预准备所需资源。
             progress_callback: 每个实体处理结束后的可选进度回调。
             persisted_wem_callback: 单个 WEM 持久化成功后的可选回调。
 
@@ -621,15 +542,6 @@ class LolAudioUnpackApp:
         opts = self._resolve_operation_options(opts)
         try:
             reader = self._get_reader()
-            remote_preparer = self._create_remote_preparer()
-            if prepare_remote and remote_preparer is not None:
-                remote_preparer.prepare_extract_wads(
-                    reader=reader,
-                    champion_ids=opts.champion_ids,
-                    map_ids=opts.map_ids,
-                    include_champions=include_champions,
-                    include_maps=include_maps,
-                )
             logger.info(
                 f"音频类型配置 - 包含: {list(self.ctx.config.include_types)}, "
                 f"排除: {list(self.ctx.config.exclude_types)}"
@@ -697,7 +609,6 @@ class LolAudioUnpackApp:
         *,
         include_champions: bool = True,
         include_maps: bool = True,
-        prepare_remote: bool = True,
         progress_callback: Callable[[str, int, int, str], None] | None = None,
     ) -> StageResult:
         """执行映射流程并返回权威阶段结果。
@@ -706,7 +617,6 @@ class LolAudioUnpackApp:
             opts: 映射操作选项。
             include_champions: 是否包含英雄。
             include_maps: 是否包含地图。
-            prepare_remote: 是否在 remote 模式下预准备所需资源。
             progress_callback: 每个实体处理结束后的可选进度回调。
 
         Returns:
@@ -716,15 +626,6 @@ class LolAudioUnpackApp:
         try:
             backend_label = self._describe_mapping_backend()
             reader = self._get_reader()
-            remote_preparer = self._create_remote_preparer()
-            if prepare_remote and remote_preparer is not None:
-                remote_preparer.prepare_mapping_wads(
-                    reader=reader,
-                    champion_ids=opts.champion_ids,
-                    map_ids=opts.map_ids,
-                    include_champions=include_champions,
-                    include_maps=include_maps,
-                )
 
             logger.info(f"缓存路径: {self.ctx.paths.cache_path}")
             logger.info(f"哈希路径: {self.ctx.paths.hash_path}")
@@ -786,4 +687,4 @@ class LolAudioUnpackApp:
         return result
 
 
-__all__ = ["LolAudioUnpackApp", "RemoteEntityCallbackPayload", "RemoteEntityWorkItem"]
+__all__ = ["LolAudioUnpackApp"]

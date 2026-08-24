@@ -13,7 +13,7 @@ from loguru import logger
 
 from .. import setup_app
 from ..app.facade import LolAudioUnpackApp
-from ..app.types import AppContext, AppContextValidationError, OperationOptions, SourceMode, WavOutputOptions
+from ..app.types import AppContext, AppContextValidationError, OperationOptions, WavOutputOptions
 from ..config import (
     COMMAND_CONFIG_FIELDS,
     CONTEXT_OPTION_ATTRS,
@@ -310,15 +310,6 @@ def initialize_app(args: argparse.Namespace) -> AppContext:
         raise CliInputError(str(exc)) from exc
 
     logger.info("命令行工具启动...")
-
-    if app_context.config.source_mode is SourceMode.LOCAL_PATH and not Path(app_context.config.game_path).exists():
-        message = "未找到有效的游戏目录 (GAME_PATH)。"
-        logger.error(f"错误：{message}")
-        if config_file is not None:
-            logger.error(f"请检查配置文件中的 game_path: {config_file}")
-        else:
-            logger.error("请通过 --game-path 显式指定游戏目录，或使用 -c 读取配置文件。")
-        raise CliInputError(message)
 
     return app_context
 

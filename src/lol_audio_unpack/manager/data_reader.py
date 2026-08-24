@@ -16,7 +16,6 @@ from lol_audio_unpack.app.targets import (
     get_default_visible_champions,
     should_hide_champion_by_default,
 )
-from lol_audio_unpack.app.types import SourceMode
 from lol_audio_unpack.manager.errors import (
     DataVersionMismatchError,
     ResourceSchemaMismatchError,
@@ -210,9 +209,7 @@ class DataReader:
         return banks_data
 
     def get_champion_resource_bindings(self, champion_id: int) -> ResourceBindings | None:
-        """读取本地英雄 v2 resource bindings；remote 旧合同返回 ``None``。"""
-        if not self._uses_local_resource_schema():
-            return None
+        """读取本地英雄 v2 resource bindings。"""
         payload = self.get_champion_banks(champion_id, require_bindings=True)
         return ResourceBindings.from_payload(payload) if payload else None
 
@@ -291,9 +288,7 @@ class DataReader:
         return banks_data
 
     def get_map_resource_bindings(self, map_id: int) -> ResourceBindings | None:
-        """读取本地地图 v2 resource bindings；remote 旧合同返回 ``None``。"""
-        if not self._uses_local_resource_schema():
-            return None
+        """读取本地地图 v2 resource bindings。"""
         payload = self.get_map_banks(map_id, require_bindings=True)
         return ResourceBindings.from_payload(payload) if payload else None
 
@@ -326,9 +321,7 @@ class DataReader:
         return banks_data
 
     def get_resource_pack_resource_bindings(self, key: str) -> ResourceBindings | None:
-        """读取本地 resource-pack v2 bindings；remote 旧合同返回 ``None``。"""
-        if not self._uses_local_resource_schema():
-            return None
+        """读取本地 resource-pack v2 bindings。"""
         payload = self.get_resource_pack_banks(key, require_bindings=True)
         return ResourceBindings.from_payload(payload) if payload else None
 
@@ -396,14 +389,9 @@ class DataReader:
             self._resource_pack_events_cache[key] = events_data
         return events_data
 
-    def _uses_local_resource_schema(self) -> bool:
-        """判断当前读取上下文是否要求 local v2 resource schema。"""
-        mode = getattr(self.ctx.config, "source_mode", SourceMode.LOCAL_PATH)
-        return mode in {SourceMode.LOCAL_PATH, SourceMode.LOCAL_PATH.value}
-
     def _validate_resource_schema(self, data: dict, label: str, *, require_bindings: bool) -> None:
-        """在显式消费 binding 时拒绝旧 local artifact，remote 保持旧合同。"""
-        if not require_bindings or not self._uses_local_resource_schema():
+        """在显式消费 binding 时拒绝旧 artifact。"""
+        if not require_bindings:
             return
         if data.get("resourceSchemaVersion") == RESOURCE_SCHEMA_VERSION:
             return

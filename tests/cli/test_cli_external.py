@@ -25,6 +25,9 @@ def test_unpack_cli_help_succeeds() -> None:
     assert "update" in result.stdout
     assert "extract" in result.stdout
     assert "mapping" in result.stdout
+    assert "--source-mode" not in result.stdout
+    assert "--remote-" not in result.stdout
+    assert "--cleanup-remote" not in result.stdout
 
 
 def test_unpack_cli_config_mode_uses_enabled_actions_from_config(tmp_path: Path) -> None:
@@ -46,4 +49,4 @@ def test_unpack_cli_config_mode_uses_enabled_actions_from_config(tmp_path: Path)
     output = f"{result.stdout}\n{result.stderr}"
     assert result.returncode == EXIT_INPUT
     assert "必须提供至少一个动作" not in output
-    assert "未找到有效的游戏目录" in output
+    assert "本地数据源缺少根目录" in output

@@ -60,8 +60,6 @@ class BinUpdater:
         self.version: str = resolve_game_version(self.ctx)
         self.version_manifest_path: Path = self.manifest_path / self.version
         self.data_file_base: Path = self.version_manifest_path / "data"
-        self.use_local_bin_flag_file: Path = self.version_manifest_path / ".use_local_bin"
-        self.local_bin_input_dir: Path = self.version_manifest_path / "bin_input"
         self.champion_banks_dir: Path = self.version_manifest_path / "banks" / "champions"
         self.map_banks_dir: Path = self.version_manifest_path / "banks" / "maps"
         self.champion_events_dir: Path = self.version_manifest_path / "events" / "champions"
@@ -73,8 +71,6 @@ class BinUpdater:
             ctx=self.ctx,
             game_path=self.game_path,
             version=self.version,
-            local_bin_input_dir=self.local_bin_input_dir,
-            use_local_bin_flag_file=self.use_local_bin_flag_file,
             languages=self.languages,
         )
         self._champion_processor = ChampionBinProcessor(
@@ -166,7 +162,6 @@ class BinUpdater:
         # 将运行期解析出的语言列表同步给协作对象
         self.bin_source.languages = self.languages
         self._map_processor.languages = self.languages
-        local_bin_mode_enabled = self.bin_source._is_local_bin_mode_enabled()
         results: list[UpdateEntityResult] = []
         normalized_map_ids = with_common_map(map_ids, "0")
         map_ids = list(normalized_map_ids) if normalized_map_ids is not None else None
@@ -179,8 +174,7 @@ class BinUpdater:
             map_count = len(filtered_data.get("maps", {}))
             logger.info(
                 f"开始更新 BIN 数据（精确模式）：英雄 {champion_count} 个，地图 {map_count} 个，"
-                f"事件处理={'开启' if self.process_events else '关闭'}，"
-                f"本地BIN模式={'开启' if local_bin_mode_enabled else '关闭'}"
+                f"事件处理={'开启' if self.process_events else '关闭'}"
             )
             if champion_ids and filtered_data.get("champions"):
                 results.extend(self._champion_processor._update_champions(filtered_data))
@@ -200,8 +194,7 @@ class BinUpdater:
             map_count = len(data.get("maps", {})) if target in ["map", "all"] else 0
             logger.info(
                 f"开始更新 BIN 数据（批量模式）：target={target}，英雄 {champion_count} 个，地图 {map_count} 个，"
-                f"事件处理={'开启' if self.process_events else '关闭'}，"
-                f"本地BIN模式={'开启' if local_bin_mode_enabled else '关闭'}"
+                f"事件处理={'开启' if self.process_events else '关闭'}"
             )
             if hidden_count:
                 logger.info(f"默认批量更新已排除 {hidden_count} 个隐藏英雄实体")

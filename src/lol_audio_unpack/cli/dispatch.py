@@ -10,7 +10,7 @@ import argparse
 from loguru import logger
 
 from ..app.facade import LolAudioUnpackApp
-from ..app.results import ResultStatus, RunResult, StageResult
+from ..app.results import ResultStatus, StageResult
 from ..app.targets import resolve_scope
 from ..config import SettingKey
 from .runtime import CliInputError, build_options, parse_int_ids, resolve_champion_ids
@@ -132,38 +132,6 @@ def _log_stage_result(stage: str, result: StageResult, detail: str | None = None
 def _log_top_error(error: Exception, *, dev_mode: bool) -> None:
     """统一记录 CLI 顶层未处理异常。"""
     logger.opt(depth=1, exception=dev_mode).error(f"执行过程中发生错误: {error}")
-
-
-def run_remote_workflow(args: argparse.Namespace, app: LolAudioUnpackApp) -> RunResult:
-    """执行 remote 模式下的单位驱动工作流。"""
-    champion_ids, map_ids = _resolve_stage_targets(args, app=app, label="远端工作流")
-    update_target, extract_include_champions, extract_include_maps = _target_scope(
-        champion_ids=champion_ids,
-        map_ids=map_ids,
-    )
-
-    update_options = None
-    if _has_update(args):
-        update_options = build_options(args, champion_ids=champion_ids, map_ids=map_ids)
-
-    extract_options = None
-    if _has_extract(args):
-        extract_options = build_options(args, champion_ids=champion_ids, map_ids=map_ids)
-
-    mapping_options = None
-    if _has_mapping(args):
-        mapping_options = build_options(args, champion_ids=champion_ids, map_ids=map_ids)
-
-    return app.run_workflow(
-        update_options=update_options,
-        update_target=update_target,
-        extract_options=extract_options,
-        mapping_options=mapping_options,
-        extract_include_champions=extract_include_champions,
-        extract_include_maps=extract_include_maps,
-        mapping_include_champions=extract_include_champions,
-        mapping_include_maps=extract_include_maps,
-    )
 
 
 def run_update(args: argparse.Namespace, app: LolAudioUnpackApp) -> StageResult | None:
@@ -315,7 +283,6 @@ __all__ = [
     "_log_top_error",
     "run_extract",
     "run_mapping",
-    "run_remote_workflow",
     "run_update",
     "run_wav",
 ]

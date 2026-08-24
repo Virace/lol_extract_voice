@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -12,22 +11,6 @@ from .resource_pack import ResourcePackWadRef
 
 class AppContextValidationError(ValueError):
     """应用上下文构建失败异常。"""
-
-
-class SourceMode(str, Enum):
-    """运行时内容来源模式。"""
-
-    LOCAL_PATH = "local_path"
-    REMOTE_SNAPSHOT = "remote_snapshot"
-
-
-@dataclass(frozen=True)
-class RemoteSnapshotConfig:
-    """远端快照配置。"""
-
-    version: str
-    lcu_manifest_url: str
-    game_manifest_url: str
 
 
 @dataclass(frozen=True)
@@ -39,9 +22,6 @@ class AppConfig:
     game_region: str = "zh_CN"
     exclude_types: tuple[str, ...] = ("SFX", "MUSIC")
     include_types: tuple[str, ...] = ("VO",)
-    cleanup_remote: bool = True
-    source_mode: SourceMode = SourceMode.LOCAL_PATH
-    remote_snapshot: RemoteSnapshotConfig | None = None
     group_by_type: bool = False
     with_bp_vo: bool = False
     wwiser_path: Path | None = None
@@ -206,7 +186,5 @@ __all__ = [
     "AppContextValidationError",
     "AppPaths",
     "OperationOptions",
-    "RemoteSnapshotConfig",
-    "SourceMode",
     "WavOutputOptions",
 ]

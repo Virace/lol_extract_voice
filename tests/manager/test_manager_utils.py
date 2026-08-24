@@ -8,7 +8,6 @@ import pytest
 
 import lol_audio_unpack.manager.files as mfiles
 from lol_audio_unpack.app import game_version
-from lol_audio_unpack.app.types import RemoteSnapshotConfig, SourceMode
 from lol_audio_unpack.manager import utils as mutils
 from lol_audio_unpack.manager.errors import ArtifactWriteError
 
@@ -90,22 +89,26 @@ def test_get_lcu_version_success(tmp_path):
     assert game_version.get_lcu_version(game_path) == "16.5"
 
 
-def test_resolve_game_version_uses_remote_snapshot_version():
+def test_resolve_game_version_uses_and_caches_local_metadata(tmp_path, monkeypatch):
+    game_path = tmp_path / "game"
+    meta_file = game_path / "Game" / "content-metadata.json"
+    meta_file.parent.mkdir(parents=True)
+    meta_file.write_text(json.dumps({"version": "16.5.123"}), encoding="utf-8")
+    validations: list[tuple[Path, str]] = []
+    monkeypatch.setattr(
+        game_version,
+        "validate_install_version",
+        lambda path, version: validations.append((path, version)),
+    )
     ctx = SimpleNamespace(
-        config=SimpleNamespace(
-            source_mode=SourceMode.REMOTE_SNAPSHOT,
-            remote_snapshot=RemoteSnapshotConfig(
-                version="16.5",
-                lcu_manifest_url="https://example.com/lcu.manifest",
-                game_manifest_url="https://example.com/game.manifest",
-            ),
-            game_path=Path("unused-game-root"),
-        ),
+        config=SimpleNamespace(game_path=game_path),
         runtime_cache={},
     )
 
     assert game_version.resolve_game_version(ctx) == "16.5"
+    assert game_version.resolve_game_version(ctx) == "16.5"
     assert ctx.runtime_cache["resolved_runtime_version"] == "16.5"
+    assert validations == [(game_path, "16.5")]
 
 
 def test_build_metadata_payload():

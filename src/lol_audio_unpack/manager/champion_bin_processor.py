@@ -175,14 +175,12 @@ class ChampionBinProcessor:
         banks_file_base = self.champion_banks_dir / champion_id
         events_file_base = self.champion_events_dir / champion_id
 
-        resource_v2 = getattr(self.bin_source, "_uses_resource_v2", lambda: False)()
-        resource_schema = RESOURCE_SCHEMA_VERSION if resource_v2 else None
         banks_need_update = needs_update(
             banks_file_base,
             self.version,
             self.force_update,
             dev_mode=self._is_dev_mode(),
-            resource_schema=resource_schema,
+            resource_schema=RESOURCE_SCHEMA_VERSION,
         )
         events_need_update = self.process_events and needs_update(
             events_file_base,
@@ -215,13 +213,10 @@ class ChampionBinProcessor:
             raise ValueError(f"英雄 {champion_id} 没有可处理的皮肤 BIN 路径")
 
         bin_paths = list(skin_id_by_path)
-        local_required_dir = Path("data") / "characters" / alias_raw
         logger.trace(f"从 {alias} 提取 {len(bin_paths)} 个BIN文件")
         batch = self._read_bin_batch(
-            champion_data,
             bin_paths,
             f"英雄 {champion_id} ({alias})",
-            local_required_dir=local_required_dir,
         )
 
         sorted_skin_ids = sorted(skin_id_by_path.values(), key=int)
@@ -248,10 +243,8 @@ class ChampionBinProcessor:
                 if self._is_dev_mode():
                     raise
 
-        bank_bindings = self.bin_source._resolve_bank_bindings(references) if batch.resource_v2 else []
-        legacy_groups = self._binding_groups(bank_bindings) if batch.resource_v2 else self._reference_groups(references)
-        if not batch.resource_v2 and not references:
-            raise ValueError(f"英雄 {champion_id} 未提取到可用 bank 引用")
+        bank_bindings = self.bin_source._resolve_bank_bindings(references)
+        legacy_groups = self._binding_groups(bank_bindings)
         champion_banks_data = self.bin_source._create_base_data(
             champion_id,
             "champion",
@@ -259,25 +252,23 @@ class ChampionBinProcessor:
             **self._build_legacy_projection(legacy_groups),
         )
 
-        completeness = Completeness.COMPLETE
-        if batch.resource_v2:
-            index_metrics, index_errors = self.bin_source._resource_index_diagnostics()
-            diagnostics = build_diagnostics(
-                batch.bindings,
-                bank_bindings,
-                index=index_metrics,
-                index_errors=index_errors,
-            )
-            resource = ResourceBindings(
-                entity_type="champion",
-                entity_id=champion_id,
-                bin_bindings=tuple(batch.bindings),
-                bank_bindings=tuple(bank_bindings),
-                diagnostics=diagnostics,
-            )
-            champion_banks_data.update(resource.to_payload())
-            self._log_binding_summary(f"英雄 {champion_id} ({alias})", diagnostics.completeness, diagnostics.to_dict())
-            completeness = diagnostics.completeness
+        index_metrics, index_errors = self.bin_source._resource_index_diagnostics()
+        diagnostics = build_diagnostics(
+            batch.bindings,
+            bank_bindings,
+            index=index_metrics,
+            index_errors=index_errors,
+        )
+        resource = ResourceBindings(
+            entity_type="champion",
+            entity_id=champion_id,
+            bin_bindings=tuple(batch.bindings),
+            bank_bindings=tuple(bank_bindings),
+            diagnostics=diagnostics,
+        )
+        champion_banks_data.update(resource.to_payload())
+        self._log_binding_summary(f"英雄 {champion_id} ({alias})", diagnostics.completeness, diagnostics.to_dict())
+        completeness = diagnostics.completeness
         self._optimize_champion_mappings(champion_banks_data)
 
         # 写入banks数据
@@ -318,30 +309,11 @@ class ChampionBinProcessor:
 
     def _read_bin_batch(
         self,
-        champion_data: ChampionData,
         bin_paths: list[str],
         entity_label: str,
-        *,
-        local_required_dir: Path,
     ) -> BinBatch:
-        """读取 declared BIN，并兼容只提供旧测试边界的调用方。"""
-        if hasattr(self.bin_source, "_resolve_bin_resources"):
-            return self.bin_source._resolve_bin_resources(
-                bin_paths,
-                entity_label,
-                local_required_dir=local_required_dir,
-            )
-
-        root_wad_path = champion_data.get("wad", {}).get("root")
-        wad_path = self.game_path / root_wad_path if root_wad_path else None
-        values = self.bin_source._extract_bin_raws(
-            wad_path=wad_path,
-            bin_paths=bin_paths,
-            entity_label=entity_label,
-            local_required_dir=local_required_dir,
-        )
-        raws = {path: raw for path, raw in zip(bin_paths, values, strict=False) if raw is not None}
-        return BinBatch(raws=raws, bindings=[], resource_v2=False)
+        """通过本地 FINAL WAD 索引读取 declared BIN。"""
+        return self.bin_source._resolve_bin_resources(bin_paths, entity_label)
 
     @staticmethod
     def _collect_bank_references(bin_file: BIN, source_bin: str, skin_id: str) -> list[BankReference]:
@@ -364,15 +336,6 @@ class ChampionBinProcessor:
                 )
                 group_index += 1
         return references
-
-    @staticmethod
-    def _reference_groups(references: list[BankReference]) -> list[tuple[str, str, list[str]]]:
-        """把 remote 旧合同的声明恢复为皮肤/category/path group。"""
-        groups: dict[tuple[str, str, str, int | None], list[str]] = {}
-        for reference in references:
-            key = (reference.sub_entity or "", reference.category, reference.source_bin, reference.group)
-            groups.setdefault(key, []).append(reference.path)
-        return [(skin_id, category, paths) for (skin_id, category, _source, _group), paths in groups.items()]
 
     @staticmethod
     def _binding_groups(bindings: list[BankBinding]) -> list[tuple[str, str, list[str]]]:

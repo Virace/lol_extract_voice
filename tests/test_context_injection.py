@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -5,7 +6,7 @@ import pytest
 
 from lol_audio_unpack import mapping as m_mapping
 from lol_audio_unpack import unpack as m_unpack
-from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths, RemoteSnapshotConfig, SourceMode
+from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
 from lol_audio_unpack.manager.data_reader import DataReader
 from lol_audio_unpack.manager.files import write_data
 from lol_audio_unpack.mapping import batch as mapping_batch
@@ -26,11 +27,13 @@ def _build_ctx(  # noqa: PLR0913
     group_by_type: bool = False,
     with_bp_vo: bool = False,
     wwiser_path: Path | None = None,
-    source_mode: SourceMode = SourceMode.LOCAL_PATH,
-    remote_version: str = "16.3",
+    game_version: str = "16.3",
 ) -> AppContext:
     game_path = tmp_path / "game"
     output_path = tmp_path / "output"
+    metadata_path = game_path / "Game" / "content-metadata.json"
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(json.dumps({"version": game_version}), encoding="utf-8")
     app_config = AppConfig(
         game_path=game_path,
         output_path=output_path,
@@ -38,16 +41,6 @@ def _build_ctx(  # noqa: PLR0913
         group_by_type=group_by_type,
         with_bp_vo=with_bp_vo,
         wwiser_path=wwiser_path,
-        source_mode=source_mode,
-        remote_snapshot=(
-            RemoteSnapshotConfig(
-                version=remote_version,
-                lcu_manifest_url="https://example.com/lcu.manifest",
-                game_manifest_url="https://example.com/game.manifest",
-            )
-            if source_mode is SourceMode.REMOTE_SNAPSHOT
-            else None
-        ),
     )
     app_paths = AppPaths(
         audio_path=output_path / "audios",
@@ -81,8 +74,8 @@ def _write_reader_data(ctx: AppContext, *, version: str, alias: str) -> None:
 
 def test_data_reader_instances_are_isolated_by_app_context(tmp_path: Path) -> None:
     """同进程 reader 必须按构造时的 context 读取各自 artifact。"""
-    ctx_a = _build_ctx(tmp_path / "a", source_mode=SourceMode.REMOTE_SNAPSHOT, remote_version="16.3")
-    ctx_b = _build_ctx(tmp_path / "b", source_mode=SourceMode.REMOTE_SNAPSHOT, remote_version="16.4")
+    ctx_a = _build_ctx(tmp_path / "a", game_version="16.3")
+    ctx_b = _build_ctx(tmp_path / "b", game_version="16.4")
     _write_reader_data(ctx_a, version="16.3", alias="ContextA")
     _write_reader_data(ctx_b, version="16.4", alias="ContextB")
 
@@ -101,13 +94,15 @@ def test_data_reader_instances_are_isolated_by_app_context(tmp_path: Path) -> No
 
 
 def test_audio_entity_from_champion_uses_ctx_region_and_game_path(tmp_path: Path) -> None:
-    ctx = _build_ctx(tmp_path, game_region="en_US", source_mode=SourceMode.REMOTE_SNAPSHOT)
+    ctx = _build_ctx(tmp_path, game_region="en_US")
     wad_file = ctx.game_path / "Game" / "en.wad.client"
     root_wad_file = ctx.game_path / "Game" / "root.wad.client"
     wad_file.parent.mkdir(parents=True, exist_ok=True)
     wad_file.write_bytes(b"wad")
     root_wad_file.write_bytes(b"root-wad")
 
+    binding = SimpleNamespace(sub_entity="1000", category="CHARACTER_VO")
+    resources = SimpleNamespace(entity_id="1", bank_bindings=(binding,), diagnostics=SimpleNamespace())
     reader = SimpleNamespace(
         get_champion=lambda _id: {
             "id": 1,
@@ -117,8 +112,9 @@ def test_audio_entity_from_champion_uses_ctx_region_and_game_path(tmp_path: Path
             "skins": [{"id": 1000, "isBase": True, "skinNames": {"zh_CN": "基础皮肤", "en_US": "Base Skin"}}],
             "wad": {"root": "Game/root.wad.client", "en_US": "Game/en.wad.client"},
         },
-        get_champion_banks=lambda _id: {"skins": {"1000": {"CHARACTER_VO": [["Game/en_events.bnk"]]}}},
-        get_champion_events=lambda _id: {"skins": {"1000": {"events": {}}}},
+        get_champion_resource_bindings=lambda _id: resources,
+        get_champion_banks=lambda _id: pytest.fail("local v2 不应读取旧 banks projection"),
+        get_audio_type=lambda _category: "VO",
     )
 
     entity_data = AudioEntityData.from_champion(1, reader, ctx=ctx)

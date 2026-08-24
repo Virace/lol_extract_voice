@@ -8,7 +8,6 @@ import lol_audio_unpack.cli.cli as cli_module
 import lol_audio_unpack.cli.dispatch as dispatch_cli
 import lol_audio_unpack.cli.runtime as runtime_cli
 from lol_audio_unpack.app.results import EntityResult, ResultStatus, StageResult
-from lol_audio_unpack.app.types import SourceMode
 from lol_audio_unpack.cli.cli import _detect_mode
 from lol_audio_unpack.cli.parser import create_parser
 
@@ -136,28 +135,18 @@ def test_build_context_settings_only_keeps_explicit_values() -> None:
     }
 
 
-def test_build_context_settings_includes_remote_options_and_bp_voice() -> None:
+def test_build_context_settings_includes_bp_voice() -> None:
     parser = create_parser()
     args = parser.parse_args(
         [
             "update",
-            "--source-mode",
-            "remote_snapshot",
-            "--remote-live-region",
-            "NA",
-            "--cleanup-remote",
             "--with-bp-vo",
         ]
     )
 
     settings = runtime_cli.build_settings(args)
 
-    assert settings == {
-        "SOURCE_MODE": "remote_snapshot",
-        "REMOTE_LIVE_REGION": "NA",
-        "CLEANUP_REMOTE": True,
-        "WITH_BP_VO": True,
-    }
+    assert settings == {"WITH_BP_VO": True}
 
 
 def test_initialize_app_passes_settings_to_setup_app(monkeypatch, tmp_path: Path) -> None:
@@ -183,7 +172,7 @@ def test_initialize_app_passes_settings_to_setup_app(monkeypatch, tmp_path: Path
     )
 
     captured = {}
-    fake_context = SimpleNamespace(config=SimpleNamespace(game_path=game_path, source_mode=SourceMode.LOCAL_PATH))
+    fake_context = SimpleNamespace(config=SimpleNamespace(game_path=game_path))
 
     def fake_setup_app(*, dev_mode=False, log_level="INFO", **kwargs):
         captured["dev_mode"] = dev_mode
@@ -344,11 +333,10 @@ def test_initialize_app_in_config_mode_uses_loaded_settings(monkeypatch, tmp_pat
     args._loaded_settings = {
         "GAME_PATH": str(game_path),
         "OUTPUT_PATH": str(tmp_path / "output"),
-        "SOURCE_MODE": "local_path",
     }
 
     captured = {}
-    fake_context = SimpleNamespace(config=SimpleNamespace(game_path=game_path, source_mode=SourceMode.LOCAL_PATH))
+    fake_context = SimpleNamespace(config=SimpleNamespace(game_path=game_path))
 
     def fake_setup_app(*, dev_mode=False, log_level="INFO", **kwargs):
         captured["settings"] = kwargs["settings"]
@@ -361,7 +349,6 @@ def test_initialize_app_in_config_mode_uses_loaded_settings(monkeypatch, tmp_pat
     assert captured["settings"] == {
         "GAME_PATH": str(game_path),
         "OUTPUT_PATH": str(tmp_path / "output"),
-        "SOURCE_MODE": "local_path",
     }
 
 
@@ -616,21 +603,16 @@ def _patch_main_runtime(
     monkeypatch,
     *,
     actions: list[str],
-    source_mode: SourceMode = SourceMode.LOCAL_PATH,
-):
+) -> None:
     ctx = SimpleNamespace(
-        config=SimpleNamespace(source_mode=source_mode),
+        config=SimpleNamespace(),
         runtime_cache={},
         paths=SimpleNamespace(log_path=Path("logs")),
     )
-    cleanup_calls: list[str] = []
 
     class FakeApp:
         def __init__(self, app_ctx) -> None:
             assert app_ctx is ctx
-
-        def cleanup_remote_artifacts(self) -> None:
-            cleanup_calls.append("cleanup")
 
     summary = SimpleNamespace(stage_context=lambda *_args, **_kwargs: nullcontext())
     monkeypatch.setattr(cli_module.sys, "argv", ["unpack", *actions])
@@ -639,7 +621,6 @@ def _patch_main_runtime(
     monkeypatch.setattr(cli_module, "get_or_create_run_summary", lambda _cache: summary)
     monkeypatch.setattr(cli_module, "attach_run_summary_sink", lambda _summary: None)
     monkeypatch.setattr(cli_module, "emit_cli_run_summary", lambda *_args, **_kwargs: None)
-    return cleanup_calls
 
 
 @pytest.mark.parametrize(
@@ -652,18 +633,17 @@ def _patch_main_runtime(
     ],
 )
 def test_main_maps_typed_result_to_process_exit(monkeypatch, status: ResultStatus, expected_exit: int) -> None:
-    cleanup_calls = _patch_main_runtime(monkeypatch, actions=["extract"])
+    _patch_main_runtime(monkeypatch, actions=["extract"])
     result = StageResult("extract", status=status)
     monkeypatch.setattr(cli_module, "run_extract", lambda *_args, **_kwargs: result)
 
     exit_code = cli_module.main()
 
     assert exit_code == expected_exit
-    assert cleanup_calls == ["cleanup"]
 
 
 def test_main_stops_dependent_stages_after_update_failure(monkeypatch) -> None:
-    cleanup_calls = _patch_main_runtime(monkeypatch, actions=["update", "extract", "mapping"])
+    _patch_main_runtime(monkeypatch, actions=["update", "extract", "mapping"])
     monkeypatch.setattr(
         cli_module,
         "run_update",
@@ -679,7 +659,6 @@ def test_main_stops_dependent_stages_after_update_failure(monkeypatch) -> None:
     exit_code = cli_module.main()
 
     assert exit_code == EXIT_FAILED
-    assert cleanup_calls == ["cleanup"]
 
 
 def test_main_treats_missing_selected_stage_result_as_failure(monkeypatch) -> None:
@@ -709,22 +688,6 @@ def test_main_continues_independent_mapping_after_extract_partial(monkeypatch) -
     assert calls == ["extract", "mapping"]
 
 
-def test_main_uses_remote_run_result_without_replaying_local_stages(monkeypatch) -> None:
-    cleanup_calls = _patch_main_runtime(
-        monkeypatch,
-        actions=["extract"],
-        source_mode=SourceMode.REMOTE_SNAPSHOT,
-    )
-    remote_result = cli_module.RunResult((_stage("extract", ResultStatus.PARTIAL),))
-    monkeypatch.setattr(cli_module, "run_remote_workflow", lambda *_args, **_kwargs: remote_result)
-    monkeypatch.setattr(cli_module, "run_extract", lambda *_args, **_kwargs: pytest.fail("不得重复执行本地 extract"))
-
-    exit_code = cli_module.main()
-
-    assert exit_code == EXIT_PARTIAL
-    assert cleanup_calls == ["cleanup"]
-
-
 def test_main_maps_input_error_and_keyboard_interrupt(monkeypatch) -> None:
     monkeypatch.setattr(cli_module.sys, "argv", ["unpack", "extract"])
     monkeypatch.setattr(
@@ -735,8 +698,7 @@ def test_main_maps_input_error_and_keyboard_interrupt(monkeypatch) -> None:
     assert cli_module.main() == EXIT_INPUT
 
     monkeypatch.setattr(cli_module, "_validate_config_argv", runtime_cli._validate_config_argv)
-    cleanup_calls = _patch_main_runtime(monkeypatch, actions=["extract"])
+    _patch_main_runtime(monkeypatch, actions=["extract"])
     monkeypatch.setattr(cli_module, "run_extract", lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt))
 
     assert cli_module.main() == EXIT_CANCELLED
-    assert cleanup_calls == ["cleanup"]

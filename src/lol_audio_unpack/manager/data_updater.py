@@ -12,7 +12,6 @@ from league_tools.formats import WAD
 from loguru import logger
 
 from lol_audio_unpack.app.game_version import resolve_game_version
-from lol_audio_unpack.app.types import SourceMode
 from lol_audio_unpack.manager.files import copy_file_atomic, needs_update, read_data, write_data
 from lol_audio_unpack.manager.utils import build_metadata_payload
 from lol_audio_unpack.utils.common import format_region, load_json
@@ -496,11 +495,7 @@ class DataUpdater:
                 map_data["binPath"] = f"data/maps/shipping/{wad_prefix.lower()}/{wad_prefix.lower()}.bin"
                 map_bin_count += 1
                 wad_info = self._build_map_wad_info(wad_prefix)
-                should_keep_wad_info = (
-                    self.ctx.config.source_mode is SourceMode.REMOTE_SNAPSHOT
-                    or (self.game_path / wad_info["root"]).exists()
-                )
-                if should_keep_wad_info:
+                if (self.game_path / wad_info["root"]).exists():
                     map_data["wad"] = wad_info
                 else:
                     logger.warning(f"地图 {wad_prefix} 的WAD文件不存在，已跳过: {self.game_path / wad_info['root']}")

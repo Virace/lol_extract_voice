@@ -39,7 +39,6 @@ def test_build_explicit_cli_argv_omits_defaults_but_keeps_required_and_changed_v
     request = CliInvocationRequest(
         actions=("extract", "wav"),
         settings=(
-            (SettingKey.SOURCE_MODE, "local_path"),
             (SettingKey.GAME_PATH, "game-root"),
             (SettingKey.OUTPUT_PATH, str(get_default_output_root(runtime_paths))),
             (SettingKey.GAME_REGION, "zh_CN"),
@@ -72,12 +71,12 @@ def test_build_explicit_cli_argv_omits_defaults_but_keeps_required_and_changed_v
     assert "--wav-format" not in argv
 
 
-def test_build_explicit_cli_argv_requires_game_path_in_local_mode(tmp_path: Path) -> None:
-    """本地模式缺少游戏目录时应拒绝构造命令。"""
+def test_build_explicit_cli_argv_requires_game_path(tmp_path: Path) -> None:
+    """缺少游戏目录时应拒绝构造命令。"""
     runtime_paths = _build_runtime_paths(tmp_path)
     request = CliInvocationRequest(
         actions=("extract",),
-        settings=((SettingKey.SOURCE_MODE, "local_path"),),
+        settings=(),
     )
 
     with pytest.raises(CliInvocationValidationError, match="game_path"):
