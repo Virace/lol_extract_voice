@@ -276,6 +276,44 @@ def test_run_execution_task_reports_partial_and_only_completes_productive_stages
     assert progress_events[-1].current < progress_events[-1].total
 
 
+def test_run_execution_task_summary_separates_stages_and_explains_issue(monkeypatch, tmp_path: Path) -> None:
+    """一个英雄跨阶段执行时，通知必须保留阶段归属与实际错误原因。"""
+    task = _build_task(champion_ids=(1,))
+
+    class FakeApp:
+        def __init__(self, app_context) -> None:
+            self.ctx = app_context
+
+        def extract(self, _options, **_kwargs) -> StageResult:
+            return StageResult.from_entities(
+                "extract",
+                (
+                    EntityResult(
+                        "champion",
+                        1,
+                        ResultStatus.PARTIAL,
+                        entity_name="安妮",
+                        error_message="voice.wpk 读取失败",
+                        artifacts=("audios/1/101.wem",),
+                    ),
+                ),
+            )
+
+        def mapping(self, _options, **_kwargs) -> StageResult:
+            return _stage("mapping")
+
+    _install_fake_runtime(monkeypatch, tmp_path, FakeApp)
+    progress = []
+    signals = SimpleNamespace(progress=SimpleNamespace(emit=progress.append))
+    result = task_runner.run_execution_task(task, signals)
+
+    assert result.run_result.status is ResultStatus.PARTIAL
+    assert "音频解包部分完成（安妮：voice.wpk 读取失败）" in result.summary
+    assert "事件映射完成" in result.summary
+    extract_progress = next(item for item in progress if item.stage_key == "extract" and item.stage_finished)
+    assert "voice.wpk 读取失败" in extract_progress.message
+
+
 def test_run_execution_task_stops_dependencies_after_failed_update(monkeypatch, tmp_path: Path) -> None:
     """前置更新失败后不得再启动依赖的解包与映射阶段。"""
     task = _build_task(run_update=True, champion_ids=(1,))

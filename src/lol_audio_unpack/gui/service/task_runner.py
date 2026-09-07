@@ -44,6 +44,7 @@ ENTITY_SCOPE_LABEL_BY_TYPE = {
     "resource_pack": "历史资源包",
     "wav": "音频转码",
 }
+MAX_SUMMARY_ISSUES = 3
 
 
 def _stage_has_artifacts(result: StageResult) -> bool:
@@ -93,11 +94,28 @@ def _terminal_stage_message(result: StageResult) -> str:
     label = STAGE_LABEL_BY_KEY.get(result.stage, result.stage)
     if result.status is ResultStatus.SUCCESS:
         return f"{label}完成" if _stage_produced_output(result) else f"{label}无需处理"
+    details = []
+    if result.error_message:
+        details.append(result.error_message)
+    affected = [entity for entity in result.entities if entity.status is not ResultStatus.SUCCESS]
+    for entity in affected[:MAX_SUMMARY_ISSUES]:
+        name = (
+            entity.entity_name or f"{ENTITY_SCOPE_LABEL_BY_TYPE.get(entity.entity_type, '对象')} ID {entity.entity_id}"
+        )
+        reason = entity.error_message or "未提供具体原因，请查看任务日志"
+        details.append(f"{name}：{reason}")
+    if len(affected) > MAX_SUMMARY_ISSUES:
+        details.append(f"另有 {len(affected) - MAX_SUMMARY_ISSUES} 个对象未完成")
+    if not details and result.note:
+        details.append(result.note)
+    if not details:
+        details.append("未提供具体原因，请查看任务日志")
+    detail_text = "；".join(details)
     if result.status is ResultStatus.PARTIAL:
-        return f"{label}部分完成"
+        return f"{label}部分完成（{detail_text}）"
     if result.status is ResultStatus.CANCELLED:
-        return f"{label}已取消"
-    return f"{label}失败"
+        return f"{label}已取消（{detail_text}）"
+    return f"{label}失败（{detail_text}）"
 
 
 def _emit_terminal_stage_progress(
@@ -132,16 +150,15 @@ def _build_run_summary(
             return f"已完成：{productive_text}（{duration}）"
         return f"执行完成：本轮没有产生新产物（{duration}）"
 
-    count_text = (
-        f"成功 {result.success_count}，部分成功 {result.partial_count}，"
-        f"失败 {result.failed_count}，取消 {result.cancelled_count}"
-    )
-    product_text = f"已产生产物的阶段：{productive_text}" if productive_text else "本轮没有确认的新产物"
+    # 同一英雄在解包和映射各有一个结果；跨阶段累加会把一个对象误显示成两个。
+    stage_text = "；".join(_terminal_stage_message(stage) for stage in result.stages)
+    if not completed_steps:
+        stage_text += "；本轮没有确认的新产物"
     if result.status is ResultStatus.PARTIAL:
-        return f"部分完成：{product_text}；{count_text}（{duration}）"
+        return f"部分完成：{stage_text}（{duration}）"
     if result.status is ResultStatus.CANCELLED:
-        return f"已取消：{product_text}；{count_text}（{duration}）"
-    return f"执行失败：{product_text}；{count_text}（{duration}）"
+        return f"已取消：{stage_text}（{duration}）"
+    return f"执行失败：{stage_text}（{duration}）"
 
 
 def _log_run_result(task_id: int, result: RunResult, summary: str) -> None:

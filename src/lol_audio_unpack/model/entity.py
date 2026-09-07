@@ -206,6 +206,12 @@ class AudioEntityData:
             # 后续 unpack / mapping / GUI 都直接复用同一份稳定值。
             safe_skin_name = sanitize_filename(skin_name)
             skin_info_map[skin_id_str] = {"id": skin_id, "name": safe_skin_name}
+            # BIN 更新包含炫彩的独立 binding，消费者也必须识别其真实 ID。
+            for chroma in skin.get("chromas", []):
+                chroma_id = str(chroma["id"])
+                names = chroma.get("chromaNames", {})
+                chroma_name = names.get(language, names.get("default", skin_name))
+                skin_info_map[chroma_id] = {"id": chroma["id"], "name": sanitize_filename(chroma_name)}
 
         sub_entities: dict[str, dict[str, Any]] = {}
         resource_banks = _build_audio_banks(resource_bindings, reader)

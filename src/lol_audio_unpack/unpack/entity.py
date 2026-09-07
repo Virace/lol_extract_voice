@@ -92,7 +92,7 @@ def _record_bound_result(
     )
 
 
-def _persist_bound_container(  # noqa: PLR0913, PLR0917
+def _persist_bound_container(  # noqa: PLR0911, PLR0913, PLR0917
     raw_data: bytes,
     bank: AudioBank,
     entity_data: AudioEntityData,
@@ -129,6 +129,11 @@ def _persist_bound_container(  # noqa: PLR0913, PLR0917
     try:
         if bank.binding.kind == "BNK":
             files = BNK(raw_data).extract_files()
+            if not files:
+                # 合法 BNK 可以只含事件/结构，音频由配套 WPK 提供；
+                # 没有内嵌 WEM 不等于读取失败，损坏数据仍由解析异常处理。
+                _record_bound_result(stats, bank, outcome="no_audio")
+                return True
 
             def get_name(file: Any) -> str:
                 """返回 BNK 内 WEM 的原始 ID 文件名。"""
@@ -282,6 +287,11 @@ def _unpack_bound_entity(  # noqa: PLR0913, PLR0917
         )
 
     stats.record_assembly_stats(len({bank.sub_id for bank in active_banks}), len(raw_by_key))
+    no_audio = {
+        (detail["wad"], detail["entryHash"]) for detail in stats.binding_details if detail["outcome"] == "no_audio"
+    }
+    if no_audio:
+        logger.info(f"{entity_data.entity_name} 有 {len(no_audio)} 个 BNK 不含内嵌音频，已正常跳过")
     diagnostics = entity_data.binding_diagnostics
     source_completeness = "partial" if diagnostics is not None and diagnostics.unresolved_bins else "complete"
     stats.set_binding_completeness(source_completeness)

@@ -14,7 +14,7 @@ from lol_audio_unpack.manager import map_bin_processor as map_module
 from lol_audio_unpack.manager.bin_source import BinBatch, LoadedBin
 from lol_audio_unpack.manager.data_reader import DataReader
 from lol_audio_unpack.manager.errors import ResourceSchemaMismatchError
-from lol_audio_unpack.manager.files import needs_update, write_data
+from lol_audio_unpack.manager.files import needs_update, read_data, write_data
 from lol_audio_unpack.model.binding import (
     RESOURCE_SCHEMA_VERSION,
     BankBinding,
@@ -24,6 +24,100 @@ from lol_audio_unpack.model.binding import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("failures", [False, True])
+def test_champion_update_records_skin_audio_without_hiding_failures(
+    tmp_path: Path, monkeypatch, failures: bool
+) -> None:
+    """落盘区分共享、独立、无声明与失败，强制重建可刷新旧记录。"""
+    paths = {str(index): f"data/skins/skin{index}.bin" for index in range(6 if failures else 4)}
+    batch = BinBatch(
+        raws={path: skin.encode() for skin, path in paths.items() if skin != "4"},
+        bindings=[
+            _bin_binding(path, BindingStatus.MISSING if skin == "4" else BindingStatus.RESOLVED)
+            for skin, path in paths.items()
+        ],
+    )
+
+    def make_bin(raw: bytes):
+        """模拟 BIN 解析边界，皮肤 1 共享全部音频，皮肤 2 有独立 SFX。"""
+        skin = raw.decode()
+        if skin == "5":
+            raise ValueError("broken BIN")
+        units = (
+            []
+            if skin == "3"
+            else [
+                SimpleNamespace(category="Test_Base_VO", bank_path=["assets/base_vo.bnk"], events=[]),
+                SimpleNamespace(
+                    category="Test_Skin2_SFX" if skin == "2" else "Test_Base_SFX",
+                    bank_path=["assets/skin2_sfx.bnk" if skin == "2" else "assets/base_sfx.bnk"],
+                    events=[],
+                ),
+            ]
+        )
+        return SimpleNamespace(theme_music=None, data=[SimpleNamespace(music=None, bank_units=units)])
+
+    def resolve_banks(references):
+        """仅替代物理索引边界，保留实际声明归属。"""
+        return [
+            BankBinding(
+                category=ref.category,
+                path=ref.path,
+                normalized_path="",
+                kind="BNK",
+                wad="Game/shared.wad.client",
+                entry_hash=ref.path,
+                source_bin=ref.source_bin,
+                role=BindingRole.ROOT,
+                status=BindingStatus.RESOLVED,
+                sub_entity=ref.sub_entity,
+            )
+            for ref in references
+        ]
+
+    source = SimpleNamespace(
+        _resolve_bin_resources=lambda *_args: batch,
+        _resolve_bank_bindings=resolve_banks,
+        _resource_index_diagnostics=lambda: ({}, []),
+        _create_base_data=lambda _id, _type, **extra: {"metadata": {"gameVersion": "16.17"}, **extra},
+    )
+    processor = champion_module.ChampionBinProcessor(
+        source,
+        ctx=SimpleNamespace(config=SimpleNamespace(dev_mode=False)),
+        version="16.17",
+        force_update=False,
+        process_events=True,
+        game_path=tmp_path,
+        champion_banks_dir=tmp_path / "banks",
+        champion_events_dir=tmp_path / "events",
+    )
+    monkeypatch.setattr(champion_module, "BIN", make_bin)
+    champion = {
+        "alias": "Test",
+        "skins": [{"id": skin, "isBase": skin == "0", "binPath": path} for skin, path in paths.items()],
+    }
+    for force in (False, True):
+        processor.force_update = force
+        if force:
+            write_data({"skinAudio": {"1": {"VO": "independent"}}}, tmp_path / "banks" / "1", dev_mode=False)
+        result = processor._process_champion_skins(champion, "1")
+        payload = read_data(tmp_path / "banks" / "1")
+        assert result.status.value == ("partial" if failures else "success")
+        expected = {
+            "0": {"VO": "independent", "SFX": "independent"},
+            "1": {"VO": "shared", "SFX": "shared"},
+            "2": {"VO": "shared", "SFX": "independent"},
+            "3": {"VO": "absent", "SFX": "absent"},
+            "4": {"VO": "unknown", "SFX": "unknown"},
+            "5": {"VO": "unknown", "SFX": "unknown"},
+        }
+        assert payload["skinAudio"] == {skin: audio for skin, audio in expected.items() if skin in paths}
+        if failures:
+            assert not (tmp_path / "events" / "1.msgpack").exists()
+        else:
+            assert read_data(tmp_path / "events" / "1")["skins"] == {}
 
 
 def _bin_binding(path: str, status: BindingStatus) -> BinBinding:

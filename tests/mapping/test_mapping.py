@@ -1,6 +1,7 @@
 """测试事件映射构建阶段的日志汇总行为。"""
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
 from threading import Event, Lock
@@ -589,10 +590,11 @@ def test_local_mapping_uses_binding_wad_namespace_and_path_level_audio_refs(
     assert {item[0] for item in extracted} == {"alpha.wad.client", "beta.wad.client"}
 
 
-def test_local_mapping_without_events_writes_partial_diagnostics(tmp_path: Path, monkeypatch) -> None:
-    """local 有效 bank 但无 events 时应可返回诊断，不伪造映射。"""
+@pytest.mark.parametrize("source", ["missing", "shared", "different_wad", "different_entry", "unresolved"])
+def test_local_mapping_without_events_writes_partial_diagnostics(tmp_path: Path, monkeypatch, source: str) -> None:
+    """仅同一物理 Base bank 可继承事件；缺失、冲突与不同资源仍不完整。"""
     binding = BankBinding(
-        category="CHARACTER_VO",
+        category="Test_Base_VO",
         path="assets/voice_events.bnk",
         normalized_path="",
         kind="BNK",
@@ -615,6 +617,24 @@ def test_local_mapping_without_events_writes_partial_diagnostics(tmp_path: Path,
         resource_banks=(AudioBank(sub_id="1001", audio_type="VO", binding=binding),),
         binding_diagnostics=BindingDiagnostics(completeness=Completeness.COMPLETE),
     )
+    if source != "missing":
+        base = replace(binding, sub_entity="1000")
+        if source == "different_wad":
+            binding = replace(binding, wad="Game/other.wad.client")
+        elif source == "different_entry":
+            binding = replace(binding, entry_hash="0000000000000002")
+        elif source == "unresolved":
+            binding = replace(binding, status=BindingStatus.MISSING)
+        entity_data.resource_banks = (
+            AudioBank(sub_id="1000", audio_type="VO", binding=base),
+            AudioBank(sub_id="1001", audio_type="VO", binding=binding),
+        )
+        entity_data.events = {"1000": {"events": {"Test_Base_VO": ["evt"]}}}
+        monkeypatch.setattr(
+            mapping_entity,
+            "_build_bound_category_mapping",
+            lambda *_args, **_kwargs: (_FakeAudioMapping({"evt": [101]}), None),
+        )
     written: list[dict] = []
     monkeypatch.setattr(mapping_entity, "write_data", lambda data, *_args, **_kwargs: written.append(data))
 
@@ -622,10 +642,32 @@ def test_local_mapping_without_events_writes_partial_diagnostics(tmp_path: Path,
         entity_data, _FakeReader(), ctx=_build_fake_ctx(cache_path=tmp_path / "cache", hash_path=tmp_path / "hashes")
     )
 
-    assert result["skins"] == {}
-    assert result["mappingDiagnostics"]["completeness"] == "partial"
-    assert result["mappingDiagnostics"]["missingEventCategories"] == [{"subEntity": "1001", "category": "CHARACTER_VO"}]
+    if source == "shared":
+        assert result["skins"]["1001"]["events"] == {"Test_Base_VO": {"evt": [101]}}
+        assert result["mappingDiagnostics"]["completeness"] == "complete"
+        assert result["mappingDiagnostics"]["missingEventCategories"] == []
+    else:
+        assert "1001" not in result["skins"]
+        assert result["mappingDiagnostics"]["completeness"] == "partial"
+        if source != "unresolved":
+            assert result["mappingDiagnostics"]["missingEventCategories"] == [
+                {"subEntity": "1001", "category": "Test_Base_VO"}
+            ]
     assert written == [result]
+
+    if source == "shared":
+        reader = SimpleNamespace(
+            get_champion=lambda _id: {
+                "id": 1,
+                "skins": [{"id": 1000, "chromas": [{"id": 1001, "chromaNames": {"zh_CN": "炫彩"}}]}],
+            },
+            get_champion_banks=lambda _id: {"skins": {}, "skinAudio": {"1001": {"VO": "shared", "SFX": "absent"}}},
+        )
+        integrated = mapping_entity.integrate_entity(entity_data, reader, result)
+        assert [skin["id"] for skin in integrated["data"]["skins"]] == [1000, 1001]
+        assert integrated["data"]["skins"][1]["skinNames"] == {"zh_CN": "炫彩"}
+        assert integrated["data"]["skins"][1]["events"]["Test_Base_VO"]["mapping"] == {"evt": [101]}
+        assert integrated["data"]["skinAudio"]["1001"]["VO"] == "shared"
 
 
 def test_local_mapping_reports_events_only_category_as_missing_bank(tmp_path: Path, monkeypatch) -> None:

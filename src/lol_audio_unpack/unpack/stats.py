@@ -316,6 +316,11 @@ class EntityUnpackStats:
         successful = [detail for detail in processable if detail["outcome"] == "success"]
         has_failure = any(detail["outcome"] in {"failed", "unresolved"} for detail in self.binding_details)
 
+        # 全部是合法无内嵌音频的 BNK 时允许成功 no-op；这些空结果不能把真实失败抬成部分成功。
+        if processable and all(detail["outcome"] == "no_audio" for detail in processable):
+            if source_completeness == "complete" and not has_failure:
+                self.binding_completeness = "complete"
+                return
         if not processable or not successful:
             self.binding_completeness = "failed"
             return
@@ -359,6 +364,20 @@ class EntityUnpackStats:
         """
 
         duration_str = format_duration(self.get_processing_duration())
+        binding_errors = {
+            (detail["wad"], detail["entryHash"], detail["path"]): detail
+            for detail in self.binding_details
+            if detail["outcome"] in {"failed", "unresolved"}
+        }
+        issue_text = ""
+        if binding_errors:
+            first = next(iter(binding_errors.values()))
+            issue_text = (
+                f"；{len(binding_errors)} 个资源容器未完成，"
+                f"首项 {Path(first['path']).name}：{first.get('error') or first['outcome']}"
+            )
+        elif self.binding_completeness == "partial":
+            issue_text = "；基础资源清单不完整，请重新生成实体数据"
 
         if self.overall_result == StageResult.SUCCESS:
             return f"✅ {self.entity_name} 解包完成 - 成功 {self.total_success_files} 个文件 ({duration_str})"
@@ -371,11 +390,12 @@ class EntityUnpackStats:
             if self.skipped_sub_entities > 0:
                 details.append(f"跳过子实体 {self.skipped_sub_entities}")
             detail_str = f" ({', '.join(details)})" if details else ""
-            return (
-                f"⚠️ {self.entity_name} 解包完成 - 成功 {self.total_success_files} 个文件{detail_str} ({duration_str})"
-            )
+            return f"⚠️ {self.entity_name} 解包完成 - 成功 {self.total_success_files} 个文件{detail_str}{issue_text} ({duration_str})"
         else:
-            return f"❌ {self.entity_name} 解包失败 - 成功 {self.total_success_files}, 失败 {self.total_failed_files} ({duration_str})"
+            return (
+                f"❌ {self.entity_name} 解包失败 - 成功 {self.total_success_files}, "
+                f"失败 {self.total_failed_files}{issue_text} ({duration_str})"
+            )
 
     def generate_concise_report_data(self) -> dict[str, Any]:
         """生成简洁的YAML报告数据

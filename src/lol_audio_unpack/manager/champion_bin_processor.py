@@ -193,12 +193,14 @@ class ChampionBinProcessor:
             return UpdateEntityResult.success("champion", champion_id, entity_name=alias_raw)
 
         skin_id_by_path: dict[str, str] = {}
+        skin_ids: set[str] = set()
         skins_data = champion_data.get("skins", [])
         sorted_skins_data = sorted(skins_data, key=lambda s: int(s["id"]))
 
         base_skin_id = None
         for skin in sorted_skins_data:
             skin_id_str = str(skin["id"])
+            skin_ids.add(skin_id_str)
             if skin.get("isBase"):
                 base_skin_id = skin_id_str
 
@@ -206,6 +208,7 @@ class ChampionBinProcessor:
                 skin_id_by_path[bin_path] = skin_id_str
             for chroma in skin.get("chromas", []):
                 chroma_id_str = str(chroma["id"])
+                skin_ids.add(chroma_id_str)
                 if bin_path := chroma.get("binPath"):
                     skin_id_by_path[bin_path] = chroma_id_str
 
@@ -225,6 +228,7 @@ class ChampionBinProcessor:
         champion_skin_events = {}
         references: list[BankReference] = []
         parse_failed = False
+        parsed_skins: set[str] = set()
 
         for skin_id in sorted_skin_ids:
             path = path_by_skin_id[skin_id]
@@ -236,6 +240,7 @@ class ChampionBinProcessor:
                 references.extend(self._collect_bank_references(bin_file, path, skin_id))
                 if events_need_update and (skin_events := self._extract_skin_events(bin_file, base_skin_id, skin_id)):
                     champion_skin_events[skin_id] = skin_events
+                parsed_skins.add(skin_id)
 
             except Exception:
                 batch.mark_parse_failed(path, "BIN 内容解析失败")
@@ -267,6 +272,16 @@ class ChampionBinProcessor:
             diagnostics=diagnostics,
         )
         champion_banks_data.update(resource.to_payload())
+        champion_banks_data["skinAudio"] = self._build_skin_audio(
+            sorted(skin_ids, key=int), parsed_skins, bank_bindings, base_skin_id
+        )
+        shared_count = sum(
+            all(status in {"shared", "absent"} for status in audio.values())
+            for audio in champion_banks_data["skinAudio"].values()
+        )
+        logger.info(
+            f"英雄 {champion_id} ({alias}) 音频检查完成：{shared_count} 个皮肤无独立 VO/SFX，已记录共享或无声明状态"
+        )
         self._log_binding_summary(f"英雄 {champion_id} ({alias})", diagnostics.completeness, diagnostics.to_dict())
         completeness = diagnostics.completeness
         self._optimize_champion_mappings(champion_banks_data)
@@ -277,7 +292,7 @@ class ChampionBinProcessor:
             artifacts.append(write_data(champion_banks_data, banks_file_base, dev_mode=self._is_dev_mode()))
 
         # 写入events数据
-        if champion_skin_events and events_need_update:
+        if events_need_update and (champion_skin_events or not diagnostics.unresolved_bins):
             final_event_data = self.bin_source._create_base_data(
                 champion_id, "champion", alias=alias, skins=champion_skin_events
             )
@@ -306,6 +321,42 @@ class ChampionBinProcessor:
             entity_name=alias_raw,
             artifacts=tuple(artifacts),
         )
+
+    @staticmethod
+    def _build_skin_audio(
+        skin_ids: list[str], parsed_skins: set[str], bindings: list[BankBinding], base_skin_id: str | None
+    ) -> dict[str, dict[str, str]]:
+        """记录每个皮肤 VO/SFX 的独立、共享、无声明或未知状态。
+
+        只有成功解析的 BIN 才能证明无声明；资源解析失败保持 unknown。
+        共享判定比较物理资源集合，优先以原皮肤作为来源，不依赖皮肤名称。
+        """
+        by_skin: dict[tuple[str, str], list[BankBinding]] = {}
+        for binding in bindings:
+            category = binding.category.upper()
+            if category.startswith("MUS_") or "MUSIC" in category:
+                continue
+            audio_type = "VO" if "_VO" in category or category.endswith("/VO") or "ANNOUNCER" in category else "SFX"
+            by_skin.setdefault((binding.sub_entity or "", audio_type), []).append(binding)
+
+        owners: dict[str, list[set[tuple[str | None, str]]]] = {"VO": [], "SFX": []}
+        result: dict[str, dict[str, str]] = {}
+        for skin_id in sorted(skin_ids, key=lambda value: (value != base_skin_id, int(value))):
+            audio = {}
+            for audio_type in ("VO", "SFX"):
+                banks = by_skin.get((skin_id, audio_type), [])
+                if skin_id not in parsed_skins or any(bank.status not in SUCCESS_STATUSES for bank in banks):
+                    audio[audio_type] = "unknown"
+                    continue
+                if not banks:
+                    audio[audio_type] = "absent"
+                    continue
+                resources = {(bank.wad, bank.entry_hash) for bank in banks}
+                shared = any(resources <= owner for owner in owners[audio_type])
+                audio[audio_type] = "shared" if shared else "independent"
+                owners[audio_type].append(resources)
+            result[skin_id] = audio
+        return result
 
     def _read_bin_batch(
         self,

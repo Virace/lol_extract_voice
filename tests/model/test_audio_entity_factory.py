@@ -163,8 +163,9 @@ def test_resource_pack_factory_preserves_string_sub_entity_and_v2_bindings() -> 
     assert entity.events == {key: {"events": {"MODE_TFT_NPC_ElderDragon_SFX": ["evt"]}}}
 
 
-def test_local_factory_uses_typed_v2_bindings_without_loading_events() -> None:
-    """local 消费投影应保留 P1 binding，且 extract 构造不读取 events。"""
+@pytest.mark.parametrize("chroma", [False, True])
+def test_local_factory_uses_typed_v2_bindings_without_loading_events(chroma: bool) -> None:
+    """普通皮肤与炫彩都保留真实 binding 和名称，extract 不读取 events。"""
     binding = BankBinding(
         category="CHARACTER_VO",
         path="assets/voice_audio.bnk",
@@ -190,7 +191,14 @@ def test_local_factory_uses_typed_v2_bindings_without_loading_events() -> None:
             "alias": "Jade_Fiddlesticks",
             "names": {"zh_CN": "玉剑费德提克"},
             "titles": {"zh_CN": "恐惧使者"},
-            "skins": [{"id": 6000901, "isBase": False, "skinNames": {"zh_CN": "玉剑"}}],
+            "skins": [
+                {
+                    "id": 6000900 if chroma else 6000901,
+                    "isBase": False,
+                    "skinNames": {"zh_CN": "玉剑"},
+                    "chromas": [{"id": 6000901, "chromaNames": {"zh_CN": "玉剑炫彩"}}] if chroma else [],
+                }
+            ],
             "wad": {"root": "Game/DATA/FINAL/Champions/FiddleSticks.wad.client"},
         },
         get_champion_resource_bindings=lambda _id: resources,
@@ -208,5 +216,6 @@ def test_local_factory_uses_typed_v2_bindings_without_loading_events() -> None:
     assert entity.resource_banks[0].binding is binding
     assert entity.resource_banks[0].sub_id == "6000901"
     assert entity.resource_banks[0].audio_type == "VO"
+    assert entity.get_sub_entity_info("6000901")["name"] == ("玉剑炫彩" if chroma else "玉剑")
     assert entity.binding_diagnostics is resources.diagnostics
     assert entity.events is None

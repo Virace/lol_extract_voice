@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -78,11 +79,13 @@ def _build_entity(key: str) -> AudioEntityData:
     )
 
 
+@pytest.mark.parametrize("container", ["audio", "metadata", "corrupt", "empty", "empty_wpk"])
 def test_bound_resource_pack_extracts_to_isolated_safe_output_and_report(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    container: str,
 ) -> None:
-    """resource-pack binding 解包应保留 key 于报告、但所有路径使用 safe component。"""
+    """合法无音频 BNK 可正常跳过，空字节、损坏与空 WPK 仍失败并保留原因。"""
     key = build_resource_pack_key("TFTCommon.wad.client", "MODE_TFT_NPC_ElderDragon_SFX")
     entity = _build_entity(key)
     game_path = tmp_path / "game"
@@ -102,6 +105,21 @@ def test_bound_resource_pack_extracts_to_isolated_safe_output_and_report(
     reader = SimpleNamespace(version="16.16")
     monkeypatch.setattr(unpack_entity, "_get_wad_instance", lambda *_args, **_kwargs: _FakeWad())
     monkeypatch.setattr(unpack_entity, "BNK", _FakeBnk)
+    if container == "metadata":
+        monkeypatch.setattr(_FakeBnk, "extract_files", staticmethod(lambda: []))
+    elif container == "corrupt":
+
+        def fail_parse(_raw):
+            """模拟外部解析器拒绝损坏内容。"""
+            raise ValueError("损坏的 BNK")
+
+        monkeypatch.setattr(unpack_entity, "BNK", fail_parse)
+    elif container == "empty":
+        monkeypatch.setattr(_FakeWad, "extract", staticmethod(lambda *_args, **_kwargs: [b""]))
+    elif container == "empty_wpk":
+        bank = entity.resource_banks[0]
+        entity.resource_banks = (replace(bank, binding=replace(bank.binding, kind="WPK")),)
+        monkeypatch.setattr(unpack_entity, "WPK", lambda _raw: SimpleNamespace(extract_files=lambda: []))
 
     stats = unpack_entity.unpack_entity(entity, reader, ctx=ctx)
 
@@ -109,10 +127,20 @@ def test_bound_resource_pack_extracts_to_isolated_safe_output_and_report(
     entity_folder = format_entity_folder_name(component, entity.entity_alias, entity.entity_name)
     wem_path = ctx.audio_path / reader.version / "SFX" / "resource_packs" / entity_folder / "101.wem"
     report_path = ctx.report_path / reader.version / "resource_packs" / f"_{component}_metadata.yaml"
-    assert wem_path.read_bytes() == b"wem"
     assert report_path.is_file()
     assert ":" not in report_path.name
-    assert stats.overall_result.value == "success"
+    if container == "audio":
+        assert wem_path.read_bytes() == b"wem"
+        assert stats.overall_result.value == "success"
+    elif container == "metadata":
+        assert not wem_path.exists()
+        assert stats.overall_result.value == "success"
+        assert stats.binding_details[0]["outcome"] == "no_audio"
+    else:
+        assert not wem_path.exists()
+        assert stats.overall_result.value == "error"
+        assert "elder_dragon_audio.bnk" in stats.get_simple_summary()
+        assert stats.binding_details[0]["error"] in stats.get_simple_summary()
 
 
 def test_resource_pack_batch_dispatches_string_task(monkeypatch: pytest.MonkeyPatch) -> None:

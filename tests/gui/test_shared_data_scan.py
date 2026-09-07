@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from loguru import logger
 
 import lol_audio_unpack.gui.service.data_loader as data_loader_module
 import lol_audio_unpack.gui.service.worker as worker_module
@@ -16,6 +17,7 @@ from lol_audio_unpack.gui.shared_data import (
     SharedDataReadiness,
     SharedDataScanResult,
 )
+from lol_audio_unpack.manager.data_reader import DataReader
 from lol_audio_unpack.manager.errors import (
     ResourceSchemaMismatchError,
     SharedDataCorruptError,
@@ -28,6 +30,24 @@ pytestmark = pytest.mark.unit
 EXPECTED_REQUIRED_COUNT = 2
 FAILING_CHAMPION_ID = 2
 WORKER_GENERATION = 10
+
+
+def test_optional_special_without_artifact_stays_unprepared_without_warning(tmp_path: Path) -> None:
+    """真实读取器路径未准备时，扫描保留特殊行且不触发缺文件警告。"""
+    loader = EntityDataLoader.__new__(EntityDataLoader)
+    loader.ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False), game_region="zh_CN")
+    loader.data_reader = DataReader.__new__(DataReader)
+    loader.data_reader.champion_banks_dir = tmp_path / "banks"
+    loader.data_reader._champion_banks_cache = {}
+    messages = []
+    sink = logger.add(lambda message: messages.append(str(message)), level="WARNING")
+    try:
+        row = loader._build_special_row(_champion(60001, "Jade_Annie"), "16.17", display_name="安妮")
+    finally:
+        logger.remove(sink)
+    assert row is not None
+    assert row["audio"] == "未准备"
+    assert messages == []
 
 
 def _champion(entity_id: int, alias: str) -> dict:

@@ -853,6 +853,7 @@ class EntityDataLoader:
         mapping_status = "未准备"
         mapping_file = ""
         try:
+            self._preload_bank_artifact("champions", str(item.champion_id))
             entity_data = self._build_entity_data("champions", str(item.champion_id))
             audio_status, mapping_status = check_entity_status(self.ctx, entity_data, version)
             mapping_path = resolve_mapping_file_path(self.ctx, "champions", str(item.champion_id), version)

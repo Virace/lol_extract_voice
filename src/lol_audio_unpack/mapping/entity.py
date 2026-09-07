@@ -230,6 +230,17 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
             event_banks.setdefault(key, []).append(bank)
 
     events = entity_data.events or {}
+    # 非基础皮肤的 Base 分类未重复保存事件；只允许相同物理 bank 复用已知事件，
+    # 避免把真正缺失的独立皮肤事件当作正常共享。
+    shared_events: dict[tuple[str, frozenset[tuple[str | None, str]]], list[str]] = {}
+    if entity_data.entity_type == "champion":
+        for key, banks in banks_by_category.items():
+            sub_id, category = key
+            event_list = events.get(sub_id, {}).get("events", {}).get(category, [])
+            if "_Base_" in category and event_list and key not in unresolved_keys:
+                physical = frozenset((bank.binding.wad, bank.binding.entry_hash) for bank in banks)
+                shared_events[(category, physical)] = event_list
+    shared_categories: list[dict[str, str]] = []
     mapped_event_count = 0
     errored_event_count = 0
     skipped_event_count = 0
@@ -251,6 +262,11 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
                 unresolved.append(_category_item(sub_id, category, status="missing"))
                 unresolved_keys.add(key)
             continue
+        if not event_list and key not in unresolved_keys:
+            physical = frozenset((bank.binding.wad, bank.binding.entry_hash) for bank in category_banks)
+            event_list = shared_events.get((category, physical), [])
+            if event_list:
+                shared_categories.append(_category_item(sub_id, category))
         if not event_list:
             missing_events.append(_category_item(sub_id, category))
             continue
@@ -317,6 +333,8 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
         logger.warning(f"{entity_data.entity_name} 缺少 events 数据，仅写入 mapping 诊断")
 
     total_wem_count = len(refs)
+    if shared_categories:
+        logger.info(f"{entity_data.entity_name} 的 {len(shared_categories)} 个音频分类复用原皮肤事件，按正常共享处理")
     unmapped_wem_count = total_wem_count - len(mapped_paths)
     source_failed = (
         entity_data.binding_diagnostics is not None and entity_data.binding_diagnostics.completeness.value == "failed"
@@ -336,6 +354,7 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
         "missingEventCategories": missing_events,
         "unresolvedBankCategories": unresolved,
         "errorCategories": errors,
+        "sharedEventCategories": shared_categories,
     }
     errored_event_count += sum(
         len(events.get(item["subEntity"], {}).get("events", {}).get(item["category"], [])) for item in errors
@@ -805,9 +824,15 @@ def integrate_entity(
                 "descriptions": entity_info.get("descriptions", {}),
                 "wad": wad_info,
                 "skins": [],
+                "skinAudio": banks_data.get("skinAudio", {}),
             }
         )
-        sub_entities = entity_info.get("skins", [])
+        sub_entities = []
+        for skin in entity_info.get("skins", []):
+            sub_entities.append(skin)
+            sub_entities.extend(
+                {**chroma, "skinNames": chroma.get("chromaNames", {})} for chroma in skin.get("chromas", [])
+            )
     elif entity_data.entity_type == "map":
         integrated_data["data"].update(
             {
@@ -838,6 +863,12 @@ def integrate_entity(
 
     mapping_data = mapping_result.get(data_key, {})
     processed_items = []
+    bound_groups: dict[tuple[str, str, str, int | None], list[str]] = {}
+    for bank in entity_data.resource_banks:
+        binding = bank.binding
+        if binding.status in SUCCESS_STATUSES:
+            key = (bank.sub_id, binding.category, binding.source_bin, binding.group)
+            bound_groups.setdefault(key, []).append(binding.path)
 
     for sub_entity in sub_entities:
         sub_id = str(sub_entity["id"])
@@ -867,6 +898,13 @@ def integrate_entity(
             sub_banks = banks_data.get("banks", {})
         else:
             raise ValueError(f"未知的实体类型: {entity_data.entity_type}")
+        if entity_data.binding_diagnostics is not None:
+            # 旧投影为共享皮肤省略了 banks；整合结果也必须消费精确 binding，
+            # 否则已成功继承事件的皮肤会在保存时再次丢失。
+            sub_banks = {}
+            for (owner, category, _source, _group), paths in bound_groups.items():
+                if owner == sub_id:
+                    sub_banks.setdefault(category, []).append(paths)
         sub_mapping = mapping_data.get(sub_id, {}).get("events", {})
         sub_audio_paths = mapping_data.get(sub_id, {}).get("audioPaths", {})
 
