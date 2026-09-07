@@ -13,6 +13,9 @@
 
 <p align="center">一个极简、高效的英雄联盟音频提取工具。</p>
 
+以 GUI 为主要入口，帮助内容创作者选择对象、处理音频、查找结果并试听、导出；
+CLI 和 Python API 继续提供批处理与自动化能力。
+
 ---
 
 - [介绍](#介绍)
@@ -61,7 +64,7 @@
 方式二：从源码启动 GUI。
 
 ```bash
-git clone https://github.com/Virace/lol_audio_unpack.git
+git clone https://github.com/Virace/lol_extract_voice.git lol_audio_unpack
 cd lol_audio_unpack
 uv sync --extra gui
 uv run unpack-gui
@@ -83,9 +86,13 @@ schema 的结构化数据会在后台自动执行一次普通更新并复检，�
 用户选定且位于 `Game/DATA/FINAL` 的 `.wad.client`，不会在默认 update 中全盘搜索。
 已解包但尚无 mapping 的实体仍可在“全部音频”中按 WEM 精确相对路径试听。
 大型地图的全部音频在首次进入该预览时后台加载；事件预览不会提前扫描数万条 WEM，
-摘要卡会显示已处理数、总数和进度条。切换到其他页面不会中断操作或构建隐藏列表；
+列表上方的上下文行会显示已处理数、总数和进度条。切换到其他页面不会中断操作或构建隐藏列表；
 后台索引完成后保留缓存，返回同一实体时直接复用事件树与全部音频模型，标签切换不会
 重新扫描或把数万条记录再次装入模型。
+
+在当前实体内点击“选择导出”，可按目录、事件节点或单条音频选择已有 WEM，支持排除项与撤销，
+确认后批量导出 WAV；选择不会跨实体累积，也不会自动解包缺失文件。任务完成后可查看结果详情，
+关闭通知后仍能从执行中心的“查看本次结果”恢复，并按明确的失败范围手动重试。
 
 可直接参考仓库内示例文件：
 
@@ -96,7 +103,7 @@ schema 的结构化数据会在后台自动执行一次普通更新并复检，�
 安装：
 
 ```bash
-git clone https://github.com/Virace/lol_audio_unpack.git
+git clone https://github.com/Virace/lol_extract_voice.git lol_audio_unpack
 cd lol_audio_unpack
 uv sync
 ```
