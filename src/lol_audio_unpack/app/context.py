@@ -7,10 +7,8 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
-from riotmanifest import LeagueManifestError, LeagueManifestResolver
 
 from lol_audio_unpack.config import (
-    DEFAULT_REMOTE_LIVE_REGION,
     DEFAULT_SHARED_SETTINGS,
     SUPPORTED_SETTING_KEYS,
     SettingKey,
@@ -20,16 +18,14 @@ from lol_audio_unpack.utils.runtime_paths import (
     get_default_output_root,
     resolve_runtime_path,
 )
-from lol_audio_unpack.utils.versioning import normalize_patch_version
 
+from .local_source import validate_local_source
 from .types import (
     AppConfig,
     AppContext,
     AppContextValidationError,
     AppPaths,
     OperationOptions,
-    RemoteSnapshotConfig,
-    SourceMode,
     WavOutputOptions,
 )
 
@@ -63,59 +59,6 @@ def _parse_exclude_types(value: Any) -> tuple[str, ...]:
     return _normalize_types([value])
 
 
-def _parse_source_mode(value: Any) -> SourceMode:
-    """解析内容来源模式。"""
-    if isinstance(value, SourceMode):
-        return value
-
-    raw_value = str(value or SourceMode.LOCAL_PATH.value).strip().lower()
-    try:
-        return SourceMode(raw_value)
-    except ValueError as exc:
-        valid_modes = ", ".join(mode.value for mode in SourceMode)
-        raise AppContextValidationError(f"{SettingKey.SOURCE_MODE} 无效: {raw_value}，可选值: {valid_modes}") from exc
-
-
-def _normalize_live_region(value: Any) -> str:
-    """标准化远端 live 区服。"""
-    text = str(value or DEFAULT_REMOTE_LIVE_REGION).strip()
-    if not text:
-        return DEFAULT_REMOTE_LIVE_REGION
-    return text.upper()
-
-
-def _resolve_latest_snapshot(*, live_region: str) -> RemoteSnapshotConfig:
-    """自动解析最新 live 快照配置。"""
-    try:
-        pair = LeagueManifestResolver().resolve_manifest_pair(live_region)
-    except LeagueManifestError as exc:
-        raise AppContextValidationError(
-            f"REMOTE_SNAPSHOT 模式自动解析最新 live 快照失败: live_region={live_region}, error={exc}"
-        ) from exc
-
-    version = normalize_patch_version(str(pair.version))
-    logger.info(
-        "REMOTE_SNAPSHOT 未显式提供快照，已自动解析最新 live 清单：live_region={}, version={}",
-        live_region,
-        version,
-    )
-    return RemoteSnapshotConfig(
-        version=version,
-        lcu_manifest_url=pair.lcu.url,
-        game_manifest_url=pair.game.url,
-    )
-
-
-def _to_path(value: Any, key_name: str) -> Path:
-    """将输入值转换为 ``Path``。"""
-    if value is None:
-        raise AppContextValidationError(f"缺少必要的配置项: {key_name}")
-    text = str(value).strip()
-    if not text:
-        raise AppContextValidationError(f"缺少必要的配置项: {key_name}")
-    return Path(text)
-
-
 def _to_runtime_path(value: Any, key_name: str, *, runtime_root: Path) -> Path:
     """按统一 runtime 语义将输入转换为绝对 ``Path``。"""
     if value is None:
@@ -124,70 +67,6 @@ def _to_runtime_path(value: Any, key_name: str, *, runtime_root: Path) -> Path:
     if not text:
         raise AppContextValidationError(f"缺少必要的配置项: {key_name}")
     return resolve_runtime_path(text, relative_to=runtime_root)
-
-
-def _to_optional_text(value: Any) -> str | None:
-    """将输入标准化为可选非空字符串。"""
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _resolve_game_path(
-    *,
-    settings: Mapping[str, Any],
-    output_path: Path,
-    source_mode: SourceMode,
-    runtime_root: Path,
-) -> Path:
-    """根据来源模式解析游戏根目录。"""
-    if source_mode is SourceMode.REMOTE_SNAPSHOT:
-        explicit_path = _to_optional_text(settings.get(SettingKey.GAME_PATH))
-        if explicit_path is not None:
-            return resolve_runtime_path(explicit_path, relative_to=runtime_root)
-        return output_path / "_prepared_game"
-    return _to_runtime_path(settings.get(SettingKey.GAME_PATH), SettingKey.GAME_PATH, runtime_root=runtime_root)
-
-
-def _build_snapshot(
-    *,
-    settings: Mapping[str, Any],
-    source_mode: SourceMode,
-) -> RemoteSnapshotConfig | None:
-    """根据原始设置构建远端快照配置。"""
-    if source_mode is not SourceMode.REMOTE_SNAPSHOT:
-        return None
-
-    version = _to_optional_text(settings.get(SettingKey.REMOTE_VERSION))
-    lcu_manifest_url = _to_optional_text(settings.get(SettingKey.REMOTE_LCU_MANIFEST_URL))
-    game_manifest_url = _to_optional_text(settings.get(SettingKey.REMOTE_GAME_MANIFEST_URL))
-    snapshot_fields = {
-        SettingKey.REMOTE_VERSION: version,
-        SettingKey.REMOTE_LCU_MANIFEST_URL: lcu_manifest_url,
-        SettingKey.REMOTE_GAME_MANIFEST_URL: game_manifest_url,
-    }
-    provided_fields = {key: value for key, value in snapshot_fields.items() if value is not None}
-
-    if provided_fields and len(provided_fields) != len(snapshot_fields):
-        missing_fields = [key for key, value in snapshot_fields.items() if value is None]
-        missing_text = ", ".join(missing_fields)
-        raise AppContextValidationError(
-            "REMOTE_SNAPSHOT 模式下若显式指定远端快照，"
-            f"{SettingKey.REMOTE_VERSION}、{SettingKey.REMOTE_LCU_MANIFEST_URL}、"
-            f"{SettingKey.REMOTE_GAME_MANIFEST_URL} 必须同时提供；"
-            f"当前缺少: {missing_text}"
-        )
-
-    if provided_fields:
-        return RemoteSnapshotConfig(
-            version=normalize_patch_version(version),
-            lcu_manifest_url=lcu_manifest_url,
-            game_manifest_url=game_manifest_url,
-        )
-
-    live_region = _normalize_live_region(settings.get(SettingKey.REMOTE_LIVE_REGION))
-    return _resolve_latest_snapshot(live_region=live_region)
 
 
 def _build_settings(
@@ -225,14 +104,11 @@ def _build_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConfig:
         SettingKey.OUTPUT_PATH,
         runtime_root=runtime_root,
     )
-    source_mode = _parse_source_mode(settings.get(SettingKey.SOURCE_MODE))
-    game_path = _resolve_game_path(
-        settings=settings,
-        output_path=output_path,
-        source_mode=source_mode,
+    game_path = _to_runtime_path(
+        settings.get(SettingKey.GAME_PATH),
+        SettingKey.GAME_PATH,
         runtime_root=runtime_root,
     )
-    remote_snapshot = _build_snapshot(settings=settings, source_mode=source_mode)
 
     game_region = str(settings.get(SettingKey.GAME_REGION, "zh_CN") or "zh_CN")
     if game_region.lower() == "en_us":
@@ -249,15 +125,10 @@ def _build_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConfig:
         game_region=game_region,
         exclude_types=exclude_types,
         include_types=include_types,
-        cleanup_remote=_parse_bool(settings.get(SettingKey.CLEANUP_REMOTE, True)),
-        source_mode=source_mode,
-        remote_snapshot=remote_snapshot,
         group_by_type=_parse_bool(settings.get(SettingKey.GROUP_BY_TYPE, False)),
         with_bp_vo=_parse_bool(settings.get(SettingKey.WITH_BP_VO, False)),
         wwiser_path=(
-            resolve_runtime_path(str(wwiser_path_raw).strip(), relative_to=runtime_root)
-            if wwiser_path_raw
-            else None
+            resolve_runtime_path(str(wwiser_path_raw).strip(), relative_to=runtime_root) if wwiser_path_raw else None
         ),
         dev_mode=dev_mode,
     )
@@ -319,6 +190,7 @@ def create_app_context(
 
     raw_settings = _build_settings(settings=settings)
     app_config = _build_config(settings=raw_settings, dev_mode=dev_mode)
+    validate_local_source(app_config.game_path)
     app_paths = _build_paths(app_config)
     return AppContext(config=app_config, paths=app_paths, runtime_cache=runtime_cache or {})
 
@@ -329,8 +201,6 @@ __all__ = [
     "AppContextValidationError",
     "AppPaths",
     "OperationOptions",
-    "RemoteSnapshotConfig",
-    "SourceMode",
     "WavOutputOptions",
     "create_app_context",
 ]

@@ -26,14 +26,15 @@ def calculate_feedback_duration(*, title: str, content: str, level: str) -> int:
     return min(base_duration + extra_duration, 15000)
 
 
-def show_feedback_infobar(
+def show_feedback_infobar(  # noqa: PLR0913
     *,
     parent,
     title: str,
     content: str,
     level: str,
     position=InfoBarPosition.TOP,
-) -> None:
+    duration: int | None = None,
+) -> InfoBar:
     """按统一策略显示全局 InfoBar。"""
     normalized_level = level.lower()
     factory = {
@@ -43,11 +44,13 @@ def show_feedback_infobar(
         "error": InfoBar.error,
     }.get(normalized_level, InfoBar.info)
 
-    factory(
+    return factory(
         title=title,
         content=content,
         isClosable=True,
         position=position,
-        duration=calculate_feedback_duration(title=title, content=content, level=normalized_level),
+        duration=duration
+        if duration is not None
+        else calculate_feedback_duration(title=title, content=content, level=normalized_level),
         parent=parent,
     )

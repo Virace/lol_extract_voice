@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -198,6 +199,7 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
     runtime_cache: mapping_session.RuntimeCache | None,
     *,
     ctx: AppContext,
+    persisted_mapping_callback: Callable[[Path], None] | None = None,
 ) -> dict[str, Any]:
     """按 local v2 events bindings 构建 mapping 与覆盖诊断。"""
     version_cache_dir, version_hash_dir = _ensure_version_dirs(reader, ctx=ctx)
@@ -228,6 +230,17 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
             event_banks.setdefault(key, []).append(bank)
 
     events = entity_data.events or {}
+    # 非基础皮肤的 Base 分类未重复保存事件；只允许相同物理 bank 复用已知事件，
+    # 避免把真正缺失的独立皮肤事件当作正常共享。
+    shared_events: dict[tuple[str, frozenset[tuple[str | None, str]]], list[str]] = {}
+    if entity_data.entity_type == "champion":
+        for key, banks in banks_by_category.items():
+            sub_id, category = key
+            event_list = events.get(sub_id, {}).get("events", {}).get(category, [])
+            if "_Base_" in category and event_list and key not in unresolved_keys:
+                physical = frozenset((bank.binding.wad, bank.binding.entry_hash) for bank in banks)
+                shared_events[(category, physical)] = event_list
+    shared_categories: list[dict[str, str]] = []
     mapped_event_count = 0
     errored_event_count = 0
     skipped_event_count = 0
@@ -249,6 +262,11 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
                 unresolved.append(_category_item(sub_id, category, status="missing"))
                 unresolved_keys.add(key)
             continue
+        if not event_list and key not in unresolved_keys:
+            physical = frozenset((bank.binding.wad, bank.binding.entry_hash) for bank in category_banks)
+            event_list = shared_events.get((category, physical), [])
+            if event_list:
+                shared_categories.append(_category_item(sub_id, category))
         if not event_list:
             missing_events.append(_category_item(sub_id, category))
             continue
@@ -315,6 +333,8 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
         logger.warning(f"{entity_data.entity_name} 缺少 events 数据，仅写入 mapping 诊断")
 
     total_wem_count = len(refs)
+    if shared_categories:
+        logger.info(f"{entity_data.entity_name} 的 {len(shared_categories)} 个音频分类复用原皮肤事件，按正常共享处理")
     unmapped_wem_count = total_wem_count - len(mapped_paths)
     source_failed = (
         entity_data.binding_diagnostics is not None and entity_data.binding_diagnostics.completeness.value == "failed"
@@ -334,6 +354,7 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
         "missingEventCategories": missing_events,
         "unresolvedBankCategories": unresolved,
         "errorCategories": errors,
+        "sharedEventCategories": shared_categories,
     }
     errored_event_count += sum(
         len(events.get(item["subEntity"], {}).get("events", {}).get(item["category"], [])) for item in errors
@@ -341,7 +362,8 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
 
     if integrate_data:
         integrated_result = integrate_entity(entity_data, reader, mapping_result)
-        _write_integrated_result(entity_data, integrated_result, version_hash_dir, ctx=ctx)
+        persisted_path = _write_integrated_result(entity_data, integrated_result, version_hash_dir, ctx=ctx)
+        _notify_persisted_mapping(persisted_path, persisted_mapping_callback)
         _log_entity_summary(
             entity_data.entity_name,
             mapped_count=mapped_event_count,
@@ -351,7 +373,8 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
         )
         return integrated_result
 
-    _write_mapping_result(mapping_result, mapping_data_key, mapping_save_dir, entity_data, ctx=ctx)
+    persisted_path = _write_mapping_result(mapping_result, mapping_data_key, mapping_save_dir, entity_data, ctx=ctx)
+    _notify_persisted_mapping(persisted_path, persisted_mapping_callback)
     _log_entity_summary(
         entity_data.entity_name,
         mapped_count=mapped_event_count,
@@ -486,7 +509,7 @@ def _write_integrated_result(
     version_hash_dir: Path,
     *,
     ctx: AppContext,
-) -> None:
+) -> Path | None:
     """保存整合结果到文件。
 
     Args:
@@ -507,7 +530,7 @@ def _write_integrated_result(
     if not integrated_result or (
         not integrated_result.get("data", {}).get(data_key) and not integrated_result.get("mappingDiagnostics")
     ):
-        return
+        return None
 
     entity_group = _entity_group(entity_data.entity_type)
     integration_save_dir = version_hash_dir / "integrated" / entity_group
@@ -516,8 +539,9 @@ def _write_integrated_result(
         entity_data.entity_type,
         entity_data.entity_id,
     )
-    write_data(integrated_result, integration_file_base, dev_mode=ctx.config.dev_mode)
-    logger.debug(f"整合数据已保存: {integration_file_base}")
+    path = write_data(integrated_result, integration_file_base, dev_mode=ctx.config.dev_mode)
+    logger.debug(f"整合数据已保存: {path}")
+    return path
 
 
 def _write_mapping_result(
@@ -527,7 +551,7 @@ def _write_mapping_result(
     entity_data: AudioEntityData,
     *,
     ctx: AppContext,
-) -> None:
+) -> Path | None:
     """保存纯 mapping 结果到文件。
 
     Args:
@@ -547,11 +571,26 @@ def _write_mapping_result(
             entity_data.entity_type,
             entity_data.entity_id,
         )
-        write_data(mapping_result, mapping_file_base, dev_mode=ctx.config.dev_mode)
-        logger.debug(f"映射结果已保存: {mapping_file_base}")
-        return
+        path = write_data(mapping_result, mapping_file_base, dev_mode=ctx.config.dev_mode)
+        logger.debug(f"映射结果已保存: {path}")
+        return path
 
     logger.warning(f"{entity_data.entity_name} 没有找到任何有效映射数据")
+    return None
+
+
+def _notify_persisted_mapping(
+    path: Path | None,
+    callback: Callable[[Path], None] | None,
+) -> None:
+    """在映射产物成功落盘后通知调用方。
+
+    Args:
+        path: 实际写入的产物路径；无产物时为 ``None``。
+        callback: 可选的落盘回调。
+    """
+    if path is not None and callback is not None:
+        callback(path)
 
 
 def _log_entity_summary(
@@ -596,6 +635,7 @@ def build_entity(  # noqa: PLR0913
     runtime_cache: mapping_session.RuntimeCache | None = None,
     *,
     ctx: AppContext,
+    persisted_mapping_callback: Callable[[Path], None] | None = None,
 ) -> dict[str, Any]:
     """构建单个实体的事件映射。
 
@@ -606,6 +646,7 @@ def build_entity(  # noqa: PLR0913
         integrate_data: 是否输出整合数据。
         runtime_cache: 映射流程共享缓存，用于复用 WAD/HIRC 解析结果。
         ctx: 运行时上下文。
+        persisted_mapping_callback: 映射或整合结果成功落盘后的可选回调。
 
     Returns:
         dict[str, Any]: 映射结果或整合结果。
@@ -627,6 +668,7 @@ def build_entity(  # noqa: PLR0913
             integrate_data,
             runtime_cache,
             ctx=ctx,
+            persisted_mapping_callback=persisted_mapping_callback,
         )
 
     version_cache_dir, version_hash_dir = _ensure_version_dirs(reader, ctx=ctx)
@@ -696,7 +738,8 @@ def build_entity(  # noqa: PLR0913
 
     if integrate_data:
         integrated_result = integrate_entity(entity_data, reader, mapping_result)
-        _write_integrated_result(entity_data, integrated_result, version_hash_dir, ctx=ctx)
+        persisted_path = _write_integrated_result(entity_data, integrated_result, version_hash_dir, ctx=ctx)
+        _notify_persisted_mapping(persisted_path, persisted_mapping_callback)
         _log_entity_summary(
             entity_data.entity_name,
             mapped_count=mapped_event_count,
@@ -706,7 +749,8 @@ def build_entity(  # noqa: PLR0913
         )
         return integrated_result
 
-    _write_mapping_result(mapping_result, mapping_data_key, mapping_save_dir, entity_data, ctx=ctx)
+    persisted_path = _write_mapping_result(mapping_result, mapping_data_key, mapping_save_dir, entity_data, ctx=ctx)
+    _notify_persisted_mapping(persisted_path, persisted_mapping_callback)
     _log_entity_summary(
         entity_data.entity_name,
         mapped_count=mapped_event_count,
@@ -780,9 +824,15 @@ def integrate_entity(
                 "descriptions": entity_info.get("descriptions", {}),
                 "wad": wad_info,
                 "skins": [],
+                "skinAudio": banks_data.get("skinAudio", {}),
             }
         )
-        sub_entities = entity_info.get("skins", [])
+        sub_entities = []
+        for skin in entity_info.get("skins", []):
+            sub_entities.append(skin)
+            sub_entities.extend(
+                {**chroma, "skinNames": chroma.get("chromaNames", {})} for chroma in skin.get("chromas", [])
+            )
     elif entity_data.entity_type == "map":
         integrated_data["data"].update(
             {
@@ -813,6 +863,12 @@ def integrate_entity(
 
     mapping_data = mapping_result.get(data_key, {})
     processed_items = []
+    bound_groups: dict[tuple[str, str, str, int | None], list[str]] = {}
+    for bank in entity_data.resource_banks:
+        binding = bank.binding
+        if binding.status in SUCCESS_STATUSES:
+            key = (bank.sub_id, binding.category, binding.source_bin, binding.group)
+            bound_groups.setdefault(key, []).append(binding.path)
 
     for sub_entity in sub_entities:
         sub_id = str(sub_entity["id"])
@@ -842,6 +898,13 @@ def integrate_entity(
             sub_banks = banks_data.get("banks", {})
         else:
             raise ValueError(f"未知的实体类型: {entity_data.entity_type}")
+        if entity_data.binding_diagnostics is not None:
+            # 旧投影为共享皮肤省略了 banks；整合结果也必须消费精确 binding，
+            # 否则已成功继承事件的皮肤会在保存时再次丢失。
+            sub_banks = {}
+            for (owner, category, _source, _group), paths in bound_groups.items():
+                if owner == sub_id:
+                    sub_banks.setdefault(category, []).append(paths)
         sub_mapping = mapping_data.get(sub_id, {}).get("events", {})
         sub_audio_paths = mapping_data.get(sub_id, {}).get("audioPaths", {})
 
@@ -880,6 +943,7 @@ def build_champion(  # noqa: PLR0913
     runtime_cache: mapping_session.RuntimeCache | None = None,
     *,
     ctx: AppContext,
+    persisted_mapping_callback: Callable[[Path], None] | None = None,
 ) -> dict[str, Any]:
     """构建单个英雄的事件映射。
 
@@ -890,6 +954,7 @@ def build_champion(  # noqa: PLR0913
         integrate_data: 是否输出整合数据。
         runtime_cache: 映射流程共享缓存。
         ctx: 运行时上下文。
+        persisted_mapping_callback: 映射或整合结果成功落盘后的可选回调。
 
     Returns:
         dict[str, Any]: 英雄映射结果。
@@ -913,6 +978,7 @@ def build_champion(  # noqa: PLR0913
             integrate_data,
             runtime_cache=runtime_cache,
             ctx=ctx,
+            persisted_mapping_callback=persisted_mapping_callback,
         )
     except ValueError as exc:
         # 显式记录后向上抛出，让 batch 统一计入失败计数，避免失败被静默吞掉返回空字典。
@@ -928,6 +994,7 @@ def build_map(  # noqa: PLR0913
     runtime_cache: mapping_session.RuntimeCache | None = None,
     *,
     ctx: AppContext,
+    persisted_mapping_callback: Callable[[Path], None] | None = None,
 ) -> dict[str, Any]:
     """构建单个地图的事件映射。
 
@@ -938,6 +1005,7 @@ def build_map(  # noqa: PLR0913
         integrate_data: 是否输出整合数据。
         runtime_cache: 映射流程共享缓存。
         ctx: 运行时上下文。
+        persisted_mapping_callback: 映射或整合结果成功落盘后的可选回调。
 
     Returns:
         dict[str, Any]: 地图映射结果。
@@ -961,6 +1029,7 @@ def build_map(  # noqa: PLR0913
             integrate_data,
             runtime_cache=runtime_cache,
             ctx=ctx,
+            persisted_mapping_callback=persisted_mapping_callback,
         )
     except ValueError as exc:
         # 显式记录后向上抛出，让 batch 统一计入失败计数，避免失败被静默吞掉返回空字典。
@@ -976,6 +1045,7 @@ def build_resource_pack(  # noqa: PLR0913
     runtime_cache: mapping_session.RuntimeCache | None = None,
     *,
     ctx: AppContext,
+    persisted_mapping_callback: Callable[[Path], None] | None = None,
 ) -> dict[str, Any]:
     """构建单个 resource-pack 的事件映射。
 
@@ -986,6 +1056,7 @@ def build_resource_pack(  # noqa: PLR0913
         integrate_data: 是否输出整合数据。
         runtime_cache: 映射流程共享缓存。
         ctx: 运行时上下文。
+        persisted_mapping_callback: 映射或整合结果成功落盘后的可选回调。
 
     Returns:
         resource-pack 原始或整合映射结果。
@@ -1008,6 +1079,7 @@ def build_resource_pack(  # noqa: PLR0913
             integrate_data,
             runtime_cache=runtime_cache,
             ctx=ctx,
+            persisted_mapping_callback=persisted_mapping_callback,
         )
     except ValueError as exc:
         logger.error(str(exc))

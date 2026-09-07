@@ -14,6 +14,7 @@ from lol_audio_unpack.app.targets import (
     iter_entity_refs,
     resolve_scope,
     should_hide_champion_by_default,
+    with_common_map,
 )
 
 
@@ -62,6 +63,23 @@ def test_resolve_scope_matches_existing_backend_contract(
 ) -> None:
     """统一范围解析应保持当前门面约定不变。"""
     assert resolve_scope(champion_ids=champion_ids, map_ids=map_ids) == expected
+
+
+@pytest.mark.parametrize(
+    ("ids", "expected"),
+    [
+        (None, None),
+        ((), ()),
+        ((11,), (0, 11)),
+        ((0, 11, 0), (0, 11)),
+    ],
+)
+def test_with_common_map_preserves_scope_semantics(
+    ids: tuple[int, ...] | None,
+    expected: tuple[int, ...] | None,
+) -> None:
+    """显式地图范围应包含且只包含一个 Map 0。"""
+    assert with_common_map(ids, 0) == expected
 
 
 def test_iter_entity_refs_uses_default_visible_champions_and_all_maps() -> None:

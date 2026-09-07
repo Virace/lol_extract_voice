@@ -8,7 +8,6 @@ from qfluentwidgets import (
     BodyLabel,
     ComboBox,
     IndicatorPosition,
-    LineEdit,
     SettingCard,
     Slider,
     SwitchButton,
@@ -19,7 +18,6 @@ from qfluentwidgets import (
     FluentIcon as FIF,
 )
 
-from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.gui.common.font_compat import apply_switch_button_safe_font
 from lol_audio_unpack.gui.components.accordion_setting_card import FormAccordionCard
 
@@ -96,43 +94,6 @@ class ComboRowBinding:
         idx = self.comboBox.findText(label)
         if idx >= 0:
             self.comboBox.setCurrentIndex(idx)
-
-
-class LineEditSettingCard(SettingCard):
-    """右侧带输入框的设置卡。"""
-
-    def __init__(
-        self,
-        icon,
-        title: str,
-        content: str,
-        placeholder: str = "",
-        parent: QWidget | None = None,
-    ) -> None:
-        """初始化输入框设置卡。
-
-        Args:
-            icon: Fluent 图标。
-            title: 标题文案。
-            content: 说明文案。
-            placeholder: 输入框占位文案。
-            parent: 父级控件。
-        """
-        super().__init__(icon, title, content, parent)
-        self.lineEdit = LineEdit(self)
-        self.lineEdit.setPlaceholderText(placeholder)
-        self.lineEdit.setFixedWidth(320)
-        self.lineEdit.setClearButtonEnabled(True)
-        self.hBoxLayout.addWidget(self.lineEdit, 0, Qt.AlignRight)
-        self.hBoxLayout.addSpacing(16)
-
-    def value(self) -> str:
-        """返回去掉首尾空白后的输入值。"""
-        return self.lineEdit.text().strip()
-
-    def setValue(self, text: str) -> None:
-        """同步输入框文本。"""
-        self.lineEdit.setText(text)
 
 
 class SliderSettingCard(SettingCard):
@@ -228,63 +189,6 @@ class LocalizedSwitchSettingCard(SwitchSettingCard):
 
         self.switchButton.setChecked(isChecked)
         self._sync_switch_text(isChecked)
-
-
-class FixedSnapshotCard(FormAccordionCard):
-    """固定快照三元组输入卡。"""
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        """初始化固定快照配置组。
-
-        Args:
-            parent: 父级控件。
-        """
-        super().__init__(
-            FIF.PIN,
-            "固定快照（高阶）",
-            "锁定指定版本的远端快照；三项必须同时填写，留空则自动获取最新",
-            parent,
-        )
-        self.versionEdit = LineEdit()
-        self.versionEdit.setPlaceholderText("例: 15.5.1")
-        self.versionEdit.setFixedWidth(240)
-        self.versionEdit.setClearButtonEnabled(True)
-
-        self.lcuUrlEdit = LineEdit()
-        self.lcuUrlEdit.setPlaceholderText("https://...")
-        self.lcuUrlEdit.setFixedWidth(360)
-        self.lcuUrlEdit.setClearButtonEnabled(True)
-
-        self.gameUrlEdit = LineEdit()
-        self.gameUrlEdit.setPlaceholderText("https://...")
-        self.gameUrlEdit.setFixedWidth(360)
-        self.gameUrlEdit.setClearButtonEnabled(True)
-
-        self.add_form_row("版本号", SettingKey.REMOTE_VERSION, self.versionEdit)
-        self.add_form_row("LCU Manifest URL", SettingKey.REMOTE_LCU_MANIFEST_URL, self.lcuUrlEdit)
-        self.add_form_row("Game Manifest URL", SettingKey.REMOTE_GAME_MANIFEST_URL, self.gameUrlEdit)
-
-    def versionValue(self) -> str:
-        """返回版本号输入值。"""
-        return self.versionEdit.text().strip()
-
-    def lcuUrlValue(self) -> str:
-        """返回 LCU Manifest URL 输入值。"""
-        return self.lcuUrlEdit.text().strip()
-
-    def gameUrlValue(self) -> str:
-        """返回 Game Manifest URL 输入值。"""
-        return self.gameUrlEdit.text().strip()
-
-    def isComplete(self) -> bool:
-        """返回固定快照三元组是否已完整填写。"""
-        return bool(self.versionValue() and self.lcuUrlValue() and self.gameUrlValue())
-
-    def setValues(self, version: str, lcu_url: str, game_url: str) -> None:
-        """同步固定快照三元组。"""
-        self.versionEdit.setText(version)
-        self.lcuUrlEdit.setText(lcu_url)
-        self.gameUrlEdit.setText(game_url)
 
 
 class SmoothScrollSettingCard(FormAccordionCard):

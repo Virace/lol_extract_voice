@@ -176,7 +176,7 @@ class SpecialContentTreeModel(QAbstractItemModel):
         return None
 
     def flags(self, index: QModelIndex) -> Qt.ItemFlag:
-        """限制分组不可选，并在 remote 时禁用特殊项目选择。"""
+        """限制分组不可选，并在交互关闭时禁用特殊项目选择。"""
         if not index.isValid():
             return Qt.ItemFlag.NoItemFlags
         node = index.internalPointer()
@@ -416,7 +416,7 @@ class SpecialContentTreeView(QTreeView):
         self._source_model.set_interactive(enabled)
         if not enabled and self.selectionModel() is not None:
             self.selectionModel().clearSelection()
-        self.setToolTip("特殊内容仅支持本地客户端资源。" if not enabled else "")
+        self.setToolTip("共享数据就绪后可选择特殊内容。" if not enabled else "")
         if self._search_active:
             self.expandAll()
         else:

@@ -16,24 +16,24 @@ from lol_audio_unpack.app.targets import (
     get_default_visible_champions,
     should_hide_champion_by_default,
 )
-from lol_audio_unpack.app.types import SourceMode
 from lol_audio_unpack.manager.errors import (
     DataVersionMismatchError,
     ResourceSchemaMismatchError,
+    SharedDataCorruptError,
     SharedDataMissingError,
 )
-from lol_audio_unpack.manager.files import read_data
+from lol_audio_unpack.manager.files import find_data_file, read_data
 from lol_audio_unpack.model.binding import RESOURCE_SCHEMA_VERSION, ResourceBindings
-from lol_audio_unpack.utils.common import Singleton
 from lol_audio_unpack.utils.logging import performance_monitor
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
 
 
-class DataReader(metaclass=Singleton):
-    """
-    从合并后的数据文件读取游戏数据
+class DataReader:
+    """读取单一应用上下文的结构化游戏数据与分散资源 artifact。
+
+    每次构造都创建独立实例；实例内缓存只在其所属 app/context 生命周期内复用。
     """
 
     MAX_MINOR_DIFF = 2
@@ -50,9 +50,6 @@ class DataReader(metaclass=Singleton):
         Args:
             ctx: 运行时上下文。
         """
-        if hasattr(self, "initialized"):
-            return
-
         self.ctx = ctx
         self.game_path = Path(self.ctx.config.game_path)
         self.manifest_path = Path(self.ctx.paths.manifest_path)
@@ -63,10 +60,25 @@ class DataReader(metaclass=Singleton):
         self.version: str = resolve_game_version(self.ctx)
         self.version_manifest_path: Path = self.manifest_path / self.version
 
-        # 使用不带后缀的基础路径，让read_data自动寻找最佳格式
-        self.data = read_data(self.version_manifest_path / "data", dev_mode=self.ctx.config.dev_mode)
+        # 使用不带后缀的基础路径，让 read_data 自动寻找最佳格式；
+        # 当前边界负责把缺失与损坏分类，避免底层和 GUI 重复记录 traceback。
+        data_file_base = self.version_manifest_path / "data"
+        actual_data_file = find_data_file(data_file_base, dev_mode=self.ctx.config.dev_mode)
+        self.data = read_data(
+            data_file_base,
+            dev_mode=self.ctx.config.dev_mode,
+            log_errors=False,
+        )
         if not self.data:
+            if actual_data_file is not None:
+                raise SharedDataCorruptError(f"核心数据文件无法读取或内容为空: {actual_data_file}")
             raise SharedDataMissingError("核心数据文件 (data.yml/json/msgpack) 不存在，请先运行更新程序。")
+        if (
+            not isinstance(self.data, dict)
+            or not isinstance(self.data.get("champions"), dict)
+            or not isinstance(self.data.get("maps"), dict)
+        ):
+            raise SharedDataCorruptError("核心数据文件缺少有效的 champions 或 maps 目录。")
 
         # 校验数据版本
         self._validate_data_version()
@@ -90,7 +102,6 @@ class DataReader(metaclass=Singleton):
 
         # 防御性开发：记录未知的音频分类
         self.unknown_categories: set[str] = set()
-        self.initialized = True
 
     def _validate_data_version(self) -> None:
         """
@@ -198,9 +209,7 @@ class DataReader(metaclass=Singleton):
         return banks_data
 
     def get_champion_resource_bindings(self, champion_id: int) -> ResourceBindings | None:
-        """读取本地英雄 v2 resource bindings；remote 旧合同返回 ``None``。"""
-        if not self._uses_local_resource_schema():
-            return None
+        """读取本地英雄 v2 resource bindings。"""
         payload = self.get_champion_banks(champion_id, require_bindings=True)
         return ResourceBindings.from_payload(payload) if payload else None
 
@@ -279,9 +288,7 @@ class DataReader(metaclass=Singleton):
         return banks_data
 
     def get_map_resource_bindings(self, map_id: int) -> ResourceBindings | None:
-        """读取本地地图 v2 resource bindings；remote 旧合同返回 ``None``。"""
-        if not self._uses_local_resource_schema():
-            return None
+        """读取本地地图 v2 resource bindings。"""
         payload = self.get_map_banks(map_id, require_bindings=True)
         return ResourceBindings.from_payload(payload) if payload else None
 
@@ -314,9 +321,7 @@ class DataReader(metaclass=Singleton):
         return banks_data
 
     def get_resource_pack_resource_bindings(self, key: str) -> ResourceBindings | None:
-        """读取本地 resource-pack v2 bindings；remote 旧合同返回 ``None``。"""
-        if not self._uses_local_resource_schema():
-            return None
+        """读取本地 resource-pack v2 bindings。"""
         payload = self.get_resource_pack_banks(key, require_bindings=True)
         return ResourceBindings.from_payload(payload) if payload else None
 
@@ -384,14 +389,9 @@ class DataReader(metaclass=Singleton):
             self._resource_pack_events_cache[key] = events_data
         return events_data
 
-    def _uses_local_resource_schema(self) -> bool:
-        """判断当前读取上下文是否要求 local v2 resource schema。"""
-        mode = getattr(self.ctx.config, "source_mode", SourceMode.LOCAL_PATH)
-        return mode in {SourceMode.LOCAL_PATH, SourceMode.LOCAL_PATH.value}
-
     def _validate_resource_schema(self, data: dict, label: str, *, require_bindings: bool) -> None:
-        """在显式消费 binding 时拒绝旧 local artifact，remote 保持旧合同。"""
-        if not require_bindings or not self._uses_local_resource_schema():
+        """在显式消费 binding 时拒绝旧 artifact。"""
+        if not require_bindings:
             return
         if data.get("resourceSchemaVersion") == RESOURCE_SCHEMA_VERSION:
             return

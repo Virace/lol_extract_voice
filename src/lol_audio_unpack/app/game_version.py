@@ -10,8 +10,6 @@ from loguru import logger
 
 from lol_audio_unpack.utils.versioning import extract_windows_file_version, normalize_patch_version
 
-from .types import SourceMode
-
 if TYPE_CHECKING:
     from .types import AppContext
 
@@ -32,7 +30,7 @@ def get_game_version(game_path: Path) -> str:
     if not meta.exists():
         raise FileNotFoundError("content-metadata.json 文件不存在，无法判断版本信息")
 
-    with open(meta, encoding="utf-8") as file:
+    with open(meta, encoding="utf-8-sig") as file:
         data = json.load(file)
 
     return normalize_patch_version(data["version"])
@@ -82,7 +80,7 @@ def validate_install_version(game_path: Path, game_version: str) -> None:
 
 
 def resolve_game_version(ctx: AppContext) -> str:
-    """根据来源模式解析当前运行使用的游戏版本。
+    """解析当前本地数据源使用的游戏版本。
 
     Args:
         ctx: 运行时上下文。
@@ -90,23 +88,15 @@ def resolve_game_version(ctx: AppContext) -> str:
     Returns:
         当前运行使用的补丁版本号。
 
-    Raises:
-        ValueError: 当远端快照缺少版本信息时抛出。
     """
     cached_version = ctx.runtime_cache.get("resolved_runtime_version")
     if isinstance(cached_version, str) and cached_version:
         return cached_version
 
-    if ctx.config.source_mode is SourceMode.REMOTE_SNAPSHOT:
-        remote_snapshot = ctx.config.remote_snapshot
-        if remote_snapshot is None:
-            raise ValueError("REMOTE_SNAPSHOT 模式缺少远端快照配置，无法解析版本。")
-        version = remote_snapshot.version
-    else:
-        version = get_game_version(Path(ctx.config.game_path))
-        if not ctx.runtime_cache.get("local_version_validated", False):
-            validate_install_version(Path(ctx.config.game_path), version)
-            ctx.runtime_cache["local_version_validated"] = True
+    version = get_game_version(Path(ctx.config.game_path))
+    if not ctx.runtime_cache.get("local_version_validated", False):
+        validate_install_version(Path(ctx.config.game_path), version)
+        ctx.runtime_cache["local_version_validated"] = True
 
     ctx.runtime_cache["resolved_runtime_version"] = version
     return version

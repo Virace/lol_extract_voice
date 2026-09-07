@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -88,16 +89,21 @@ def attach_bp_vo(
     reader: DataReader,
     *,
     ctx: AppContext,
-) -> None:
+    persisted_artifact_callback: Callable[[Path], None] | None = None,
+) -> tuple[Path, ...]:
     """将大厅音频附加到英雄输出目录。
 
     Args:
         entity: 英雄实体数据。
         reader: 数据读取器。
         ctx: 运行时上下文。
+        persisted_artifact_callback: 大厅音频成功落盘后的可选内部回调。
+
+    Returns:
+        本轮成功写入的大厅音频路径。
     """
     if not bool(ctx.config.with_bp_vo):
-        return
+        return ()
 
     audio_root = Path(ctx.paths.audio_path)
     entity_folder = format_entity_folder_name(
@@ -114,6 +120,7 @@ def attach_bp_vo(
         entity_folder=entity_folder,
     )
     target_dir.mkdir(parents=True, exist_ok=True)
+    persisted_paths: list[Path] = []
 
     for category, target_name in LOBBY_AUDIO_FILE_MAPPING.items():
         source = find_bp_vo_source(reader, entity.entity_id, category, ctx=ctx)
@@ -126,7 +133,11 @@ def attach_bp_vo(
 
         target = target_dir / target_name
         mode = link_or_copy(source, target)
+        persisted_paths.append(target)
+        if persisted_artifact_callback is not None:
+            persisted_artifact_callback(target)
         logger.debug(f"大厅音频已写入: {target} (mode={mode})")
+    return tuple(persisted_paths)
 
 
 def _build_lobby_dir(

@@ -10,6 +10,7 @@ import pytest
 
 import lol_audio_unpack.manager.data_reader as data_reader_module
 from lol_audio_unpack.manager.data_reader import DataReader
+from lol_audio_unpack.manager.errors import SharedDataCorruptError
 
 
 def test_write_unknown_categories_to_file_logs_error_with_exception(monkeypatch, tmp_path: Path) -> None:
@@ -121,6 +122,21 @@ def test_get_champion_banks_logs_error_with_exception_on_unexpected_failure(monk
     assert result is None
     assert opt_calls == [{"exception": True}]
     assert errors == ["读取英雄 banks 数据失败: champion_id=1"]
+
+
+def test_data_reader_classifies_existing_unreadable_dataset_as_corrupt(monkeypatch, tmp_path: Path) -> None:
+    """已有 data 文件无法形成内容时不能误报为缺失。"""
+    ctx = SimpleNamespace(
+        config=SimpleNamespace(game_path=tmp_path, dev_mode=False),
+        paths=SimpleNamespace(manifest_path=tmp_path / "manifest"),
+    )
+    data_path = tmp_path / "manifest" / "16.16" / "data.msgpack"
+    monkeypatch.setattr(data_reader_module, "resolve_game_version", lambda _ctx: "16.16")
+    monkeypatch.setattr(data_reader_module, "find_data_file", lambda *_args, **_kwargs: data_path)
+    monkeypatch.setattr(data_reader_module, "read_data", lambda *_args, **_kwargs: {})
+
+    with pytest.raises(SharedDataCorruptError, match="无法读取或内容为空"):
+        DataReader(ctx)
 
 
 def test_get_map_events_logs_error_with_exception_on_unexpected_failure(monkeypatch) -> None:

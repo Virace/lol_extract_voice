@@ -98,8 +98,8 @@ WAD stat key 在单次运行中不被重复构造。
 - `--source-label`：写入 JSON meta 与每条 summary 的源码标签。
 - `--log-level`：benchmark 执行日志级别。
 
-Remote 快照有独立的 `scripts/benchmark_remote_live.py`，默认会访问 Riot live manifest，
-并可准备 wwiser；它同样不是 CI 或 pytest 门禁。remote 模式优化的是磁盘峰值，而非总耗时。
+已安装客户端与外部准备目录都通过 `--game-path` 交给同一个 benchmark。脚本只消费本地资源，
+不会下载缺失文件；外部准备器的下载耗时与缓存效率不属于本项目基准口径。
 
 ## 5. 历史数据
 

@@ -10,7 +10,6 @@ import argparse
 from typing import Literal
 
 from .. import __version__
-from ..app.types import SourceMode
 from .invocation import DEFAULT_CLI_MAX_WORKERS
 from .text import text
 
@@ -88,11 +87,6 @@ def _create_shared_parser() -> argparse.ArgumentParser:
     )
 
     config_group = parser.add_argument_group(text("group.config.title"), text("group.config.description"))
-    config_group.add_argument(
-        "--source-mode",
-        choices=[SourceMode.LOCAL_PATH.value, SourceMode.REMOTE_SNAPSHOT.value],
-        help=text("help.source_mode"),
-    )
     config_group.add_argument("--game-path", type=str, metavar="PATH", help=text("help.game_path"))
     config_group.add_argument("--output-path", type=str, metavar="PATH", help=text("help.output_path"))
     config_group.add_argument("--game-region", type=str, metavar="REGION", help=text("help.game_region"))
@@ -103,36 +97,6 @@ def _create_shared_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=None,
         help=text("help.group_by_type"),
-    )
-    config_group.add_argument(
-        "--remote-live-region",
-        type=str,
-        metavar="REGION",
-        help=text("help.remote_live_region"),
-    )
-    config_group.add_argument(
-        "--cleanup-remote",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help=text("help.cleanup_remote"),
-    )
-    config_group.add_argument(
-        "--remote-version",
-        type=str,
-        metavar="VERSION",
-        help=text("help.remote_version"),
-    )
-    config_group.add_argument(
-        "--remote-lcu-manifest-url",
-        type=str,
-        metavar="URL",
-        help=text("help.remote_lcu_manifest_url"),
-    )
-    config_group.add_argument(
-        "--remote-game-manifest-url",
-        type=str,
-        metavar="URL",
-        help=text("help.remote_game_manifest_url"),
     )
     return parser
 
@@ -317,5 +281,3 @@ __all__ = [
     "EntryMode",
     "create_parser",
 ]
-
-

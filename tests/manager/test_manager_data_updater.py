@@ -1,3 +1,5 @@
+"""结构化游戏数据更新与持久化边界测试。"""
+
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -5,8 +7,8 @@ from types import SimpleNamespace
 import pytest
 from loguru import logger
 
-from lol_audio_unpack.app.types import SourceMode
 from lol_audio_unpack.manager import data_updater as m_data_updater
+from lol_audio_unpack.manager.errors import ArtifactWriteError
 
 pytestmark = pytest.mark.integration
 
@@ -18,7 +20,6 @@ def _build_updater(game_path: Path, version: str = "16.3"):
             game_path=game_path,
             game_region="zh_CN",
             dev_mode=False,
-            source_mode=SourceMode.LOCAL_PATH,
             with_bp_vo=False,
         ),
         paths=SimpleNamespace(
@@ -30,6 +31,128 @@ def _build_updater(game_path: Path, version: str = "16.3"):
     updater.game_path = game_path
     updater.version = version
     return updater
+
+
+def test_process_data_propagates_final_artifact_copy_failure(tmp_path, monkeypatch):
+    updater = _build_updater(tmp_path)
+    updater.process_languages = []
+    updater.version_manifest_path = tmp_path / "manifest" / updater.version
+    updater.data_file_base = updater.version_manifest_path / "data"
+    target = updater.data_file_base.with_suffix(".msgpack")
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"old-data")
+
+    def build_temp_data(temp_path: Path) -> None:
+        source = temp_path / updater.version / "data.msgpack"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"new-data")
+
+    def fail_copy(_source: Path, path: Path) -> Path:
+        raise ArtifactWriteError(path, "replace")
+
+    monkeypatch.setattr(updater, "_merge_and_build_data", build_temp_data)
+    monkeypatch.setattr(m_data_updater, "copy_file_atomic", fail_copy)
+
+    with pytest.raises(ArtifactWriteError, match="replace"):
+        updater._process_data(tmp_path / "run")
+
+    assert target.read_bytes() == b"old-data"
+
+
+def test_check_and_update_propagates_artifact_write_error(tmp_path, monkeypatch):
+    updater = _build_updater(tmp_path)
+    updater.force_update = True
+    updater.temp_path = tmp_path / "temp"
+    updater.version_manifest_path = tmp_path / "manifest" / updater.version
+    updater.data_file_base = updater.version_manifest_path / "data"
+    error = ArtifactWriteError(updater.data_file_base.with_suffix(".msgpack"), "replace")
+
+    def fail_update(_temp_path: Path) -> None:
+        raise error
+
+    monkeypatch.setattr(updater, "_process_data", fail_update)
+
+    with pytest.raises(ArtifactWriteError) as raised:
+        updater.check_and_update()
+
+    assert raised.value is error
+
+
+def test_merge_and_build_data_requires_default_champion_summary(tmp_path, monkeypatch):
+    updater = _build_updater(tmp_path)
+    monkeypatch.setattr(updater, "_load_language_json", lambda _base, _name: {})
+
+    with pytest.raises(FileNotFoundError, match="default 语言的英雄概要数据"):
+        updater._merge_and_build_data(tmp_path)
+
+
+def test_check_languages_reads_canonical_metadata(tmp_path):
+    updater = _build_updater(tmp_path)
+    updater.data_file_base = tmp_path / "manifest" / updater.version / "data"
+    updater.process_languages = ["default", "zh_CN"]
+    m_data_updater.write_data(
+        {"metadata": {"gameVersion": updater.version, "languages": ["zh_CN"]}},
+        updater.data_file_base,
+        dev_mode=False,
+    )
+
+    assert updater._check_languages() is True
+
+
+def test_check_languages_treats_empty_list_as_default_only(tmp_path):
+    updater = _build_updater(tmp_path)
+    updater.data_file_base = tmp_path / "manifest" / updater.version / "data"
+    m_data_updater.write_data(
+        {"metadata": {"gameVersion": updater.version, "languages": []}},
+        updater.data_file_base,
+        dev_mode=False,
+    )
+
+    updater.process_languages = ["default"]
+    assert updater._check_languages() is True
+
+    updater.process_languages = ["default", "zh_CN"]
+    assert updater._check_languages() is False
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"metadata": {}},
+        {"metadata": {"languages": "zh_CN"}},
+        {"metadata": {"languages": [None]}},
+        {"metadata": {"languages": [""]}},
+    ],
+)
+def test_check_languages_rejects_invalid_metadata(tmp_path, payload):
+    updater = _build_updater(tmp_path)
+    updater.data_file_base = tmp_path / "manifest" / updater.version / "data"
+    updater.process_languages = ["default"]
+    m_data_updater.write_data(payload, updater.data_file_base, dev_mode=False)
+
+    assert updater._check_languages() is False
+
+
+def test_check_and_update_skips_when_canonical_languages_are_fresh(tmp_path, monkeypatch):
+    updater = _build_updater(tmp_path)
+    updater.force_update = False
+    updater.temp_path = tmp_path / "temp"
+    updater.version_manifest_path = tmp_path / "manifest" / updater.version
+    updater.data_file_base = updater.version_manifest_path / "data"
+    updater.process_languages = ["default", "zh_CN"]
+    m_data_updater.write_data(
+        {"metadata": {"gameVersion": updater.version, "languages": ["zh_CN"]}},
+        updater.data_file_base,
+        dev_mode=False,
+    )
+    process_calls: list[Path] = []
+    monkeypatch.setattr(updater, "_process_data", process_calls.append)
+
+    result = updater.check_and_update()
+
+    assert result == updater.data_file_base
+    assert process_calls == []
 
 
 def test_extract_wad_data_collects_all_default_asset_volumes(tmp_path, monkeypatch):
@@ -403,41 +526,8 @@ def test_persist_bp_vo_files_copies_new_sfx_category(tmp_path):
     assert target_file.read_bytes() == b"sfx"
 
 
-def test_merge_and_build_data_keeps_remote_map_wad_info_without_local_files(tmp_path):
-    updater = _build_updater(tmp_path)
-    updater.ctx.config.source_mode = SourceMode.REMOTE_SNAPSHOT
-    updater.process_languages = ["default"]
-    updater._is_dev_mode = lambda: False
-
-    base_path = tmp_path / updater.version / "default"
-    base_path.mkdir(parents=True, exist_ok=True)
-    (base_path / "champion-summary.json").write_text("[]", encoding="utf-8")
-    (base_path / "maps.json").write_text(
-        json.dumps([{"id": 11, "mapStringId": "SR", "name": "召唤师峡谷"}]),
-        encoding="utf-8",
-    )
-
-    captured = {}
-
-    def fake_write_data(data: dict, _base: Path, *, dev_mode: bool) -> None:
-        captured["data"] = data
-        captured["dev_mode"] = dev_mode
-
-    original_write_data = m_data_updater.write_data
-    m_data_updater.write_data = fake_write_data
-    try:
-        updater._merge_and_build_data(tmp_path)
-    finally:
-        m_data_updater.write_data = original_write_data
-
-    result = captured["data"]
-    assert captured["dev_mode"] is False
-    assert result["maps"]["11"]["wad"]["root"] == "Game/DATA/FINAL/Maps/Shipping/Map11.wad.client"
-
-
 def test_merge_and_build_data_logs_bin_metadata_summary(tmp_path):
     updater = _build_updater(tmp_path)
-    updater.ctx.config.source_mode = SourceMode.LOCAL_PATH
     updater.process_languages = ["default"]
     updater._is_dev_mode = lambda: False
 
@@ -488,6 +578,8 @@ def test_merge_and_build_data_logs_bin_metadata_summary(tmp_path):
 
     assert captured["dev_mode"] is False
     assert any("INFO|合并英雄数据并装配 bin 元数据..." in line for line in log_lines)
-    assert any("DEBUG|英雄 bin 元数据装配完成，共 1 个英雄，1 个皮肤 binPath，1 个炫彩 binPath" in line for line in log_lines)
+    assert any(
+        "DEBUG|英雄 bin 元数据装配完成，共 1 个英雄，1 个皮肤 binPath，1 个炫彩 binPath" in line for line in log_lines
+    )
     assert any("INFO|合并地图数据并装配 bin 元数据..." in line for line in log_lines)
     assert any("DEBUG|地图 bin 元数据装配完成，共 1 个地图 binPath" in line for line in log_lines)

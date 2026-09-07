@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from lol_audio_unpack.app import LolAudioUnpackApp, OperationOptions, create_app_context
+from lol_audio_unpack.app import LolAudioUnpackApp, OperationOptions, ResultStatus, create_app_context
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.manager.files import find_data_file
 from lol_audio_unpack.model import AudioEntityData
@@ -26,6 +26,7 @@ MAP_ID = 11
 TFT_MAP_ID = 22
 DEFAULT_GAME_DRIVES = ("D",)
 DEFAULT_GAME_PARTS = ("Games", "Tencent", "WeGameApps", "英雄联盟")
+PRODUCTIVE_STATUSES = frozenset({ResultStatus.SUCCESS, ResultStatus.PARTIAL})
 
 
 def _game_candidates() -> tuple[Path, ...]:
@@ -70,13 +71,17 @@ def _verify_game_inputs(game_path: Path) -> None:
 def _verify_manifest(reader: DataReader, *, ctx: AppContext) -> None:
     """验证 banks、events 与本地 binding 已覆盖代表实体。"""
     champion_banks = reader.get_champion_banks(CHAMPION_ID)
+    common_map_banks = reader.get_map_banks(COMMON_MAP_ID)
     map_banks = reader.get_map_banks(MAP_ID)
     champion_events = reader.get_champion_events(CHAMPION_ID)
+    common_map_events = reader.get_map_events(COMMON_MAP_ID)
     map_events = reader.get_map_events(MAP_ID)
 
     assert champion_banks and champion_banks.get("skins"), "英雄 banks 为空"
+    assert common_map_banks and common_map_banks.get("banks"), "公共地图 0 banks 为空"
     assert map_banks and map_banks.get("banks"), "地图 banks 为空"
     assert champion_events and champion_events.get("skins"), "英雄 events 为空"
+    assert common_map_events, "公共地图 0 events 为空"
     assert map_events, "地图 events 为空"
 
     jade_bindings = reader.get_champion_resource_bindings(JADE_CHAMPION_ID)
@@ -118,7 +123,9 @@ def _extract_new_wems(
 ) -> set[Path]:
     """执行一次解包并返回该范围新增的 WEM 路径。"""
     before_wems = set(audio_root.rglob("*.wem"))
-    app.extract(options, include_champions=include_champions)
+    result = app.extract(options, include_champions=include_champions)
+    assert result.status in PRODUCTIVE_STATUSES, f"解包返回不可消费状态: {result.status.value}"
+    assert any(entity.artifacts for entity in result.entities), "解包成功但没有记录落盘产物"
     return set(audio_root.rglob("*.wem")) - before_wems
 
 
@@ -152,7 +159,7 @@ def test_local_pipeline_updates_extracts_and_maps(tmp_path: Path) -> None:
     )
     app = LolAudioUnpackApp(ctx)
 
-    app.update(
+    update_result = app.update(
         OperationOptions(
             champion_ids=(CHAMPION_ID, JADE_CHAMPION_ID),
             map_ids=(COMMON_MAP_ID, MAP_ID, TFT_MAP_ID),
@@ -161,6 +168,7 @@ def test_local_pipeline_updates_extracts_and_maps(tmp_path: Path) -> None:
         ),
         target="all",
     )
+    assert update_result.status is ResultStatus.SUCCESS, f"更新返回非成功状态: {update_result}"
 
     reader = DataReader(ctx=ctx)
     data_file = find_data_file(ctx.paths.manifest_path / reader.version / "data", dev_mode=False)
@@ -204,9 +212,13 @@ def test_local_pipeline_updates_extracts_and_maps(tmp_path: Path) -> None:
     assert (report_root / "maps" / f"_{MAP_ID}_metadata.yaml").is_file()
     assert (report_root / "maps" / f"_{TFT_MAP_ID}_metadata.yaml").is_file()
 
-    app.mapping(OperationOptions(champion_ids=(CHAMPION_ID, JADE_CHAMPION_ID), max_workers=2))
-    app.mapping(
+    champion_mapping_result = app.mapping(OperationOptions(champion_ids=(CHAMPION_ID, JADE_CHAMPION_ID), max_workers=2))
+    map_mapping_result = app.mapping(
         OperationOptions(map_ids=(MAP_ID,), max_workers=2),
         include_champions=False,
     )
+    assert champion_mapping_result.status is ResultStatus.SUCCESS
+    assert map_mapping_result.status is ResultStatus.SUCCESS
+    assert all(entity.artifacts for entity in champion_mapping_result.entities)
+    assert all(entity.artifacts for entity in map_mapping_result.entities)
     _verify_mapping(output_path, reader.version)

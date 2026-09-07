@@ -135,8 +135,7 @@ def _build_controller(qtbot, monkeypatch, *, should_show: bool = True, active: b
     setting_page = _page(
         qtbot,
         "SettingPage",
-        sourceModeCard=None if missing_first else _widget(qtbot),
-        gamePathCard=_widget(qtbot),
+        gamePathCard=None if missing_first else _widget(qtbot),
         outputPathCard=_widget(qtbot),
         wwiserCard=_widget(qtbot),
     )
@@ -219,9 +218,9 @@ def test_onboarding_walks_complete_navigation_and_page_flow(qtbot, monkeypatch) 
     previous_tip = created[-1]["tip"]
     window.stackedWidget.setCurrentWidget(pages.setting)
     assert previous_tip.closed is True
-    assert created[-1]["target"] is pages.setting.sourceModeCard
+    assert created[-1]["target"] is pages.setting.gamePathCard
 
-    for target in (pages.setting.gamePathCard, pages.setting.outputPathCard, window.executionNav):
+    for target in (pages.setting.outputPathCard, window.executionNav):
         previous_tip = created[-1]["tip"]
         controller._next()
         assert previous_tip.closed is True
@@ -281,7 +280,6 @@ def test_route_change_waits_before_showing_page_step(qtbot, monkeypatch) -> None
     setting_page = _page(
         qtbot,
         "SettingPage",
-        sourceModeCard=_widget(qtbot),
         gamePathCard=_widget(qtbot),
         outputPathCard=_widget(qtbot),
         wwiserCard=_widget(qtbot),
@@ -302,7 +300,7 @@ def test_route_change_waits_before_showing_page_step(qtbot, monkeypatch) -> None
 
     assert callbacks[-1][0] >= MIN_ROUTE_SETTLE_DELAY_MS
     callbacks.pop()[1]()
-    assert created[-1]["target"] is setting_page.sourceModeCard
+    assert created[-1]["target"] is setting_page.gamePathCard
 
 
 @pytest.mark.parametrize(
@@ -341,7 +339,7 @@ def test_missing_target_skips_to_next_available_step(qtbot, monkeypatch) -> None
 
     controller._next()
 
-    assert created[-1]["target"] is pages.setting.gamePathCard
+    assert created[-1]["target"] is pages.setting.outputPathCard
 
 
 def test_close_before_delayed_show_prevents_tip_creation(qtbot, monkeypatch) -> None:
@@ -363,7 +361,6 @@ def test_close_before_delayed_show_prevents_tip_creation(qtbot, monkeypatch) -> 
     setting_page = _page(
         qtbot,
         "SettingPage",
-        sourceModeCard=_widget(qtbot),
         gamePathCard=_widget(qtbot),
         outputPathCard=_widget(qtbot),
         wwiserCard=_widget(qtbot),

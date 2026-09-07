@@ -105,7 +105,7 @@ class OverviewEntityListPanel(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 12, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
         self.nav_pivot = SegmentedWidget(self)
         self.nav_pivot.addItem("champions", "英雄")
@@ -119,7 +119,7 @@ class OverviewEntityListPanel(QWidget):
         apply_line_edit_safe_font(self.search_input)
         layout.addWidget(self.search_input)
 
-        self.special_availability_label = CaptionLabel("特殊内容仅支持本地客户端资源。", self)
+        self.special_availability_label = CaptionLabel("特殊内容需要可用的本地游戏数据。", self)
         self.special_availability_label.setWordWrap(True)
         self.special_availability_label.setVisible(False)
         layout.addWidget(self.special_availability_label)
@@ -133,6 +133,7 @@ class OverviewEntityListPanel(QWidget):
         status_layout.addWidget(self.selection_status_label)
         status_layout.addStretch(1)
         status_layout.addWidget(self.status_legend)
+        status_row.setMinimumHeight(32)
         layout.addWidget(status_row)
 
         self.list_stack = QStackedWidget(self)
@@ -143,13 +144,23 @@ class OverviewEntityListPanel(QWidget):
         special_list = SpecialContentTreeView(self.list_stack)
         self.entity_lists["special"] = special_list
         self.list_stack.addWidget(special_list)
-        layout.addWidget(self.list_stack, 1)
 
         self.selection_bar = QFrame(self)
         self.selection_bar.setObjectName("OverviewSelectionBar")
-        selection_layout = QHBoxLayout(self.selection_bar)
-        selection_layout.setContentsMargins(12, 10, 12, 10)
-        selection_layout.setSpacing(10)
+        self.selection_bar.setFrameShape(QFrame.Shape.NoFrame)
+        selection_layout = QVBoxLayout(self.selection_bar)
+        selection_layout.setContentsMargins(0, 0, 0, 0)
+        selection_layout.setSpacing(8)
+
+        self.selection_separator = QFrame(self.selection_bar)
+        self.selection_separator.setFrameShape(QFrame.Shape.HLine)
+        self.selection_separator.setFrameShadow(QFrame.Shadow.Plain)
+        self.selection_separator.setFixedHeight(1)
+        selection_layout.addWidget(self.selection_separator)
+
+        actions_layout = QHBoxLayout()
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(8)
 
         self.clear_selection_btn = PushButton("清空选择", self.selection_bar)
         self.scan_resource_packs_btn = PushButton("添加/扫描历史资源包", self.selection_bar)
@@ -160,11 +171,19 @@ class OverviewEntityListPanel(QWidget):
         self.clear_selection_btn.setEnabled(False)
         self.sync_selection_btn.setEnabled(False)
 
-        selection_layout.addStretch(1)
-        selection_layout.addWidget(self.scan_resource_packs_btn)
-        selection_layout.addWidget(self.clear_selection_btn)
-        selection_layout.addWidget(self.sync_selection_btn)
-        layout.addWidget(self.selection_bar)
+        actions_layout.addStretch(1)
+        actions_layout.addWidget(self.scan_resource_packs_btn)
+        actions_layout.addWidget(self.clear_selection_btn)
+        actions_layout.addWidget(self.sync_selection_btn)
+        selection_layout.addLayout(actions_layout)
+
+        list_footer = QWidget(self)
+        list_footer_layout = QVBoxLayout(list_footer)
+        list_footer_layout.setContentsMargins(0, 0, 0, 0)
+        list_footer_layout.setSpacing(0)
+        list_footer_layout.addWidget(self.list_stack, 1)
+        list_footer_layout.addWidget(self.selection_bar)
+        layout.addWidget(list_footer, 1)
 
     def current_entity_type(self) -> str:
         """返回当前展示的实体类型。"""
@@ -335,7 +354,7 @@ class OverviewEntityListPanel(QWidget):
         self.scan_resource_packs_btn.setEnabled(enabled)
 
     def set_special_interaction_enabled(self, enabled: bool) -> None:
-        """根据来源模式切换特殊内容目录的选择能力。"""
+        """根据应用上下文就绪状态切换特殊内容目录的选择能力。"""
         special_list = self.entity_lists["special"]
         special_list.set_interaction_enabled(enabled)
 

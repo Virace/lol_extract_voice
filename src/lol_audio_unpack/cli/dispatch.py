@@ -6,14 +6,14 @@
 from __future__ import annotations
 
 import argparse
-import sys
 
 from loguru import logger
 
 from ..app.facade import LolAudioUnpackApp
+from ..app.results import ResultStatus, StageResult
 from ..app.targets import resolve_scope
 from ..config import SettingKey
-from .runtime import build_options, parse_int_ids, resolve_champion_ids
+from .runtime import CliInputError, build_options, parse_int_ids, resolve_champion_ids
 
 
 def _has_update(args: argparse.Namespace) -> bool:
@@ -45,6 +45,21 @@ def _resolve_targets(
     champion_ids = resolve_champion_ids(args.champions, app=app, force_update=args.force)
     map_ids = parse_int_ids(args.maps)
     return champion_ids, map_ids
+
+
+def _resolve_stage_targets(
+    args: argparse.Namespace,
+    *,
+    app: LolAudioUnpackApp,
+    label: str,
+) -> tuple[tuple[int, ...] | None, tuple[int, ...] | None]:
+    """解析阶段目标，并把预期输入错误提升到 CLI 顶层。"""
+    try:
+        return _resolve_targets(args, app=app)
+    except ValueError as exc:
+        message = f"{label}目标无效：{exc}"
+        logger.error(message)
+        raise CliInputError(message) from exc
 
 
 def _target_scope(
@@ -93,49 +108,38 @@ def _log_stage_done(stage: str, detail: str | None = None) -> None:
     logger.opt(depth=1).success(message)
 
 
+def _log_stage_result(stage: str, result: StageResult, detail: str | None = None) -> None:
+    """仅在 typed result 成功时输出完成结论。"""
+    if result.status is ResultStatus.SUCCESS:
+        _log_stage_done(stage, detail)
+        return
+
+    message = f"{stage}阶段"
+    if result.status is ResultStatus.PARTIAL:
+        message += "部分完成"
+        log = logger.warning
+    elif result.status is ResultStatus.CANCELLED:
+        message += "已取消"
+        log = logger.warning
+    else:
+        message += "失败"
+        log = logger.error
+    if detail:
+        message = f"{message}: {detail}"
+    log(message)
+
+
 def _log_top_error(error: Exception, *, dev_mode: bool) -> None:
     """统一记录 CLI 顶层未处理异常。"""
     logger.opt(depth=1, exception=dev_mode).error(f"执行过程中发生错误: {error}")
 
 
-def run_remote_workflow(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
-    """执行 remote 模式下的单位驱动工作流。"""
-    champion_ids, map_ids = _resolve_targets(args, app=app)
-    update_target, extract_include_champions, extract_include_maps = _target_scope(
-        champion_ids=champion_ids,
-        map_ids=map_ids,
-    )
-
-    update_options = None
-    if _has_update(args):
-        update_options = build_options(args, champion_ids=champion_ids, map_ids=map_ids)
-
-    extract_options = None
-    if _has_extract(args):
-        extract_options = build_options(args, champion_ids=champion_ids, map_ids=map_ids)
-
-    mapping_options = None
-    if _has_mapping(args):
-        mapping_options = build_options(args, champion_ids=champion_ids, map_ids=map_ids)
-
-    app.run_workflow(
-        update_options=update_options,
-        update_target=update_target,
-        extract_options=extract_options,
-        mapping_options=mapping_options,
-        extract_include_champions=extract_include_champions,
-        extract_include_maps=extract_include_maps,
-        mapping_include_champions=extract_include_champions,
-        mapping_include_maps=extract_include_maps,
-    )
-
-
-def run_update(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
+def run_update(args: argparse.Namespace, app: LolAudioUnpackApp) -> StageResult | None:
     """执行数据更新操作。"""
     if not _has_update(args):
         return
 
-    champion_ids, map_ids = _resolve_targets(args, app=app)
+    champion_ids, map_ids = _resolve_stage_targets(args, app=app, label="数据更新")
     target, _, _ = _target_scope(champion_ids=champion_ids, map_ids=map_ids)
 
     if args.skip_events:
@@ -151,20 +155,17 @@ def run_update(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
         map_detail="指定地图数据",
     )
     _log_stage_start("数据更新", detail)
-    app.update(build_options(args, champion_ids=champion_ids, map_ids=map_ids), target=target)
-    _log_stage_done("数据更新", detail)
+    result = app.update(build_options(args, champion_ids=champion_ids, map_ids=map_ids), target=target)
+    _log_stage_result("数据更新", result, detail)
+    return result
 
 
-def run_extract(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
+def run_extract(args: argparse.Namespace, app: LolAudioUnpackApp) -> StageResult | None:
     """执行音频解包操作。"""
     if not _has_extract(args):
         return
 
-    try:
-        champion_ids, map_ids = _resolve_targets(args, app=app)
-    except ValueError as exc:
-        logger.error(f"解包目标失败: {exc}")
-        return
+    champion_ids, map_ids = _resolve_stage_targets(args, app=app, label="音频解包")
 
     _, include_champions, include_maps = _target_scope(champion_ids=champion_ids, map_ids=map_ids)
     detail = _target_detail(
@@ -175,24 +176,36 @@ def run_extract(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
         map_detail="指定地图音频",
     )
     _log_stage_start("音频解包", detail)
-    app.extract(
+    result = app.extract(
         build_options(args, champion_ids=champion_ids, map_ids=map_ids),
         include_champions=include_champions,
         include_maps=include_maps,
     )
-    _log_stage_done("音频解包", detail)
+    _log_stage_result("音频解包", result, detail)
+    return result
 
 
-def run_wav(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
+def run_wav(
+    args: argparse.Namespace,
+    app: LolAudioUnpackApp,
+    *,
+    extract_result: StageResult | None = None,
+) -> StageResult | None:
     """执行独立的 WAV 转码 stage。"""
     if not _has_wav(args):
         return
 
-    try:
-        champion_ids, map_ids = _resolve_targets(args, app=app)
-    except ValueError as exc:
-        logger.error(f"音频转码目标失败: {exc}")
-        return
+    champion_ids, map_ids = _resolve_stage_targets(args, app=app, label="WAV 转码")
+    if extract_result is not None:
+        successful_entities = tuple(
+            entity
+            for entity in extract_result.entities
+            if entity.status in {ResultStatus.SUCCESS, ResultStatus.PARTIAL} and entity.artifacts
+        )
+        champion_ids = tuple(
+            int(entity.entity_id) for entity in successful_entities if entity.entity_type == "champion"
+        )
+        map_ids = tuple(int(entity.entity_id) for entity in successful_entities if entity.entity_type == "map")
 
     detail = _target_detail(
         champion_ids=champion_ids,
@@ -202,8 +215,9 @@ def run_wav(args: argparse.Namespace, app: LolAudioUnpackApp) -> None:
         map_detail="指定地图音频目录",
     )
     _log_stage_start("WAV 转码", detail)
-    app.transcode_wav(build_options(args, champion_ids=champion_ids, map_ids=map_ids))
-    _log_stage_done("WAV 转码", detail)
+    result = app.transcode_wav(build_options(args, champion_ids=champion_ids, map_ids=map_ids))
+    _log_stage_result("WAV 转码", result, detail)
+    return result
 
 
 def _log_mapping_error(error: ValueError) -> None:
@@ -225,7 +239,7 @@ def _log_mapping_error(error: ValueError) -> None:
 def run_mapping(
     args: argparse.Namespace,
     app: LolAudioUnpackApp,
-) -> None:
+) -> StageResult | None:
     """执行事件映射操作。"""
     if not _has_mapping(args):
         return
@@ -233,11 +247,7 @@ def run_mapping(
     if build_options(args).integrate_data:
         logger.info("启用整合数据功能，将生成包含完整实体信息的整合文件")
 
-    try:
-        champion_ids, map_ids = _resolve_targets(args, app=app)
-    except ValueError as exc:
-        logger.error(f"构建映射目标失败: {exc}")
-        return
+    champion_ids, map_ids = _resolve_stage_targets(args, app=app, label="事件映射")
 
     _, include_champions, include_maps = _target_scope(champion_ids=champion_ids, map_ids=map_ids)
     detail = _target_detail(
@@ -250,15 +260,16 @@ def run_mapping(
     _log_stage_start("事件映射", detail)
     mapping_options = build_options(args, champion_ids=champion_ids, map_ids=map_ids)
     try:
-        app.mapping(
+        result = app.mapping(
             mapping_options,
             include_champions=include_champions,
             include_maps=include_maps,
         )
     except ValueError as exc:
         _log_mapping_error(exc)
-        sys.exit(1)
-    _log_stage_done("事件映射", detail)
+        raise CliInputError(str(exc)) from exc
+    _log_stage_result("事件映射", result, detail)
+    return result
 
 
 __all__ = [
@@ -267,11 +278,11 @@ __all__ = [
     "_has_update",
     "_has_wav",
     "_log_stage_done",
+    "_log_stage_result",
     "_log_stage_start",
     "_log_top_error",
     "run_extract",
     "run_mapping",
-    "run_remote_workflow",
     "run_update",
     "run_wav",
 ]

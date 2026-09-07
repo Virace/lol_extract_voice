@@ -12,7 +12,6 @@ from lol_audio_unpack.gui.components.preview_tree import (
     AUDIO_REF_ROLE,
     PreviewTreeModel,
     PreviewTreeView,
-    build_tree_summary_text,
     collect_tree_stats,
 )
 
@@ -145,7 +144,7 @@ def test_collect_tree_stats_does_not_count_missing_exact_mapping_path() -> None:
     stats = collect_tree_stats(mapping_data, (_make_ref("1000/VO/1001.wem"),))
 
     assert stats.available_audio_id_count == 0
-    assert "可试听 0" in build_tree_summary_text(stats)
+    assert stats.available_file_count == 0
 
 
 def test_collect_tree_stats_does_not_count_legacy_duplicate_id_as_playable() -> None:
@@ -161,4 +160,27 @@ def test_collect_tree_stats_does_not_count_legacy_duplicate_id_as_playable() -> 
     )
 
     assert stats.available_audio_id_count == 0
-    assert "可试听 0" in build_tree_summary_text(stats)
+    assert stats.available_file_count == 0
+
+
+def test_collect_tree_stats_separates_event_references_from_physical_files() -> None:
+    """同路径跨事件只算一个文件，同 ID 不同路径仍各计一个文件。"""
+    first = _make_ref("1000/VO/1001.wem")
+    second = _make_ref("1001/VO/1001.wem")
+    mapping_data = {
+        "skins": {
+            "1000": {
+                "events": {"VO": {"attack": ["1001"], "spell": ["1001", "1002"]}},
+                "audioPaths": {
+                    "VO": {
+                        "attack": [first.relative_path],
+                        "spell": [first.relative_path, second.relative_path, "1000/VO/1002.wem"],
+                    }
+                },
+            }
+        }
+    }
+
+    stats = collect_tree_stats(mapping_data, (first, second))
+
+    assert (stats.available_audio_id_count, stats.available_file_count, stats.unavailable_audio_count) == (3, 2, 1)

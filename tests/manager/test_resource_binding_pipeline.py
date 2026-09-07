@@ -1,4 +1,4 @@
-"""local v2 resource binding 处理链与 remote 兼容合同测试。"""
+"""本地 v2 resource binding 处理链合同测试。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from lol_audio_unpack.app.types import SourceMode
 from lol_audio_unpack.manager import bin_source as bin_source_module
 from lol_audio_unpack.manager import champion_bin_processor as champion_module
 from lol_audio_unpack.manager import data_reader as data_reader_module
@@ -15,7 +14,7 @@ from lol_audio_unpack.manager import map_bin_processor as map_module
 from lol_audio_unpack.manager.bin_source import BinBatch, LoadedBin
 from lol_audio_unpack.manager.data_reader import DataReader
 from lol_audio_unpack.manager.errors import ResourceSchemaMismatchError
-from lol_audio_unpack.manager.files import needs_update, write_data
+from lol_audio_unpack.manager.files import needs_update, read_data, write_data
 from lol_audio_unpack.model.binding import (
     RESOURCE_SCHEMA_VERSION,
     BankBinding,
@@ -25,6 +24,100 @@ from lol_audio_unpack.model.binding import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize("failures", [False, True])
+def test_champion_update_records_skin_audio_without_hiding_failures(
+    tmp_path: Path, monkeypatch, failures: bool
+) -> None:
+    """落盘区分共享、独立、无声明与失败，强制重建可刷新旧记录。"""
+    paths = {str(index): f"data/skins/skin{index}.bin" for index in range(6 if failures else 4)}
+    batch = BinBatch(
+        raws={path: skin.encode() for skin, path in paths.items() if skin != "4"},
+        bindings=[
+            _bin_binding(path, BindingStatus.MISSING if skin == "4" else BindingStatus.RESOLVED)
+            for skin, path in paths.items()
+        ],
+    )
+
+    def make_bin(raw: bytes):
+        """模拟 BIN 解析边界，皮肤 1 共享全部音频，皮肤 2 有独立 SFX。"""
+        skin = raw.decode()
+        if skin == "5":
+            raise ValueError("broken BIN")
+        units = (
+            []
+            if skin == "3"
+            else [
+                SimpleNamespace(category="Test_Base_VO", bank_path=["assets/base_vo.bnk"], events=[]),
+                SimpleNamespace(
+                    category="Test_Skin2_SFX" if skin == "2" else "Test_Base_SFX",
+                    bank_path=["assets/skin2_sfx.bnk" if skin == "2" else "assets/base_sfx.bnk"],
+                    events=[],
+                ),
+            ]
+        )
+        return SimpleNamespace(theme_music=None, data=[SimpleNamespace(music=None, bank_units=units)])
+
+    def resolve_banks(references):
+        """仅替代物理索引边界，保留实际声明归属。"""
+        return [
+            BankBinding(
+                category=ref.category,
+                path=ref.path,
+                normalized_path="",
+                kind="BNK",
+                wad="Game/shared.wad.client",
+                entry_hash=ref.path,
+                source_bin=ref.source_bin,
+                role=BindingRole.ROOT,
+                status=BindingStatus.RESOLVED,
+                sub_entity=ref.sub_entity,
+            )
+            for ref in references
+        ]
+
+    source = SimpleNamespace(
+        _resolve_bin_resources=lambda *_args: batch,
+        _resolve_bank_bindings=resolve_banks,
+        _resource_index_diagnostics=lambda: ({}, []),
+        _create_base_data=lambda _id, _type, **extra: {"metadata": {"gameVersion": "16.17"}, **extra},
+    )
+    processor = champion_module.ChampionBinProcessor(
+        source,
+        ctx=SimpleNamespace(config=SimpleNamespace(dev_mode=False)),
+        version="16.17",
+        force_update=False,
+        process_events=True,
+        game_path=tmp_path,
+        champion_banks_dir=tmp_path / "banks",
+        champion_events_dir=tmp_path / "events",
+    )
+    monkeypatch.setattr(champion_module, "BIN", make_bin)
+    champion = {
+        "alias": "Test",
+        "skins": [{"id": skin, "isBase": skin == "0", "binPath": path} for skin, path in paths.items()],
+    }
+    for force in (False, True):
+        processor.force_update = force
+        if force:
+            write_data({"skinAudio": {"1": {"VO": "independent"}}}, tmp_path / "banks" / "1", dev_mode=False)
+        result = processor._process_champion_skins(champion, "1")
+        payload = read_data(tmp_path / "banks" / "1")
+        assert result.status.value == ("partial" if failures else "success")
+        expected = {
+            "0": {"VO": "independent", "SFX": "independent"},
+            "1": {"VO": "shared", "SFX": "shared"},
+            "2": {"VO": "shared", "SFX": "independent"},
+            "3": {"VO": "absent", "SFX": "absent"},
+            "4": {"VO": "unknown", "SFX": "unknown"},
+            "5": {"VO": "unknown", "SFX": "unknown"},
+        }
+        assert payload["skinAudio"] == {skin: audio for skin, audio in expected.items() if skin in paths}
+        if failures:
+            assert not (tmp_path / "events" / "1.msgpack").exists()
+        else:
+            assert read_data(tmp_path / "events" / "1")["skins"] == {}
 
 
 def _bin_binding(path: str, status: BindingStatus) -> BinBinding:
@@ -46,7 +139,6 @@ def test_champion_first_missing_bin_keeps_later_binding_and_writes_partial_v2(tm
     batch = BinBatch(
         raws={second: b"second"},
         bindings=[_bin_binding(first, BindingStatus.MISSING), _bin_binding(second, BindingStatus.RESOLVED)],
-        resource_v2=True,
     )
 
     fake_bin = SimpleNamespace(
@@ -79,8 +171,6 @@ def test_champion_first_missing_bin_keeps_later_binding_and_writes_partial_v2(tm
     )
 
     source = SimpleNamespace(
-        _is_local_bin_mode_enabled=lambda: False,
-        _uses_resource_v2=lambda: True,
         _resolve_bin_resources=lambda *_args, **_kwargs: batch,
         _resolve_bank_bindings=lambda _references: [bank_binding],
         _resource_index_diagnostics=lambda: ({"requests": 3}, []),
@@ -124,48 +214,38 @@ def test_champion_first_missing_bin_keeps_later_binding_and_writes_partial_v2(tm
     assert artifact["skins"]["2"]["Characters/Test/Skins/Skin2/VO"] == [["assets/sounds/wwise2016/vo/test_audio.bnk"]]
 
 
-def test_remote_local_bin_flag_short_circuits_wad_index(tmp_path: Path, monkeypatch) -> None:
-    """remote `.use_local_bin` 必须在创建本地 WAD index 前直接读取准备好的 BIN。"""
+def test_legacy_local_bin_marker_does_not_override_wad_index(tmp_path: Path) -> None:
+    """历史 marker 与 bin_input 不得改变唯一的本地 WAD 索引路径。"""
     source = bin_source_module.BinSource.__new__(bin_source_module.BinSource)
     source.ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False), runtime_cache={})
     source.game_path = tmp_path
-    source.local_bin_input_dir = tmp_path / "bin_input"
-    source.use_local_bin_flag_file = tmp_path / ".use_local_bin"
-    source.use_local_bin_flag_file.write_text("", encoding="utf-8")
-    target = source.local_bin_input_dir / "data/characters/Test/skin.bin"
+    source._wad_index = SimpleNamespace(
+        resolve_many=lambda *_args, **_kwargs: [
+            SimpleNamespace(
+                path="data/characters/Test/skin.bin",
+                normalized_path="data/characters/test/skin.bin",
+                wad="Game/DATA/FINAL/Test.wad.client",
+                entry_hash="0000000000000001",
+                status=BindingStatus.RESOLVED,
+                role=BindingRole.ROOT,
+                candidates=(),
+                diagnostic=None,
+                payload=b"wad-bin",
+            )
+        ]
+    )
+    (tmp_path / ".use_local_bin").write_text("", encoding="utf-8")
+    target = tmp_path / "bin_input" / "data/characters/Test/skin.bin"
     target.parent.mkdir(parents=True)
-    target.write_bytes(b"remote-bin")
-
-    monkeypatch.setattr(source, "_get_wad_index", lambda: pytest.fail("remote 不应创建本地 WAD index"))
+    target.write_bytes(b"legacy-bin")
 
     batch = source._resolve_bin_resources(
         ["data/characters/Test/skin.bin"],
         "英雄 1",
-        local_required_dir=Path("data/characters/Test"),
     )
 
-    assert batch.resource_v2 is False
-    assert batch.bindings == []
-    assert batch.raws == {"data/characters/Test/skin.bin": b"remote-bin"}
-
-
-def test_remote_without_prepared_bin_does_not_fall_through_to_local_index(tmp_path: Path, monkeypatch) -> None:
-    """remote 输入未准备完成时也不得意外接管为 local resolver。"""
-    source = bin_source_module.BinSource.__new__(bin_source_module.BinSource)
-    source.ctx = SimpleNamespace(
-        config=SimpleNamespace(dev_mode=False, source_mode=SourceMode.REMOTE_SNAPSHOT),
-        runtime_cache={},
-    )
-    source.game_path = tmp_path
-    source.local_bin_input_dir = tmp_path / "bin_input"
-    source.use_local_bin_flag_file = tmp_path / ".use_local_bin"
-    monkeypatch.setattr(source, "_get_wad_index", lambda: pytest.fail("remote 不应创建本地 WAD index"))
-
-    batch = source._resolve_bin_resources(["data/test.bin"], "英雄 1")
-
-    assert batch.resource_v2 is False
-    assert batch.raws == {}
-    assert batch.bindings == []
+    assert batch.raws == {"data/characters/Test/skin.bin": b"wad-bin"}
+    assert [binding.wad for binding in batch.bindings] == ["Game/DATA/FINAL/Test.wad.client"]
 
 
 def test_map_processor_keeps_common_binding_but_deduplicates_legacy_projection(tmp_path: Path, monkeypatch) -> None:
@@ -176,7 +256,6 @@ def test_map_processor_keeps_common_binding_but_deduplicates_legacy_projection(t
     batch = BinBatch(
         raws={bin_path: b"map"},
         bindings=[_bin_binding(bin_path, BindingStatus.RESOLVED)],
-        resource_v2=True,
     )
     fake_bin = SimpleNamespace(
         theme_music=None,
@@ -217,8 +296,6 @@ def test_map_processor_keeps_common_binding_but_deduplicates_legacy_projection(t
         group=1,
     )
     source = SimpleNamespace(
-        _is_local_bin_mode_enabled=lambda: False,
-        _uses_resource_v2=lambda: True,
         _load_map_bin_resource=lambda *_args: LoadedBin(fake_bin, batch),
         _resolve_bank_bindings=lambda _references: [bank_binding, common_binding],
         _resource_index_diagnostics=lambda: ({"requests": 2}, []),
@@ -257,8 +334,8 @@ def test_map_processor_keeps_common_binding_but_deduplicates_legacy_projection(t
     assert artifact["banks"] == {"Map22_SFX": [[bank_path]]}
 
 
-def test_needs_update_distinguishes_local_resource_schema_from_legacy_freshness(tmp_path: Path) -> None:
-    """相同 gameVersion 的旧 local banks 仍需重建，remote 旧检查保持可复用。"""
+def test_needs_update_distinguishes_resource_schema_from_legacy_freshness(tmp_path: Path) -> None:
+    """相同 gameVersion 的旧 banks 仍需按 v2 schema 重建。"""
     base = tmp_path / "banks" / "1"
     base.parent.mkdir(parents=True)
     write_data({"metadata": {"gameVersion": "16.16"}, "skins": {}}, base, dev_mode=True)
@@ -275,19 +352,13 @@ def test_needs_update_distinguishes_local_resource_schema_from_legacy_freshness(
     assert needs_update(base, "16.16", False, dev_mode=True, resource_schema=RESOURCE_SCHEMA_VERSION) is False
 
 
-@pytest.mark.parametrize(
-    ("source_mode", "raises"),
-    [(SourceMode.LOCAL_PATH, True), (SourceMode.REMOTE_SNAPSHOT, False)],
-)
-def test_data_reader_requires_v2_only_for_local_artifacts(
+def test_data_reader_requires_v2_for_artifacts(
     tmp_path: Path,
     monkeypatch,
-    source_mode: SourceMode,
-    raises: bool,
 ) -> None:
-    """显式 require 在 local 拒绝 v1，在 remote 继续返回旧投影。"""
+    """显式 require 必须拒绝 v1 artifact。"""
     reader = DataReader.__new__(DataReader)
-    reader.ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False, source_mode=source_mode))
+    reader.ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False))
     reader.champion_banks_dir = tmp_path / "banks"
     reader._champion_banks_cache = {}
     monkeypatch.setattr(
@@ -297,9 +368,5 @@ def test_data_reader_requires_v2_only_for_local_artifacts(
     )
 
     assert reader.get_champion_banks(1) is not None
-    if raises:
-        with pytest.raises(ResourceSchemaMismatchError, match="重新运行 update"):
-            reader.get_champion_banks(1, require_bindings=True)
-    else:
-        assert reader.get_champion_banks(1, require_bindings=True) is not None
-        assert reader.get_champion_resource_bindings(1) is None
+    with pytest.raises(ResourceSchemaMismatchError, match="重新运行 update"):
+        reader.get_champion_banks(1, require_bindings=True)

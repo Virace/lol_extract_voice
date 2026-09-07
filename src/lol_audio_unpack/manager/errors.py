@@ -1,4 +1,4 @@
-"""共享数据相关的语义化异常与统一分类工具。
+"""manager 持久化与共享数据边界的语义异常。
 
 CLI 报错与 GUI 自动准备判定都需要识别"共享数据尚未就绪、应先运行更新"这一类
 错误。历史上 GUI 在多个消费点各自硬编码中文文案子串来判断，一旦文案改写，判定会
@@ -7,9 +7,12 @@ CLI 报错与 GUI 自动准备判定都需要识别"共享数据尚未就绪、�
 - 业务层（manager/service）抛出语义异常，调用方可用 ``isinstance`` 稳健判定。
 - 跨 Qt 信号边界后异常类型会退化为字符串（``Signal(str)``），此时回退到集中维护的
   文案子串匹配；同一组标记只在这里维护一份。
+- 结构化 artifact 写入失败携带正式目标与失败阶段，原始异常保留在异常链中。
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 # 同时用于异常消息和字符串边界判定的文案标记，集中维护避免多处漂移。
 SHARED_DATA_NOT_READY_MARKERS: tuple[str, ...] = (
@@ -21,6 +24,22 @@ SHARED_DATA_NOT_READY_MARKERS: tuple[str, ...] = (
 )
 
 
+class ArtifactWriteError(OSError):
+    """结构化 artifact 未能完整替换目标文件。
+
+    原始异常通过异常链保留，调用方无需从日志文本推断失败原因。
+
+    Args:
+        path: 原本要替换的正式目标路径。
+        stage: 失败阶段，例如 ``serialize``、``fsync`` 或 ``replace``。
+    """
+
+    def __init__(self, path: Path, stage: str) -> None:
+        self.path = Path(path)
+        self.stage = stage
+        super().__init__(f"artifact 写入失败（{stage}）: {self.path}")
+
+
 class SharedDataNotReadyError(Exception):
     """共享数据尚未就绪：需先运行更新程序后才能读取实体数据。"""
 
@@ -30,6 +49,10 @@ class SharedDataMissingError(SharedDataNotReadyError, FileNotFoundError):
 
     同时继承 ``FileNotFoundError`` 以兼容既有按 ``FileNotFoundError`` 捕获的调用方。
     """
+
+
+class SharedDataCorruptError(SharedDataNotReadyError, ValueError):
+    """共享数据 artifact 已存在，但无法反序列化或缺少必要结构。"""
 
 
 class DataVersionMismatchError(SharedDataNotReadyError, ValueError):
@@ -63,8 +86,10 @@ def is_shared_data_not_ready(error: Exception | str) -> bool:
 
 __all__ = [
     "SHARED_DATA_NOT_READY_MARKERS",
+    "ArtifactWriteError",
     "DataVersionMismatchError",
     "ResourceSchemaMismatchError",
+    "SharedDataCorruptError",
     "SharedDataMissingError",
     "SharedDataNotReadyError",
     "is_shared_data_not_ready",

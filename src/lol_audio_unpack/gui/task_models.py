@@ -4,14 +4,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
+from uuid import uuid4
 
+from lol_audio_unpack.app.audio_export import AudioExportRequest
 from lol_audio_unpack.app.resource_pack import ResourcePackWadRef
+from lol_audio_unpack.app.results import EntityResult, RunResult
 from lol_audio_unpack.app.types import OperationOptions, WavOutputOptions
 from lol_audio_unpack.config import SettingKey
+from lol_audio_unpack.runtime.wav.batch import WavBatchResult
 
 TASK_STATUS_WAITING = "等待中"
 TASK_STATUS_RUNNING = "运行中"
 TASK_STATUS_COMPLETED = "已完成"
+TASK_STATUS_PARTIAL = "部分完成"
 TASK_STATUS_FAILED = "失败"
 TASK_STATUS_CANCELLED = "已取消"
 
@@ -123,6 +129,16 @@ class ExecutionTaskParamsSnapshot:
 
 
 @dataclass(slots=True, frozen=True)
+class ExecutionRetryStage:
+    """限定一次重试内某个阶段的独立范围，避免不同阶段目标交叉扩大。"""
+
+    label: str
+    params: ExecutionTaskParamsSnapshot
+    extract_entities: tuple[EntityResult, ...] = ()
+    wav_batches: tuple[WavBatchResult, ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
 class ExecutionTaskDraft:
     """执行中心中的任务草稿快照。
 
@@ -137,6 +153,14 @@ class ExecutionTaskDraft:
     source_summary: str
     context_input: AppContextInputSnapshot = field(default_factory=AppContextInputSnapshot)
     task_params: ExecutionTaskParamsSnapshot = field(default_factory=ExecutionTaskParamsSnapshot)
+    operation_id: str = field(default_factory=lambda: uuid4().hex)
+    export_request: AudioExportRequest | None = None
+    retry_wav: tuple[WavBatchResult, ...] = ()
+    retry_of: str | None = None
+    version: str = ""
+    retry_extract: tuple[EntityResult, ...] = ()
+    retry_stages: tuple[ExecutionRetryStage, ...] = ()
+    retry_keys: frozenset[tuple[str, ...]] = frozenset()
 
 
 @dataclass(slots=True, frozen=True)
@@ -178,7 +202,7 @@ class QueuedExecutionTask:
         progress_total: 总进度计数。
         progress_message: 当前进度提示文案。
         progress_detail: 当前阶段的结构化进度快照。
-        result_summary: 成功执行后的结果摘要。
+        result_summary: typed result 对应的终态摘要。
         error_message: 失败时的错误摘要。
     """
 
@@ -202,14 +226,19 @@ class ExecutionTaskResult:
     """后台任务完成后的结果摘要。
 
     Args:
-        completed_steps: 已成功完成的步骤名称。
-        summary: 展示给用户的完成摘要。
+        completed_steps: success/partial 且已确认产生产物的步骤名称。
+        summary: 展示给用户的终态摘要。
         duration_seconds: 本次任务耗时。
+        run_result: 后端返回的权威整轮执行结果。
     """
 
     completed_steps: tuple[str, ...]
     summary: str
     duration_seconds: float
+    run_result: RunResult
+    report_path: Path | None = None
+    version: str = ""
+    wav_batches: tuple[WavBatchResult, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)
@@ -229,6 +258,7 @@ class OutputStateRefreshRequest:
     special_targets: tuple[str, ...] = ()
     requires_full_refresh: bool = False
     resource_pack_wads: tuple[ResourcePackWadRef, ...] = ()
+    quiet: bool = False
 
     def has_incremental_targets(self) -> bool:
         """返回当前请求是否包含可增量刷新的实体目标。"""

@@ -5,12 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from PySide6.QtCore import Qt
-
 import lol_audio_unpack.gui.view.overview_page as overview_page_module
 from lol_audio_unpack.app.artifacts import AudioIndexProgress, AudioRef
 from lol_audio_unpack.app.resource_pack import ResourcePackWadRef
-from lol_audio_unpack.app.types import SourceMode
 from lol_audio_unpack.gui.controllers.overview_preview import (
     ALL_AUDIO_PREVIEW_MODE,
     EVENT_PREVIEW_MODE,
@@ -18,6 +15,7 @@ from lol_audio_unpack.gui.controllers.overview_preview import (
     AudioPreviewToggleResult,
     OverviewPreviewLoadResult,
 )
+from lol_audio_unpack.gui.shared_data import SharedDataPhase, SharedDataState
 from lol_audio_unpack.gui.view.overview_page import OverviewPage
 
 
@@ -326,49 +324,6 @@ def test_overview_page_rejects_stale_all_audio_worker_result(qtbot) -> None:
     assert page.audio_list.model().rowCount() == 1
 
 
-def test_overview_page_remote_special_tab_shows_local_only_notice(qtbot) -> None:
-    """远端模式下特殊目录仍可浏览，但不能选择或发送。"""
-    page = OverviewPage()
-    qtbot.addWidget(page)
-    page.set_entity_data(
-        "special",
-        [
-            {
-                "id": "66600",
-                "key": "champion:66600",
-                "name": "厄加特",
-                "display_name": "末日人机 · 厄加特",
-                "mode_key": "doom_bots",
-                "audio": "未准备",
-                "mapping": "未准备",
-                "search_text": "末日人机 doom bots 厄加特 ruby_urgot 66600 champion:66600",
-            }
-        ],
-    )
-    page.nav_pivot.setCurrentItem("special")
-    page.set_app_context(SimpleNamespace(config=SimpleNamespace(source_mode=SourceMode.REMOTE_SNAPSHOT)))
-
-    item = (
-        page.entityListPanel.current_list()
-        .model()
-        .index(
-            0,
-            0,
-            page.entityListPanel.current_list().model().index(0, 0),
-        )
-    )
-
-    assert page.entityListPanel.special_availability_label.isHidden() is False
-    assert not bool(item.flags() & Qt.ItemFlag.ItemIsSelectable)
-    assert page.subtitle_label.text() == "特殊内容仅支持本地客户端资源。"
-    assert page.previewPanel.text_preview.toPlainText() == "特殊内容仅支持本地客户端资源。"
-
-    page.nav_pivot.setCurrentItem("champions")
-
-    assert page.entityListPanel.special_availability_label.isHidden() is True
-    assert page.search_input.placeholderText() == "搜索英雄、别名或 ID"
-
-
 def test_overview_page_updates_search_placeholder_per_entity_directory(qtbot) -> None:
     """一级目录切换应说明各自可搜索字段。"""
     page = OverviewPage()
@@ -388,8 +343,9 @@ def test_overview_page_special_catalog_empty_and_unprepared_states_are_explicit(
     """本地目录应区分当前版本无 special 与需要更新实体数据。"""
     page = OverviewPage()
     qtbot.addWidget(page)
+    page.set_shared_data_state(SharedDataState(SharedDataPhase.READY, 1))
     page.nav_pivot.setCurrentItem("special")
-    page.set_app_context(SimpleNamespace(config=SimpleNamespace(source_mode=SourceMode.LOCAL_PATH)))
+    page.set_app_context(SimpleNamespace(config=SimpleNamespace()))
 
     assert page.previewPanel.text_preview.toPlainText() == "当前版本未发现特殊内容"
 
