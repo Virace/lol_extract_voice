@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -5,12 +6,15 @@ import pytest
 
 from lol_audio_unpack import mapping as m_mapping
 from lol_audio_unpack import unpack as m_unpack
-from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths, SourceMode
+from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
+from lol_audio_unpack.manager.data_reader import DataReader
+from lol_audio_unpack.manager.files import write_data
 from lol_audio_unpack.mapping import batch as mapping_batch
 from lol_audio_unpack.mapping import session as mapping_session
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.unpack import batch as unpack_batch
 from lol_audio_unpack.unpack import bp_vo as unpack_bp_vo
+from lol_audio_unpack.unpack.stats import StageResult as UnpackStageResult
 from lol_audio_unpack.utils.path_constants import format_entity_folder_name, format_sub_entity_folder_name
 
 pytestmark = pytest.mark.unit
@@ -23,10 +27,13 @@ def _build_ctx(  # noqa: PLR0913
     group_by_type: bool = False,
     with_bp_vo: bool = False,
     wwiser_path: Path | None = None,
-    source_mode: SourceMode = SourceMode.LOCAL_PATH,
+    game_version: str = "16.3",
 ) -> AppContext:
     game_path = tmp_path / "game"
     output_path = tmp_path / "output"
+    metadata_path = game_path / "Game" / "content-metadata.json"
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(json.dumps({"version": game_version}), encoding="utf-8")
     app_config = AppConfig(
         game_path=game_path,
         output_path=output_path,
@@ -34,7 +41,6 @@ def _build_ctx(  # noqa: PLR0913
         group_by_type=group_by_type,
         with_bp_vo=with_bp_vo,
         wwiser_path=wwiser_path,
-        source_mode=source_mode,
     )
     app_paths = AppPaths(
         audio_path=output_path / "audios",
@@ -53,14 +59,50 @@ def _build_ctx(  # noqa: PLR0913
     return AppContext(config=app_config, paths=app_paths)
 
 
+def _write_reader_data(ctx: AppContext, *, version: str, alias: str) -> None:
+    """为 reader 生命周期测试写入最小结构化数据。"""
+    write_data(
+        {
+            "metadata": {"gameVersion": version, "languages": []},
+            "champions": {"1": {"id": 1, "alias": alias}},
+            "maps": {},
+        },
+        ctx.paths.manifest_path / version / "data",
+        dev_mode=ctx.config.dev_mode,
+    )
+
+
+def test_data_reader_instances_are_isolated_by_app_context(tmp_path: Path) -> None:
+    """同进程 reader 必须按构造时的 context 读取各自 artifact。"""
+    ctx_a = _build_ctx(tmp_path / "a", game_version="16.3")
+    ctx_b = _build_ctx(tmp_path / "b", game_version="16.4")
+    _write_reader_data(ctx_a, version="16.3", alias="ContextA")
+    _write_reader_data(ctx_b, version="16.4", alias="ContextB")
+
+    reader_a = DataReader(ctx_a)
+    second_reader_a = DataReader(ctx_a)
+    reader_b = DataReader(ctx_b)
+
+    assert reader_a is not second_reader_a
+    assert reader_a is not reader_b
+    assert reader_a.ctx is ctx_a
+    assert reader_b.ctx is ctx_b
+    assert reader_a.version_manifest_path == ctx_a.paths.manifest_path / "16.3"
+    assert reader_b.version_manifest_path == ctx_b.paths.manifest_path / "16.4"
+    assert reader_a.get_champion(1)["alias"] == "ContextA"
+    assert reader_b.get_champion(1)["alias"] == "ContextB"
+
+
 def test_audio_entity_from_champion_uses_ctx_region_and_game_path(tmp_path: Path) -> None:
-    ctx = _build_ctx(tmp_path, game_region="en_US", source_mode=SourceMode.REMOTE_SNAPSHOT)
+    ctx = _build_ctx(tmp_path, game_region="en_US")
     wad_file = ctx.game_path / "Game" / "en.wad.client"
     root_wad_file = ctx.game_path / "Game" / "root.wad.client"
     wad_file.parent.mkdir(parents=True, exist_ok=True)
     wad_file.write_bytes(b"wad")
     root_wad_file.write_bytes(b"root-wad")
 
+    binding = SimpleNamespace(sub_entity="1000", category="CHARACTER_VO")
+    resources = SimpleNamespace(entity_id="1", bank_bindings=(binding,), diagnostics=SimpleNamespace())
     reader = SimpleNamespace(
         get_champion=lambda _id: {
             "id": 1,
@@ -70,8 +112,9 @@ def test_audio_entity_from_champion_uses_ctx_region_and_game_path(tmp_path: Path
             "skins": [{"id": 1000, "isBase": True, "skinNames": {"zh_CN": "基础皮肤", "en_US": "Base Skin"}}],
             "wad": {"root": "Game/root.wad.client", "en_US": "Game/en.wad.client"},
         },
-        get_champion_banks=lambda _id: {"skins": {"1000": {"CHARACTER_VO": [["Game/en_events.bnk"]]}}},
-        get_champion_events=lambda _id: {"skins": {"1000": {"events": {}}}},
+        get_champion_resource_bindings=lambda _id: resources,
+        get_champion_banks=lambda _id: pytest.fail("local v2 不应读取旧 banks projection"),
+        get_audio_type=lambda _category: "VO",
     )
 
     entity_data = AudioEntityData.from_champion(1, reader, ctx=ctx)
@@ -221,8 +264,11 @@ def test_unpack_batch_reports_partial_failures(monkeypatch: pytest.MonkeyPatch, 
         opt=_opt_logger,
     )
 
-    def _fake_unpack_champion(*_args, **_kwargs) -> None:
-        return None
+    def _fake_unpack_champion(*_args, **_kwargs) -> SimpleNamespace:
+        return SimpleNamespace(
+            overall_result=UnpackStageResult.SUCCESS,
+            get_simple_summary=lambda: "英雄解包成功",
+        )
 
     def _fail_unpack_map(*_args, **_kwargs) -> None:
         raise RuntimeError("map boom")

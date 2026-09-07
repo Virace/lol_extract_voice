@@ -54,6 +54,7 @@ def _log_startup_stage(stage: str, startup_begin: float, previous_mark: float) -
 
 
 def main() -> None:
+    """启动 GUI 应用。"""
     startup_begin = perf_counter()
     previous_mark = startup_begin
     cfg = GuiConfig()
@@ -72,9 +73,7 @@ def main() -> None:
     previous_mark = _log_startup_stage("setup_logging 完成", startup_begin, previous_mark)
 
     # 启用高 DPI 缩放
-    QApplication.setHighDpiScaleFactorRoundingPolicy(
-        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
-    )
+    QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps)
     previous_mark = _log_startup_stage("Qt HighDPI 属性配置完成", startup_begin, previous_mark)
@@ -111,6 +110,7 @@ def main() -> None:
     if not window.isVisible():
         window.show()
     previous_mark = _log_startup_stage("主窗口可见状态确认完成", startup_begin, previous_mark)
+    logger.info("GUI 主窗口已就绪 | 启动耗时 {:.3f}s", previous_mark - startup_begin)
     sys.exit(app.exec())
 
 

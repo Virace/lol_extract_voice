@@ -4,13 +4,31 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from lol_audio_unpack.app.special_content import is_structured_special_champion
 
 EntityRef = tuple[str, int]
 EntityTask = tuple[str, int, str]
 _HIDDEN_CHAMPION_PREFIXES = ("ruby_", "jade_")
+_MapId = TypeVar("_MapId", int, str)
+
+
+def with_common_map(ids: Sequence[_MapId] | None, common_id: _MapId) -> tuple[_MapId, ...] | None:
+    """在显式地图范围中稳定包含 Common 地图。
+
+    Args:
+        ids: 显式地图 ID；``None`` 表示沿用全量语义。
+        common_id: 与调用方 ID 类型一致的 Common 地图 ID。
+
+    Returns:
+        保留输入顺序并把 Common 地图放在首位的去重结果。
+    """
+    if ids is None:
+        return None
+    if not ids:
+        return ()
+    return tuple(dict.fromkeys((common_id, *ids)))
 
 
 def get_default_hidden_champion_markers(champion: Mapping[str, Any]) -> tuple[str, ...]:

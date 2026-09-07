@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import multiprocessing as mp
+import os
+import signal
+import subprocess
 from queue import Empty
 from typing import Any
 
+from loguru import logger
 from PySide6.QtCore import QObject, QTimer
 
 from lol_audio_unpack.gui.service.task_runner import run_execution_task
@@ -44,6 +48,9 @@ class _ProcessSignals:
 
 def _run_task_process(task: QueuedExecutionTask, event_queue) -> None:
     """在子进程中执行单条任务，并通过队列回传事件。"""
+    if os.name != "nt":
+        # 上游转码池继承进程组，取消时可连同其工作进程一起回收。
+        os.setsid()
     signals = _ProcessSignals(event_queue)
     signals.started.emit()
     try:
@@ -79,6 +86,7 @@ class ExecutionProcessWorker(QObject):
         self._event_queue = self._ctx.Queue()
         self._process = self._ctx.Process(target=_run_task_process, args=(task, self._event_queue))
         self._transport_closed = False
+        self._terminal_seen = False
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(poll_interval_ms)
         self._poll_timer.timeout.connect(self._pump_events)
@@ -110,14 +118,33 @@ class ExecutionProcessWorker(QObject):
         return finished
 
     def terminate(self) -> None:
-        """强制结束子进程并回收事件通道。"""
+        """结束本任务进程树，避免取消后上游转码池继续运行。"""
         if self._process.is_alive():
+            pid = getattr(self._process, "pid", None)
+            if pid is not None:
+                if os.name == "nt":
+                    result = subprocess.run(
+                        ["taskkill", "/PID", str(pid), "/T", "/F"],
+                        capture_output=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW,
+                        check=False,
+                    )
+                    if result.returncode and self._process.is_alive():
+                        raise RuntimeError("无法结束任务进程树，仍保留运行状态，请再次尝试取消。")
+                else:
+                    try:
+                        os.killpg(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                logger.info("已结束任务进程树：{}", pid)
             self._process.terminate()
             self._process.join()
         self._finalize_transport()
 
     def _pump_events(self) -> None:
         """将子进程发回的事件转发为 Qt 信号。"""
+        if self._transport_closed:
+            return
         while True:
             try:
                 event_name, payload = self._event_queue.get_nowait()
@@ -129,11 +156,17 @@ class ExecutionProcessWorker(QObject):
             elif event_name == PROCESS_EVENT_PROGRESS:
                 self.signals.progress.emit(payload)
             elif event_name == PROCESS_EVENT_FINISHED:
+                self._terminal_seen = True
                 self.signals.finished.emit(payload)
             elif event_name == PROCESS_EVENT_FAILED:
+                self._terminal_seen = True
                 self.signals.failed.emit(str(payload))
 
         if not self._process.is_alive():
+            if not self._terminal_seen:
+                self._terminal_seen = True
+                code = getattr(self._process, "exitcode", None)
+                self.signals.failed.emit(f"任务进程异常退出（退出码 {code}），完成范围未知，请检查已有产物。")
             self._finalize_transport()
 
     def _finalize_transport(self) -> None:

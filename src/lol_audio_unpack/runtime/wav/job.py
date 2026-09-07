@@ -7,12 +7,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from loguru import logger
-from pyvgmstream.transcode import BatchTranscodeItemResult, BatchTranscodeProgress, transcode_tree
+from pyvgmstream.transcode import BatchTranscodeProgress
 
+from ...app.audio_scope import AudioScope
 from ...app.types import AppContext, WavOutputOptions
-from ._runtime import resolve_decode_config
+from .batch import WavBatchResult, run_batch
 
 
 @dataclass(slots=True, frozen=True)
@@ -75,17 +77,6 @@ def _resolve_target_label(*, input_root: Path, audio_root: Path) -> str:
     return input_root.name
 
 
-def _serialize_failure(result: BatchTranscodeItemResult) -> dict[str, Any]:
-    """序列化单条失败结果。"""
-    return {
-        "source_path": str(result.source_path),
-        "output_path": str(result.output_path),
-        "frame_count": result.frame_count,
-        "byte_count": result.byte_count,
-        "error": result.error or "unknown error",
-    }
-
-
 def _write_reports(
     report_root: Path,
     *,
@@ -129,7 +120,8 @@ def run_tree(  # noqa: PLR0913
         dict[str, Any]: 供上层汇总与日志消费的转码结果摘要。
     """
     paths = build_transcode_paths(ctx=ctx, version=version, job_label=job_label)
-    decode_config = resolve_decode_config(wav_output.format)
+    operation_id = uuid4().hex
+    report_root = paths.report_root / operation_id
 
     if audio_targets is not None:
         run_targets = tuple(
@@ -168,11 +160,17 @@ def run_tree(  # noqa: PLR0913
             "failed_file_count": 0,
             "audio_roots": [],
         }
-        _write_reports(paths.report_root, payload=payload, failures=[])
+        payload["report_path"] = str(report_root / "summary.json")
+        _write_reports(report_root, payload=payload, failures=[])
         return payload
 
     processed_count = 0
     failed_count = 0
+    skipped_count = 0
+    unconfirmed_count = 0
+    batch_reports: list[str] = []
+    batches: list[WavBatchResult] = []
+    batch_errors: list[str] = []
     failures: list[dict[str, Any]] = []
     root_total = max(len(run_targets), 1)
     for root_index, target in enumerate(run_targets, start=1):
@@ -186,21 +184,24 @@ def run_tree(  # noqa: PLR0913
         if progress_callback is not None:
             progress_callback("wav", root_index - 1, root_total, f"正在处理: {target_label}")
 
-        summary = transcode_tree(
-            input_root,
+        summary = run_batch(
+            AudioScope(input_root, directories=(".",)),
             output_root,
-            workers=wav_output.worker_count,
-            chunk_frames=65536,
-            dispatch_chunksize=64,
-            config=decode_config,
-            progress_callback=emit_progress,
+            options=wav_output,
+            report_root=report_root,
+            progress=emit_progress,
         )
-        processed_count += summary.processed_count
+        processed_count += summary.success_count
+        batches.append(summary)
         failed_count += summary.failed_count
+        skipped_count += summary.skipped_count
+        unconfirmed_count += summary.unconfirmed_count
+        batch_reports.append(str(summary.report_path))
+        if summary.error_message:
+            batch_errors.append(summary.error_message)
         failures.extend(
-            _serialize_failure(result)
-            for result in summary.results
-            if result.error
+            {"source_path": item.source_path, "output_path": item.output_path, "error": item.error}
+            for item in summary.failures
         )
         root_finish_message = f"WAV 转码目录完成：{target_label}"
         if progress_callback is not None:
@@ -210,17 +211,17 @@ def run_tree(  # noqa: PLR0913
             logger.warning(
                 "{} · 本目录成功 {} 个，失败 {} 个",
                 root_finish_message,
-                summary.processed_count,
+                summary.success_count,
                 summary.failed_count,
             )
         else:
             logger.info(
                 "{} · 本目录成功 {} 个",
                 root_finish_message,
-                summary.processed_count,
+                summary.success_count,
             )
     payload = {
-        "status": "warning" if failed_count else "success",
+        "status": "warning" if failed_count or batch_errors else "success",
         "job_label": job_label,
         "audio_root": str(paths.audio_root),
         "wav_root": str(paths.wav_root),
@@ -228,9 +229,21 @@ def run_tree(  # noqa: PLR0913
         "wav_format": wav_output.format,
         "processed_file_count": processed_count,
         "failed_file_count": failed_count,
+        "skipped_file_count": skipped_count,
+        "unconfirmed_file_count": unconfirmed_count,
+        "errors": batch_errors,
+        "batch_reports": batch_reports,
+        "operation_id": operation_id,
+        "report_path": str(report_root / "summary.json"),
         "audio_roots": [str(target.root_path) for target in run_targets],
     }
-    _write_reports(paths.report_root, payload=payload, failures=failures)
+    try:
+        _write_reports(report_root, payload=payload, failures=failures)
+    except OSError as exc:
+        logger.error("WAV 汇总报告保存失败，保留已完成结果：{}", exc)
+        payload["report_error"] = str(exc)
+    # 运行事实通过 typed result 传递，不依赖报告文件仍然可读。
+    payload["batches"] = tuple(batches)
 
     if failed_count:
         logger.warning(

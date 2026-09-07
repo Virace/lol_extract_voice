@@ -2,29 +2,31 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from loguru import logger
 
 from lol_audio_unpack.app.context import create_app_context
 from lol_audio_unpack.app.facade import LolAudioUnpackApp
+from lol_audio_unpack.app.game_version import resolve_game_version
+from lol_audio_unpack.app.operation_report import write_operation_report
 from lol_audio_unpack.app.resource_pack import partition_special_targets
-from lol_audio_unpack.app.special_content import (
-    is_special_content_supported,
-    merge_champion_ids,
-)
+from lol_audio_unpack.app.results import EntityResult, ResultStatus, RunResult, StageResult
+from lol_audio_unpack.app.special_content import merge_champion_ids
 from lol_audio_unpack.app.targets import resolve_scope
 from lol_audio_unpack.app.types import OperationOptions
 from lol_audio_unpack.config import SettingKey
-from lol_audio_unpack.gui.common.remote_mode_policy import normalize_app_context_settings
 from lol_audio_unpack.gui.task_models import (
     ExecutionTaskProgress,
     ExecutionTaskResult,
     QueuedExecutionTask,
 )
-from lol_audio_unpack.manager import DataReader
+from lol_audio_unpack.runtime.wav.batch import WavBatchResult, read_batch_result, retry_batch, run_batch
+from lol_audio_unpack.unpack.batch import execute_tasks as execute_extract_tasks
 
 if TYPE_CHECKING:
     from lol_audio_unpack.gui.workers import WorkerSignals
@@ -48,6 +50,141 @@ ENTITY_SCOPE_LABEL_BY_TYPE = {
     "resource_pack": "历史资源包",
     "wav": "音频转码",
 }
+MAX_SUMMARY_ISSUES = 3
+
+
+def _stage_has_artifacts(result: StageResult) -> bool:
+    """返回阶段是否携带本轮已确认落盘的产物。"""
+    return any(entity.artifacts for entity in result.entities)
+
+
+def _stage_produced_output(result: StageResult) -> bool:
+    """判断阶段是否能进入 GUI 的已产生产物步骤列表。"""
+    if result.status not in {ResultStatus.SUCCESS, ResultStatus.PARTIAL}:
+        return False
+    if result.stage == "update":
+        # GUI 的 update 始终是显式 force update；成功返回表示基础 artifact 已完成换代。
+        if result.status is ResultStatus.SUCCESS:
+            return result.note != "当前目标不需要更新。"
+        return _stage_has_artifacts(result)
+    return _stage_has_artifacts(result)
+
+
+def _build_wav_options(options: OperationOptions, extract_result: StageResult) -> OperationOptions:
+    """把 WAV 消费范围限制到本轮解包已确认落盘的实体。"""
+    eligible_entities = tuple(
+        entity
+        for entity in extract_result.entities
+        if entity.status in {ResultStatus.SUCCESS, ResultStatus.PARTIAL} and entity.artifacts
+    )
+    return replace(
+        options,
+        champion_ids=tuple(int(entity.entity_id) for entity in eligible_entities if entity.entity_type == "champion"),
+        map_ids=tuple(int(entity.entity_id) for entity in eligible_entities if entity.entity_type == "map"),
+        special_targets=(),
+        resource_pack_wads=(),
+    )
+
+
+def _terminal_progress_counts(result: StageResult) -> tuple[int, int]:
+    """构造不会把非 success 终态伪装成满进度的计数。"""
+    total = max(result.total_count, 1)
+    if result.status is ResultStatus.SUCCESS:
+        return total, total
+    artifact_count = sum(bool(entity.artifacts) for entity in result.entities)
+    return min(artifact_count, total - 1), total
+
+
+def _terminal_stage_message(result: StageResult) -> str:
+    """按 typed status 构造阶段收尾文案。"""
+    label = STAGE_LABEL_BY_KEY.get(result.stage, result.stage)
+    if result.status is ResultStatus.SUCCESS:
+        return f"{label}完成" if _stage_produced_output(result) else f"{label}无需处理"
+    details = []
+    if result.error_message:
+        details.append(result.error_message)
+    affected = [entity for entity in result.entities if entity.status is not ResultStatus.SUCCESS]
+    for entity in affected[:MAX_SUMMARY_ISSUES]:
+        name = (
+            entity.entity_name or f"{ENTITY_SCOPE_LABEL_BY_TYPE.get(entity.entity_type, '对象')} ID {entity.entity_id}"
+        )
+        reason = entity.error_message or "未提供具体原因，请查看任务日志"
+        details.append(f"{name}：{reason}")
+    if len(affected) > MAX_SUMMARY_ISSUES:
+        details.append(f"另有 {len(affected) - MAX_SUMMARY_ISSUES} 个对象未完成")
+    if not details and result.note:
+        details.append(result.note)
+    if not details:
+        details.append("未提供具体原因，请查看任务日志")
+    detail_text = "；".join(details)
+    if result.status is ResultStatus.PARTIAL:
+        return f"{label}部分完成（{detail_text}）"
+    if result.status is ResultStatus.CANCELLED:
+        return f"{label}已取消（{detail_text}）"
+    return f"{label}失败（{detail_text}）"
+
+
+def _emit_terminal_stage_progress(
+    signals: WorkerSignals,
+    result: StageResult,
+    *,
+    entity_scope_label: str,
+) -> None:
+    """将 typed stage result 映射为最终结构化进度。"""
+    current, total = _terminal_progress_counts(result)
+    _emit_stage_progress(
+        signals,
+        stage_key=result.stage,
+        entity_scope_label=entity_scope_label,
+        current=current,
+        total=total,
+        message=_terminal_stage_message(result),
+        stage_finished=True,
+    )
+
+
+def _build_run_summary(
+    result: RunResult,
+    completed_steps: tuple[str, ...],
+    duration_seconds: float,
+) -> str:
+    """根据权威整轮结果构造用户可观察的终态摘要。"""
+    duration = f"{duration_seconds:.1f}s"
+    productive_text = " -> ".join(completed_steps)
+    if result.status is ResultStatus.SUCCESS:
+        if productive_text:
+            return f"已完成：{productive_text}（{duration}）"
+        return f"执行完成：本轮没有产生新产物（{duration}）"
+
+    # 同一英雄在解包和映射各有一个结果；跨阶段累加会把一个对象误显示成两个。
+    stage_text = "；".join(_terminal_stage_message(stage) for stage in result.stages)
+    if not completed_steps:
+        stage_text += "；本轮没有确认的新产物"
+    if result.status is ResultStatus.PARTIAL:
+        return f"部分完成：{stage_text}（{duration}）"
+    if result.status is ResultStatus.CANCELLED:
+        return f"已取消：{stage_text}（{duration}）"
+    return f"执行失败：{stage_text}（{duration}）"
+
+
+def _log_run_result(task_id: int, result: RunResult, summary: str) -> None:
+    """按 typed status 记录一次 GUI 任务终态。"""
+    message = f"[执行中心] 任务 #{task_id} {summary}"
+    if result.status is ResultStatus.SUCCESS:
+        logger.success(message)
+    elif result.status in {ResultStatus.PARTIAL, ResultStatus.CANCELLED}:
+        logger.warning(message)
+    else:
+        logger.error(message)
+
+
+def _require_stage_result(result: StageResult | None, stage_key: str) -> StageResult:
+    """拒绝已选择的 GUI 阶段静默丢失后端结果。"""
+    if result is None:
+        raise RuntimeError(f"已选择的 {stage_key} 阶段没有返回执行结果")
+    if result.stage != stage_key:
+        raise RuntimeError(f"{stage_key} 阶段返回了不匹配的结果 key: {result.stage}")
+    return result
 
 
 def _resolve_task_scope(task: QueuedExecutionTask) -> tuple[str, bool, bool, bool]:
@@ -83,15 +220,11 @@ def _resolve_task_options(task: QueuedExecutionTask) -> OperationOptions:
     return task.draft.task_params.to_operation_options()
 
 
-def _ensure_special_targets_supported(task: QueuedExecutionTask, source_mode: object) -> None:
-    """在创建任何 AppContext 前拒绝远端特殊内容任务。"""
+def _validate_special_targets(task: QueuedExecutionTask) -> None:
+    """在创建 AppContext 前验证特殊内容的阶段兼容边界。"""
     task_params = task.draft.task_params
-    if task_params.special_targets and not is_special_content_supported(source_mode):
-        raise ValueError("特殊内容仅支持本地客户端资源。")
     partition = partition_special_targets(task_params.special_targets)
     has_resource_pack_scope = bool(partition.resource_pack_targets or task_params.resource_pack_wads)
-    if has_resource_pack_scope and not is_special_content_supported(source_mode):
-        raise ValueError("资源包发现仅支持本地客户端资源。")
     if has_resource_pack_scope and task_params.wav_enabled:
         raise ValueError("resource pack 当前不支持 WAV 转码；请先只执行 extract 或 mapping。")
 
@@ -114,7 +247,7 @@ def _build_runtime_settings(
     settings.update(task.draft.task_params.to_runtime_overrides())
     if force_bp_vo:
         settings[SettingKey.WITH_BP_VO] = True
-    return normalize_app_context_settings(settings)
+    return settings
 
 
 def _build_scope_label(
@@ -177,11 +310,7 @@ def _ensure_map_banks_ready(
     if not include_maps:
         return
 
-    ctx = getattr(runtime_app, "ctx", None)
-    if ctx is None:
-        return
-
-    reader = DataReader(ctx=ctx)
+    reader = runtime_app._get_reader()
     map_ids = task.draft.task_params.map_ids
     target_ids = (
         tuple(int(map_id) for map_id in map_ids)
@@ -197,6 +326,145 @@ def _ensure_map_banks_ready(
     )
 
 
+def _run_audio_export(task: QueuedExecutionTask, signals: WorkerSignals) -> ExecutionTaskResult:
+    """将导出和精确 WAV 重试交给同一批处理层，不创建额外任务调度器。"""
+    started = perf_counter()
+    request = task.draft.export_request
+    batches: list[WavBatchResult] = []
+
+    def emit(progress) -> None:
+        _emit_stage_progress(
+            signals,
+            stage_key="wav",
+            entity_scope_label="音频文件",
+            current=progress.completed_count,
+            total=progress.total_count,
+            message=f"已处理 {progress.completed_count}/{progress.total_count} 个文件 · 失败 {progress.failed_count} 个",
+        )
+
+    if task.draft.retry_wav:
+        for previous in task.draft.retry_wav:
+            batches.append(retry_batch(previous, progress=emit))
+        report_root = task.draft.retry_wav[0].report_path.parent.parent
+        version = task.draft.version
+    elif request is not None:
+        request.validate()
+        for target in request.targets:
+            batches.append(
+                run_batch(
+                    target.scope,
+                    target.output_root,
+                    options=request.options,
+                    report_root=request.report_root,
+                    overwrite=request.overwrite,
+                    progress=emit,
+                    output_file=request.output_file,
+                )
+            )
+        report_root = request.report_root
+        version = request.version
+    else:
+        raise ValueError("缺少音频导出范围")
+
+    success = sum(batch.success_count for batch in batches)
+    failed = sum(batch.failed_count for batch in batches)
+    skipped = sum(batch.skipped_count for batch in batches)
+    unknown = sum(batch.unconfirmed_count for batch in batches)
+    entities = tuple(
+        EntityResult(
+            "wav",
+            batch.operation_id,
+            ResultStatus(batch.status),
+            entity_name=task.draft.source_summary,
+            error_message=batch.error_message,
+            artifacts=(str(batch.output_file or batch.output_root),) if batch.success_count else (),
+        )
+        for batch in batches
+    )
+    summary = f"成功 {success}、失败 {failed}、跳过 {skipped} 个文件"
+    if unknown:
+        summary += f"；{unknown} 个文件完成状态未知"
+    stage = StageResult(
+        "wav",
+        entities,
+        note=summary,
+        reports=tuple(str(batch.report_path) for batch in batches),
+        wav_batches=tuple(batches),
+    )
+    result = RunResult((stage,))
+    duration = perf_counter() - started
+    report_path = write_operation_report(
+        report_root,
+        operation_id=task.draft.operation_id,
+        version=version,
+        snapshot=asdict(task.draft),
+        result=result,
+        duration_seconds=duration,
+        retry_of=task.draft.retry_of,
+    )
+    _log_run_result(task.task_id, result, summary)
+    return ExecutionTaskResult(
+        ("音频转码",) if success else (),
+        summary,
+        duration,
+        result,
+        report_path=report_path,
+        version=version,
+        wav_batches=tuple(batches),
+    )
+
+
+def _run_retry(task: QueuedExecutionTask, signals: WorkerSignals) -> ExecutionTaskResult:
+    """在同一个 worker 内依次执行限定阶段，保留每阶段独立范围和原报告。"""
+    started = perf_counter()
+    results: list[ExecutionTaskResult] = []
+    for stage in task.draft.retry_stages:
+        logger.info("[重试] {}", stage.label)
+        draft = replace(
+            task.draft,
+            operation_id=uuid4().hex,
+            task_params=stage.params,
+            retry_stages=(),
+            export_request=None,
+            retry_extract=stage.extract_entities,
+            retry_wav=stage.wav_batches,
+        )
+        try:
+            results.append(run_execution_task(replace(task, draft=draft), signals))
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("重试输入复核失败：{}", stage.label)
+            key = next((STAGE_KEY_BY_STEP_NAME[name] for name in stage.params.selected_steps()), "run")
+            results.append(ExecutionTaskResult((), str(exc), 0.0, RunResult((StageResult.from_error(key, exc),))))
+    run_result = RunResult(tuple(stage for result in results for stage in result.run_result.stages))
+    completed = tuple(dict.fromkeys(step for result in results for step in result.completed_steps))
+    duration = perf_counter() - started
+    report_root = next(
+        (result.report_path.parent.parent.parent for result in results if result.report_path is not None), None
+    )
+    report_path = (
+        write_operation_report(
+            report_root,
+            operation_id=task.draft.operation_id,
+            version=task.draft.version,
+            snapshot=asdict(task.draft),
+            result=run_result,
+            duration_seconds=duration,
+            retry_of=task.draft.retry_of,
+        )
+        if report_root is not None
+        else None
+    )
+    return ExecutionTaskResult(
+        completed,
+        _build_run_summary(run_result, completed, duration),
+        duration,
+        run_result,
+        report_path=report_path,
+        version=task.draft.version,
+        wav_batches=tuple(batch for result in results for batch in result.wav_batches),
+    )
+
+
 def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> ExecutionTaskResult:
     """在后台线程中执行单个队列任务。
 
@@ -208,8 +476,12 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
         任务完成后的结果摘要。
 
     Raises:
-        Exception: 将真实后端异常继续上抛给上层 worker。
+        ValueError: 无法确定任务输入契约时，在执行前拒绝请求。
     """
+    if task.draft.retry_stages:
+        return _run_retry(task, signals)
+    if task.draft.export_request is not None or task.draft.retry_wav:
+        return _run_audio_export(task, signals)
     started_at = perf_counter()
     task_params = task.draft.task_params
     options = _resolve_task_options(task)
@@ -221,15 +493,26 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     )
     steps = task_params.selected_steps()
     completed_steps: list[str] = []
+    stage_results: list[StageResult] = []
+    extract_result: StageResult | None = None
     runtime_app: LolAudioUnpackApp | None = None
+    runtime_context = None
+    stage_key = "run"
+
+    def create_runtime_app(settings) -> LolAudioUnpackApp:
+        nonlocal runtime_context
+        runtime_context = create_app_context(settings=settings)
+        if task.draft.version and resolve_game_version(runtime_context) != task.draft.version:
+            raise ValueError("客户端版本已变化，请刷新共享数据后重新确认任务范围")
+        return LolAudioUnpackApp(runtime_context)
+
     map_banks_checked = False
     runtime_settings = _build_runtime_settings(task)
-    source_mode = runtime_settings.get(SettingKey.SOURCE_MODE, "local_path")
-    _ensure_special_targets_supported(task, source_mode)
+    _validate_special_targets(task)
 
     try:
         logger.info(f"[执行中心] 任务 #{task.task_id} 开始执行: {' -> '.join(steps)}")
-        logger.debug(f"[执行中心] 任务 #{task.task_id} 范围={task_scope_label}, source_mode={source_mode}")
+        logger.debug(f"[执行中心] 任务 #{task.task_id} 范围={task_scope_label}")
         logger.debug(f"[执行中心] 任务 #{task.task_id} 共享上下文快照={task.draft.context_input.to_settings()}")
         logger.debug(
             f"[执行中心] 任务 #{task.task_id} 参数快照 "
@@ -237,6 +520,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
         )
         for step_name in steps:
             stage_key = STAGE_KEY_BY_STEP_NAME.get(step_name, "unknown")
+            stage_result: StageResult | None = None
             logger.info(f"[执行中心] 任务 #{task.task_id} 开始{step_name}")
 
             if step_name == "前置强制更新":
@@ -248,20 +532,8 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     total=1,
                     message="正在强制刷新基础数据…",
                 )
-                update_app = LolAudioUnpackApp(
-                    create_app_context(
-                        settings=_build_runtime_settings(task, force_bp_vo=True),
-                    )
-                )
-                update_app.update(options, target=target)
-                _emit_stage_progress(
-                    signals,
-                    stage_key=stage_key,
-                    entity_scope_label=task_scope_label,
-                    current=1,
-                    total=1,
-                    message="基础数据刷新完成",
-                )
+                update_app = create_runtime_app(_build_runtime_settings(task, force_bp_vo=True))
+                stage_result = _require_stage_result(update_app.update(options, target=target), stage_key)
             elif step_name == "音频解包":
 
                 def emit_extract_progress(
@@ -283,11 +555,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
 
                 if runtime_app is None:
                     logger.debug(f"[执行中心] 任务 #{task.task_id} 创建运行时 AppContext")
-                    runtime_app = LolAudioUnpackApp(
-                        create_app_context(
-                            settings=runtime_settings,
-                        )
-                    )
+                    runtime_app = create_runtime_app(runtime_settings)
                 if not map_banks_checked:
                     _ensure_map_banks_ready(runtime_app, task, include_maps=include_maps)
                     map_banks_checked = True
@@ -298,22 +566,29 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     entity_scope_label=task_scope_label,
                     message="正在准备解包任务…",
                 )
-                runtime_app.extract(
-                    options,
-                    include_champions=include_champions,
-                    include_maps=include_maps,
-                    progress_callback=emit_extract_progress,
-                )
-                _emit_stage_progress(
-                    signals,
-                    stage_key=stage_key,
-                    entity_scope_label=task_scope_label,
-                    current=1,
-                    total=1,
-                    message="音频解包阶段已结束",
-                    stage_finished=True,
-                )
+                if task.draft.retry_extract:
+                    stage_result = execute_extract_tasks(
+                        [(item.entity_type, item.entity_id, item.entity_name) for item in task.draft.retry_extract],
+                        runtime_app._get_reader(),
+                        options.max_workers,
+                        ctx=runtime_context,
+                        progress_callback=emit_extract_progress,
+                        retry_entities=task.draft.retry_extract,
+                    )
+                else:
+                    stage_result = _require_stage_result(
+                        runtime_app.extract(
+                            options,
+                            include_champions=include_champions,
+                            include_maps=include_maps,
+                            progress_callback=emit_extract_progress,
+                        ),
+                        stage_key,
+                    )
             elif step_name == "音频转码":
+                if extract_result is not None and extract_result.status is ResultStatus.FAILED:
+                    logger.warning(f"[执行中心] 任务 #{task.task_id} 解包没有成功实体，跳过依赖的音频转码")
+                    continue
 
                 def emit_wav_progress(
                     entity_type: str,
@@ -334,11 +609,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
 
                 if runtime_app is None:
                     logger.debug(f"[执行中心] 任务 #{task.task_id} 创建运行时 AppContext")
-                    runtime_app = LolAudioUnpackApp(
-                        create_app_context(
-                            settings=runtime_settings,
-                        )
-                    )
+                    runtime_app = create_runtime_app(runtime_settings)
 
                 _emit_stage_progress(
                     signals,
@@ -346,19 +617,13 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     entity_scope_label=task_scope_label,
                     message="正在准备音频转码…",
                 )
-                runtime_app.transcode_wav(
-                    options,
-                    progress_callback=emit_wav_progress,
-                    job_label=f"gui-task-{task.task_id}",
-                )
-                _emit_stage_progress(
-                    signals,
-                    stage_key=stage_key,
-                    entity_scope_label=task_scope_label,
-                    current=1,
-                    total=1,
-                    message="音频转码完成",
-                    stage_finished=True,
+                stage_result = _require_stage_result(
+                    runtime_app.transcode_wav(
+                        _build_wav_options(options, extract_result) if extract_result is not None else options,
+                        progress_callback=emit_wav_progress,
+                        job_label=f"gui-task-{task.task_id}",
+                    ),
+                    stage_key,
                 )
             elif step_name == "事件映射":
                 mapping_progress_seen = False
@@ -384,11 +649,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
 
                 if runtime_app is None:
                     logger.debug(f"[执行中心] 任务 #{task.task_id} 创建运行时 AppContext")
-                    runtime_app = LolAudioUnpackApp(
-                        create_app_context(
-                            settings=runtime_settings,
-                        )
-                    )
+                    runtime_app = create_runtime_app(runtime_settings)
                 if not map_banks_checked:
                     _ensure_map_banks_ready(runtime_app, task, include_maps=include_maps)
                     map_banks_checked = True
@@ -399,34 +660,63 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     entity_scope_label=task_scope_label,
                     message="正在准备事件映射任务…",
                 )
-                runtime_app.mapping(
-                    options,
-                    include_champions=include_champions,
-                    include_maps=include_maps,
-                    progress_callback=emit_mapping_progress,
+                stage_result = _require_stage_result(
+                    runtime_app.mapping(
+                        options,
+                        include_champions=include_champions,
+                        include_maps=include_maps,
+                        progress_callback=emit_mapping_progress,
+                    ),
+                    stage_key,
                 )
                 if not mapping_progress_seen:
-                    logger.debug(f"[执行中心] 任务 #{task.task_id} 事件映射未返回增量进度，补发单步完成进度")
-                    _emit_stage_progress(
-                        signals,
-                        stage_key=stage_key,
-                        entity_scope_label=task_scope_label,
-                        current=1,
-                        total=1,
-                        message="事件映射完成",
-                    )
+                    logger.debug(f"[执行中心] 任务 #{task.task_id} 事件映射未返回增量进度")
 
-            completed_steps.append(step_name)
+            resolved_result = _require_stage_result(stage_result, stage_key)
+            stage_results.append(resolved_result)
+            if resolved_result.stage == "extract":
+                extract_result = resolved_result
+            _emit_terminal_stage_progress(
+                signals,
+                resolved_result,
+                entity_scope_label=task_scope_label,
+            )
+            if _stage_produced_output(resolved_result):
+                completed_steps.append(step_name)
+            if resolved_result.status is ResultStatus.CANCELLED:
+                break
+            if resolved_result.stage == "update" and resolved_result.status is ResultStatus.FAILED:
+                break
 
-    except Exception:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
         logger.exception(f"[执行中心] 任务 #{task.task_id} 执行失败")
-        raise
+        # 后续步骤的异常不能抹掉先前已经确认的成功与落盘事实。
+        stage_results.append(StageResult.from_error(stage_key, exc))
 
     duration_seconds = perf_counter() - started_at
-    summary = f"已完成：{' -> '.join(completed_steps)}（{duration_seconds:.1f}s）"
-    logger.success(f"[执行中心] 任务 #{task.task_id} {summary}")
+    run_result = RunResult(tuple(stage_results))
+    completed_step_names = tuple(completed_steps)
+    summary = _build_run_summary(run_result, completed_step_names, duration_seconds)
+    _log_run_result(task.task_id, run_result, summary)
+    wav_batches = tuple(batch for stage in stage_results for batch in stage.wav_batches)
+    version = task.draft.version or getattr(runtime_context, "runtime_cache", {}).get("resolved_runtime_version", "")
+    report_path = None
+    if version and runtime_context is not None:
+        report_path = write_operation_report(
+            Path(runtime_context.paths.report_path) / version,
+            operation_id=task.draft.operation_id,
+            version=version,
+            snapshot=asdict(task.draft),
+            result=run_result,
+            duration_seconds=duration_seconds,
+            retry_of=task.draft.retry_of,
+        )
     return ExecutionTaskResult(
-        completed_steps=tuple(completed_steps),
+        completed_steps=completed_step_names,
         summary=summary,
         duration_seconds=duration_seconds,
+        run_result=run_result,
+        report_path=report_path,
+        version=version,
+        wav_batches=wav_batches,
     )

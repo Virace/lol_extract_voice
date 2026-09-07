@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from time import perf_counter
 
@@ -27,14 +28,16 @@ from lol_audio_unpack import __version__
 from lol_audio_unpack.app.context import create_app_context
 from lol_audio_unpack.app.facade import LolAudioUnpackApp
 from lol_audio_unpack.app.types import OperationOptions
-from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.gui.common import (
     apply_smooth_scroll_enabled,
     get_block_reason,
     show_feedback_infobar,
 )
-from lol_audio_unpack.gui.common.remote_mode_policy import normalize_app_context_settings
-from lol_audio_unpack.gui.components.global_progress_strip import GlobalProgressStripHost
+from lol_audio_unpack.gui.components.global_progress_strip import (
+    GlobalProgressStripCoordinator,
+    GlobalProgressStripHost,
+    GlobalProgressStripState,
+)
 from lol_audio_unpack.gui.components.log_drawer import (
     GlobalLogDrawer,
 )
@@ -42,6 +45,7 @@ from lol_audio_unpack.gui.controllers import (
     DevConsoleController,
     LogDrawerController,
     SharedDataController,
+    SharedDataProgressDemo,
 )
 from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
 from lol_audio_unpack.gui.controllers.onboarding import OnboardingTourController
@@ -55,6 +59,7 @@ from lol_audio_unpack.gui.controllers.window_shell import (
     apply_task_queue_busy_state,
     bind_shared_data_controller_signals,
     confirm_force_close_running_tasks,
+    dispatch_shared_data_action,
     force_quit_application,
     forward_selection_sync_feedback,
     register_navigation_items,
@@ -62,7 +67,12 @@ from lol_audio_unpack.gui.controllers.window_shell import (
 )
 from lol_audio_unpack.gui.resources import assets
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
-from lol_audio_unpack.gui.service.worker import DataLoadWorker
+from lol_audio_unpack.gui.service.worker import SharedDataScanWorker
+from lol_audio_unpack.gui.shared_data import (
+    SharedDataPreparationResult,
+    SharedDataRepairScope,
+    SharedDataState,
+)
 from lol_audio_unpack.gui.view.about_page import AboutPage, get_minimum_shell_size
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 from lol_audio_unpack.gui.view.home_page import HomePage
@@ -70,8 +80,7 @@ from lol_audio_unpack.gui.view.item_lookup_page import ItemLookupPage
 from lol_audio_unpack.gui.view.overview_page import OverviewPage
 from lol_audio_unpack.gui.view.setting_page import SettingPage
 from lol_audio_unpack.gui.workers import TaskWorker
-from lol_audio_unpack.manager.data_reader import DataReader
-from lol_audio_unpack.utils.common import Singleton
+from lol_audio_unpack.model.progress import OperationProgress
 from lol_audio_unpack.utils.logging import setup_logging
 
 NAV_EXPANDED_WIDTH_THRESHOLD = 100
@@ -89,33 +98,39 @@ def _log_window_stage(stage: str, startup_begin: float, previous_mark: float) ->
     return current_mark
 
 
-def _prepare_shared_entity_data(shared_settings: dict[str, str | bool]) -> None:
-    """为实体列表准备后端共享数据。"""
-    prepare_settings = dict(shared_settings)
-    prepare_settings[SettingKey.WITH_BP_VO] = True
-    prepare_settings = normalize_app_context_settings(prepare_settings)
-    app_context = create_app_context(settings=prepare_settings)
+def _prepare_shared_entity_data(
+    shared_settings: dict[str, str | bool],
+    *,
+    generation: int,
+    scope: SharedDataRepairScope,
+    force_update: bool,
+    progress_callback: Callable[[OperationProgress], None],
+) -> SharedDataPreparationResult:
+    """按扫描证据执行一次后端共享数据准备并保留 typed result。"""
+    app_context = create_app_context(settings=dict(shared_settings))
     app = LolAudioUnpackApp(app_context)
-    app.update(OperationOptions(), target="all")
-
-
-def _reset_data_reader_singleton() -> None:
-    """重置 ``DataReader`` 单例，确保后续读取使用新的上下文。"""
-    if DataReader in Singleton._instances:
-        logger.debug("检测到共享实体数据读取上下文已变化，重置 DataReader 单例缓存")
-        del Singleton._instances[DataReader]
+    options = OperationOptions(
+        force_update=force_update,
+        champion_ids=None if scope.full or not scope.champion_ids else scope.champion_ids,
+        map_ids=None if scope.full or not scope.map_ids else scope.map_ids,
+    )
+    stage_result = app.update(options, target="all", progress_callback=progress_callback)
+    return SharedDataPreparationResult(generation, scope, stage_result)
 
 
 class MainWindow(FluentWindow):
     """应用主窗口。"""
 
     def __init__(self):
+        """初始化应用窗口。"""
         startup_begin = perf_counter()
         previous_mark = startup_begin
         self._log_drawer_controller = LogDrawerController()
+        self._shared_progress_demo: SharedDataProgressDemo | None = None
         super().__init__()
         previous_mark = _log_window_stage("FluentWindow 基类初始化", startup_begin, previous_mark)
         self._progress_strip_host = GlobalProgressStripHost(self)
+        self._progress_strip_coordinator = GlobalProgressStripCoordinator(self._apply_global_progress_state)
         self._content_shell = QWidget(self)
         self._content_shell_layout = QVBoxLayout(self._content_shell)
         self._content_shell_layout.setContentsMargins(0, 0, 0, 0)
@@ -185,12 +200,11 @@ class MainWindow(FluentWindow):
             get_config=lambda: self.settingInterface.config,
             has_incomplete_tasks=self.executionInterface.has_incomplete_tasks,
             create_app_context_fn=create_app_context,
-            data_load_worker_cls=DataLoadWorker,
+            data_load_worker_cls=SharedDataScanWorker,
             task_worker_cls=TaskWorker,
             entity_data_loader_cls=EntityDataLoader,
             start_worker_fn=lambda worker: QThreadPool.globalInstance().start(worker),
             prepare_shared_entity_data_fn=_prepare_shared_entity_data,
-            reset_data_reader_singleton_fn=_reset_data_reader_singleton,
             app_context_block_reason_fn=get_block_reason,
             parent=self,
         )
@@ -339,6 +353,10 @@ class MainWindow(FluentWindow):
             queue_fill=self.executionInterface._debug_fill_mock_queue,
             queue_clear=self.executionInterface._debug_clear_mock_queue,
             queue_inspect=self.executionInterface._debug_inspect_queue,
+            queue_result=self.executionInterface._debug_simulate_terminal_result,
+            shared_progress=self._debug_start_shared_progress_demo,
+            shared_stop=self._debug_stop_shared_progress_demo,
+            shared_inspect=self._debug_inspect_shared_progress_demo,
         )
 
     def _show_dev_console(self) -> None:
@@ -365,6 +383,79 @@ class MainWindow(FluentWindow):
         theme = Theme.LIGHT if qconfig.theme == Theme.DARK else Theme.DARK
         qconfig.set(qconfig.themeMode, theme)
 
+    def _apply_global_progress_state(self, state: GlobalProgressStripState) -> None:
+        """把协调后的单一全局进度状态应用到窗口宿主。"""
+        self._progress_strip_host.set_state(state, animate=True)
+
+    def _sync_shared_data_progress_visibility(self, *_args: object) -> None:
+        """首页显示页内进度时隐藏同源底栏，其他页面继续展示。"""
+        home_page = getattr(self, "homeInterface", None)
+        current_page = self.stackedWidget.currentWidget()
+        self._progress_strip_coordinator.set_shared_data_progress_suppressed(current_page is home_page)
+
+    def _show_shared_progress_demo_state(self, state: SharedDataState) -> None:
+        """把 mock 状态限制在首页与全局进度组件，避免改变真实任务门禁。"""
+        self.homeInterface.set_shared_data_state(state)
+        self._progress_strip_coordinator.set_shared_data_state(state)
+
+    def _debug_start_shared_progress_demo(self, interval_ms: int) -> str:
+        """从开发控制台启动或调速共享进度 mock。"""
+        shared_controller = self._shared_data_controller
+        if shared_controller is None:
+            return "共享数据控制器尚未就绪，无法启动 mock。"
+        if shared_controller.state.active:
+            return "真实共享数据流程正在运行，请等待结束后再启动 mock。"
+        if self._shared_progress_demo is not None:
+            self._shared_progress_demo.stop()
+            self._shared_progress_demo.deleteLater()
+        self._shared_progress_demo = SharedDataProgressDemo(interval_ms=interval_ms, parent=self)
+        self._shared_progress_demo.state_changed.connect(self._show_shared_progress_demo_state)
+        self._shared_progress_demo.start(
+            generation=shared_controller.generation,
+        )
+        logger.info("共享数据进度 mock 已启动 | 间隔 {}ms | 不读取或修改真实实体数据", interval_ms)
+        return f"共享进度 mock 已启动：{interval_ms} ms/步；再次执行可调速。"
+
+    def _debug_stop_shared_progress_demo(self) -> str:
+        """停止共享进度 mock，并恢复最新真实状态。"""
+        if self._shared_progress_demo is None:
+            return "共享进度 mock 当前未运行。"
+        self._shared_progress_demo.stop()
+        self._shared_progress_demo.deleteLater()
+        self._shared_progress_demo = None
+        state = self._shared_data_controller.state
+        self.homeInterface.set_shared_data_state(state)
+        self._progress_strip_coordinator.set_shared_data_state(state)
+        logger.info("共享数据进度 mock 已停止，已恢复真实共享状态")
+        return "共享进度 mock 已停止，已恢复真实状态。"
+
+    def _debug_inspect_shared_progress_demo(self) -> str:
+        """返回共享进度 mock 的当前运行信息。"""
+        demo = self._shared_progress_demo
+        if demo is None or not demo.is_running:
+            return "共享进度 mock：stopped"
+        return f"共享进度 mock：running\n步进间隔：{demo.interval_ms} ms\n模式：循环整体更新"
+
+    def _cancel_shared_progress_demo_on_real_state(self, _state: SharedDataState) -> None:
+        """真实状态再次发布时自动结束 mock，避免遮蔽后台事实。"""
+        demo = self._shared_progress_demo
+        if demo is None:
+            return
+        demo.stop()
+        demo.deleteLater()
+        self._shared_progress_demo = None
+        logger.info("真实共享数据状态已更新，共享进度 mock 自动停止")
+
+    def _dispatch_shared_data_action(self, action_key: str) -> None:
+        """处理首页共享数据状态区发出的稳定动作。"""
+        dispatch_shared_data_action(
+            action_key,
+            shared_data_controller=self._shared_data_controller,
+            show_settings=lambda: self.switchTo(self.settingInterface),
+            show_execution=lambda: self.switchTo(self.executionInterface),
+            show_overview=lambda: self.switchTo(self.overviewInterface),
+        )
+
     def _connect_pages(self):
         """连接页面间的数据同步"""
         si = self.settingInterface
@@ -385,6 +476,10 @@ class MainWindow(FluentWindow):
                 execution_page=self.executionInterface,
             ),
         )
+        self._shared_data_controller.state_changed.connect(self._progress_strip_coordinator.set_shared_data_state)
+        self._shared_data_controller.state_changed.connect(self._cancel_shared_progress_demo_on_real_state)
+        self.stackedWidget.currentChanged.connect(self._sync_shared_data_progress_visibility)
+        self._sync_shared_data_progress_visibility()
 
         # 路径改变时实时同步到首页
         si.game_path_changed.connect(hi.update_game_dir)
@@ -393,10 +488,16 @@ class MainWindow(FluentWindow):
         si.vgmstream_path_changed.connect(hi.update_vgmstream)
         hi.navigate_to_execution_requested.connect(lambda: self.switchTo(self.executionInterface))
         hi.navigate_to_overview_requested.connect(lambda: self.switchTo(self.overviewInterface))
+        hi.shared_data_action_requested.connect(self._dispatch_shared_data_action)
 
         # 注入配置到各业务页面
         self.executionInterface.set_gui_config(cfg)
         self.overviewInterface.set_gui_config(cfg)
+        self.overviewInterface.audio_export_requested.connect(self.executionInterface.submit_audio_export)
+        self.overviewInterface.background_work_changed.connect(self.executionInterface.set_external_busy)
+        self.overviewInterface.background_work_changed.connect(self._sync_heavy_work_state)
+        self.executionInterface.task_queue_busy_changed.connect(self.overviewInterface.set_task_busy)
+        self.executionInterface.result_ready.connect(self._on_task_result_ready)
         self.overviewInterface.selection_sync_requested.connect(
             lambda payload: forward_selection_sync_feedback(
                 payload=payload,
@@ -411,26 +512,15 @@ class MainWindow(FluentWindow):
         self.executionInterface.output_state_refresh_requested.connect(
             self._shared_data_controller.refresh_shared_output_state
         )
-        self.executionInterface.global_progress_state_changed.connect(
-            lambda state: self._progress_strip_host.set_state(state, animate=True)
-        )
-        self.executionInterface.task_queue_busy_changed.connect(
-            lambda busy: apply_task_queue_busy_state(
-                busy=busy,
-                setting_page=self.settingInterface,
-                navigation_interface=self.navigationInterface,
-                shared_data_controller=self._shared_data_controller,
-            )
-        )
+        self.executionInterface.global_progress_state_changed.connect(self._progress_strip_coordinator.set_task_state)
+        self.executionInterface.task_queue_busy_changed.connect(self._sync_heavy_work_state)
         self._progress_strip_host.strip_widget().stop_requested.connect(self.executionInterface.request_cancel_task)
         self.executionInterface.log_lines_appended.connect(self._log_drawer_controller.append_log_lines)
-        self._progress_strip_host.set_state(
-            self.executionInterface.current_global_progress_state(),
-            animate=False,
-        )
+        self._progress_strip_coordinator.set_task_state(self.executionInterface.current_global_progress_state())
         self.settingInterface.shared_context_input_changed.connect(
             self._shared_data_controller.on_context_input_changed
         )
+
         self.settingInterface.smooth_scroll_changed.connect(
             lambda page_enabled, widget_enabled: apply_smooth_scroll_settings(
                 setting_page=self.settingInterface,
@@ -475,8 +565,25 @@ class MainWindow(FluentWindow):
         self._shared_data_controller.reader_signature = build_shared_entity_reader_signature(cfg)
         self._shared_data_controller.scan_signature = build_shared_entity_scan_signature(cfg)
 
-        # 首页初始化完成后加载数据
+        # 首页初始化完成后加载真实数据；mock 仅由开发控制台按需覆盖展示层。
         self._shared_data_controller.load_initial_data(cfg)
+
+    def _on_task_result_ready(self, task, result) -> None:
+        """单文件后台转换成功后恢复原有定位文件交互。"""
+        request = task.draft.export_request
+        if request is not None and request.reveal_output and request.output_file is not None:
+            if any(batch.success_count for batch in result.wav_batches):
+                self.overviewInterface._reveal_file_path(request.output_file)
+
+    def _sync_heavy_work_state(self, _busy: bool) -> None:
+        """扫描和用户任务共同锁定共享准备与可变运行设置。"""
+        apply_task_queue_busy_state(
+            busy=self.executionInterface.has_incomplete_tasks()
+            or self.overviewInterface._resource_pack_scan_worker is not None,
+            setting_page=self.settingInterface,
+            navigation_interface=self.navigationInterface,
+            shared_data_controller=self._shared_data_controller,
+        )
 
     def _has_active_background_work(self) -> bool:
         """返回窗口关闭前是否仍存在后台工作。"""

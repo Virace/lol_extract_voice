@@ -67,12 +67,20 @@ def test_attach_bp_vo_to_champion_fallback_copy_when_link_fails(tmp_path, monkey
     )
     reader = SimpleNamespace(version=version)
 
-    unpack_bp_vo.attach_bp_vo(entity_data, reader, ctx=ctx)
-
     entity_folder = format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
     target_dir = audio_root / version / "champions" / entity_folder / "lobby"
+    persisted: list[Path] = []
+    result = unpack_bp_vo.attach_bp_vo(
+        entity_data,
+        reader,
+        ctx=ctx,
+        persisted_artifact_callback=persisted.append,
+    )
+
     assert (target_dir / "ban.ogg").read_bytes() == b"ban"
     assert (target_dir / "choose.ogg").read_bytes() == b"choose"
+    assert result == (target_dir / "ban.ogg", target_dir / "choose.ogg")
+    assert persisted == list(result)
 
 
 def test_attach_bp_vo_writes_sfx_audio_from_default_fallback(tmp_path, monkeypatch):

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+from lol_audio_unpack.app.results import FailureDetail
 
 from ..manager.utils import build_metadata_payload
 from ..utils.common import dump_yaml, format_duration
@@ -121,6 +123,7 @@ class EntityUnpackStats:
     binding_completeness: str | None = None
     binding_details: list[dict[str, Any]] = field(default_factory=list)
     binding_wads: list[dict[str, Any]] = field(default_factory=list)
+    file_failures: list[FailureDetail] = field(default_factory=list)
 
     # === 阶段3: 数据组装统计 ===
     assembled_sub_entities: int = 0
@@ -313,9 +316,16 @@ class EntityUnpackStats:
         processable = [
             detail for detail in self.binding_details if detail["status"] in {"resolved", "ambiguous_identical"}
         ]
-        successful = [detail for detail in processable if detail["outcome"] == "success"]
-        has_failure = any(detail["outcome"] in {"failed", "unresolved"} for detail in self.binding_details)
+        successful = [detail for detail in processable if detail["outcome"] in {"success", "partial"}]
+        has_failure = any(
+            detail["outcome"] in {"failed", "unresolved", "partial", "write_failed"} for detail in self.binding_details
+        )
 
+        # 全部是合法无内嵌音频的 BNK 时允许成功 no-op；这些空结果不能把真实失败抬成部分成功。
+        if processable and all(detail["outcome"] == "no_audio" for detail in processable):
+            if source_completeness == "complete" and not has_failure:
+                self.binding_completeness = "complete"
+                return
         if not processable or not successful:
             self.binding_completeness = "failed"
             return
@@ -333,7 +343,7 @@ class EntityUnpackStats:
             self.total_skipped_files += sub_stats.empty_containers + sub_stats.empty_subfiles
 
         # binding 驱动阶段需要用实体级 complete/partial/failed 覆盖旧双 WAD 结论；
-        # remote/legacy 分支仍保持原有统计语义。
+        # 未提供 binding 诊断的兼容调用方仍保持原有统计语义。
         if self.binding_completeness == "failed":
             self.overall_result = StageResult.ERROR
         elif self.binding_completeness == "partial":
@@ -359,6 +369,20 @@ class EntityUnpackStats:
         """
 
         duration_str = format_duration(self.get_processing_duration())
+        binding_errors = {
+            (detail["wad"], detail["entryHash"], detail["path"]): detail
+            for detail in self.binding_details
+            if detail["outcome"] in {"failed", "unresolved"}
+        }
+        issue_text = ""
+        if binding_errors:
+            first = next(iter(binding_errors.values()))
+            issue_text = (
+                f"；{len(binding_errors)} 个资源容器未完成，"
+                f"首项 {Path(first['path']).name}：{first.get('error') or first['outcome']}"
+            )
+        elif self.binding_completeness == "partial":
+            issue_text = "；基础资源清单不完整，请重新生成实体数据"
 
         if self.overall_result == StageResult.SUCCESS:
             return f"✅ {self.entity_name} 解包完成 - 成功 {self.total_success_files} 个文件 ({duration_str})"
@@ -371,11 +395,12 @@ class EntityUnpackStats:
             if self.skipped_sub_entities > 0:
                 details.append(f"跳过子实体 {self.skipped_sub_entities}")
             detail_str = f" ({', '.join(details)})" if details else ""
-            return (
-                f"⚠️ {self.entity_name} 解包完成 - 成功 {self.total_success_files} 个文件{detail_str} ({duration_str})"
-            )
+            return f"⚠️ {self.entity_name} 解包完成 - 成功 {self.total_success_files} 个文件{detail_str}{issue_text} ({duration_str})"
         else:
-            return f"❌ {self.entity_name} 解包失败 - 成功 {self.total_success_files}, 失败 {self.total_failed_files} ({duration_str})"
+            return (
+                f"❌ {self.entity_name} 解包失败 - 成功 {self.total_success_files}, "
+                f"失败 {self.total_failed_files}{issue_text} ({duration_str})"
+            )
 
     def generate_concise_report_data(self) -> dict[str, Any]:
         """生成简洁的YAML报告数据
@@ -473,6 +498,8 @@ class EntityUnpackStats:
 
             report["sub_entities"][sub_stats.name] = sub_entity_data
 
+        if self.file_failures:
+            report["fileFailures"] = [asdict(item) for item in self.file_failures]
         metadata["report"] = report
         return metadata
 

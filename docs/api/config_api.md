@@ -28,7 +28,6 @@
 - `SHARED_FIELDS_BY_CLI_ATTR`
 - `SUPPORTED_SETTING_KEYS`
 - `DEFAULT_SHARED_SETTINGS`
-- `DEFAULT_REMOTE_LIVE_REGION`
 - `COMMAND_CONFIG_FIELDS`
 - `CONTEXT_OPTION_ATTRS`
 - `build_settings(args)`
@@ -124,7 +123,6 @@ GUI 只读取 `[app]`。其余 section 仅供 CLI 配置文件模式使用；启
 
 常用共享设置 key：
 
-- `SOURCE_MODE`
 - `GAME_PATH`
 - `OUTPUT_PATH`
 - `GAME_REGION`
@@ -132,20 +130,12 @@ GUI 只读取 `[app]`。其余 section 仅供 CLI 配置文件模式使用；启
 - `GROUP_BY_TYPE`
 - `WWISER_PATH`
 - `WITH_BP_VO`
-- `REMOTE_LIVE_REGION`
-- `CLEANUP_REMOTE`
-- `REMOTE_VERSION`
-- `REMOTE_LCU_MANIFEST_URL`
-- `REMOTE_GAME_MANIFEST_URL`
 
 当前默认值：
 
 - `GAME_REGION = "zh_CN"`
 - `EXCLUDE_TYPE = "SFX,MUSIC"`
-- `CLEANUP_REMOTE = True`
 - `GROUP_BY_TYPE = False`
-- `SOURCE_MODE = "local_path"`
-- `REMOTE_LIVE_REGION = "EUW"`
 - `WITH_BP_VO = False`
 
 ## 6. 上下文构建
@@ -171,6 +161,7 @@ def setup_app(
 - `create_app_context(...)` 负责：
   - 标准化共享配置
   - 构建 `AppConfig`
+  - 在任何输出初始化前验证本地数据源基础结构
   - 派生 `AppPaths`
   - 产出 `AppContext`
 - `setup_app(...)` 在此基础上额外完成日志初始化
@@ -192,14 +183,12 @@ def setup_app(
 - `Game/DATA/FINAL/Maps/Shipping`
 - `LeagueClient/Plugins/rcp-be-lol-game-data`
 
-在 `remote_snapshot` 模式下：
-
-- `game_path` 默认落在 `OUTPUT_PATH/_prepared_game`
-- `cache/remote/<version>/...` 用于缓存 manifest、LCU bundle 与 GAME WAD
+`game_path` 可以指向已安装客户端，也可以指向外部工具准备的等价目录。两者必须满足同一个
+[已准备本地数据源合同](./prepared_source.md)，程序不提供下载或网络回退。
 
 ## 8. 配置示例
 
-### 8.1 本地模式
+### 8.1 已安装客户端
 
 ```python
 from lol_audio_unpack.app import create_app_context
@@ -213,21 +202,23 @@ ctx = create_app_context(
 )
 ```
 
-### 8.2 remote 模式
+### 8.2 外部准备目录
 
 ```python
 from lol_audio_unpack.app import create_app_context
 
 ctx = create_app_context(
     settings={
-        "SOURCE_MODE": "remote_snapshot",
+        "GAME_PATH": "/path/to/prepared/lol-client",
         "OUTPUT_PATH": "./out",
         "GAME_REGION": "zh_CN",
-        "REMOTE_LIVE_REGION": "EUW",
         "WWISER_PATH": "./wwiser.pyz",
     }
 )
 ```
+
+旧版 `source_mode`、`remote_*` 与 `cleanup_remote` INI 项会作为未知配置记录警告并被忽略，
+不会改变 `game_path` 的本地消费语义。
 
 ### 8.3 直接读写 INI
 

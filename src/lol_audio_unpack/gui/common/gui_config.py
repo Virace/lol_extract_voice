@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from lol_audio_unpack.config import (
-    DEFAULT_REMOTE_LIVE_REGION,
     ConfigSection,
     SettingKey,
     load_command_config,
@@ -17,7 +16,6 @@ from lol_audio_unpack.config import (
     write_section,
     write_settings,
 )
-from lol_audio_unpack.gui.common.remote_mode_policy import resolve_source_mode
 from lol_audio_unpack.gui.task_models import AppContextInputSnapshot
 from lol_audio_unpack.gui.theme import (
     DEFAULT_ACCENT_PRESET_ID,
@@ -50,14 +48,7 @@ class GuiConfig:
         self._config_file = resolve_default_path(dev_mode=dev_mode)
 
         # 内部缓存 — CLI 共享配置
-        self._source_mode: str = "local_path"
         self._game_path: str = ""
-        self._remote_live_region: str = "EUW"
-        self._cleanup_remote: bool = True
-        self._snapshot_version: str = ""
-        self._snapshot_lcu_url: str = ""
-        self._snapshot_game_url: str = ""
-        self._remote_snapshot_strategy: str = "latest"
         self._output_path: str = ""
         self._game_region: str = "zh_CN"
         self._group_by_type: bool = False
@@ -104,13 +95,7 @@ class GuiConfig:
             return default if file_value is None else str(file_value)
 
         # 1. 读取共享配置
-        self._source_mode = _shared_value(SettingKey.SOURCE_MODE, "local_path")
         self._game_path = _shared_value(SettingKey.GAME_PATH, "")
-        self._remote_live_region = _shared_value(SettingKey.REMOTE_LIVE_REGION, DEFAULT_REMOTE_LIVE_REGION)
-        self._cleanup_remote = self._to_bool(_shared_value(SettingKey.CLEANUP_REMOTE, "true"))
-        self._snapshot_version = _shared_value(SettingKey.REMOTE_VERSION, "")
-        self._snapshot_lcu_url = _shared_value(SettingKey.REMOTE_LCU_MANIFEST_URL, "")
-        self._snapshot_game_url = _shared_value(SettingKey.REMOTE_GAME_MANIFEST_URL, "")
         self._output_path = _shared_value(SettingKey.OUTPUT_PATH, "")
         self._game_region = _shared_value(SettingKey.GAME_REGION, "zh_CN")
         self._group_by_type = self._to_bool(_shared_value(SettingKey.GROUP_BY_TYPE, "false"))
@@ -124,48 +109,24 @@ class GuiConfig:
         # 2. GUI 专有配置统一走项目 INI，不再读取用户全局 QSettings。
         self._vgmstream_path = _gui_value("vgmstream_path", "")
 
-        inferred_snapshot_strategy = (
-            "custom"
-            if self._snapshot_version and self._snapshot_lcu_url and self._snapshot_game_url
-            else "latest"
-        )
-        self._remote_snapshot_strategy = (
-            _gui_value("remote_snapshot_strategy", inferred_snapshot_strategy) or inferred_snapshot_strategy
-        )
-        self.remote_snapshot_strategy = self._remote_snapshot_strategy
-        self._snapshot_version = _gui_value("remote_snapshot_version", self._snapshot_version)
-        self._snapshot_lcu_url = _gui_value("remote_snapshot_lcu_url", self._snapshot_lcu_url)
-        self._snapshot_game_url = _gui_value("remote_snapshot_game_url", self._snapshot_game_url)
-
         self._theme_mode = _gui_value("theme_mode", "Auto") or "Auto"
         self._accent_preset_id = resolve_accent_preset_id(_gui_value("accent_preset_id", self._accent_preset_id))
         self._theme_color = get_accent_preset(self._accent_preset_id).primary_hex
 
         self._page_smooth_scroll_enabled = self._to_bool(_gui_value("page_smooth_scroll_enabled", "false"))
         self._widget_smooth_scroll_enabled = self._to_bool(_gui_value("widget_smooth_scroll_enabled", "false"))
-        self._log_drawer_auto_collapse_enabled = self._to_bool(
-            _gui_value("log_drawer_auto_collapse_enabled", "true")
-        )
+        self._log_drawer_auto_collapse_enabled = self._to_bool(_gui_value("log_drawer_auto_collapse_enabled", "true"))
         self._console_log_level = _gui_value("console_log_level", "INFO").upper()
         self._file_log_level = _gui_value("file_log_level", "DEBUG").upper()
-        self._preview_audio_volume_percent = self._clamp_percentage(
-            _gui_value("preview_audio_volume_percent", "10")
-        )
+        self._preview_audio_volume_percent = self._clamp_percentage(_gui_value("preview_audio_volume_percent", "10"))
         self.preview_audio_output_device_key = _gui_value("preview_audio_output_device_key", "default")
 
     def save(self) -> None:
         """保存配置到项目标准 INI。"""
-        snapshot_overrides = self._snapshot_overrides()
         write_settings(
             self._config_file,
             {
-                SettingKey.SOURCE_MODE: self._source_mode,
                 SettingKey.GAME_PATH: self._game_path,
-                SettingKey.REMOTE_LIVE_REGION: self._remote_live_region,
-                SettingKey.CLEANUP_REMOTE: self._cleanup_remote,
-                SettingKey.REMOTE_VERSION: snapshot_overrides[SettingKey.REMOTE_VERSION],
-                SettingKey.REMOTE_LCU_MANIFEST_URL: snapshot_overrides[SettingKey.REMOTE_LCU_MANIFEST_URL],
-                SettingKey.REMOTE_GAME_MANIFEST_URL: snapshot_overrides[SettingKey.REMOTE_GAME_MANIFEST_URL],
                 SettingKey.OUTPUT_PATH: self._output_path,
                 SettingKey.GAME_REGION: self._game_region,
                 SettingKey.GROUP_BY_TYPE: self._group_by_type,
@@ -204,18 +165,11 @@ class GuiConfig:
 
     def to_app_context_settings(self) -> dict[str, str | bool]:
         """构建供 ``create_app_context`` 使用的共享配置映射。"""
-        snapshot_overrides = self._snapshot_overrides()
         return {
-            SettingKey.SOURCE_MODE: self.effective_source_mode,
             SettingKey.GAME_PATH: self._game_path,
             SettingKey.OUTPUT_PATH: self._output_path,
             SettingKey.GAME_REGION: self._game_region,
             SettingKey.GROUP_BY_TYPE: self._group_by_type,
-            SettingKey.REMOTE_LIVE_REGION: self._remote_live_region,
-            SettingKey.CLEANUP_REMOTE: self._cleanup_remote,
-            SettingKey.REMOTE_VERSION: snapshot_overrides[SettingKey.REMOTE_VERSION],
-            SettingKey.REMOTE_LCU_MANIFEST_URL: snapshot_overrides[SettingKey.REMOTE_LCU_MANIFEST_URL],
-            SettingKey.REMOTE_GAME_MANIFEST_URL: snapshot_overrides[SettingKey.REMOTE_GAME_MANIFEST_URL],
             SettingKey.WWISER_PATH: self._wwiser_path,
         }
 
@@ -319,9 +273,7 @@ class GuiConfig:
 
         state = self._load_onboarding_state()
         completed = (
-            ""
-            if state.get(_ONBOARDING_COMPLETED_KEY, "") == version
-            else state.get(_ONBOARDING_COMPLETED_KEY, "")
+            "" if state.get(_ONBOARDING_COMPLETED_KEY, "") == version else state.get(_ONBOARDING_COMPLETED_KEY, "")
         )
         skipped = "" if state.get(_ONBOARDING_SKIPPED_KEY, "") == version else state.get(_ONBOARDING_SKIPPED_KEY, "")
         self._write_onboarding_state(completed=completed, skipped=skipped)
@@ -331,20 +283,6 @@ class GuiConfig:
     # ------------------------------------------------------------------
 
     @property
-    def source_mode(self) -> str:
-        """``"local_path"`` or ``"remote_snapshot"``."""
-        return self._source_mode
-
-    @property
-    def effective_source_mode(self) -> str:
-        """返回 GUI 当前运行时应使用的来源模式。"""
-        return resolve_source_mode(self._source_mode)
-
-    @source_mode.setter
-    def source_mode(self, v: str) -> None:
-        self._source_mode = v
-
-    @property
     def game_path(self) -> str:
         """Absolute path to the local LoL game root directory."""
         return self._game_path
@@ -352,62 +290,6 @@ class GuiConfig:
     @game_path.setter
     def game_path(self, v: str) -> None:
         self._game_path = v
-
-    # ------------------------------------------------------------------
-    # Properties — remote
-    # ------------------------------------------------------------------
-
-    @property
-    def remote_live_region(self) -> str:
-        """Riot live-region code for snapshot resolution (e.g. ``"EUW"``)."""
-        return self._remote_live_region
-
-    @remote_live_region.setter
-    def remote_live_region(self, v: str) -> None:
-        self._remote_live_region = v
-
-    @property
-    def cleanup_remote(self) -> bool:
-        """Whether to clean up temporary remote files after extraction."""
-        return self._cleanup_remote
-
-    @cleanup_remote.setter
-    def cleanup_remote(self, v: bool) -> None:
-        self._cleanup_remote = v
-
-    @property
-    def remote_snapshot_strategy(self) -> str:
-        """返回远端快照来源策略。"""
-        return self._remote_snapshot_strategy
-
-    @remote_snapshot_strategy.setter
-    def remote_snapshot_strategy(self, value: str) -> None:
-        normalized = str(value or "latest").strip().lower()
-        self._remote_snapshot_strategy = "custom" if normalized == "custom" else "latest"
-
-    @property
-    def snapshot_version(self) -> str:
-        return self._snapshot_version
-
-    @snapshot_version.setter
-    def snapshot_version(self, v: str) -> None:
-        self._snapshot_version = v
-
-    @property
-    def snapshot_lcu_url(self) -> str:
-        return self._snapshot_lcu_url
-
-    @snapshot_lcu_url.setter
-    def snapshot_lcu_url(self, v: str) -> None:
-        self._snapshot_lcu_url = v
-
-    @property
-    def snapshot_game_url(self) -> str:
-        return self._snapshot_game_url
-
-    @snapshot_game_url.setter
-    def snapshot_game_url(self, v: str) -> None:
-        self._snapshot_game_url = v
 
     # ------------------------------------------------------------------
     # Properties — base
@@ -644,10 +526,6 @@ class GuiConfig:
             section=ConfigSection.GUI,
             values={
                 "vgmstream_path": self._vgmstream_path,
-                "remote_snapshot_strategy": self._remote_snapshot_strategy,
-                "remote_snapshot_version": self._snapshot_version,
-                "remote_snapshot_lcu_url": self._snapshot_lcu_url,
-                "remote_snapshot_game_url": self._snapshot_game_url,
                 "theme_mode": self._theme_mode,
                 "accent_preset_id": self._accent_preset_id,
                 "page_smooth_scroll_enabled": self._page_smooth_scroll_enabled,
@@ -689,18 +567,3 @@ class GuiConfig:
                 _ONBOARDING_SKIPPED_KEY: state.get(_ONBOARDING_SKIPPED_KEY, ""),
             },
         )
-
-    def _snapshot_overrides(self) -> dict[str, str]:
-        """根据当前远端快照策略构建实际生效的快照覆盖项。"""
-        if self._source_mode != "remote_snapshot" or self._remote_snapshot_strategy != "custom":
-            return {
-                SettingKey.REMOTE_VERSION: "",
-                SettingKey.REMOTE_LCU_MANIFEST_URL: "",
-                SettingKey.REMOTE_GAME_MANIFEST_URL: "",
-            }
-
-        return {
-            SettingKey.REMOTE_VERSION: self._snapshot_version,
-            SettingKey.REMOTE_LCU_MANIFEST_URL: self._snapshot_lcu_url,
-            SettingKey.REMOTE_GAME_MANIFEST_URL: self._snapshot_game_url,
-        }

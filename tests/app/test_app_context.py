@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -6,7 +7,7 @@ import pytest
 import lol_audio_unpack as app_pkg
 import lol_audio_unpack.app.context as app_context_module
 from lol_audio_unpack import setup_app
-from lol_audio_unpack.app import AppContext, AppContextValidationError, SourceMode, create_app_context
+from lol_audio_unpack.app import AppContext, AppContextValidationError, create_app_context
 from lol_audio_unpack.config import (
     CONFIG_SECTION,
     load_command_config,
@@ -19,9 +20,26 @@ from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
 pytestmark = pytest.mark.unit
 
 
+def _prepare_local_source(game_path: Path) -> Path:
+    """创建满足公共预检合同的最小本地数据源。"""
+    (game_path / "Game" / "DATA" / "FINAL").mkdir(parents=True)
+    lcu_root = game_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data"
+    lcu_root.mkdir(parents=True)
+    (game_path / "Game" / "content-metadata.json").write_text(
+        json.dumps({"version": "15.6.1"}),
+        encoding="utf-8",
+    )
+    (lcu_root / "description.json").write_text(
+        json.dumps({"riotMeta": {}}),
+        encoding="utf-8",
+    )
+    return game_path
+
+
 def _build_settings(tmp_path: Path) -> dict[str, object]:
+    game_path = _prepare_local_source(tmp_path / "game")
     return {
-        "GAME_PATH": str(tmp_path / "game"),
+        "GAME_PATH": str(game_path),
         "OUTPUT_PATH": str(tmp_path / "output"),
         "GAME_REGION": "zh_CN",
         "EXCLUDE_TYPE": "SFX,MUSIC",
@@ -70,7 +88,7 @@ def test_create_app_context_uses_runtime_default_output_when_missing(
 ) -> None:
     runtime_root = tmp_path / "runtime-root"
     runtime_root.mkdir(parents=True, exist_ok=True)
-    game_path = tmp_path / "game"
+    game_path = _prepare_local_source(tmp_path / "game")
     monkeypatch.setattr(
         app_context_module,
         "detect_runtime_paths",
@@ -98,7 +116,7 @@ def test_create_app_context_ignores_blank_output_setting(
 ) -> None:
     runtime_root = tmp_path / "runtime-root"
     runtime_root.mkdir(parents=True, exist_ok=True)
-    game_path = tmp_path / "game"
+    game_path = _prepare_local_source(tmp_path / "game")
     monkeypatch.setattr(
         app_context_module,
         "detect_runtime_paths",
@@ -126,6 +144,7 @@ def test_create_app_context_resolves_relative_paths_from_runtime_root(
 ) -> None:
     runtime_root = tmp_path / "runtime-root"
     runtime_root.mkdir(parents=True, exist_ok=True)
+    _prepare_local_source(runtime_root / "game-client")
     monkeypatch.setattr(
         app_context_module,
         "detect_runtime_paths",
@@ -150,11 +169,11 @@ def test_create_app_context_resolves_relative_paths_from_runtime_root(
     assert app_context.config.wwiser_path == runtime_root / "tools" / "wwiser" / "wwiser.pyz"
 
 
-def test_create_app_context_builds_remote_snapshot_config(tmp_path: Path) -> None:
+def test_create_app_context_ignores_removed_remote_settings(tmp_path: Path) -> None:
     settings = _build_settings(tmp_path)
     settings.update(
         {
-            "SOURCE_MODE": SourceMode.REMOTE_SNAPSHOT.value,
+            "SOURCE_MODE": "remote_snapshot",
             "REMOTE_VERSION": "15.6",
             "REMOTE_LCU_MANIFEST_URL": "https://example.com/lcu.manifest",
             "REMOTE_GAME_MANIFEST_URL": "https://example.com/game.manifest",
@@ -163,9 +182,55 @@ def test_create_app_context_builds_remote_snapshot_config(tmp_path: Path) -> Non
 
     app_context = create_app_context(settings=settings)
 
-    assert app_context.config.source_mode is SourceMode.REMOTE_SNAPSHOT
-    assert app_context.config.remote_snapshot is not None
-    assert app_context.config.remote_snapshot.version == "15.6"
+    assert app_context.config.game_path == tmp_path / "game"
+    assert not hasattr(app_context.config, "source_mode")
+    assert not hasattr(app_context.config, "remote_snapshot")
+
+
+def test_create_app_context_rejects_incomplete_source_before_creating_outputs(tmp_path: Path) -> None:
+    game_path = tmp_path / "incomplete-game"
+    game_path.mkdir()
+    output_path = tmp_path / "output"
+
+    with pytest.raises(AppContextValidationError, match="GAME FINAL 目录"):
+        create_app_context(
+            settings={
+                "GAME_PATH": str(game_path),
+                "OUTPUT_PATH": str(output_path),
+            }
+        )
+
+    assert not output_path.exists()
+
+
+def test_create_app_context_rejects_corrupt_metadata_before_creating_outputs(tmp_path: Path) -> None:
+    game_path = _prepare_local_source(tmp_path / "game")
+    (game_path / "Game" / "content-metadata.json").write_text("not-json", encoding="utf-8")
+    output_path = tmp_path / "output"
+
+    with pytest.raises(AppContextValidationError, match="content-metadata.json无法解析"):
+        create_app_context(
+            settings={
+                "GAME_PATH": str(game_path),
+                "OUTPUT_PATH": str(output_path),
+            }
+        )
+
+    assert not output_path.exists()
+
+
+def test_create_app_context_rejects_invalid_lcu_description(tmp_path: Path) -> None:
+    game_path = _prepare_local_source(tmp_path / "game")
+    description_path = game_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data" / "description.json"
+    description_path.write_text(json.dumps({"unexpected": {}}), encoding="utf-8")
+
+    with pytest.raises(AppContextValidationError, match="description.json 缺少有效 riotMeta"):
+        create_app_context(
+            settings={
+                "GAME_PATH": str(game_path),
+                "OUTPUT_PATH": str(tmp_path / "output"),
+            }
+        )
 
 
 def test_create_app_context_missing_required_setting_raises(tmp_path: Path) -> None:
@@ -229,6 +294,34 @@ def test_load_settings_requires_existing_file(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError, match="配置文件不存在"):
         load_settings(config_file)
+
+
+def test_load_settings_warns_and_ignores_removed_remote_keys(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_file = tmp_path / "legacy.ini"
+    config_file.write_text(
+        (
+            "[app]\n"
+            "game_path = ./game\n"
+            "source_mode = remote_snapshot\n"
+            "remote_live_region = EUW\n"
+            "cleanup_remote = false\n"
+        ),
+        encoding="utf-8",
+    )
+    warnings: list[str] = []
+    monkeypatch.setattr("lol_audio_unpack.config.ini.logger.warning", warnings.append)
+
+    settings = load_settings(config_file)
+
+    assert settings == {"GAME_PATH": "./game"}
+    assert warnings == [
+        "忽略未知配置项: source_mode",
+        "忽略未知配置项: remote_live_region",
+        "忽略未知配置项: cleanup_remote",
+    ]
 
 
 def test_load_command_config_reads_targets_and_wav_sections(tmp_path: Path) -> None:

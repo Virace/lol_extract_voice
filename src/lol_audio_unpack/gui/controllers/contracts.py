@@ -41,6 +41,7 @@ class GuiNotice:
     title: str
     content: str
     level: str
+    terminal: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,14 +50,6 @@ class GuiLogMessage:
 
     level: str
     message: str
-
-
-@dataclass(frozen=True, slots=True)
-class SharedDataLoadingState:
-    """共享数据加载状态。"""
-
-    message: str
-    active: bool
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,3 +1,5 @@
+"""manager 数据文件与 metadata 辅助函数的行为测试。"""
+
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -6,8 +8,8 @@ import pytest
 
 import lol_audio_unpack.manager.files as mfiles
 from lol_audio_unpack.app import game_version
-from lol_audio_unpack.app.types import RemoteSnapshotConfig, SourceMode
 from lol_audio_unpack.manager import utils as mutils
+from lol_audio_unpack.manager.errors import ArtifactWriteError
 
 pytestmark = pytest.mark.unit
 
@@ -32,23 +34,23 @@ def test_find_data_file_priority_in_prod_mode(tmp_path):
 
 def test_write_and_read_data_roundtrip_msgpack(tmp_path):
     base = tmp_path / "result" / "data"
-    base.parent.mkdir(parents=True, exist_ok=True)
     data = {"metadata": {"gameVersion": "16.3"}, "items": [1, 2, 3]}
 
-    mfiles.write_data(data, base, dev_mode=False)
+    path = mfiles.write_data(data, base, dev_mode=False)
 
-    assert base.with_suffix(".msgpack").exists()
+    assert path == base.with_suffix(".msgpack")
+    assert path.exists()
     assert mfiles.read_data(base, dev_mode=False) == data
 
 
 def test_write_and_read_data_roundtrip_yaml(tmp_path):
     base = tmp_path / "result" / "data"
-    base.parent.mkdir(parents=True, exist_ok=True)
     data = {"metadata": {"gameVersion": "16.3"}, "items": [1, 2, 3]}
 
-    mfiles.write_data(data, base, dev_mode=True)
+    path = mfiles.write_data(data, base, dev_mode=True)
 
-    assert base.with_suffix(".yml").exists()
+    assert path == base.with_suffix(".yml")
+    assert path.exists()
     assert mfiles.read_data(base, dev_mode=True) == data
 
 
@@ -87,22 +89,26 @@ def test_get_lcu_version_success(tmp_path):
     assert game_version.get_lcu_version(game_path) == "16.5"
 
 
-def test_resolve_game_version_uses_remote_snapshot_version():
+def test_resolve_game_version_uses_and_caches_local_metadata(tmp_path, monkeypatch):
+    game_path = tmp_path / "game"
+    meta_file = game_path / "Game" / "content-metadata.json"
+    meta_file.parent.mkdir(parents=True)
+    meta_file.write_text(json.dumps({"version": "16.5.123"}), encoding="utf-8")
+    validations: list[tuple[Path, str]] = []
+    monkeypatch.setattr(
+        game_version,
+        "validate_install_version",
+        lambda path, version: validations.append((path, version)),
+    )
     ctx = SimpleNamespace(
-        config=SimpleNamespace(
-            source_mode=SourceMode.REMOTE_SNAPSHOT,
-            remote_snapshot=RemoteSnapshotConfig(
-                version="16.5",
-                lcu_manifest_url="https://example.com/lcu.manifest",
-                game_manifest_url="https://example.com/game.manifest",
-            ),
-            game_path=Path("unused-game-root"),
-        ),
+        config=SimpleNamespace(game_path=game_path),
         runtime_cache={},
     )
 
     assert game_version.resolve_game_version(ctx) == "16.5"
+    assert game_version.resolve_game_version(ctx) == "16.5"
     assert ctx.runtime_cache["resolved_runtime_version"] == "16.5"
+    assert validations == [(game_path, "16.5")]
 
 
 def test_build_metadata_payload():
@@ -185,26 +191,120 @@ def test_read_data_logs_error_with_exception_when_loader_fails(tmp_path, monkeyp
     assert errors == [f"读取文件时出错: {actual_file}, 错误: boom"]
 
 
-def test_write_data_logs_error_with_exception_when_dump_fails(tmp_path, monkeypatch):
-    base = tmp_path / "out" / "data"
-    base.parent.mkdir(parents=True, exist_ok=True)
+def test_read_data_can_defer_deserialization_logging_to_aggregate_boundary(tmp_path, monkeypatch) -> None:
+    """完整扫描可关闭逐 artifact traceback，由上层统一记录摘要。"""
+    base = tmp_path / "broken"
+    actual_file = base.with_suffix(".json")
+    actual_file.write_text("{}", encoding="utf-8")
     opt_calls: list[dict[str, object]] = []
-    errors: list[str] = []
 
-    monkeypatch.setattr(mfiles, "dump_msgpack", lambda _data, _path: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(mfiles, "find_data_file", lambda _path, dev_mode=False: actual_file)
+    monkeypatch.setattr(mfiles, "load_json", lambda _path: (_ for _ in ()).throw(RuntimeError("boom")))
     monkeypatch.setattr(
         mfiles,
         "logger",
         SimpleNamespace(
             trace=lambda _message: None,
-            opt=lambda **kwargs: opt_calls.append(kwargs) or SimpleNamespace(error=errors.append),
+            debug=lambda _message: None,
+            opt=lambda **kwargs: opt_calls.append(kwargs) or SimpleNamespace(error=lambda _message: None),
         ),
     )
 
-    mfiles.write_data({"k": "v"}, base, dev_mode=False)
+    result = mfiles.read_data(base, dev_mode=False, log_errors=False)
 
-    assert opt_calls == [{"exception": True}]
-    assert errors == [f"写入文件失败: {base.with_suffix('.msgpack')}, 错误: boom"]
+    assert result == {}
+    assert opt_calls == []
+
+
+def test_write_data_preserves_existing_file_when_serialize_fails(tmp_path, monkeypatch):
+    base = tmp_path / "out" / "data"
+    target = base.with_suffix(".msgpack")
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"old-data")
+
+    monkeypatch.setattr(mfiles, "dump_msgpack", lambda _data, _path: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    with pytest.raises(ArtifactWriteError) as raised:
+        mfiles.write_data({"k": "v"}, base, dev_mode=False)
+
+    assert raised.value.path == target
+    assert raised.value.stage == "serialize"
+    assert isinstance(raised.value.__cause__, RuntimeError)
+    assert target.read_bytes() == b"old-data"
+    assert list(target.parent.iterdir()) == [target]
+
+
+def test_write_data_removes_temp_when_first_write_fails(tmp_path, monkeypatch):
+    base = tmp_path / "out" / "data"
+    target = base.with_suffix(".msgpack")
+    monkeypatch.setattr(mfiles, "dump_msgpack", lambda _data, _path: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    with pytest.raises(ArtifactWriteError, match="serialize"):
+        mfiles.write_data({"k": "v"}, base, dev_mode=False)
+
+    assert not target.exists()
+    assert list(target.parent.iterdir()) == []
+
+
+def test_write_data_preserves_existing_file_when_fsync_fails(tmp_path, monkeypatch):
+    base = tmp_path / "out" / "data"
+    target = base.with_suffix(".msgpack")
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"old-data")
+    monkeypatch.setattr(mfiles.os, "fsync", lambda _fd: (_ for _ in ()).throw(OSError("disk full")))
+
+    with pytest.raises(ArtifactWriteError) as raised:
+        mfiles.write_data({"k": "v"}, base, dev_mode=False)
+
+    assert raised.value.stage == "fsync"
+    assert target.read_bytes() == b"old-data"
+    assert list(target.parent.iterdir()) == [target]
+
+
+def test_write_data_preserves_existing_file_when_replace_fails(tmp_path, monkeypatch):
+    base = tmp_path / "out" / "data"
+    target = base.with_suffix(".msgpack")
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"old-data")
+    monkeypatch.setattr(mfiles.os, "replace", lambda _source, _target: (_ for _ in ()).throw(OSError("busy")))
+
+    with pytest.raises(ArtifactWriteError) as raised:
+        mfiles.write_data({"k": "v"}, base, dev_mode=False)
+
+    assert raised.value.stage == "replace"
+    assert target.read_bytes() == b"old-data"
+    assert list(target.parent.iterdir()) == [target]
+
+
+def test_copy_file_atomic_preserves_existing_file_when_copy_fails(tmp_path, monkeypatch):
+    source = tmp_path / "source.msgpack"
+    target = tmp_path / "manifest" / "data.msgpack"
+    source.write_bytes(b"new-data")
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"old-data")
+    monkeypatch.setattr(mfiles.shutil, "copy2", lambda _source, _target: (_ for _ in ()).throw(OSError("full")))
+
+    with pytest.raises(ArtifactWriteError) as raised:
+        mfiles.copy_file_atomic(source, target)
+
+    assert raised.value.stage == "copy"
+    assert target.read_bytes() == b"old-data"
+    assert list(target.parent.iterdir()) == [target]
+
+
+def test_copy_file_atomic_replaces_target_after_complete_copy(tmp_path):
+    source = tmp_path / "source.msgpack"
+    target = tmp_path / "manifest" / "data.msgpack"
+    source.write_bytes(b"new-data")
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"old-data")
+
+    path = mfiles.copy_file_atomic(source, target)
+
+    assert path == target
+    assert target.read_bytes() == b"new-data"
+    assert source.read_bytes() == b"new-data"
+    assert list(target.parent.iterdir()) == [target]
 
 
 def test_manager_utils_keeps_legacy_exports_for_files_and_game_version() -> None:

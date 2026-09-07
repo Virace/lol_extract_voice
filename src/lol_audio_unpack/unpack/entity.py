@@ -16,6 +16,7 @@ from lol_audio_unpack.app.path_layout import (
     get_entity_path_component,
     get_output_dir_name,
 )
+from lol_audio_unpack.app.results import FailureDetail
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.model import AudioBank, AudioEntityData
 from lol_audio_unpack.model.binding import SUCCESS_STATUSES
@@ -92,7 +93,7 @@ def _record_bound_result(
     )
 
 
-def _persist_bound_container(  # noqa: PLR0913, PLR0917
+def _persist_bound_container(  # noqa: PLR0911, PLR0913, PLR0917
     raw_data: bytes,
     bank: AudioBank,
     entity_data: AudioEntityData,
@@ -102,6 +103,7 @@ def _persist_bound_container(  # noqa: PLR0913, PLR0917
     *,
     ctx: AppContext,
     persisted_wem_callback: Callable[[Path], None] | None,
+    file_limits: frozenset[Path] | None = None,
 ) -> bool:
     """解析一个精确 binding 容器，并将 WEM 回挂到其逻辑子实体。"""
     sub_info = entity_data.get_sub_entity_info(bank.sub_id)
@@ -129,6 +131,11 @@ def _persist_bound_container(  # noqa: PLR0913, PLR0917
     try:
         if bank.binding.kind == "BNK":
             files = BNK(raw_data).extract_files()
+            if not files:
+                # 合法 BNK 可以只含事件/结构，音频由配套 WPK 提供；
+                # 没有内嵌 WEM 不等于读取失败，损坏数据仍由解析异常处理。
+                _record_bound_result(stats, bank, outcome="no_audio")
+                return True
 
             def get_name(file: Any) -> str:
                 """返回 BNK 内 WEM 的原始 ID 文件名。"""
@@ -153,6 +160,9 @@ def _persist_bound_container(  # noqa: PLR0913, PLR0917
             return False
 
         has_content = False
+        write_failures = 0
+        write_successes = 0
+        matched_paths: set[Path] = set()
         for file in files:
             if not getattr(file, "data", True):
                 stats.record_file_result(sub_id, sub_name, bank.audio_type, FileProcessResult.EMPTY_SUBFILE)
@@ -160,13 +170,54 @@ def _persist_bound_container(  # noqa: PLR0913, PLR0917
 
             has_content = True
             destination_path = output_path / get_name(file)
+            if file_limits is not None and destination_path not in file_limits:
+                continue
+            matched_paths.add(destination_path)
             if destination_path not in persisted_paths:
-                _persist_wem(file, destination_path, persisted_wem_callback=persisted_wem_callback)
+                try:
+                    _persist_wem(file, destination_path, persisted_wem_callback=persisted_wem_callback)
+                except OSError as exc:
+                    write_failures += 1
+                    logger.warning("WEM 写入失败，继续处理同容器其他文件：{} | {}", destination_path, exc)
+                    stats.file_failures.append(
+                        FailureDetail(
+                            unit="file",
+                            source_path=source_path,
+                            output_path=str(destination_path),
+                            error_message=str(exc),
+                            error_type=type(exc).__name__,
+                            sub_entity=bank.sub_id,
+                            audio_type=bank.audio_type,
+                            category=bank.binding.category,
+                            wad=bank.binding.wad or "",
+                            entry_hash=bank.binding.entry_hash,
+                            retryable=True,
+                        )
+                    )
+                    stats.record_file_result(
+                        sub_id,
+                        sub_name,
+                        bank.audio_type,
+                        FileProcessResult.PARSE_ERROR,
+                        error_info={"path": str(destination_path), "error": str(exc), "type": "WEM"},
+                    )
+                    continue
                 persisted_paths.add(destination_path)
             stats.record_file_result(sub_id, sub_name, bank.audio_type, FileProcessResult.SUCCESS)
+            write_successes += 1
 
         if not has_content:
             _record_bound_result(stats, bank, outcome="failed", error="容器内没有可写入的 WEM")
+            return False
+        if file_limits is not None and matched_paths != file_limits:
+            raise ValueError("原失败 WEM 已不在该容器中，请重新确认输入资源")
+        if write_failures:
+            _record_bound_result(
+                stats,
+                bank,
+                outcome="partial" if write_successes else "write_failed",
+                error=f"{write_failures} 个 WEM 写入失败",
+            )
             return False
     except Exception as exc:  # noqa: BLE001
         container_type = bank.binding.kind or Path(source_path).suffix.removeprefix(".").upper()
@@ -195,6 +246,7 @@ def _unpack_bound_entity(  # noqa: PLR0913, PLR0917
     *,
     ctx: AppContext,
     persisted_wem_callback: Callable[[Path], None] | None,
+    file_limits: dict[tuple[str, ...], frozenset[Path]] | None = None,
 ) -> None:
     """仅按 local v2 成功 binding 的物理 WAD 与 entry 提取音频。"""
     stats.total_sub_entities = len(entity_data.sub_entities)
@@ -279,9 +331,17 @@ def _unpack_bound_entity(  # noqa: PLR0913, PLR0917
             persisted_paths,
             ctx=ctx,
             persisted_wem_callback=persisted_wem_callback,
+            file_limits=(file_limits or {}).get(
+                (bank.sub_id, bank.audio_type, binding.category, binding.wad or "", binding.entry_hash)
+            ),
         )
 
     stats.record_assembly_stats(len({bank.sub_id for bank in active_banks}), len(raw_by_key))
+    no_audio = {
+        (detail["wad"], detail["entryHash"]) for detail in stats.binding_details if detail["outcome"] == "no_audio"
+    }
+    if no_audio:
+        logger.info(f"{entity_data.entity_name} 有 {len(no_audio)} 个 BNK 不含内嵌音频，已正常跳过")
     diagnostics = entity_data.binding_diagnostics
     source_completeness = "partial" if diagnostics is not None and diagnostics.unresolved_bins else "complete"
     stats.set_binding_completeness(source_completeness)
@@ -319,7 +379,8 @@ def unpack_entity(  # noqa: PLR0913
     *,
     ctx: AppContext,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-) -> None:
+    file_limits: dict[tuple[str, ...], frozenset[Path]] | None = None,
+) -> EntityUnpackStats:
     """解包单个实体音频。
 
     Args:
@@ -329,6 +390,9 @@ def unpack_entity(  # noqa: PLR0913
         cache_lock: 多线程场景下的缓存锁。
         ctx: 运行时上下文。
         persisted_wem_callback: WEM 落盘后的附加回调。
+
+    Returns:
+        保持现有报告 schema 的实体解包统计。
 
     Raises:
         ValueError: 实体数据无效时抛出。
@@ -362,9 +426,10 @@ def unpack_entity(  # noqa: PLR0913
                 cache_lock,
                 ctx=ctx,
                 persisted_wem_callback=persisted_wem_callback,
+                file_limits=file_limits,
             )
         _finish_unpack_stats(entity_data, reader, stats, ctx=ctx)
-        return
+        return stats
 
     with stats_context as stats:
         logger.info(f"解包 {entity_data.entity_name} (ID:{entity_data.entity_id})")
@@ -418,7 +483,7 @@ def unpack_entity(  # noqa: PLR0913
             logger.warning(
                 f"{entity_data.entity_type} '{entity_data.entity_name}' 未找到任何需要解包的音频文件 (检查排除类型配置)。"
             )
-            return
+            return stats
 
         logger.debug("阶段 2: 开始批量解包WAD文件...")
         raw_by_path: dict[str, bytes] = {}
@@ -615,6 +680,8 @@ def unpack_entity(  # noqa: PLR0913
     except Exception as e:
         logger.debug(f"保存报告文件失败: {e}")
 
+    return stats
+
 
 def _generate_relative_path(entity_data: AudioEntityData, sub_id: str) -> Path:
     """生成不含音频类型的相对目录。
@@ -739,7 +806,8 @@ def unpack_champion(  # noqa: PLR0913
     *,
     ctx: AppContext,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-) -> None:
+    persisted_artifact_callback: Callable[[Path], None] | None = None,
+) -> EntityUnpackStats:
     """按英雄 ID 解包音频。
 
     Args:
@@ -749,6 +817,10 @@ def unpack_champion(  # noqa: PLR0913
         cache_lock: 多线程场景下的缓存锁。
         ctx: 运行时上下文。
         persisted_wem_callback: WEM 落盘后的附加回调。
+        persisted_artifact_callback: 非 WEM 解包产物落盘后的内部回调。
+
+    Returns:
+        保持现有报告 schema 的实体解包统计。
     """
     try:
         entity_data = AudioEntityData.from_entity(
@@ -757,7 +829,7 @@ def unpack_champion(  # noqa: PLR0913
             reader,
             ctx=ctx,
         )
-        unpack_entity(
+        stats = unpack_entity(
             entity_data,
             reader,
             wad_cache=wad_cache,
@@ -765,7 +837,13 @@ def unpack_champion(  # noqa: PLR0913
             ctx=ctx,
             persisted_wem_callback=persisted_wem_callback,
         )
-        attach_bp_vo(entity_data, reader, ctx=ctx)
+        attach_bp_vo(
+            entity_data,
+            reader,
+            ctx=ctx,
+            persisted_artifact_callback=persisted_artifact_callback,
+        )
+        return stats
     except ValueError as e:
         # 显式记录边界错误后向上抛出，交由 batch 统一计入失败计数；
         # 不在此处吞掉返回 None，否则失败会被误判为成功（见 AGENTS.project.md 日志硬规则）。
@@ -781,7 +859,7 @@ def unpack_map(  # noqa: PLR0913
     *,
     ctx: AppContext,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-) -> None:
+) -> EntityUnpackStats:
     """按地图 ID 解包音频。
 
     Args:
@@ -791,6 +869,9 @@ def unpack_map(  # noqa: PLR0913
         cache_lock: 多线程场景下的缓存锁。
         ctx: 运行时上下文。
         persisted_wem_callback: WEM 落盘后的附加回调。
+
+    Returns:
+        保持现有报告 schema 的实体解包统计。
     """
     try:
         entity_data = AudioEntityData.from_entity(
@@ -799,7 +880,7 @@ def unpack_map(  # noqa: PLR0913
             reader,
             ctx=ctx,
         )
-        unpack_entity(
+        stats = unpack_entity(
             entity_data,
             reader,
             wad_cache=wad_cache,
@@ -807,6 +888,7 @@ def unpack_map(  # noqa: PLR0913
             ctx=ctx,
             persisted_wem_callback=persisted_wem_callback,
         )
+        return stats
     except ValueError as e:
         # 显式记录边界错误后向上抛出，交由 batch 统一计入失败计数；
         # 不在此处吞掉返回 None，否则失败会被误判为成功（见 AGENTS.project.md 日志硬规则）。
@@ -822,7 +904,7 @@ def unpack_resource_pack(  # noqa: PLR0913
     *,
     ctx: AppContext,
     persisted_wem_callback: Callable[[Path], None] | None = None,
-) -> None:
+) -> EntityUnpackStats:
     """按 resource-pack stable key 解包音频。
 
     Args:
@@ -832,6 +914,9 @@ def unpack_resource_pack(  # noqa: PLR0913
         cache_lock: 多线程场景下的缓存锁。
         ctx: 运行时上下文。
         persisted_wem_callback: WEM 落盘后的附加回调。
+
+    Returns:
+        保持现有报告 schema 的实体解包统计。
 
     Raises:
         ValueError: resource-pack artifact 或绑定无效时抛出。
@@ -843,7 +928,7 @@ def unpack_resource_pack(  # noqa: PLR0913
             reader,
             ctx=ctx,
         )
-        unpack_entity(
+        stats = unpack_entity(
             entity_data,
             reader,
             wad_cache=wad_cache,
@@ -851,6 +936,7 @@ def unpack_resource_pack(  # noqa: PLR0913
             ctx=ctx,
             persisted_wem_callback=persisted_wem_callback,
         )
+        return stats
     except ValueError as exc:
         logger.error(str(exc))
         raise

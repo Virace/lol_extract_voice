@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from lol_audio_unpack.app.resource_pack import RESOURCE_PACK_ENTITY_TYPE, parse_resource_pack_key
-from lol_audio_unpack.app.types import SourceMode
 from lol_audio_unpack.model.binding import BankBinding, BindingDiagnostics
 from lol_audio_unpack.utils.common import sanitize_filename
 
@@ -45,8 +44,8 @@ class AudioEntityData:
         wad_root: 根 WAD 相对路径，用于 SFX/MUSIC。
         wad_language: 语言 WAD 相对路径，用于 VO；缺失时为 ``None``。
         events: 事件数据，仅映射流程需要；缺失时为 ``None``。
-        resource_banks: local v2 使用的逐条 bank binding 消费投影。
-        binding_diagnostics: local v2 artifact 的 binding 诊断；remote v1 为 ``None``。
+        resource_banks: resource schema v2 使用的逐条 bank binding 消费投影。
+        binding_diagnostics: resource schema v2 artifact 的 binding 诊断；未提供时为 ``None``。
     """
 
     entity_id: str
@@ -182,12 +181,9 @@ class AudioEntityData:
         if not champion:
             raise ValueError(f"数据中不存在英雄ID {champion_id}")
 
-        resource_bindings = reader.get_champion_resource_bindings(champion_id) if _uses_local_bindings(ctx) else None
-        champion_banks = None if resource_bindings is not None else reader.get_champion_banks(champion_id)
-        if resource_bindings is None and not champion_banks:
-            if _uses_local_bindings(ctx):
-                raise ValueError(f"英雄ID {champion_id} 缺少 resource schema v2，请先重新运行 update")
-            raise ValueError(f"英雄ID {champion_id} 没有音频数据")
+        resource_bindings = reader.get_champion_resource_bindings(champion_id)
+        if resource_bindings is None:
+            raise ValueError(f"英雄ID {champion_id} 缺少 resource schema v2，请先重新运行 update")
 
         wad_info = champion.get("wad", {})
         wad_root = wad_info.get("root")
@@ -210,25 +206,19 @@ class AudioEntityData:
             # 后续 unpack / mapping / GUI 都直接复用同一份稳定值。
             safe_skin_name = sanitize_filename(skin_name)
             skin_info_map[skin_id_str] = {"id": skin_id, "name": safe_skin_name}
+            # BIN 更新包含炫彩的独立 binding，消费者也必须识别其真实 ID。
+            for chroma in skin.get("chromas", []):
+                chroma_id = str(chroma["id"])
+                names = chroma.get("chromaNames", {})
+                chroma_name = names.get(language, names.get("default", skin_name))
+                skin_info_map[chroma_id] = {"id": chroma["id"], "name": sanitize_filename(chroma_name)}
 
         sub_entities: dict[str, dict[str, Any]] = {}
-        available_skins = champion_banks.get("skins", {}) if champion_banks else {}
-
-        for skin_id_str, banks in available_skins.items():
-            skin_info = skin_info_map.get(skin_id_str)
-            if not skin_info:
-                continue
-
-            # 这里只保留当前 banks 真正出现的皮肤，
-            # 避免后续流程再为“有皮肤定义但没有音频数据”的空壳子实体兜底。
-            sub_entities[skin_id_str] = {"name": skin_info["name"], "categories": banks}
-
-        resource_banks = _build_audio_banks(resource_bindings, reader) if resource_bindings is not None else ()
-        if resource_bindings is not None:
-            for bank in resource_banks:
-                skin_info = skin_info_map.get(bank.sub_id)
-                if skin_info is not None:
-                    sub_entities.setdefault(bank.sub_id, {"name": skin_info["name"], "categories": {}})
+        resource_banks = _build_audio_banks(resource_bindings, reader)
+        for bank in resource_banks:
+            skin_info = skin_info_map.get(bank.sub_id)
+            if skin_info is not None:
+                sub_entities.setdefault(bank.sub_id, {"name": skin_info["name"], "categories": {}})
 
         events_data = None
         if include_events:
@@ -254,7 +244,7 @@ class AudioEntityData:
             wad_language=wad_language,
             events=events_data,
             resource_banks=resource_banks,
-            binding_diagnostics=resource_bindings.diagnostics if resource_bindings is not None else None,
+            binding_diagnostics=resource_bindings.diagnostics,
         )
 
     @classmethod
@@ -284,12 +274,9 @@ class AudioEntityData:
         if not map_info:
             raise ValueError(f"数据中不存在地图ID {map_id}")
 
-        resource_bindings = reader.get_map_resource_bindings(map_id) if _uses_local_bindings(ctx) else None
-        map_banks = None if resource_bindings is not None else reader.get_map_banks(map_id)
-        if resource_bindings is None and not map_banks:
-            if _uses_local_bindings(ctx):
-                raise ValueError(f"地图ID {map_id} 缺少 resource schema v2，请先重新运行 update")
-            raise ValueError(f"地图ID {map_id} 没有音频数据")
+        resource_bindings = reader.get_map_resource_bindings(map_id)
+        if resource_bindings is None:
+            raise ValueError(f"地图ID {map_id} 缺少 resource schema v2，请先重新运行 update")
 
         wad_info = map_info.get("wad", {})
         wad_root = wad_info.get("root")
@@ -308,10 +295,8 @@ class AudioEntityData:
 
         # 地图没有独立皮肤概念，但解包和映射都按“实体 -> 子实体”统一处理，
         # 因此这里把地图包装成唯一一个子实体，减少下游分支。
-        sub_entities = {
-            str(map_id): {"name": safe_map_name, "categories": map_banks.get("banks", {}) if map_banks else {}}
-        }
-        resource_banks = _build_audio_banks(resource_bindings, reader) if resource_bindings is not None else ()
+        sub_entities = {str(map_id): {"name": safe_map_name, "categories": {}}}
+        resource_banks = _build_audio_banks(resource_bindings, reader)
 
         events_data = None
         if include_events:
@@ -331,7 +316,7 @@ class AudioEntityData:
             wad_language=wad_language,
             events=events_data,
             resource_banks=resource_banks,
-            binding_diagnostics=resource_bindings.diagnostics if resource_bindings is not None else None,
+            binding_diagnostics=resource_bindings.diagnostics,
         )
 
     @classmethod
@@ -357,8 +342,6 @@ class AudioEntityData:
         Raises:
             ValueError: 当前不是 local v2、artifact 不完整或 metadata 与 key 不一致时抛出。
         """
-        if not _uses_local_bindings(ctx):
-            raise ValueError("resource pack 仅支持本地 resource schema v2")
         parse_resource_pack_key(key)
         resource_bindings = reader.get_resource_pack_resource_bindings(key)
         banks_data = reader.get_resource_pack_banks(key, require_bindings=True)
@@ -397,12 +380,6 @@ class AudioEntityData:
             resource_banks=resource_banks,
             binding_diagnostics=resource_bindings.diagnostics,
         )
-
-
-def _uses_local_bindings(ctx: AppContext) -> bool:
-    """判断当前实体工厂是否必须消费 local v2 bindings。"""
-    mode = getattr(ctx.config, "source_mode", SourceMode.LOCAL_PATH)
-    return mode in {SourceMode.LOCAL_PATH, SourceMode.LOCAL_PATH.value}
 
 
 def _build_audio_banks(resource_bindings: Any, reader: DataReader) -> tuple[AudioBank, ...]:

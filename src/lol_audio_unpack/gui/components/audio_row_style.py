@@ -13,6 +13,8 @@ AUDIO_ROW_SELECTED_BAR_WIDTH = 3
 AUDIO_ROW_SELECTED_BAR_MARGIN = 0
 AUDIO_ROW_BUTTON_SIZE = 18
 AUDIO_ROW_BUTTON_GAP = 6
+# 平铺播放按钮与树根展开箭头共用中心轴，但不预留整格箭头位置。
+AUDIO_ROW_BUTTON_LEADING_INSET = (AUDIO_ROW_LEADING_SLOT_WIDTH - AUDIO_ROW_BUTTON_SIZE) // 2
 
 
 def active_audio_row_color(*, is_dark: bool) -> QColor:
@@ -76,6 +78,7 @@ def audio_selection_bar_color(*, is_dark: bool) -> QColor:
 
 __all__ = [
     "AUDIO_ROW_BUTTON_GAP",
+    "AUDIO_ROW_BUTTON_LEADING_INSET",
     "AUDIO_ROW_BUTTON_SIZE",
     "AUDIO_ROW_HORIZONTAL_MARGIN",
     "AUDIO_ROW_LEADING_SLOT_WIDTH",

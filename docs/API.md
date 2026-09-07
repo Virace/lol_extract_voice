@@ -15,11 +15,13 @@
   - `AppContextValidationError`
   - `OperationOptions`
   - `WavOutputOptions`
-  - `RemoteSnapshotConfig`
-  - `SourceMode`
   - `LolAudioUnpackApp`
-  - `RemoteEntityWorkItem`
-  - `RemoteEntityCallbackPayload`
+  - `ResourcePackWadRef`
+  - `OperationProgress`
+  - `ResultStatus`
+  - `EntityResult`
+  - `StageResult`
+  - `RunResult`
 - `lol_audio_unpack.config`
   - `SettingKey`
   - `ConfigSection`
@@ -54,11 +56,6 @@
   - `AudioEntityData`
   - `generate_champion_tasks`
   - `generate_map_tasks`
-- `lol_audio_unpack.runtime.remote`
-  - `RemotePreparer`
-  - `LcuResult`
-  - `BinInputResult`
-  - `GameWadResult`
 - `lol_audio_unpack.runtime.wav`
   - `TranscodeCoordinator`
   - `TranscodePaths`
@@ -79,7 +76,7 @@
 - 需要完整编排能力时，优先使用 `setup_app` + `lol_audio_unpack.app`。
 - 需要显式构建上下文、编写 GUI/脚本接入时，优先使用 `lol_audio_unpack.app` 与 `lol_audio_unpack.config`。
 - 只复用单一解包或映射能力时，直接导入 `lol_audio_unpack.unpack` 或 `lol_audio_unpack.mapping`。
-- 只有在需要 remote 资源准备或 WAV sidecar 转码时，再下沉到 `lol_audio_unpack.runtime.remote` 与 `lol_audio_unpack.runtime.wav`。
+- 只有在需要 WAV sidecar 转码时，再下沉到 `lol_audio_unpack.runtime.wav`。
 - `lol_audio_unpack.manager` 更接近底层数据准备/读取层，适合脚本化或测试场景。
 
 ## 3. 快速示例
@@ -108,10 +105,10 @@ uv run unpack update --game-path "/path/to/League of Legends" --output-path "./o
 ```
 
 ```bash
-uv run unpack extract \
-  --output-path "/tmp/lol-remote" \
+uv run unpack update extract \
+  --game-path "/path/to/prepared/lol-client" \
+  --output-path "./output" \
   --game-region zh_CN \
-  --source-mode remote_snapshot \
   --champions 1,103,555
 ```
 
@@ -120,6 +117,6 @@ uv run unpack extract \
 - [API 导航与模块视图](./api/README.md)
 - [Python API（分域包与公开入口）](./api/python_api.md)
 - [CLI API（命令行参数与执行语义）](./api/cli_api.md)
-- [Remote 模式（运行与接入）](./api/remote_mode.md)
+- [已准备本地数据源合同](./api/prepared_source.md)
 - [解包与映射 API（核心流水线）](./api/pipeline_api.md)
 - [配置与上下文 API](./api/config_api.md)

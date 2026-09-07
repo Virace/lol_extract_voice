@@ -31,7 +31,6 @@ class _FakeGuiConfig:
         """返回最小共享上下文快照。"""
         return AppContextInputSnapshot(
             settings=(
-                ("SOURCE_MODE", "local_path"),
                 ("GAME_PATH", EXPECTED_GAME_PATH),
                 ("OUTPUT_PATH", EXPECTED_OUTPUT_PATH),
                 ("GAME_REGION", "zh_CN"),

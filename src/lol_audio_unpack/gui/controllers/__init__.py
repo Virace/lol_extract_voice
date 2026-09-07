@@ -10,8 +10,8 @@ from .home_status import HomeStatusController, HomeStatusDisplayState
 from .log_drawer import LogDrawerController
 from .overview_preview import OverviewPreviewController
 from .preview_playback import PreviewPlaybackController
-from .remote_source import RemoteSourceController
 from .shared_data import SharedDataController
+from .shared_data_demo import SharedDataProgressDemo
 
 __all__ = [
     "DevConsoleController",
@@ -23,6 +23,6 @@ __all__ = [
     "LogDrawerController",
     "OverviewPreviewController",
     "PreviewPlaybackController",
-    "RemoteSourceController",
     "SharedDataController",
+    "SharedDataProgressDemo",
 ]

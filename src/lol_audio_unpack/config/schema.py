@@ -20,17 +20,11 @@ from typing import Any
 class SettingKey:
     """共享配置 key 常量。"""
 
-    SOURCE_MODE = "SOURCE_MODE"
     GAME_PATH = "GAME_PATH"
     OUTPUT_PATH = "OUTPUT_PATH"
     GAME_REGION = "GAME_REGION"
     EXCLUDE_TYPE = "EXCLUDE_TYPE"
-    CLEANUP_REMOTE = "CLEANUP_REMOTE"
     GROUP_BY_TYPE = "GROUP_BY_TYPE"
-    REMOTE_LIVE_REGION = "REMOTE_LIVE_REGION"
-    REMOTE_VERSION = "REMOTE_VERSION"
-    REMOTE_LCU_MANIFEST_URL = "REMOTE_LCU_MANIFEST_URL"
-    REMOTE_GAME_MANIFEST_URL = "REMOTE_GAME_MANIFEST_URL"
     WITH_BP_VO = "WITH_BP_VO"
     WWISER_PATH = "WWISER_PATH"
 
@@ -47,9 +41,6 @@ class ConfigSection:
     MAPPING = "mapping"
     GUI = "gui"
     ONBOARDING = "onboarding"
-
-
-DEFAULT_REMOTE_LIVE_REGION = "EUW"
 
 
 @dataclass(frozen=True)
@@ -72,40 +63,17 @@ class CommandConfigField:
 
 
 SHARED_SETTING_FIELDS: tuple[SharedSettingField, ...] = (
-    SharedSettingField(SettingKey.SOURCE_MODE, "source_mode", "source_mode", "local_path"),
     SharedSettingField(SettingKey.GAME_PATH, "game_path", "game_path"),
     SharedSettingField(SettingKey.OUTPUT_PATH, "output_path", "output_path"),
     SharedSettingField(SettingKey.GAME_REGION, "game_region", "game_region", "zh_CN"),
     SharedSettingField(SettingKey.EXCLUDE_TYPE, "exclude_type", "exclude_type", "SFX,MUSIC"),
-    SharedSettingField(SettingKey.CLEANUP_REMOTE, "cleanup_remote", "cleanup_remote", True),
     SharedSettingField(SettingKey.GROUP_BY_TYPE, "group_by_type", "group_by_type", False),
-    SharedSettingField(
-        SettingKey.REMOTE_LIVE_REGION,
-        "remote_live_region",
-        "remote_live_region",
-        DEFAULT_REMOTE_LIVE_REGION,
-    ),
-    SharedSettingField(SettingKey.REMOTE_VERSION, "remote_version", "remote_version"),
-    SharedSettingField(
-        SettingKey.REMOTE_LCU_MANIFEST_URL,
-        "remote_lcu_manifest_url",
-        "remote_lcu_manifest_url",
-    ),
-    SharedSettingField(
-        SettingKey.REMOTE_GAME_MANIFEST_URL,
-        "remote_game_manifest_url",
-        "remote_game_manifest_url",
-    ),
     SharedSettingField(SettingKey.WITH_BP_VO, "with_bp_vo", "with_bp_vo", False),
     SharedSettingField(SettingKey.WWISER_PATH, "wwiser_path", "wwiser_path"),
 )
 
-SHARED_FIELDS_BY_KEY: dict[str, SharedSettingField] = {
-    field.key: field for field in SHARED_SETTING_FIELDS
-}
-SHARED_FIELDS_BY_INI_KEY: dict[str, SharedSettingField] = {
-    field.ini_key: field for field in SHARED_SETTING_FIELDS
-}
+SHARED_FIELDS_BY_KEY: dict[str, SharedSettingField] = {field.key: field for field in SHARED_SETTING_FIELDS}
+SHARED_FIELDS_BY_INI_KEY: dict[str, SharedSettingField] = {field.ini_key: field for field in SHARED_SETTING_FIELDS}
 SHARED_FIELDS_BY_CLI_ATTR: dict[str, SharedSettingField] = {
     field.cli_attr: field for field in SHARED_SETTING_FIELDS if field.cli_attr is not None
 }
@@ -121,17 +89,13 @@ COMMAND_CONFIG_FIELDS: dict[str, tuple[CommandConfigField, ...]] = {
         CommandConfigField("champions", "champions", "text"),
         CommandConfigField("maps", "maps", "text"),
     ),
-    ConfigSection.RUNTIME: (
-        CommandConfigField("max_workers", "max_workers", "int"),
-    ),
+    ConfigSection.RUNTIME: (CommandConfigField("max_workers", "max_workers", "int"),),
     ConfigSection.UPDATE: (
         CommandConfigField("_update_enabled", "enable", "bool"),
         CommandConfigField("force", "force", "bool"),
         CommandConfigField("skip_events", "skip_events", "bool"),
     ),
-    ConfigSection.EXTRACT: (
-        CommandConfigField("_extract_enabled", "enable", "bool"),
-    ),
+    ConfigSection.EXTRACT: (CommandConfigField("_extract_enabled", "enable", "bool"),),
     ConfigSection.WAV: (
         CommandConfigField("wav", "enable", "bool"),
         CommandConfigField("wav_workers", "wav_workers", "int"),
@@ -155,10 +119,10 @@ def build_settings(args: Any) -> dict[str, Any]:
             settings[field.key] = value
     return settings
 
+
 __all__ = [
     "COMMAND_CONFIG_FIELDS",
     "CONTEXT_OPTION_ATTRS",
-    "DEFAULT_REMOTE_LIVE_REGION",
     "DEFAULT_SHARED_SETTINGS",
     "SHARED_FIELDS_BY_CLI_ATTR",
     "SHARED_FIELDS_BY_INI_KEY",

@@ -6,13 +6,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from lol_audio_unpack.manager.bin_source import BinBatch, BinSource, LoadedBin
+from lol_audio_unpack.manager.bin_source import BinSource, LoadedBin
 from lol_audio_unpack.manager.files import needs_update, write_data
+from lol_audio_unpack.manager.update_result import UpdateEntityResult
 from lol_audio_unpack.model.binding import (
     RESOURCE_SCHEMA_VERSION,
     SUCCESS_STATUSES,
@@ -22,6 +24,7 @@ from lol_audio_unpack.model.binding import (
     ResourceBindings,
     build_diagnostics,
 )
+from lol_audio_unpack.model.progress import OperationProgress, ProgressEvent
 from lol_audio_unpack.utils.logging import performance_monitor
 from lol_audio_unpack.utils.run_summary import record_runtime_note
 
@@ -46,6 +49,7 @@ class MapBinProcessor:
         map_banks_dir: Path,
         map_events_dir: Path,
         languages: list[str] | None = None,
+        progress_callback: Callable[[OperationProgress], None] | None = None,
     ):
         """初始化地图 BIN 处理器。
 
@@ -66,6 +70,7 @@ class MapBinProcessor:
         self.map_banks_dir = map_banks_dir
         self.map_events_dir = map_events_dir
         self.languages: list[str] = languages if languages is not None else []
+        self._progress_callback = progress_callback
 
     def _is_dev_mode(self) -> bool:
         """返回当前运行是否为开发模式。"""
@@ -76,12 +81,8 @@ class MapBinProcessor:
         logger.info(f"{stage_name}进度 {index}/{total}: {entity_id}")
 
     @performance_monitor(level="DEBUG")
-    def _update_maps(self, data: dict) -> None:
-        """
-        处理地图数据，按地图ID分别生成文件
-
-        :param data: 包含地图数据的字典
-        """
+    def _update_maps(self, data: dict) -> tuple[UpdateEntityResult, ...]:
+        """按地图 ID 更新 banks/events，并返回逐实体结果。"""
         logger.info("开始处理地图音频数据...")
         self.map_banks_dir.mkdir(parents=True, exist_ok=True)
         self.map_events_dir.mkdir(parents=True, exist_ok=True)
@@ -114,11 +115,72 @@ class MapBinProcessor:
 
         map_items = list(maps.items())
         total_maps = len(map_items)
+        self._emit_progress("started", current=0, total=total_maps)
+        results: list[UpdateEntityResult] = []
+        first_error: BaseException | None = None
         for index, (map_id, map_data) in enumerate(map_items, start=1):
             self._log_simple_progress("处理地图", index, total_maps, map_id)
-            self._process_single_map(map_id, map_data, common_event_sources, common_banks_set)
+            try:
+                result = self._process_single_map(map_id, map_data, common_event_sources, common_banks_set)
+            except Exception as exc:  # noqa: BLE001
+                first_error = first_error or exc
+                result = UpdateEntityResult.from_error(
+                    "map",
+                    map_id,
+                    exc,
+                    entity_name=self._get_map_name(map_data),
+                )
+            results.append(result)
+            self._emit_progress(
+                "advanced",
+                current=index,
+                total=total_maps,
+                entity_id=map_id,
+            )
 
-        logger.success(f"地图Banks数据更新完成，共处理 {total_maps} 个地图")
+        self._emit_progress("finished", current=total_maps, total=total_maps)
+        failed_count = sum(result.status.value == "failed" for result in results)
+        partial_count = sum(result.status.value == "partial" for result in results)
+        if first_error is not None:
+            logger.opt(exception=first_error).error(
+                "地图 Banks 更新出现未预期异常：总计 {}，失败 {}，部分成功 {}",
+                total_maps,
+                failed_count,
+                partial_count,
+            )
+        elif failed_count or partial_count:
+            logger.warning(
+                "地图 Banks 更新未完整：总计 {}，失败 {}，部分成功 {}",
+                total_maps,
+                failed_count,
+                partial_count,
+            )
+        else:
+            logger.success(f"地图Banks数据更新完成，共处理 {total_maps} 个地图")
+        return tuple(results)
+
+    def _emit_progress(
+        self,
+        event: ProgressEvent,
+        *,
+        current: int,
+        total: int,
+        entity_id: str | None = None,
+    ) -> None:
+        """发送地图 banks 阶段的结构化进度。"""
+        if self._progress_callback is None:
+            return
+        self._progress_callback(
+            OperationProgress(
+                operation_key="update",
+                stage_key="map_banks",
+                event=event,
+                current=current,
+                total=total,
+                entity_type="map" if entity_id is not None else None,
+                entity_id=entity_id,
+            )
+        )
 
     def _process_single_map(
         self,
@@ -126,7 +188,7 @@ class MapBinProcessor:
         map_data: dict,
         common_event_sources: CommonEventSourceIndex | None = None,
         common_banks_set: set | None = None,
-    ) -> None:
+    ) -> UpdateEntityResult:
         """
         处理单个地图的Banks和Events数据
 
@@ -138,16 +200,14 @@ class MapBinProcessor:
         banks_file_base = self.map_banks_dir / map_id
         events_file_base = self.map_events_dir / map_id
 
-        resource_v2 = getattr(self.bin_source, "_uses_resource_v2", lambda: False)()
-        resource_schema = RESOURCE_SCHEMA_VERSION if resource_v2 else None
         banks_need_update = needs_update(
             banks_file_base,
             self.version,
             self.force_update,
             dev_mode=self._is_dev_mode(),
-            resource_schema=resource_schema,
+            resource_schema=RESOURCE_SCHEMA_VERSION,
         )
-        events_need_update = needs_update(
+        events_need_update = self.process_events and needs_update(
             events_file_base,
             self.version,
             self.force_update,
@@ -155,58 +215,53 @@ class MapBinProcessor:
         )
         if not banks_need_update and not events_need_update:
             logger.trace(f"地图 {map_id} 的数据已是最新，跳过处理")
-            return
+            return UpdateEntityResult.success("map", map_id, entity_name=self._get_map_name(map_data))
 
         if not map_data.get("binPath"):
-            return
+            raise ValueError(f"地图 {map_id} 缺少 BIN 路径，无法准备 banks artifact")
 
         loaded = self._load_map_resource(map_id, map_data)
         bin_file = loaded.bin_file
         batch = loaded.batch
 
         references = self._collect_bank_references(bin_file, map_data["binPath"], map_id) if bin_file else []
-        bank_bindings = self.bin_source._resolve_bank_bindings(references) if batch.resource_v2 else []
-        if batch.resource_v2:
-            map_banks = self._binding_map_banks(bank_bindings)
-        else:
-            map_banks = self._reference_map_banks(references)
+        bank_bindings = self.bin_source._resolve_bank_bindings(references)
+        map_banks = self._binding_map_banks(bank_bindings)
 
         # 写入Banks数据
-        if banks_need_update and (map_banks or batch.resource_v2):
+        completeness = Completeness.COMPLETE
+        artifacts: list[Path] = []
+        if banks_need_update:
             map_banks_data = self.bin_source._create_base_data(
                 map_id, "map", name=self._get_map_name(map_data), banks=map_banks
             )
 
-            if batch.resource_v2:
-                index_metrics, index_errors = self.bin_source._resource_index_diagnostics()
-                diagnostics = build_diagnostics(
-                    batch.bindings,
-                    bank_bindings,
-                    index=index_metrics,
-                    index_errors=index_errors,
-                )
-                resource = ResourceBindings(
-                    entity_type="map",
-                    entity_id=map_id,
-                    bin_bindings=tuple(batch.bindings),
-                    bank_bindings=tuple(bank_bindings),
-                    diagnostics=diagnostics,
-                )
-                map_banks_data.update(resource.to_payload())
-                self._log_binding_summary(f"地图 {map_id}", diagnostics.completeness, diagnostics.to_dict())
+            index_metrics, index_errors = self.bin_source._resource_index_diagnostics()
+            diagnostics = build_diagnostics(
+                batch.bindings,
+                bank_bindings,
+                index=index_metrics,
+                index_errors=index_errors,
+            )
+            resource = ResourceBindings(
+                entity_type="map",
+                entity_id=map_id,
+                bin_bindings=tuple(batch.bindings),
+                bank_bindings=tuple(bank_bindings),
+                diagnostics=diagnostics,
+            )
+            map_banks_data.update(resource.to_payload())
+            self._log_binding_summary(f"地图 {map_id}", diagnostics.completeness, diagnostics.to_dict())
+            completeness = diagnostics.completeness
 
             # 对非公共地图进行去重处理
             if map_id != "0" and common_banks_set:
                 self._deduplicate_single_map_banks(map_banks_data, common_banks_set)
 
-            # 去重后检查是否还有数据需要写入
-            if map_banks_data.get("banks") or batch.resource_v2:
-                write_data(map_banks_data, banks_file_base, dev_mode=self._is_dev_mode())
-            else:
-                logger.trace(f"地图 {map_id} 去重后无独有Banks数据，跳过写入")
+            artifacts.append(write_data(map_banks_data, banks_file_base, dev_mode=self._is_dev_mode()))
 
         # 处理Events数据，只有在启用事件处理时才提取
-        if self.process_events and events_need_update and bin_file is not None:
+        if events_need_update and bin_file is not None:
             map_events, dedup_summary = self._extract_map_events(
                 bin_file,
                 common_event_sources if map_id != "0" else None,
@@ -217,13 +272,35 @@ class MapBinProcessor:
                 final_event_data = self.bin_source._create_base_data(
                     map_id, "map", name=self._get_map_name(map_data), map=map_events
                 )
-                write_data(final_event_data, events_file_base, dev_mode=self._is_dev_mode())
+                artifacts.append(write_data(final_event_data, events_file_base, dev_mode=self._is_dev_mode()))
+
+        if completeness is Completeness.FAILED:
+            return UpdateEntityResult.incomplete(
+                "map",
+                map_id,
+                entity_name=self._get_map_name(map_data),
+                message="resource bindings 未形成可用结果",
+                failed=True,
+                artifacts=tuple(artifacts),
+            )
+        if completeness is Completeness.PARTIAL:
+            return UpdateEntityResult.incomplete(
+                "map",
+                map_id,
+                entity_name=self._get_map_name(map_data),
+                message="部分 BIN 或 bank binding 未能解析",
+                artifacts=tuple(artifacts),
+            )
+        return UpdateEntityResult.success(
+            "map",
+            map_id,
+            entity_name=self._get_map_name(map_data),
+            artifacts=tuple(artifacts),
+        )
 
     def _load_map_resource(self, map_id: str, map_data: dict) -> LoadedBin:
-        """加载地图 BIN，并兼容旧测试边界。"""
-        if hasattr(self.bin_source, "_load_map_bin_resource"):
-            return self.bin_source._load_map_bin_resource(map_id, map_data)
-        return LoadedBin(self.bin_source._load_map_bin_file(map_id, map_data), BinBatch({}, [], False))
+        """通过本地 FINAL WAD 索引加载地图 BIN。"""
+        return self.bin_source._load_map_bin_resource(map_id, map_data)
 
     @staticmethod
     def _collect_bank_references(bin_file, source_bin: str, map_id: str) -> list[BankReference]:
@@ -246,15 +323,6 @@ class MapBinProcessor:
                 )
                 group_index += 1
         return references
-
-    @staticmethod
-    def _reference_map_banks(references: list[BankReference]) -> dict[str, list[list[str]]]:
-        """从 remote 旧合同声明派生 map banks 投影。"""
-        groups: dict[tuple[str, str, int | None], list[str]] = {}
-        for reference in references:
-            key = (reference.category, reference.source_bin, reference.group)
-            groups.setdefault(key, []).append(reference.path)
-        return MapBinProcessor._group_map_banks(groups)
 
     @staticmethod
     def _binding_map_banks(bindings: list[BankBinding]) -> dict[str, list[list[str]]]:

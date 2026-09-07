@@ -7,14 +7,12 @@ import pytest
 
 import lol_audio_unpack.app.context as app_context_module
 import lol_audio_unpack.config.ini as config_ini_module
-from lol_audio_unpack.manager.data_reader import DataReader
-from lol_audio_unpack.utils.common import Singleton
 from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths
 
 
 @pytest.fixture(autouse=True)
 def _isolate_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
-    """隔离配置目录与 ``DataReader`` 单例缓存。
+    """隔离每个测试使用的配置目录与运行时路径。
 
     Args:
         monkeypatch: pytest 属性替换夹具。
@@ -46,8 +44,4 @@ def _isolate_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterato
         ),
     )
 
-    Singleton._instances.pop(DataReader, None)
-
     yield
-
-    Singleton._instances.pop(DataReader, None)

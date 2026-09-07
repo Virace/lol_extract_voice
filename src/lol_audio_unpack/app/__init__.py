@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
+from lol_audio_unpack.model.progress import OperationProgress
+
 from .context import create_app_context
 from .facade import LolAudioUnpackApp
-from .remote import RemoteEntityCallbackPayload, RemoteEntityWorkItem
 from .resource_pack import ResourcePackWadRef
+from .results import EntityResult, ResultStatus, RunResult, StageResult
 from .types import (
     AppConfig,
     AppContext,
     AppContextValidationError,
     AppPaths,
     OperationOptions,
-    RemoteSnapshotConfig,
-    SourceMode,
     WavOutputOptions,
 )
 
@@ -22,13 +22,14 @@ __all__ = [
     "AppContext",
     "AppContextValidationError",
     "AppPaths",
+    "EntityResult",
     "LolAudioUnpackApp",
     "OperationOptions",
-    "RemoteEntityCallbackPayload",
-    "RemoteEntityWorkItem",
-    "RemoteSnapshotConfig",
+    "OperationProgress",
+    "ResultStatus",
     "ResourcePackWadRef",
-    "SourceMode",
+    "RunResult",
+    "StageResult",
     "WavOutputOptions",
     "create_app_context",
 ]

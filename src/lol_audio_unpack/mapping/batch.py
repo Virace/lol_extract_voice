@@ -6,10 +6,12 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from lol_audio_unpack.app.results import EntityResult, ResultStatus, StageResult
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.model import generate_champion_tasks, generate_map_tasks
 
@@ -59,6 +61,7 @@ def _build_entity(  # noqa: PLR0913, PLR0917
     runtime_cache: mapping_session.RuntimeCache,
     *,
     ctx: AppContext,
+    persisted_mapping_callback: Callable[[Path], None] | None = None,
 ) -> None:
     """执行单个实体的映射构建。
 
@@ -70,6 +73,7 @@ def _build_entity(  # noqa: PLR0913, PLR0917
         integrate_data: 是否输出整合数据。
         runtime_cache: 运行时缓存。
         ctx: 运行时上下文。
+        persisted_mapping_callback: 映射或整合产物成功落盘后的可选回调。
 
     Raises:
         ValueError: 实体类型未知时抛出。
@@ -83,6 +87,7 @@ def _build_entity(  # noqa: PLR0913, PLR0917
             integrate_data,
             runtime_cache=runtime_cache,
             ctx=ctx,
+            persisted_mapping_callback=persisted_mapping_callback,
         )
         return
     if entity_type == "map":
@@ -93,6 +98,7 @@ def _build_entity(  # noqa: PLR0913, PLR0917
             integrate_data,
             runtime_cache=runtime_cache,
             ctx=ctx,
+            persisted_mapping_callback=persisted_mapping_callback,
         )
         return
     if entity_type == "resource_pack":
@@ -103,6 +109,7 @@ def _build_entity(  # noqa: PLR0913, PLR0917
             integrate_data,
             runtime_cache=runtime_cache,
             ctx=ctx,
+            persisted_mapping_callback=persisted_mapping_callback,
         )
         return
     raise ValueError(f"未知的实体类型: {entity_type}")
@@ -166,7 +173,7 @@ def execute_tasks(  # noqa: PLR0913
     *,
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
-) -> None:
+) -> StageResult:
     """执行映射任务集。
 
     Args:
@@ -176,11 +183,26 @@ def execute_tasks(  # noqa: PLR0913
         integrate_data: 是否生成整合数据。
         ctx: 运行时上下文。
         progress_callback: 每个实体完成后的可选进度回调。
+
+    Returns:
+        当前 mapping 阶段的执行结果。
+
+    Raises:
+        ValueError: 任务包含未知实体类型时抛出。
     """
 
     if not tasks:
-        logger.warning("没有任何任务需要执行")
-        return
+        note = "没有任何任务需要执行"
+        logger.info(note)
+        return StageResult.from_entities("mapping", (), note=note)
+
+    unknown_entity_type = next(
+        (entity_type for entity_type, _, _ in tasks if entity_type not in {"champion", "map", "resource_pack"}),
+        None,
+    )
+    if unknown_entity_type is not None:
+        # 任务类型是 batch 的基础输入合同，不能被归类为可继续的实体构建失败。
+        raise ValueError(f"未知的实体类型: {unknown_entity_type}")
 
     start_time = time.time()
     total_tasks = len(tasks)
@@ -192,17 +214,33 @@ def execute_tasks(  # noqa: PLR0913
     )
     logger.info(f"HIRC 后端: {mapping_session.describe_hirc_backend(ctx)}")
 
-    failed_count = 0
     show_exception = bool(getattr(ctx.config, "dev_mode", False))
     # manager 和 runtime_cache 都按“整轮任务”复用，
     # 否则多实体并发时会重复创建 wwiser 进程态和 WAD/HIRC 缓存。
     wwiser_manager = mapping_session._create_wwiser_manager(ctx)
     runtime_cache = mapping_session.RuntimeCache(cache_lock=threading.Lock() if max_workers > 1 else None)
     progress_lock = threading.Lock() if max_workers > 1 else None
+    artifact_lock = threading.Lock()
+    artifact_paths: list[list[str]] = [[] for _ in tasks]
+
+    def capture_artifact(index: int) -> Callable[[Path], None]:
+        """记录当前实体已成功写入的 mapping 产物。"""
+
+        def _capture(path: Path) -> None:
+            with artifact_lock:
+                artifact_paths[index].append(str(path))
+
+        return _capture
+
+    def get_artifacts(index: int) -> tuple[str, ...]:
+        """返回当前实体的已确认 mapping 产物快照。"""
+        with artifact_lock:
+            return tuple(artifact_paths[index])
 
     if max_workers > 1:
 
         def build_entity_with_progress(
+            index: int,
             entity_type: str,
             entity_id: int | str,
             description: str,
@@ -234,27 +272,44 @@ def execute_tasks(  # noqa: PLR0913
                 integrate_data,
                 runtime_cache,
                 ctx=ctx,
+                persisted_mapping_callback=capture_artifact(index),
             )
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_task = {
-                executor.submit(build_entity_with_progress, entity_type, entity_id, description): (
+                executor.submit(build_entity_with_progress, index, entity_type, entity_id, description): (
+                    index,
                     entity_type,
+                    entity_id,
                     description,
                 )
-                for entity_type, entity_id, description in tasks
+                for index, (entity_type, entity_id, description) in enumerate(tasks)
             }
             completed_count = 0
+            entity_results: list[EntityResult | None] = [None] * total_tasks
             for future in as_completed(future_to_task):
-                entity_type, description = future_to_task[future]
+                index, entity_type, entity_id, description = future_to_task[future]
                 completed_count += 1
                 finished_by_type[entity_type] = finished_by_type.get(entity_type, 0) + 1
                 try:
                     future.result()
+                    entity_results[index] = EntityResult(
+                        entity_type,
+                        entity_id,
+                        ResultStatus.SUCCESS,
+                        entity_name=description,
+                        artifacts=get_artifacts(index),
+                    )
                     progress_message = f"{description} 映射完成"
                     logger.info(f"进度: {completed_count}/{total_tasks} - {progress_message}。")
                 except Exception as exc:  # noqa: BLE001
-                    failed_count += 1
+                    entity_results[index] = EntityResult.from_error(
+                        entity_type,
+                        entity_id,
+                        exc,
+                        entity_name=description,
+                        artifacts=get_artifacts(index),
+                    )
                     progress_message = f"{description} 映射失败"
                     logger.opt(exception=show_exception).warning(f"{description} 映射失败，将继续后续任务: {exc}")
                 _emit_progress(
@@ -268,6 +323,7 @@ def execute_tasks(  # noqa: PLR0913
                 )
     else:
         completed_count = 0
+        entity_results = []
         for entity_type, entity_id, description in tasks:
             try:
                 _emit_running_progress(
@@ -286,14 +342,33 @@ def execute_tasks(  # noqa: PLR0913
                     integrate_data,
                     runtime_cache,
                     ctx=ctx,
+                    persisted_mapping_callback=capture_artifact(completed_count),
+                )
+                entity_results.append(
+                    EntityResult(
+                        entity_type,
+                        entity_id,
+                        ResultStatus.SUCCESS,
+                        entity_name=description,
+                        artifacts=get_artifacts(completed_count),
+                    )
                 )
                 progress_message = f"{description} 映射完成"
-                completed_count += 1
-                logger.info(f"进度: {completed_count}/{total_tasks} - {progress_message}。")
             except Exception as exc:  # noqa: BLE001
-                failed_count += 1
+                entity_results.append(
+                    EntityResult.from_error(
+                        entity_type,
+                        entity_id,
+                        exc,
+                        entity_name=description,
+                        artifacts=get_artifacts(completed_count),
+                    )
+                )
                 progress_message = f"{description} 映射失败"
                 logger.opt(exception=show_exception).warning(f"{description} 映射失败，将继续后续任务: {exc}")
+            completed_count += 1
+            if entity_results[-1].status is ResultStatus.SUCCESS:
+                logger.info(f"进度: {completed_count}/{total_tasks} - {progress_message}。")
             finished_by_type[entity_type] = finished_by_type.get(entity_type, 0) + 1
             _emit_progress(
                 progress_callback,
@@ -306,17 +381,19 @@ def execute_tasks(  # noqa: PLR0913
             )
 
     duration = time.time() - start_time
+    stage_result = StageResult.from_entities("mapping", tuple(entity_results))
     summary_message = (
-        f"映射完成: {' 和 '.join(summary_parts)}，"
-        f"成功 {total_tasks - failed_count} 个，失败 {failed_count} 个，"
+        f"映射结果: {' 和 '.join(summary_parts)}，"
+        f"成功 {stage_result.success_count} 个，失败 {stage_result.failed_count} 个，"
         f"耗时 {duration:.2f}s"
     )
-    if failed_count == 0:
+    if stage_result.status is ResultStatus.SUCCESS:
         logger.success(summary_message)
-    elif failed_count < total_tasks:
+    elif stage_result.status is ResultStatus.PARTIAL:
         logger.warning(summary_message)
     else:
         logger.error(summary_message)
+    return stage_result
 
 
 def build_all(  # noqa: PLR0913
@@ -328,7 +405,7 @@ def build_all(  # noqa: PLR0913
     *,
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
-) -> None:
+) -> StageResult:
     """构建所有实体的事件映射。
 
     Args:
@@ -339,6 +416,9 @@ def build_all(  # noqa: PLR0913
         integrate_data: 是否生成整合数据。
         ctx: 运行时上下文。
         progress_callback: 每个实体完成后的可选进度回调。
+
+    Returns:
+        当前 mapping 阶段的执行结果。
     """
 
     tasks: list[EntityTask] = []
@@ -350,11 +430,7 @@ def build_all(  # noqa: PLR0913
         map_tasks = generate_map_tasks(reader, None)
         tasks.extend(map_tasks)
         logger.debug(f"已添加 {len(map_tasks)} 个地图映射任务")
-    if not tasks:
-        logger.warning("没有找到任何需要映射的实体")
-        return
-
-    execute_tasks(
+    return execute_tasks(
         tasks,
         reader,
         max_workers,
@@ -372,7 +448,7 @@ def build_champions(  # noqa: PLR0913
     *,
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
-) -> None:
+) -> StageResult:
     """构建指定英雄的事件映射。
 
     Args:
@@ -382,9 +458,12 @@ def build_champions(  # noqa: PLR0913
         integrate_data: 是否生成整合数据。
         ctx: 运行时上下文。
         progress_callback: 每个实体完成后的可选进度回调。
+
+    Returns:
+        当前 mapping 阶段的执行结果。
     """
 
-    execute_tasks(
+    return execute_tasks(
         generate_champion_tasks(reader, champion_ids),
         reader,
         max_workers,
@@ -402,7 +481,7 @@ def build_maps(  # noqa: PLR0913
     *,
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
-) -> None:
+) -> StageResult:
     """构建指定地图的事件映射。
 
     Args:
@@ -412,9 +491,12 @@ def build_maps(  # noqa: PLR0913
         integrate_data: 是否生成整合数据。
         ctx: 运行时上下文。
         progress_callback: 每个实体完成后的可选进度回调。
+
+    Returns:
+        当前 mapping 阶段的执行结果。
     """
 
-    execute_tasks(
+    return execute_tasks(
         generate_map_tasks(reader, map_ids),
         reader,
         max_workers,
@@ -432,7 +514,7 @@ def build_resource_packs(  # noqa: PLR0913
     *,
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
-) -> None:
+) -> StageResult:
     """构建指定 resource-pack 的事件映射。
 
     Args:
@@ -442,9 +524,12 @@ def build_resource_packs(  # noqa: PLR0913
         integrate_data: 是否生成整合数据。
         ctx: 运行时上下文。
         progress_callback: 每个实体完成后的可选进度回调。
+
+    Returns:
+        当前 mapping 阶段的执行结果。
     """
     tasks: list[EntityTask] = [("resource_pack", key, f"资源包 {key}") for key in keys]
-    execute_tasks(
+    return execute_tasks(
         tasks,
         reader,
         max_workers,

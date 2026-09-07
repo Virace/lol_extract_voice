@@ -6,8 +6,6 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from .types import SourceMode
-
 
 @dataclass(frozen=True, slots=True)
 class SpecialContentProfile:
@@ -186,15 +184,6 @@ def merge_champion_ids(
     return tuple(merged)
 
 
-def is_special_content_supported(source_mode: SourceMode | str | object) -> bool:
-    """判断当前来源模式是否支持执行特殊内容。
-
-    远端快照仅保留目录可见与说明，不允许将 special key 发送到
-    资源准备链路，避免把本地客户端资源合同伪装成远端能力。
-    """
-    return str(getattr(source_mode, "value", source_mode)) != SourceMode.REMOTE_SNAPSHOT.value
-
-
 def build_special_content_item(
     champion: Mapping[str, Any],
     *,
@@ -256,7 +245,6 @@ __all__ = [
     "build_special_content_item",
     "build_special_target_key",
     "get_special_content_profile",
-    "is_special_content_supported",
     "is_structured_special_champion",
     "merge_champion_ids",
     "resolve_special_target_ids",

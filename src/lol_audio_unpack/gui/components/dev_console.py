@@ -33,7 +33,7 @@ class DevConsoleWindow(QDialog):
         hint.setWordWrap(True)
 
         self.command_input = LineEdit(self)
-        self.command_input.setPlaceholderText("help / queue fill 5 / queue inspect")
+        self.command_input.setPlaceholderText("help / queue fill 5 / shared progress 50")
         self.command_input.returnPressed.connect(self._submit_current_command)
 
         self.output_panel = PlainTextEdit(self)

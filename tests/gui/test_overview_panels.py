@@ -18,7 +18,12 @@ from lol_audio_unpack.gui.components.preview_tree import (
 )
 from lol_audio_unpack.gui.components.special_content_tree import SpecialContentTreeView
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
-from lol_audio_unpack.gui.controllers.overview_preview import OverviewPreviewController
+from lol_audio_unpack.gui.controllers.overview_preview import (
+    ALL_AUDIO_PREVIEW_MODE,
+    EVENT_PREVIEW_MODE,
+    RAW_PREVIEW_MODE,
+    OverviewPreviewController,
+)
 from lol_audio_unpack.gui.view.overview.audio_preview_panel import OverviewAudioPreviewPanel
 from lol_audio_unpack.gui.view.overview.entity_list_panel import OverviewEntityListPanel
 from lol_audio_unpack.gui.view.overview.preview_panel import OverviewPreviewPanel
@@ -272,8 +277,8 @@ def test_special_content_tree_keeps_hidden_search_selection_state_restorable(qtb
     assert special_tree.currentIndex().data(Qt.ItemDataRole.UserRole)["key"] == "champion:77702"
 
 
-def test_special_content_tree_disables_item_selection_for_remote_mode(qtbot) -> None:
-    """远端模式仍可浏览特殊目录，但子项不再可选。"""
+def test_special_content_tree_disables_selection_until_shared_data_is_ready(qtbot) -> None:
+    """共享数据未就绪时特殊目录可浏览但不可选择。"""
     tree = SpecialContentTreeView()
     qtbot.addWidget(tree)
     tree.set_rows(
@@ -291,7 +296,7 @@ def test_special_content_tree_disables_item_selection_for_remote_mode(qtbot) -> 
     item = tree.model().index(0, 0, group)
 
     assert not bool(item.flags() & Qt.ItemFlag.ItemIsSelectable)
-    assert "仅支持本地客户端资源" in tree.toolTip()
+    assert tree.toolTip() == "共享数据就绪后可选择特殊内容。"
 
 
 def test_resource_pack_catalog_uses_safe_display_name_and_selectable_snapshot(monkeypatch, tmp_path: Path) -> None:
@@ -622,6 +627,54 @@ def test_overview_preview_panel_exposes_named_audio_preview_controls(qtbot) -> N
     assert panel.audio_preview_panel.audio_preview_tree.accessibleName() == "事件音频树"
     assert panel.audio_preview_panel.audio_list.accessibleName() == "全部音频列表"
     assert panel.text_preview.accessibleName() == "原始映射数据"
+
+
+def test_overview_preview_panel_switches_source_slot_and_hides_audio_export_for_raw(qtbot) -> None:
+    """原始数据使用来源槽位，且不显示音频选择和导出区域。"""
+    panel = OverviewPreviewPanel(audio_summary_placeholder="这里会显示当前实体的事件分组。")
+    qtbot.addWidget(panel)
+
+    panel.show()
+    panel.show_current_preview()
+    panel.set_preview_mode(EVENT_PREVIEW_MODE)
+    assert panel.preview_search_stack.currentWidget() is panel.search_controls
+    assert panel.audio_preview_panel.export_bar.context_bar.isVisible() is True
+    assert panel.audio_preview_panel.export_bar.footer_bar.isVisible() is True
+
+    panel.audio_preview_panel.export_bar.set_mode(True)
+    panel.set_preview_path("mapping.msgpack")
+    panel.set_preview_mode(RAW_PREVIEW_MODE)
+
+    assert panel.preview_search_stack.currentWidget() is panel.raw_controls
+    assert panel.preview_path_edit.text() == "mapping.msgpack"
+    assert panel.audio_preview_panel.export_bar.context_bar.isVisible() is False
+    assert panel.audio_preview_panel.export_bar.footer_bar.isVisible() is False
+
+    panel.set_preview_mode(ALL_AUDIO_PREVIEW_MODE)
+    assert panel.preview_search_stack.currentWidget() is panel.search_controls
+    assert panel.audio_preview_panel.export_bar.footer_bar.isVisible() is True
+    assert panel.audio_preview_panel.export_bar.tools.isVisible() is True
+    assert panel.audio_preview_panel.export_bar.summary.isVisible() is False
+
+
+def test_overview_preview_panel_resource_info_dialog_uses_current_source(qtbot, tmp_path: Path) -> None:
+    """资源信息窗口使用当前来源，清理实体时同步关闭旧窗口。"""
+    panel = OverviewPreviewPanel(audio_summary_placeholder="这里会显示当前实体的事件分组。")
+    qtbot.addWidget(panel)
+    source = tmp_path / "mapping.msgpack"
+    panel.set_resource_info({"当前对象": "安妮", "本地音频文件": "960 个文件"}, source)
+
+    dialog = panel.show_resource_info()
+    assert dialog is not None
+    assert dialog.source_edit.text() == str(source)
+    opened: list[Path] = []
+    panel.resource_source_open_requested.connect(opened.append)
+    dialog.open_source_btn.click()
+    assert opened == [source]
+
+    panel.clear_resource_info()
+    assert panel.resource_info_btn.isEnabled() is False
+    assert dialog.isVisible() is False
 
 
 def test_overview_audio_preview_panel_can_reset_summary(qtbot) -> None:

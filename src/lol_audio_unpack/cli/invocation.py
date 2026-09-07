@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from lol_audio_unpack.app.types import OperationOptions, SourceMode, WavOutputOptions
-from lol_audio_unpack.config import DEFAULT_REMOTE_LIVE_REGION, DEFAULT_SHARED_SETTINGS, SettingKey
+from lol_audio_unpack.app.types import OperationOptions, WavOutputOptions
+from lol_audio_unpack.config import DEFAULT_SHARED_SETTINGS, SettingKey
 from lol_audio_unpack.utils.runtime_paths import (
     RuntimePaths,
     detect_runtime_paths,
@@ -21,7 +21,6 @@ DEFAULT_WAV_TIMEOUT = _DEFAULT_WAV_OPTIONS.timeout_seconds
 DEFAULT_WAV_RETRIES = _DEFAULT_WAV_OPTIONS.max_retries
 DEFAULT_WAV_FORMAT = _DEFAULT_WAV_OPTIONS.format
 DEFAULT_GAME_REGION = str(DEFAULT_SHARED_SETTINGS[SettingKey.GAME_REGION])
-DEFAULT_SOURCE_MODE = str(DEFAULT_SHARED_SETTINGS[SettingKey.SOURCE_MODE])
 DEFAULT_EXCLUDE_TYPE = str(DEFAULT_SHARED_SETTINGS[SettingKey.EXCLUDE_TYPE])
 VALID_ACTIONS = ("update", "extract", "wav", "mapping")
 
@@ -130,29 +129,16 @@ def validate_request(
     if request.wav_enabled and not wav_requested:
         raise CliInvocationValidationError("wav_enabled=true 时，actions 中必须包含 wav。")
     if wav_tuning_explicit and not wav_requested:
-        raise CliInvocationValidationError("--wav-workers / --wav-timeout / --wav-retries / --wav-format 只能与 wav 动作一起使用。")
+        raise CliInvocationValidationError(
+            "--wav-workers / --wav-timeout / --wav-retries / --wav-format 只能与 wav 动作一起使用。"
+        )
 
     if request.integrate_data is not None and "mapping" not in actions:
         raise CliInvocationValidationError("--integrate-data 只能与 mapping 动作一起使用。")
 
     settings = _normalized_settings(request)
-    source_mode = str(settings.get(SettingKey.SOURCE_MODE, DEFAULT_SOURCE_MODE) or DEFAULT_SOURCE_MODE).strip().lower()
-    if source_mode not in {mode.value for mode in SourceMode}:
-        raise CliInvocationValidationError(f"source_mode 无效: {source_mode}")
-
-    if check_required_settings and source_mode == SourceMode.LOCAL_PATH.value and not settings.get(SettingKey.GAME_PATH):
-        raise CliInvocationValidationError("当前命令缺少本地模式必需的共享配置: game_path")
-
-    remote_keys = (
-        SettingKey.REMOTE_VERSION,
-        SettingKey.REMOTE_LCU_MANIFEST_URL,
-        SettingKey.REMOTE_GAME_MANIFEST_URL,
-    )
-    provided_remote_keys = [key for key in remote_keys if settings.get(key)]
-    if provided_remote_keys and len(provided_remote_keys) != len(remote_keys):
-        raise CliInvocationValidationError(
-            "若显式指定远端快照，则 remote_version、remote_lcu_manifest_url、remote_game_manifest_url 必须同时提供。"
-        )
+    if check_required_settings and not settings.get(SettingKey.GAME_PATH):
+        raise CliInvocationValidationError("当前命令缺少必需的共享配置: game_path")
 
 
 def build_argv(
@@ -169,7 +155,6 @@ def build_argv(
     wav_requested = "wav" in actions
     argv = ["uv", "run", "unpack", *actions]
 
-    source_mode = str(settings.get(SettingKey.SOURCE_MODE, DEFAULT_SOURCE_MODE) or DEFAULT_SOURCE_MODE).strip().lower()
     game_path = settings.get(SettingKey.GAME_PATH)
     output_path = settings.get(SettingKey.OUTPUT_PATH)
     game_region = settings.get(SettingKey.GAME_REGION)
@@ -177,11 +162,6 @@ def build_argv(
     wwiser_path = settings.get(SettingKey.WWISER_PATH)
     with_bp_vo = bool(settings.get(SettingKey.WITH_BP_VO, False))
     group_by_type = bool(settings.get(SettingKey.GROUP_BY_TYPE, False))
-    remote_live_region = str(settings.get(SettingKey.REMOTE_LIVE_REGION, DEFAULT_REMOTE_LIVE_REGION) or DEFAULT_REMOTE_LIVE_REGION)
-    cleanup_remote = bool(settings.get(SettingKey.CLEANUP_REMOTE, True))
-
-    if source_mode != DEFAULT_SOURCE_MODE:
-        argv.extend(["--source-mode", source_mode])
     if isinstance(game_path, str):
         argv.extend(["--game-path", game_path])
 
@@ -198,23 +178,6 @@ def build_argv(
         argv.append("--with-bp-vo")
     if group_by_type:
         argv.append("--group-by-type")
-
-    if source_mode == SourceMode.REMOTE_SNAPSHOT.value:
-        if remote_live_region != DEFAULT_REMOTE_LIVE_REGION:
-            argv.extend(["--remote-live-region", remote_live_region])
-        if not cleanup_remote:
-            argv.append("--no-cleanup-remote")
-        _append_optional_arg(argv, "--remote-version", settings.get(SettingKey.REMOTE_VERSION) if isinstance(settings.get(SettingKey.REMOTE_VERSION), str) else None)
-        _append_optional_arg(
-            argv,
-            "--remote-lcu-manifest-url",
-            settings.get(SettingKey.REMOTE_LCU_MANIFEST_URL) if isinstance(settings.get(SettingKey.REMOTE_LCU_MANIFEST_URL), str) else None,
-        )
-        _append_optional_arg(
-            argv,
-            "--remote-game-manifest-url",
-            settings.get(SettingKey.REMOTE_GAME_MANIFEST_URL) if isinstance(settings.get(SettingKey.REMOTE_GAME_MANIFEST_URL), str) else None,
-        )
 
     if "mapping" in actions and isinstance(wwiser_path, str):
         resolved_wwiser_path = resolve_runtime_path(wwiser_path, runtime_paths=runtime)
@@ -270,5 +233,3 @@ __all__ = [
     "render_cli_command",
     "validate_request",
 ]
-
-

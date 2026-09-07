@@ -19,6 +19,7 @@ from lol_audio_unpack.app.resource_pack import (
     resource_pack_path_component,
 )
 from lol_audio_unpack.manager.data_reader import DataReader
+from lol_audio_unpack.manager.errors import ArtifactWriteError
 from lol_audio_unpack.manager.files import read_data, write_data
 from lol_audio_unpack.manager.resource_pack_discovery import (
     MAX_ENTRY_UNCOMPRESSED_BYTES,
@@ -379,7 +380,7 @@ def test_artifact_write_failure_is_reported_and_does_not_publish_banks(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """共享 writer 静默失败后必须回读判错，且 banks 提交点不得对 catalog 可见。"""
+    """共享 writer 明确失败后不得发布 banks 提交点。"""
     ctx = _build_ctx(tmp_path)
     ref, _path = _selected_wad(ctx)
     category = "MODE_TFT_WRITE_FAILURE_SFX"
@@ -389,13 +390,13 @@ def test_artifact_write_failure_is_reported_and_does_not_publish_banks(
     events_base = Path(ctx.paths.manifest_path) / "16.16" / "events" / "resource_packs" / component
     wad = _FakeWad([_section(1, offset=1)], {1: b"PROPgood"})
 
-    def swallow_events_write(data: dict, base: Path, *, dev_mode: bool) -> None:
-        """模拟共享 writer 已记录异常但没有向调用者抛出。"""
+    def fail_events_write(data: dict, base: Path, *, dev_mode: bool) -> Path:
+        """在 events 写入边界注入明确的 artifact 异常。"""
         if "events" in base.parts:
-            return
-        write_data(data, base, dev_mode=dev_mode)
+            raise ArtifactWriteError(base.with_suffix(".yml"), "replace")
+        return write_data(data, base, dev_mode=dev_mode)
 
-    monkeypatch.setattr(discovery_module, "write_data", swallow_events_write)
+    monkeypatch.setattr(discovery_module, "write_data", fail_events_write)
     result = ResourcePackDiscovery(
         ctx,
         wad_factory=lambda _path: wad,
@@ -432,14 +433,18 @@ def test_banks_write_failure_restores_existing_banks_and_events(
     assert first.status == "complete"
     old_banks = read_data(banks_base, dev_mode=True)
     old_events = read_data(events_base, dev_mode=True)
+    banks_path = banks_base.with_suffix(".yml")
+    events_path = events_base.with_suffix(".yml")
+    old_banks_bytes = banks_path.read_bytes()
+    old_events_bytes = events_path.read_bytes()
 
-    def swallow_banks_write(data: dict, base: Path, *, dev_mode: bool) -> None:
-        """允许新 events 落盘，但模拟 banks writer 静默失败。"""
+    def fail_banks_write(data: dict, base: Path, *, dev_mode: bool) -> Path:
+        """允许新 events 落盘，再在 banks 提交点注入明确失败。"""
         if "banks" in base.parts:
-            return
-        write_data(data, base, dev_mode=dev_mode)
+            raise ArtifactWriteError(base.with_suffix(".yml"), "replace")
+        return write_data(data, base, dev_mode=dev_mode)
 
-    monkeypatch.setattr(discovery_module, "write_data", swallow_banks_write)
+    monkeypatch.setattr(discovery_module, "write_data", fail_banks_write)
     second = ResourcePackDiscovery(
         ctx,
         wad_factory=lambda _path: wad,
@@ -451,6 +456,8 @@ def test_banks_write_failure_restores_existing_banks_and_events(
     assert second.packs[0].status == "failed"
     assert read_data(banks_base, dev_mode=True) == old_banks
     assert read_data(events_base, dev_mode=True) == old_events
+    assert banks_path.read_bytes() == old_banks_bytes
+    assert events_path.read_bytes() == old_events_bytes
 
 
 def test_normalized_namespace_collision_is_reported_without_writing_artifact(tmp_path: Path) -> None:
