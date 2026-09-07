@@ -8,11 +8,15 @@ from typing import Any
 from PySide6.QtCore import QAbstractListModel, QModelIndex, QPoint, QPointF, QRect, QSortFilterProxyModel, Qt, Signal
 from PySide6.QtGui import QPainter, QPolygonF
 from PySide6.QtWidgets import QListView, QStyle, QStyledItemDelegate, QStyleOptionViewItem
-from qfluentwidgets import isDarkTheme
+from qfluentwidgets import CustomStyleSheet, isDarkTheme, setCustomStyleSheet, setStyleSheet
 
 from lol_audio_unpack.app.artifacts import AudioRef
 from lol_audio_unpack.app.audio_selection import AudioSelection
-from lol_audio_unpack.gui.common.styles import resolve_fluent_neutral_surface, resolve_fluent_text_primary_color
+from lol_audio_unpack.gui.common.styles import (
+    build_fluent_list_shell_theme_pair,
+    resolve_fluent_neutral_surface,
+    resolve_fluent_text_primary_color,
+)
 from lol_audio_unpack.gui.components.audio_check import (
     CHECK_COLUMN_WIDTH,
     AudioCheckDelegate,
@@ -21,12 +25,11 @@ from lol_audio_unpack.gui.components.audio_check import (
 )
 from lol_audio_unpack.gui.components.audio_row_style import (
     AUDIO_ROW_BUTTON_GAP,
+    AUDIO_ROW_BUTTON_LEADING_INSET,
     AUDIO_ROW_BUTTON_SIZE,
     AUDIO_ROW_HORIZONTAL_MARGIN,
-    AUDIO_ROW_LEADING_SLOT_WIDTH,
     AUDIO_ROW_SELECTED_BAR_MARGIN,
     AUDIO_ROW_SELECTED_BAR_WIDTH,
-    AUDIO_ROW_TEXT_GAP,
     active_audio_row_color,
     audio_control_colors,
     audio_progress_color,
@@ -37,6 +40,32 @@ AUDIO_REF_ROLE = int(Qt.ItemDataRole.UserRole) + 1
 EMPTY_MODEL_INDEX = QModelIndex()
 _ITEM_HEIGHT = 32
 _LAYOUT_BATCH_SIZE = 512
+
+
+def _build_styles() -> tuple[str, str]:
+    """构造全部音频列表的透明亮暗主题样式。"""
+    # 顶部 2px 对齐英雄列表首项留白，水平内收统一由行绘制负责。
+    return build_fluent_list_shell_theme_pair(
+        light_background="transparent",
+        dark_background="transparent",
+        light_border="none",
+        dark_border="none",
+        border_radius="0",
+        padding="2px 0 0 0",
+        item_min_height=_ITEM_HEIGHT,
+        item_border_radius=0,
+        extra_item_rules="""
+        padding-left: 0;
+        padding-right: 0;
+        """,
+    )
+
+
+def inject_audio_list_style(list_view: QListView) -> None:
+    """为全部音频列表挂载透明壳层样式。"""
+    light_qss, dark_qss = _build_styles()
+    setCustomStyleSheet(list_view, light_qss, dark_qss)
+    setStyleSheet(list_view, CustomStyleSheet(list_view))
 
 
 class AudioListModel(QAbstractListModel):
@@ -293,6 +322,7 @@ class AudioListView(QListView):
         self.setBatchSize(_LAYOUT_BATCH_SIZE)
         self.setMouseTracking(True)
         self.setSpacing(0)
+        inject_audio_list_style(self)
         selection_model = self.selectionModel()
         if selection_model is not None:
             selection_model.currentChanged.connect(self._on_current_changed)
@@ -341,7 +371,7 @@ class AudioListView(QListView):
         """返回指定列表行左侧播放按钮的命中区域。"""
         row_rect = self.row_rect(self.visualRect(index))
         side = max(12, min(AUDIO_ROW_BUTTON_SIZE, row_rect.height() - 8))
-        left = row_rect.left() + AUDIO_ROW_LEADING_SLOT_WIDTH + AUDIO_ROW_TEXT_GAP
+        left = row_rect.left() + AUDIO_ROW_BUTTON_LEADING_INSET
         return QRect(left, row_rect.center().y() - side // 2, side, side)
 
     def is_active(self, ref: AudioRef) -> bool:

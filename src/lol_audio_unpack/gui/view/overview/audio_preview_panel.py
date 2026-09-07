@@ -49,8 +49,14 @@ class OverviewAudioPreviewPanel(QWidget):
         self.audio_list.setAccessibleName("全部音频列表")
         self.preview_stack.addWidget(self.audio_preview_tree)
         self.preview_stack.addWidget(self.audio_list)
-        layout.addWidget(self.preview_stack, 1)
-        layout.addWidget(self.export_bar.footer_bar)
+
+        preview_footer = QWidget(self)
+        preview_footer_layout = QVBoxLayout(preview_footer)
+        preview_footer_layout.setContentsMargins(0, 0, 0, 0)
+        preview_footer_layout.setSpacing(0)
+        preview_footer_layout.addWidget(self.preview_stack, 1)
+        preview_footer_layout.addWidget(self.export_bar.footer_bar)
+        layout.addWidget(preview_footer, 1)
 
     def set_summary_text(self, text: str) -> None:
         """更新摘要文案。

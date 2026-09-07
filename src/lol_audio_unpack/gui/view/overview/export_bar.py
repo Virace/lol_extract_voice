@@ -74,7 +74,7 @@ class AudioExportBar(QWidget):
         self.footer_bar.setObjectName("OverviewAudioExportFooter")
         self.footer_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         footer_layout = QVBoxLayout(self.footer_bar)
-        footer_layout.setContentsMargins(0, 8, 0, 0)
+        footer_layout.setContentsMargins(0, 0, 0, 0)
         footer_layout.setSpacing(8)
 
         self.separator = QFrame(self.footer_bar)

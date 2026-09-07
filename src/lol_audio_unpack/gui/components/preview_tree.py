@@ -104,12 +104,13 @@ def _build_styles() -> tuple[str, str]:
         margin: 2px 0;
         padding-left: 0;
     """
+    # 顶部 2px 对齐英雄列表首项留白，水平内收统一由行绘制负责。
     return build_fluent_tree_shell_theme_pair(
         light_background="transparent",
         dark_background="transparent",
         is_border_visible=False,
         border_radius="10px",
-        padding="8px 6px",
+        padding="2px 0 0 0",
         item_min_height=PREVIEW_TREE_ITEM_MIN_HEIGHT,
         item_border_radius=0,
         extra_item_rules=item_rules,

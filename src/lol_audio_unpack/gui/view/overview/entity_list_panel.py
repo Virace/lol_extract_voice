@@ -144,13 +144,12 @@ class OverviewEntityListPanel(QWidget):
         special_list = SpecialContentTreeView(self.list_stack)
         self.entity_lists["special"] = special_list
         self.list_stack.addWidget(special_list)
-        layout.addWidget(self.list_stack, 1)
 
         self.selection_bar = QFrame(self)
         self.selection_bar.setObjectName("OverviewSelectionBar")
         self.selection_bar.setFrameShape(QFrame.Shape.NoFrame)
         selection_layout = QVBoxLayout(self.selection_bar)
-        selection_layout.setContentsMargins(0, 8, 0, 0)
+        selection_layout.setContentsMargins(0, 0, 0, 0)
         selection_layout.setSpacing(8)
 
         self.selection_separator = QFrame(self.selection_bar)
@@ -177,7 +176,14 @@ class OverviewEntityListPanel(QWidget):
         actions_layout.addWidget(self.clear_selection_btn)
         actions_layout.addWidget(self.sync_selection_btn)
         selection_layout.addLayout(actions_layout)
-        layout.addWidget(self.selection_bar)
+
+        list_footer = QWidget(self)
+        list_footer_layout = QVBoxLayout(list_footer)
+        list_footer_layout.setContentsMargins(0, 0, 0, 0)
+        list_footer_layout.setSpacing(0)
+        list_footer_layout.addWidget(self.list_stack, 1)
+        list_footer_layout.addWidget(self.selection_bar)
+        layout.addWidget(list_footer, 1)
 
     def current_entity_type(self) -> str:
         """返回当前展示的实体类型。"""
