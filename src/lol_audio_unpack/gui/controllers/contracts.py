@@ -41,6 +41,7 @@ class GuiNotice:
     title: str
     content: str
     level: str
+    terminal: bool = False
 
 
 @dataclass(frozen=True, slots=True)

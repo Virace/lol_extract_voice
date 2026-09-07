@@ -175,7 +175,7 @@ def test_execution_queue_controller_on_task_finished_emits_refresh_request_for_l
     assert completed_payload.status == TASK_STATUS_COMPLETED
     assert completed_payload.progress_current == completed_payload.progress_total
     assert controller.active_task_id is None
-    assert refresh_requests == [OutputStateRefreshRequest(champion_ids=("1", "103"))]
+    assert refresh_requests == [OutputStateRefreshRequest(champion_ids=("1", "103"), quiet=True)]
 
 
 def test_execution_queue_controller_keeps_resource_pack_key_and_snapshot_for_refresh(monkeypatch) -> None:
@@ -206,7 +206,9 @@ def test_execution_queue_controller_keeps_resource_pack_key_and_snapshot_for_ref
         ),
     )
 
-    assert refresh_requests == [OutputStateRefreshRequest(special_targets=(key,), resource_pack_wads=(ref,))]
+    assert refresh_requests == [
+        OutputStateRefreshRequest(special_targets=(key,), resource_pack_wads=(ref,), quiet=True)
+    ]
 
 
 def test_execution_queue_controller_single_task_mode_clears_stale_history_before_next_task(
@@ -278,7 +280,7 @@ def test_execution_queue_controller_maps_partial_result_to_warning_and_bounded_r
     assert feedbacks[-1].level == "warning"
     assert progress_updates[-1].progress_current < progress_updates[-1].progress_total
     assert controller.has_incomplete_tasks() is False
-    assert refresh_requests == [OutputStateRefreshRequest(champion_ids=("1",))]
+    assert refresh_requests == [OutputStateRefreshRequest(champion_ids=("1",), quiet=True)]
 
 
 def test_execution_queue_controller_failed_result_without_artifacts_does_not_refresh(monkeypatch) -> None:
@@ -348,7 +350,7 @@ def test_execution_queue_controller_failed_result_refreshes_only_confirmed_artif
         ),
     )
 
-    assert refresh_requests == [OutputStateRefreshRequest(champion_ids=("1",))]
+    assert refresh_requests == [OutputStateRefreshRequest(champion_ids=("1",), quiet=True)]
 
 
 def test_execution_queue_controller_maps_typed_cancelled_without_refresh(monkeypatch) -> None:

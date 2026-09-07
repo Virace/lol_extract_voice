@@ -314,10 +314,16 @@ CLI 与 GUI 可以按执行顺序把这些阶段聚合为 `RunResult`。公共�
 只要 banks 已就绪即可跳过 BIN 读取。启用事件处理时也只在 events 缺失、过期或显式 force 时提取
 事件；banks 单独因 resource schema 迁移需要重建时，不会重复解析已经新鲜的 events。
 
-WAV runtime 实际处理至少一个文件时，`transcode_wav(...)` 会返回一个稳定的 `wav:batch`
+WAV runtime 实际成功转换至少一个文件时，`transcode_wav(...)` 会返回一个稳定的 `wav:batch`
 实体，其 `artifacts` 为 runtime 报告的真实 `wav_root`；零文件 success no-op 不创建实体。
 extract 的 artifacts 是本轮确认落盘的 WEM 或大厅音频路径，mapping 的 artifacts 是最终写入文件；
 即使实体随后失败，已落盘路径仍会保留，供调用方进行有界刷新或恢复判断。
+
+WAV 目录、所选范围与单文件导出共用 `runtime.wav.batch.run_batch`。已有输出默认跳过，跳过数
+与本次成功数分别统计。`StageResult.wav_batches` 保留文件级成功/失败/跳过计数、精确失败输入
+和独立报告地址；`reports` 提供本轮报告路径。即使报告写入失败，内存中的 typed result 仍保留。
+GUI 导出时可显式覆盖，失败 WAV 重试只替换原失败输出。解包的 `EntityResult.failures` 在有可靠
+身份时区分文件与容器；容器失败不代表已知数量的音频失败。
 
 合法 no-op 是计数为 0 的 success。实体成功与失败并存时为 partial；全部失败为 failed；
 cancelled 在整轮聚合中优先。完整 traceback 只写日志，不进入公共结果。

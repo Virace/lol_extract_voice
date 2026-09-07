@@ -5,6 +5,10 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from lol_audio_unpack.runtime.wav.batch import WavBatchResult
 
 
 class ResultStatus(str, Enum):
@@ -33,6 +37,33 @@ def _aggregate(statuses: Iterable[ResultStatus]) -> ResultStatus:
 
 
 @dataclass(frozen=True, slots=True)
+class FailureDetail:
+    """记录有可靠输入身份的文件或容器失败，不把容器数当作音频数。"""
+
+    unit: str
+    source_path: str
+    error_message: str
+    sub_entity: str = ""
+    audio_type: str = ""
+    category: str = ""
+    wad: str = ""
+    entry_hash: str = ""
+    output_path: str = ""
+    error_type: str = ""
+    retryable: bool = False
+
+    @property
+    def binding_key(self) -> tuple[str, str, str, str, str]:
+        """返回逻辑归属与物理容器共同组成的 binding 身份。"""
+        return self.sub_entity, self.audio_type, self.category, self.wad, self.entry_hash
+
+    @property
+    def key(self) -> tuple[str, ...]:
+        """返回同一阶段中可跨重试关联的失败身份。"""
+        return self.unit, *self.binding_key, self.source_path, self.output_path
+
+
+@dataclass(frozen=True, slots=True)
 class EntityResult:
     """描述一个稳定实体工作项的执行事实。
 
@@ -53,10 +84,12 @@ class EntityResult:
     error_type: str | None = None
     error_message: str | None = None
     artifacts: tuple[str, ...] = ()
+    failures: tuple[FailureDetail, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "status", ResultStatus(self.status))
         object.__setattr__(self, "artifacts", tuple(self.artifacts))
+        object.__setattr__(self, "failures", tuple(self.failures))
 
     @classmethod
     def from_error(
@@ -105,10 +138,14 @@ class StageResult:
     error_type: str | None = None
     error_message: str | None = None
     note: str | None = None
+    reports: tuple[str, ...] = ()
+    wav_batches: tuple[WavBatchResult, ...] = ()
 
     def __post_init__(self) -> None:
         entities = tuple(self.entities)
         object.__setattr__(self, "entities", entities)
+        object.__setattr__(self, "reports", tuple(self.reports))
+        object.__setattr__(self, "wav_batches", tuple(self.wav_batches))
         if self.status is not None:
             object.__setattr__(self, "status", ResultStatus(self.status))
             return
@@ -199,6 +236,8 @@ class StageResult:
             error_type=first_error.error_type if first_error is not None else None,
             error_message=first_error.error_message if first_error is not None else None,
             note=combined_note,
+            reports=tuple(path for result in children for path in result.reports),
+            wav_batches=tuple(batch for result in children for batch in result.wav_batches),
         )
 
     @classmethod
@@ -296,6 +335,7 @@ class RunResult:
 
 
 __all__ = [
+    "FailureDetail",
     "EntityResult",
     "ResultStatus",
     "RunResult",

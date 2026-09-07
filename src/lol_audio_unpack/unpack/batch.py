@@ -6,17 +6,19 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from league_tools.formats import WAD
 from loguru import logger
 
-from lol_audio_unpack.app.results import EntityResult, ResultStatus, StageResult
+from lol_audio_unpack.app.results import EntityResult, FailureDetail, ResultStatus, StageResult
 from lol_audio_unpack.manager import DataReader
-from lol_audio_unpack.model import generate_champion_tasks, generate_map_tasks
+from lol_audio_unpack.model import AudioEntityData, generate_champion_tasks, generate_map_tasks
+from lol_audio_unpack.model.binding import SUCCESS_STATUSES, BindingDiagnostics, Completeness
 
-from .entity import unpack_champion, unpack_map, unpack_resource_pack
+from .entity import unpack_champion, unpack_entity, unpack_map, unpack_resource_pack
 from .stats import EntityUnpackStats
 from .stats import StageResult as UnpackStageResult
 
@@ -67,6 +69,21 @@ def _result_from_stats(
             artifacts=artifacts,
         )
 
+    failures = tuple(stats.file_failures) + tuple(
+        FailureDetail(
+            unit="container",
+            source_path=str(item.get("path", "")),
+            error_message=str(item.get("error", "原因未分类")),
+            sub_entity=str(item.get("subEntity", "")),
+            audio_type=str(item.get("audioType", "")),
+            category=str(item.get("category", "")),
+            wad=str(item.get("wad") or ""),
+            entry_hash=str(item.get("entryHash", "")),
+            retryable=item.get("outcome") == "failed" and bool(item.get("wad") and item.get("entryHash")),
+        )
+        for item in stats.binding_details
+        if item.get("outcome") in {"failed", "unresolved"}
+    )
     return EntityResult(
         entity_type=entity_type,
         entity_id=entity_id,
@@ -75,6 +92,7 @@ def _result_from_stats(
         error_type=f"Unpack{stats.overall_result.name.title()}",
         error_message=stats.get_simple_summary(),
         artifacts=artifacts,
+        failures=failures,
     )
 
 
@@ -95,6 +113,7 @@ def execute_tasks(  # noqa: PLR0913
     ctx: AppContext,
     progress_callback: Callable[[str, int, int, str], None] | None = None,
     persisted_wem_callback: Callable[[Path], None] | None = None,
+    retry_entities: tuple[EntityResult, ...] = (),
 ) -> StageResult:
     """执行批量解包任务。
 
@@ -105,6 +124,7 @@ def execute_tasks(  # noqa: PLR0913
         ctx: 运行时上下文。
         progress_callback: 每个实体处理结束后的可选进度回调。
         persisted_wem_callback: WEM 落盘后的附加回调。
+        retry_entities: 已核对的失败实体及其精确容器或文件范围。
 
     Returns:
         按输入任务顺序保存实体事实的解包阶段结果。
@@ -179,6 +199,62 @@ def execute_tasks(  # noqa: PLR0913
             "ctx": ctx,
             "persisted_wem_callback": capture_artifact(index, forward_wem=True),
         }
+        if retry_entities:
+            previous = next(
+                item
+                for item in retry_entities
+                if item.entity_type == entity_type and str(item.entity_id) == str(entity_id)
+            )
+            entity_data = AudioEntityData.from_entity(entity_type, entity_id, reader, ctx=ctx)
+            keys = {failure.binding_key for failure in previous.failures if failure.retryable}
+            banks = tuple(
+                bank
+                for bank in entity_data.resource_banks
+                if (
+                    bank.sub_id,
+                    bank.audio_type,
+                    bank.binding.category,
+                    bank.binding.wad or "",
+                    bank.binding.entry_hash,
+                )
+                in keys
+                and bank.binding.status in SUCCESS_STATUSES
+            )
+            if len(
+                {
+                    (
+                        bank.sub_id,
+                        bank.audio_type,
+                        bank.binding.category,
+                        bank.binding.wad or "",
+                        bank.binding.entry_hash,
+                    )
+                    for bank in banks
+                }
+            ) != len(keys):
+                raise ValueError("原失败容器的 binding 已变化或不可用，请重新生成数据后确认范围")
+            if not banks:
+                raise ValueError("没有可精确重试的失败容器")
+            # 只消费批准的绑定；原实体中无关的未解析 BIN 不扩大这次重试。
+            selected = replace(
+                entity_data, resource_banks=banks, binding_diagnostics=BindingDiagnostics(Completeness.COMPLETE)
+            )
+            file_limits = {
+                key: frozenset(
+                    Path(item.output_path)
+                    for item in previous.failures
+                    if item.binding_key == key and item.unit == "file"
+                )
+                for key in keys
+                if not any(item.binding_key == key and item.unit == "container" for item in previous.failures)
+            }
+            logger.info(
+                "按失败范围重试 {}：{} 个容器，{} 个精确文件",
+                previous.entity_name,
+                len(keys),
+                sum(len(paths) for paths in file_limits.values()),
+            )
+            return unpack_entity(selected, reader, **common_kwargs, file_limits=file_limits)
         if entity_type == "champion":
             return unpack_champion(
                 entity_id,

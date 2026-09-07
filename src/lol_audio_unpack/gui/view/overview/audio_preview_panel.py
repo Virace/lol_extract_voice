@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtWidgets import QFrame, QStackedWidget, QVBoxLayout, QWidget
-from qfluentwidgets import BodyLabel, ProgressBar
+from PySide6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
+from qfluentwidgets import BodyLabel
 
 from lol_audio_unpack.app.artifacts import AudioRef
 from lol_audio_unpack.gui.components.audio_list import AudioListView
 from lol_audio_unpack.gui.components.preview_tree import PreviewTreeModel, PreviewTreeView
 from lol_audio_unpack.gui.controllers.overview_preview import ALL_AUDIO_PREVIEW_MODE
+from lol_audio_unpack.gui.view.overview.export_bar import AudioExportBar
 
 
 class OverviewAudioPreviewPanel(QWidget):
@@ -30,21 +31,16 @@ class OverviewAudioPreviewPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
-        self.summary_card = QFrame(self)
-        self.summary_card.setObjectName("AudioPreviewSummaryCard")
-        summary_layout = QVBoxLayout(self.summary_card)
-        summary_layout.setContentsMargins(12, 10, 12, 10)
-        summary_layout.setSpacing(4)
+        self.export_bar = AudioExportBar(self)
+        # 页面在 Tab 往返时恢复完整摘要，紧凑行只展示状态；二者不参与同一布局。
+        self.summary_card = self.export_bar.context_bar
+        self.summary_label = BodyLabel(summary_placeholder, self)
+        self.summary_label.setVisible(False)
+        self.summary_label.setText(summary_placeholder)
+        self._summary_text = summary_placeholder
 
-        self.summary_label = BodyLabel(summary_placeholder, self.summary_card)
-        self.summary_label.setWordWrap(True)
-        summary_layout.addWidget(self.summary_label)
-        self.load_progress_bar = ProgressBar(self.summary_card, useAni=False)
-        self.load_progress_bar.setAccessibleName("全部音频加载进度")
-        self.load_progress_bar.setTextVisible(False)
-        self.load_progress_bar.setVisible(False)
-        summary_layout.addWidget(self.load_progress_bar)
-        layout.addWidget(self.summary_card)
+        self.load_progress_bar = self.export_bar.progress_bar
+        layout.addWidget(self.export_bar.context_bar)
 
         self.preview_stack = QStackedWidget(self)
         self.audio_preview_tree = PreviewTreeView(self.preview_stack)
@@ -54,6 +50,7 @@ class OverviewAudioPreviewPanel(QWidget):
         self.preview_stack.addWidget(self.audio_preview_tree)
         self.preview_stack.addWidget(self.audio_list)
         layout.addWidget(self.preview_stack, 1)
+        layout.addWidget(self.export_bar.footer_bar)
 
     def set_summary_text(self, text: str) -> None:
         """更新摘要文案。
@@ -61,19 +58,22 @@ class OverviewAudioPreviewPanel(QWidget):
         Args:
             text: 新的摘要文本。
         """
-        self.summary_label.setText(text)
+        self._summary_text = str(text)
+        self.summary_label.setText(self._summary_text)
+        self.export_bar.summary.setText(self._summary_context(self._summary_text))
+        self.export_bar.summary.setToolTip(self._summary_text)
 
     def set_summary_visible(self, visible: bool) -> None:
-        """切换摘要卡显示状态。
+        """切换上下文摘要显示状态。
 
         Args:
-            visible: 是否显示摘要卡。
+            visible: 是否显示上下文摘要。
         """
-        self.summary_card.setVisible(visible)
+        self.export_bar.summary.setVisible(visible and not self.export_bar.active)
 
     def reset_summary(self) -> None:
         """恢复默认摘要文案。"""
-        self.summary_label.setText(self._summary_placeholder)
+        self.set_summary_text(self._summary_placeholder)
         self.clear_load_progress()
 
     def set_load_progress(self, current: int, total: int) -> None:
@@ -83,17 +83,24 @@ class OverviewAudioPreviewPanel(QWidget):
             current: 已处理的 WEM 候选数。
             total: 当前发现的 WEM 候选总数；未知时为 0。
         """
-        maximum = max(int(total), 1)
-        value = max(0, min(int(current), maximum))
-        self.load_progress_bar.setRange(0, maximum)
-        self.load_progress_bar.setValue(value)
-        self.load_progress_bar.setVisible(True)
+        self.export_bar.set_load_progress(current, total)
 
     def clear_load_progress(self) -> None:
         """隐藏并重置全部音频索引进度。"""
-        self.load_progress_bar.setVisible(False)
-        self.load_progress_bar.setRange(0, 1)
-        self.load_progress_bar.setValue(0)
+        self.export_bar.clear_load_progress()
+
+    def set_export_visible(self, visible: bool) -> None:
+        """按当前预览 tab 显示或隐藏音频选择和导出区域。
+
+        Args:
+            visible: 事件或全部音频模式显示，原始数据模式隐藏。
+        """
+        self.export_bar.set_export_visible(visible)
+
+    @staticmethod
+    def _summary_context(text: str) -> str:
+        """取摘要首段作为上下文行状态，详细统计保留在内部摘要中。"""
+        return str(text).split("·", 1)[0].strip()
 
     def clear_preview(self) -> None:
         """清空当前试听树并恢复默认摘要。"""
@@ -111,6 +118,7 @@ class OverviewAudioPreviewPanel(QWidget):
         audio_refs: tuple[AudioRef, ...],
         group_label_map: dict[str, str] | None,
         summary_text: str,
+        selection_mapping: dict | None = None,
     ) -> None:
         """刷新事件树数据与摘要文案。"""
         self.clear_load_progress()
@@ -118,7 +126,7 @@ class OverviewAudioPreviewPanel(QWidget):
         model = self.audio_preview_tree.model()
         if isinstance(model, PreviewTreeModel):
             self.audio_preview_tree.collapseAll()
-            model.set_preview_data(mapping_data, audio_refs, group_label_map)
+            model.set_preview_data(mapping_data, audio_refs, group_label_map, selection_mapping)
             self._expand_single_root()
 
     def set_audio_refs(self, refs: tuple[AudioRef, ...], *, summary_text: str) -> None:

@@ -162,3 +162,17 @@ def test_execution_process_worker_terminate_only_stops_child_process(qtbot) -> N
     assert context.process.terminated is True
     assert queue_obj.closed is True
     assert queue_obj.joined is True
+
+
+def test_worker_exit_without_terminal_event_reports_unknown_scope(qtbot) -> None:
+    """进程崩溃而未回传终态时必须解除等待并报告未知范围，不能伪装成功。"""
+    context = _FakeContext(_FakeQueue([]))
+    worker = ExecutionProcessWorker(_build_task(), mp_context=context)
+    failures = []
+    worker.signals.failed.connect(failures.append)
+    worker.start()
+    context.process.alive = False
+    worker._pump_events()
+    assert len(failures) == 1 and "完成范围未知" in failures[0]
+    worker._pump_events()
+    assert len(failures) == 1

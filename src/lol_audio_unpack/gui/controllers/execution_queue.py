@@ -81,6 +81,7 @@ def _build_output_state_refresh_request(
         map_ids=unique(map_ids),
         special_targets=unique(special_targets),
         resource_pack_wads=task_params.resource_pack_wads if resource_pack_seen else (),
+        quiet=True,
     )
     return request if request.has_incremental_targets() else None
 
@@ -98,12 +99,12 @@ def _terminal_task_status(status: ResultStatus) -> str:
 def _terminal_notice(status: ResultStatus, summary: str) -> GuiNotice:
     """按核心结果状态构造终态通知。"""
     if status is ResultStatus.SUCCESS:
-        return GuiNotice(title="任务执行完成", content=summary, level="success")
+        return GuiNotice(title="任务执行完成", content=summary, level="success", terminal=True)
     if status is ResultStatus.PARTIAL:
-        return GuiNotice(title="任务部分完成", content=summary, level="warning")
+        return GuiNotice(title="任务部分完成", content=summary, level="warning", terminal=True)
     if status is ResultStatus.CANCELLED:
-        return GuiNotice(title="任务已取消", content=summary, level="warning")
-    return GuiNotice(title="任务执行失败", content=summary, level="error")
+        return GuiNotice(title="任务已取消", content=summary, level="warning", terminal=True)
+    return GuiNotice(title="任务执行失败", content=summary, level="error", terminal=True)
 
 
 class ExecutionQueueController(QObject):
@@ -115,6 +116,7 @@ class ExecutionQueueController(QObject):
     feedback_requested = Signal(object)
     log_requested = Signal(object)
     output_state_refresh_requested = Signal(object)
+    result_ready = Signal(object, object)
 
     def __init__(
         self,
@@ -198,13 +200,14 @@ class ExecutionQueueController(QObject):
         else:
             self.progress_display_requested.emit(QueueProgressUpdate())
 
-        self.feedback_requested.emit(
-            GuiNotice(
-                title="任务已创建" if self._single_task_mode else "已加入任务队列",
-                content=summary if self._single_task_mode else row_text,
-                level="success",
+        if not self._single_task_mode:
+            self.feedback_requested.emit(
+                GuiNotice(
+                    title="任务已创建" if self._single_task_mode else "已加入任务队列",
+                    content=summary if self._single_task_mode else row_text,
+                    level="success",
+                )
             )
-        )
         return queued_task
 
     def update_task(self, task_id: int, **changes) -> QueuedExecutionTask:
@@ -288,7 +291,7 @@ class ExecutionQueueController(QObject):
             progress_message=progress.message,
             progress_detail=progress,
         )
-        if progress.stage_finished and progress.stage_key == "extract":
+        if not self._single_task_mode and progress.stage_finished and progress.stage_key == "extract":
             self._emit_extract_stage_notice(updated_task, progress)
         if self._active_task_id == task_id:
             self.progress_display_requested.emit(QueueProgressUpdate())
@@ -364,6 +367,7 @@ class ExecutionQueueController(QObject):
         else:
             logger.error(log_message)
         self._advance_or_finish(updated_task, task_result)
+        self.result_ready.emit(updated_task, task_result)
         self.feedback_requested.emit(_terminal_notice(result_status, task_result.summary))
 
     def on_task_failed(self, task_id: int, error: str) -> None:
@@ -407,7 +411,8 @@ class ExecutionQueueController(QObject):
             ),
         )
         self._advance_or_finish(updated_task, failed_result)
-        self.feedback_requested.emit(GuiNotice(title="任务执行失败", content=error, level="error"))
+        self.result_ready.emit(updated_task, failed_result)
+        self.feedback_requested.emit(_terminal_notice(ResultStatus.FAILED, error))
 
     def cancel_active_task(self) -> bool:
         """强制结束当前运行中的任务，并将其收口为已取消。"""
@@ -416,7 +421,13 @@ class ExecutionQueueController(QObject):
             return False
 
         self._ignored_task_ids.add(task.task_id)
-        self._stop_active_worker()
+        try:
+            self._stop_active_worker()
+        except (OSError, RuntimeError) as exc:
+            self._ignored_task_ids.discard(task.task_id)
+            logger.error("结束任务失败，保留运行状态：{}", exc)
+            self.feedback_requested.emit(GuiNotice(title="结束任务失败", content=str(exc), level="error"))
+            return False
 
         cancelled_message = "任务已被强制结束。"
         cancelled_progress_detail = None
@@ -440,13 +451,15 @@ class ExecutionQueueController(QObject):
         logger.warning(f"[队列] 任务 #{task.task_id} 已被强制结束")
         self.task_queue_busy_changed.emit(self.has_incomplete_tasks())
         self.progress_display_requested.emit(QueueProgressUpdate())
-        self.feedback_requested.emit(
-            GuiNotice(
-                title="任务已取消",
-                content=f"任务 #{updated_task.task_id} 已强制结束。",
-                level="warning",
-            )
+        cancelled_result = ExecutionTaskResult(
+            (),
+            "任务已强制结束，完成范围未知。",
+            0.0,
+            RunResult((StageResult.cancelled("run", note="完成范围未知，请检查已有产物。"),)),
+            version=task.draft.version,
         )
+        self.result_ready.emit(updated_task, cancelled_result)
+        self.feedback_requested.emit(_terminal_notice(ResultStatus.CANCELLED, cancelled_result.summary))
         return True
 
     def _after_task_stopped(self, task_id: int) -> None:

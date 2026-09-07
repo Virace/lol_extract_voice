@@ -156,6 +156,8 @@ def test_resource_pack_batch_dispatches_string_task(monkeypatch: pytest.MonkeyPa
             calls.append(value),
             SimpleNamespace(
                 overall_result=UnpackStageResult.SUCCESS,
+                file_failures=[],
+                binding_details=[],
                 get_simple_summary=lambda: "resource pack 解包成功",
             ),
         )[1],
@@ -165,3 +167,75 @@ def test_resource_pack_batch_dispatches_string_task(monkeypatch: pytest.MonkeyPa
 
     assert calls == [key]
     assert result.status is ResultStatus.SUCCESS
+
+
+def test_file_write_failure_retries_only_selected_binding_and_wem(monkeypatch, tmp_path: Path) -> None:
+    """容器内写入失败不阻断其他 WEM，重试只重读相关容器并补写失败文件。"""
+    key = build_resource_pack_key("TFTCommon.wad.client", "MODE_TFT_NPC_ElderDragon_SFX")
+    entity = _build_entity(key)
+    bank = entity.resource_banks[0]
+    other = replace(bank, binding=replace(bank.binding, path="other.bnk", normalized_path="other.bnk", entry_hash="02"))
+    entity.resource_banks += (other,)
+    wad_path = tmp_path / "game" / bank.binding.wad
+    wad_path.parent.mkdir(parents=True)
+    wad_path.write_bytes(b"wad")
+    ctx = SimpleNamespace(
+        game_path=tmp_path / "game",
+        audio_path=tmp_path / "audios",
+        report_path=tmp_path / "reports",
+        game_region="zh_CN",
+        include_types=("SFX",),
+        exclude_types=(),
+        group_by_type=True,
+        config=SimpleNamespace(dev_mode=False),
+    )
+    reader = SimpleNamespace(version="16.16", write_unknown_categories=lambda: None)
+    writes: list[int] = []
+    reads: list[tuple[str, ...]] = []
+    denied = True
+    failed_id = 102
+
+    def save(number: int, path: Path) -> None:
+        """仅让第一次写入指定文件失败。"""
+        writes.append(number)
+        if denied and number == failed_id:
+            raise PermissionError("access denied")
+        path.write_bytes(b"wem")
+
+    def extract(paths, *, raw):
+        """保留实际提交给 WAD 的容器范围。"""
+        reads.append(tuple(paths))
+        return [path.encode() for path in paths]
+
+    def parse(raw):
+        """模拟外部容器边界，目录组织与重试逻辑仍由生产代码处理。"""
+        numbers = (103,) if raw == b"other.bnk" else (101, 102)
+        return SimpleNamespace(
+            extract_files=lambda: [
+                SimpleNamespace(id=number, data=b"wem", save_file=lambda path, number=number: save(number, path))
+                for number in numbers
+            ]
+        )
+
+    monkeypatch.setattr(unpack_entity, "_get_wad_instance", lambda *_args, **_kwargs: SimpleNamespace(extract=extract))
+    monkeypatch.setattr(unpack_entity, "BNK", parse)
+    monkeypatch.setattr(AudioEntityData, "from_entity", staticmethod(lambda *_args, **_kwargs: entity))
+    monkeypatch.setattr(
+        unpack_batch,
+        "unpack_resource_pack",
+        lambda _key, reader, **kwargs: unpack_entity.unpack_entity(entity, reader, **kwargs),
+    )
+    original = unpack_batch.execute_tasks([("resource_pack", key, "资源包")], reader, 1, ctx=ctx)
+    assert original.status is ResultStatus.PARTIAL
+    (failure,) = original.entities[0].failures
+    assert failure.unit == "file" and Path(failure.output_path).name == "102.wem"
+    assert writes == [101, 102, 103]
+    denied = False
+    writes.clear()
+    retried = unpack_batch.execute_tasks(
+        [("resource_pack", key, "资源包")], reader, 1, ctx=ctx, retry_entities=original.entities
+    )
+    assert retried.status is ResultStatus.SUCCESS
+    assert reads[-1] == (bank.binding.path,)
+    assert writes == [102]
+    assert retried.entities[0].artifacts == (failure.output_path,)

@@ -203,6 +203,11 @@ class LolAudioUnpackApp:
         raw_status = str(payload.get("status", ""))
         processed_count = int(payload.get("processed_file_count", 0))
         failed_count = int(payload.get("failed_file_count", 0))
+        skipped_count = int(payload.get("skipped_file_count", 0))
+        unconfirmed_count = int(payload.get("unconfirmed_file_count", 0))
+        reports = tuple(str(path) for path in payload.get("batch_reports", ()))
+        batches = tuple(payload.get("batches", ()))
+        errors = tuple(str(error) for error in payload.get("errors", ()))
         entities: tuple[EntityResult, ...] = ()
         if processed_count > 0:
             wav_root = payload.get("wav_root")
@@ -211,22 +216,27 @@ class LolAudioUnpackApp:
             entity_status = ResultStatus.SUCCESS if failed_count == 0 else ResultStatus.PARTIAL
             entities = (EntityResult("wav", "batch", entity_status, artifacts=(wav_root,)),)
         if raw_status == "success" and failed_count == 0:
-            note = "没有待转换的音频文件。" if processed_count == 0 else f"已转换 {processed_count} 个文件。"
+            note = (
+                f"已转换 {processed_count} 个文件，跳过已有输出 {skipped_count} 个。"
+                if processed_count or skipped_count
+                else "没有待转换的音频文件。"
+            )
             if entities:
-                return StageResult.from_entities("wav", entities, note=note)
-            return StageResult("wav", status=ResultStatus.SUCCESS, note=note)
-        if raw_status == "warning" and failed_count > 0:
-            status = ResultStatus.PARTIAL if processed_count > 0 else ResultStatus.FAILED
-            if entities:
-                return StageResult.from_entities(
-                    "wav",
-                    entities,
-                    note=f"已转换 {processed_count} 个文件，失败 {failed_count} 个。",
-                )
+                return StageResult("wav", entities, note=note, reports=reports, wav_batches=batches)
+            return StageResult("wav", status=ResultStatus.SUCCESS, note=note, reports=reports, wav_batches=batches)
+        if raw_status == "warning" and (failed_count > 0 or errors):
+            status = ResultStatus.PARTIAL if processed_count or skipped_count else ResultStatus.FAILED
             return StageResult(
                 "wav",
+                entities,
                 status=status,
-                note=f"已转换 {processed_count} 个文件，失败 {failed_count} 个。",
+                note=(
+                    f"已转换 {processed_count} 个文件，失败 {failed_count} 个，跳过 {skipped_count} 个。"
+                    + (f"另有 {unconfirmed_count} 个文件的完成状态未知。" if unconfirmed_count else "")
+                ),
+                error_message="；".join(errors) or None,
+                reports=reports,
+                wav_batches=batches,
             )
         raise RuntimeError(f"未知 WAV 转码汇总状态: {raw_status}")
 

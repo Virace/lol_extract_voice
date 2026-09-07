@@ -105,7 +105,7 @@ class OverviewEntityListPanel(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 12, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
         self.nav_pivot = SegmentedWidget(self)
         self.nav_pivot.addItem("champions", "英雄")
@@ -133,6 +133,7 @@ class OverviewEntityListPanel(QWidget):
         status_layout.addWidget(self.selection_status_label)
         status_layout.addStretch(1)
         status_layout.addWidget(self.status_legend)
+        status_row.setMinimumHeight(32)
         layout.addWidget(status_row)
 
         self.list_stack = QStackedWidget(self)
@@ -147,9 +148,20 @@ class OverviewEntityListPanel(QWidget):
 
         self.selection_bar = QFrame(self)
         self.selection_bar.setObjectName("OverviewSelectionBar")
-        selection_layout = QHBoxLayout(self.selection_bar)
-        selection_layout.setContentsMargins(12, 10, 12, 10)
-        selection_layout.setSpacing(10)
+        self.selection_bar.setFrameShape(QFrame.Shape.NoFrame)
+        selection_layout = QVBoxLayout(self.selection_bar)
+        selection_layout.setContentsMargins(0, 8, 0, 0)
+        selection_layout.setSpacing(8)
+
+        self.selection_separator = QFrame(self.selection_bar)
+        self.selection_separator.setFrameShape(QFrame.Shape.HLine)
+        self.selection_separator.setFrameShadow(QFrame.Shadow.Plain)
+        self.selection_separator.setFixedHeight(1)
+        selection_layout.addWidget(self.selection_separator)
+
+        actions_layout = QHBoxLayout()
+        actions_layout.setContentsMargins(0, 0, 0, 0)
+        actions_layout.setSpacing(8)
 
         self.clear_selection_btn = PushButton("清空选择", self.selection_bar)
         self.scan_resource_packs_btn = PushButton("添加/扫描历史资源包", self.selection_bar)
@@ -160,10 +172,11 @@ class OverviewEntityListPanel(QWidget):
         self.clear_selection_btn.setEnabled(False)
         self.sync_selection_btn.setEnabled(False)
 
-        selection_layout.addStretch(1)
-        selection_layout.addWidget(self.scan_resource_packs_btn)
-        selection_layout.addWidget(self.clear_selection_btn)
-        selection_layout.addWidget(self.sync_selection_btn)
+        actions_layout.addStretch(1)
+        actions_layout.addWidget(self.scan_resource_packs_btn)
+        actions_layout.addWidget(self.clear_selection_btn)
+        actions_layout.addWidget(self.sync_selection_btn)
+        selection_layout.addLayout(actions_layout)
         layout.addWidget(self.selection_bar)
 
     def current_entity_type(self) -> str:

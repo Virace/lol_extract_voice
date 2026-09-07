@@ -493,6 +493,11 @@ class MainWindow(FluentWindow):
         # 注入配置到各业务页面
         self.executionInterface.set_gui_config(cfg)
         self.overviewInterface.set_gui_config(cfg)
+        self.overviewInterface.audio_export_requested.connect(self.executionInterface.submit_audio_export)
+        self.overviewInterface.background_work_changed.connect(self.executionInterface.set_external_busy)
+        self.overviewInterface.background_work_changed.connect(self._sync_heavy_work_state)
+        self.executionInterface.task_queue_busy_changed.connect(self.overviewInterface.set_task_busy)
+        self.executionInterface.result_ready.connect(self._on_task_result_ready)
         self.overviewInterface.selection_sync_requested.connect(
             lambda payload: forward_selection_sync_feedback(
                 payload=payload,
@@ -508,20 +513,14 @@ class MainWindow(FluentWindow):
             self._shared_data_controller.refresh_shared_output_state
         )
         self.executionInterface.global_progress_state_changed.connect(self._progress_strip_coordinator.set_task_state)
-        self.executionInterface.task_queue_busy_changed.connect(
-            lambda busy: apply_task_queue_busy_state(
-                busy=busy,
-                setting_page=self.settingInterface,
-                navigation_interface=self.navigationInterface,
-                shared_data_controller=self._shared_data_controller,
-            )
-        )
+        self.executionInterface.task_queue_busy_changed.connect(self._sync_heavy_work_state)
         self._progress_strip_host.strip_widget().stop_requested.connect(self.executionInterface.request_cancel_task)
         self.executionInterface.log_lines_appended.connect(self._log_drawer_controller.append_log_lines)
         self._progress_strip_coordinator.set_task_state(self.executionInterface.current_global_progress_state())
         self.settingInterface.shared_context_input_changed.connect(
             self._shared_data_controller.on_context_input_changed
         )
+
         self.settingInterface.smooth_scroll_changed.connect(
             lambda page_enabled, widget_enabled: apply_smooth_scroll_settings(
                 setting_page=self.settingInterface,
@@ -568,6 +567,23 @@ class MainWindow(FluentWindow):
 
         # 首页初始化完成后加载真实数据；mock 仅由开发控制台按需覆盖展示层。
         self._shared_data_controller.load_initial_data(cfg)
+
+    def _on_task_result_ready(self, task, result) -> None:
+        """单文件后台转换成功后恢复原有定位文件交互。"""
+        request = task.draft.export_request
+        if request is not None and request.reveal_output and request.output_file is not None:
+            if any(batch.success_count for batch in result.wav_batches):
+                self.overviewInterface._reveal_file_path(request.output_file)
+
+    def _sync_heavy_work_state(self, _busy: bool) -> None:
+        """扫描和用户任务共同锁定共享准备与可变运行设置。"""
+        apply_task_queue_busy_state(
+            busy=self.executionInterface.has_incomplete_tasks()
+            or self.overviewInterface._resource_pack_scan_worker is not None,
+            setting_page=self.settingInterface,
+            navigation_interface=self.navigationInterface,
+            shared_data_controller=self._shared_data_controller,
+        )
 
     def _has_active_background_work(self) -> bool:
         """返回窗口关闭前是否仍存在后台工作。"""

@@ -474,6 +474,29 @@ def test_run_execution_task_successful_no_op_has_no_completed_product_stage(
     assert result.summary.startswith("执行完成：本轮没有产生新产物")
 
 
+def test_later_exception_preserves_completed_extract(monkeypatch, tmp_path: Path) -> None:
+    """映射步骤抛出异常仍须保留先前解包成功及其产物。"""
+
+    class FakeApp:
+        def __init__(self, context):
+            self.ctx = context
+
+        def extract(self, *_args, **_kwargs):
+            return _entity_stage("extract", ("champion", 1, ResultStatus.SUCCESS, ("1.wem",)))
+
+        def mapping(self, *_args, **_kwargs):
+            raise OSError("disk full")
+
+    _install_fake_runtime(monkeypatch, tmp_path, FakeApp)
+    result = task_runner.run_execution_task(
+        _build_task(champion_ids=(1,)), SimpleNamespace(progress=SimpleNamespace(emit=lambda _event: None))
+    )
+    assert result.run_result.status is ResultStatus.PARTIAL
+    assert result.completed_steps == ("音频解包",)
+    assert result.run_result.stages[0].entities[0].artifacts == ("1.wem",)
+    assert result.run_result.stages[1].error_message == "disk full"
+
+
 def test_run_execution_task_allows_wav_stage_without_extract(monkeypatch, tmp_path: Path) -> None:
     task = _build_task(run_extract=False, run_mapping=False, wav_enabled=True)
     events: list[str] = []
@@ -575,8 +598,9 @@ def test_run_execution_task_rejects_missing_map_banks_before_runtime_steps(
     monkeypatch.setattr(task_runner, "LolAudioUnpackApp", FakeApp)
     signals = SimpleNamespace(progress=SimpleNamespace(emit=lambda _payload: None))
 
-    with pytest.raises(RuntimeError, match="地图基础数据仍未准备完成"):
-        task_runner.run_execution_task(task, signals)
+    result = task_runner.run_execution_task(task, signals)
+    assert result.run_result.status is ResultStatus.FAILED
+    assert "地图基础数据仍未准备完成" in result.run_result.stages[-1].error_message
 
 
 def test_run_execution_task_preserves_special_targets_for_app_facade(monkeypatch, tmp_path: Path) -> None:

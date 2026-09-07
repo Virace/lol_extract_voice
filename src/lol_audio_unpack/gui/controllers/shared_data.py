@@ -694,6 +694,8 @@ class SharedDataController(QObject):
 
     def refresh_shared_output_state(self, refresh_request: object | None = None) -> None:
         """刷新输出状态；增量成功不改变已验证的共享目录 readiness。"""
+        request = refresh_request if isinstance(refresh_request, OutputStateRefreshRequest) else None
+        show_notice = request is None or not request.quiet
         if self._has_incomplete_tasks():
             self.notice_requested.emit(
                 GuiNotice(
@@ -705,13 +707,12 @@ class SharedDataController(QObject):
             return
         if self.state.active:
             return
-        self.pending_refresh_notice = True
+        self.pending_refresh_notice = show_notice
         if self.app_context is None:
             logger.warning("共享上下文尚未就绪，回退到完整共享数据刷新")
-            self.request_shared_data_reload(show_notice=True, allow_auto_prepare=True)
+            self.request_shared_data_reload(show_notice=show_notice, allow_auto_prepare=True)
             return
 
-        request = refresh_request if isinstance(refresh_request, OutputStateRefreshRequest) else None
         if request is not None and not request.requires_full_refresh and request.has_incremental_targets():
             try:
                 loader = self._entity_data_loader_cls(self.app_context)
@@ -729,19 +730,20 @@ class SharedDataController(QObject):
                     self.entity_rows_updated.emit(EntityRowsPayload.from_rows("maps", rows))
             except Exception as exc:  # noqa: BLE001
                 logger.warning(f"增量刷新共享输出状态失败，回退到全量检查: {exc}")
-                self.request_shared_data_reload(show_notice=True, allow_auto_prepare=True)
+                self.request_shared_data_reload(show_notice=show_notice, allow_auto_prepare=True)
                 return
-            self.notice_requested.emit(
-                GuiNotice(
-                    title="数据已刷新",
-                    content="列表内容已经更新，可以继续查看或创建任务。",
-                    level="success",
+            if show_notice:
+                self.notice_requested.emit(
+                    GuiNotice(
+                        title="数据已刷新",
+                        content="列表内容已经更新，可以继续查看或创建任务。",
+                        level="success",
+                    )
                 )
-            )
             self.pending_refresh_notice = False
             return
 
-        self.request_shared_data_reload(show_notice=True, allow_auto_prepare=True)
+        self.request_shared_data_reload(show_notice=show_notice, allow_auto_prepare=True)
 
     def reload_unpack_data(self, config=None) -> None:
         """按当前配置显式重建共享目录。"""

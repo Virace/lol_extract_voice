@@ -11,7 +11,14 @@ from PySide6.QtWidgets import QListView, QStyle, QStyledItemDelegate, QStyleOpti
 from qfluentwidgets import isDarkTheme
 
 from lol_audio_unpack.app.artifacts import AudioRef
+from lol_audio_unpack.app.audio_selection import AudioSelection
 from lol_audio_unpack.gui.common.styles import resolve_fluent_neutral_surface, resolve_fluent_text_primary_color
+from lol_audio_unpack.gui.components.audio_check import (
+    CHECK_COLUMN_WIDTH,
+    AudioCheckDelegate,
+    audio_check_rect,
+    draw_audio_check,
+)
 from lol_audio_unpack.gui.components.audio_row_style import (
     AUDIO_ROW_BUTTON_GAP,
     AUDIO_ROW_BUTTON_SIZE,
@@ -35,6 +42,8 @@ _LAYOUT_BATCH_SIZE = 512
 class AudioListModel(QAbstractListModel):
     """以稳定相对路径为身份的全部音频列表模型。"""
 
+    selection_changed = Signal()
+
     def __init__(self, parent=None) -> None:
         """初始化列表模型。
 
@@ -43,6 +52,8 @@ class AudioListModel(QAbstractListModel):
         """
         super().__init__(parent)
         self._refs: tuple[AudioRef, ...] = ()
+        self.audio_selection: AudioSelection | None = None
+        self.selection_mode = False
 
     def set_audio_refs(self, refs: tuple[AudioRef, ...]) -> None:
         """替换当前实体的全部路径级音频引用。
@@ -70,7 +81,34 @@ class AudioListModel(QAbstractListModel):
             return ref.relative_path
         if role == AUDIO_REF_ROLE:
             return ref
+        if role == Qt.ItemDataRole.CheckStateRole and self.selection_mode:
+            return (
+                Qt.CheckState.Checked
+                if self.audio_selection is not None and self.audio_selection.contains(ref.path)
+                else Qt.CheckState.Unchecked
+            )
         return None
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlags:
+        """选择模式提供可访问的勾选语义，不改变浏览单选。"""
+        flags = super().flags(index)
+        if self.selection_mode and index.isValid():
+            flags |= Qt.ItemFlag.ItemIsUserCheckable
+        return flags
+
+    def setData(self, index: QModelIndex, value: Any, role: int = int(Qt.ItemDataRole.EditRole)) -> bool:
+        """修改当前精确路径的导出选择。"""
+        ref = self.data(index, AUDIO_REF_ROLE)
+        if (
+            role != Qt.ItemDataRole.CheckStateRole
+            or not self.selection_mode
+            or self.audio_selection is None
+            or ref is None
+        ):
+            return False
+        self.audio_selection.set_paths((ref.path,), value in (Qt.CheckState.Checked, Qt.CheckState.Checked.value))
+        self.selection_changed.emit()
+        return True
 
 
 class AudioListFilterModel(QSortFilterProxyModel):
@@ -80,6 +118,7 @@ class AudioListFilterModel(QSortFilterProxyModel):
         """初始化筛选代理。"""
         super().__init__(parent)
         self._keyword = ""
+        self.only_selected = False
         self.setDynamicSortFilter(True)
 
     def set_keyword(self, keyword: str) -> None:
@@ -97,9 +136,6 @@ class AudioListFilterModel(QSortFilterProxyModel):
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
         """判断源模型行是否匹配当前音频搜索。"""
-        if not self._keyword:
-            return True
-
         source = self.sourceModel()
         if source is None:
             return False
@@ -107,6 +143,10 @@ class AudioListFilterModel(QSortFilterProxyModel):
         ref = source.data(index, AUDIO_REF_ROLE)
         if not isinstance(ref, AudioRef):
             return False
+        if self.only_selected and (source.audio_selection is None or not source.audio_selection.contains(ref.path)):
+            return False
+        if not self._keyword:
+            return True
 
         parts = [ref.wem_id, ref.relative_path]
         if ref.audio_type:
@@ -114,7 +154,7 @@ class AudioListFilterModel(QSortFilterProxyModel):
         return any(self._keyword in part.casefold() for part in parts)
 
 
-class _AudioListDelegate(QStyledItemDelegate):
+class _AudioListDelegate(AudioCheckDelegate):
     """按事件树叶子风格绘制紧凑单行试听项。"""
 
     def __init__(self, view: AudioListView) -> None:
@@ -188,6 +228,15 @@ class _AudioListDelegate(QStyledItemDelegate):
 
         text_left = button_rect.right() + AUDIO_ROW_BUTTON_GAP + 1
         text_rect = QRect(text_left, option.rect.top(), max(0, row_rect.right() - text_left - 8), option.rect.height())
+        if self._view.source_model.selection_mode:
+            text_rect.adjust(0, 0, -CHECK_COLUMN_WIDTH, 0)
+            draw_audio_check(
+                self._view,
+                painter,
+                audio_check_rect(row_rect, self._view.viewport().width()),
+                index.data(Qt.ItemDataRole.CheckStateRole),
+                enabled=True,
+            )
         painter.setPen(option.palette.text().color())
         painter.setFont(option.font)
         painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, ref.wem_id)
@@ -330,12 +379,43 @@ class AudioListView(QListView):
         """在播放按钮上发出精确音频引用，其他区域保持默认选择。"""
         if event.button() == Qt.MouseButton.LeftButton:
             index = self.indexAt(event.position().toPoint())
+            if self.source_model.selection_mode and audio_check_rect(
+                self.visualRect(index), self.viewport().width()
+            ).contains(event.position().toPoint()):
+                self._toggle_export_check(index)
+                event.accept()
+                return
             ref = self.audio_ref_at(index)
             if ref is not None and self.audio_control_rect(index).contains(event.position().toPoint()):
                 self.audio_ref_toggle_requested.emit(ref)
                 event.accept()
                 return
         super().mouseReleaseEvent(event)
+
+    def _toggle_export_check(self, index: QModelIndex) -> None:
+        state = index.data(Qt.ItemDataRole.CheckStateRole)
+        self.model().setData(
+            index,
+            Qt.CheckState.Unchecked if state == Qt.CheckState.Checked else Qt.CheckState.Checked,
+            Qt.ItemDataRole.CheckStateRole,
+        )
+
+    def keyPressEvent(self, event) -> None:
+        """选择模式用空格切换导出复选框。"""
+        if event.key() == Qt.Key.Key_Space and self.source_model.selection_mode:
+            self._toggle_export_check(self.currentIndex())
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def refresh_export_selection(self, *, only_selected: bool = False) -> None:
+        """刷新模型筛选与行末选择，保留当前路径索引。"""
+        was_filtered = self.filter_model.only_selected
+        self.filter_model.only_selected = only_selected
+        if was_filtered or only_selected:
+            self.filter_model.beginFilterChange()
+            self.filter_model.endFilterChange(QSortFilterProxyModel.Direction.Rows)
+        self.viewport().update()
 
     def contextMenuEvent(self, event) -> None:
         """为当前精确音频项请求与事件树一致的路径操作菜单。"""

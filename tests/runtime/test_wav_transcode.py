@@ -8,8 +8,10 @@ from typing import Any
 
 import pytest
 from pyvgmstream import SampleFormat
+from pyvgmstream.transcode import BatchTranscodeItemResult, BatchTranscodeSummary
 
 from lol_audio_unpack.app.types import WavOutputOptions
+from lol_audio_unpack.runtime.wav import batch as wav_batch
 from lol_audio_unpack.runtime.wav import build_output_path, resolve_decode_config
 from lol_audio_unpack.runtime.wav import job as wav_job
 from lol_audio_unpack.runtime.wav._runtime import Job, run_worker
@@ -89,7 +91,7 @@ class SimpleQueueAdapter:
         self.payloads.append(payload)
 
 
-def test_run_tree_uses_transcode_tree_for_version_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_tree_uses_version_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """独立 WAV stage 应直接消费当前版本的 audios 根目录。"""
     ctx = SimpleNamespace(
         paths=SimpleNamespace(
@@ -103,11 +105,12 @@ def test_run_tree_uses_transcode_tree_for_version_roots(tmp_path: Path, monkeypa
     (input_root / "sample.wem").write_bytes(b"wem")
     calls: list[tuple[Path, Path]] = []
 
-    def fake_transcode_tree(input_root_arg: Path, output_root_arg: Path, **kwargs):
-        calls.append((Path(input_root_arg), Path(output_root_arg)))
-        return SimpleNamespace(processed_count=1, failed_count=0, results=())
+    def fake_transcode_many(sources, output_root_arg: Path, **kwargs):
+        assert tuple(sources) == (input_root / "sample.wem",)
+        calls.append((Path(kwargs["input_root"]), Path(output_root_arg)))
+        return BatchTranscodeSummary(kwargs["input_root"], output_root_arg, 1, 0, ())
 
-    monkeypatch.setattr(wav_job, "transcode_tree", fake_transcode_tree)
+    monkeypatch.setattr(wav_batch, "transcode_many", fake_transcode_many)
 
     payload = wav_job.run_tree(
         ctx=ctx,
@@ -144,11 +147,12 @@ def test_run_tree_uses_selected_audio_roots_when_provided(tmp_path: Path, monkey
     (ignored_root / "sample.wem").write_bytes(b"wem")
     calls: list[tuple[Path, Path]] = []
 
-    def fake_transcode_tree(input_root_arg: Path, output_root_arg: Path, **kwargs):
-        calls.append((Path(input_root_arg), Path(output_root_arg)))
-        return SimpleNamespace(processed_count=1, failed_count=0, results=())
+    def fake_transcode_many(sources, output_root_arg: Path, **kwargs):
+        assert tuple(sources) == (selected_root / "sample.wem",)
+        calls.append((Path(kwargs["input_root"]), Path(output_root_arg)))
+        return BatchTranscodeSummary(kwargs["input_root"], output_root_arg, 1, 0, ())
 
-    monkeypatch.setattr(wav_job, "transcode_tree", fake_transcode_tree)
+    monkeypatch.setattr(wav_batch, "transcode_many", fake_transcode_many)
 
     payload = wav_job.run_tree(
         ctx=ctx,
@@ -185,11 +189,12 @@ def test_run_tree_bridges_root_level_progress_to_callback(tmp_path: Path, monkey
     (second_root / "sample-2.wem").write_bytes(b"wem")
     progress_events: list[tuple[str, int, int, str]] = []
 
-    def fake_transcode_tree(_input_root: Path, _output_root: Path, **kwargs):
-        kwargs["progress_callback"](SimpleNamespace(completed_count=2, total_count=3, failed_count=1))
-        return SimpleNamespace(processed_count=2, failed_count=1, results=())
+    def fake_transcode_many(sources, output_root: Path, **kwargs):
+        kwargs["progress_callback"](SimpleNamespace(completed_count=1, total_count=1, failed_count=1))
+        failure = BatchTranscodeItemResult(sources[0], output_root / "failed.wav", 0, 0, "decode failed")
+        return BatchTranscodeSummary(kwargs["input_root"], output_root, 1, 1, (failure,))
 
-    monkeypatch.setattr(wav_job, "transcode_tree", fake_transcode_tree)
+    monkeypatch.setattr(wav_batch, "transcode_many", fake_transcode_many)
 
     wav_job.run_tree(
         ctx=ctx,
@@ -245,11 +250,12 @@ def test_run_tree_logs_internal_file_progress_at_debug_level(tmp_path: Path, mon
     debug_messages: list[str] = []
     success_messages: list[str] = []
 
-    def fake_transcode_tree(_input_root: Path, _output_root: Path, **kwargs):
-        kwargs["progress_callback"](SimpleNamespace(completed_count=2, total_count=3, failed_count=1))
-        return SimpleNamespace(processed_count=2, failed_count=1, results=())
+    def fake_transcode_many(sources, output_root: Path, **kwargs):
+        kwargs["progress_callback"](SimpleNamespace(completed_count=1, total_count=1, failed_count=1))
+        failure = BatchTranscodeItemResult(sources[0], output_root / "failed.wav", 0, 0, "decode failed")
+        return BatchTranscodeSummary(kwargs["input_root"], output_root, 1, 1, (failure,))
 
-    monkeypatch.setattr(wav_job, "transcode_tree", fake_transcode_tree)
+    monkeypatch.setattr(wav_batch, "transcode_many", fake_transcode_many)
     monkeypatch.setattr(
         wav_job,
         "logger",
@@ -267,8 +273,8 @@ def test_run_tree_logs_internal_file_progress_at_debug_level(tmp_path: Path, mon
         wav_output=WavOutputOptions(enabled=True, worker_count=2, timeout_seconds=5, max_retries=3, format="pcm16"),
     )
 
-    assert debug_messages == ["WAV 转码内部进度：文件 2/3 · 失败 1"]
+    assert debug_messages == ["WAV 转码内部进度：文件 1/1 · 失败 1"]
     assert all("内部进度" not in message for message in info_messages)
     assert any("WAV 转码目录完成：当前版本音频" in message for message in info_messages)
-    assert any("WAV 转码完成：成功 2 个，失败 1 个" in message for message in info_messages)
+    assert any("WAV 转码完成：成功 0 个，失败 1 个" in message for message in info_messages)
     assert success_messages == []

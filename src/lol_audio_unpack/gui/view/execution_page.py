@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from loguru import logger
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QMessageBox, QSizePolicy, QVBoxLayout, QWidget
-from qfluentwidgets import CaptionLabel, InfoBarPosition, SmoothScrollArea, SubtitleLabel, qconfig
+from PySide6.QtWidgets import QHBoxLayout, QMessageBox, QSizePolicy, QVBoxLayout, QWidget
+from qfluentwidgets import CaptionLabel, InfoBarPosition, PushButton, SmoothScrollArea, SubtitleLabel, qconfig
 
+from lol_audio_unpack.app.audio_export import AudioExportRequest
 from lol_audio_unpack.gui.common import (
     GUI_LOG_FORMAT,
     GUI_LOG_MAX_LINES,
@@ -29,9 +31,16 @@ from lol_audio_unpack.gui.controllers import (
 )
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
 from lol_audio_unpack.gui.controllers.entity_data_store import EntityDataStore
+from lol_audio_unpack.gui.controllers.task_results import TaskResultsController
 from lol_audio_unpack.gui.shared_data import SharedDataPhase, SharedDataState
 from lol_audio_unpack.gui.shared_data_view import describe_shared_data_state
-from lol_audio_unpack.gui.task_models import ExecutionTaskResult, QueuedExecutionTask
+from lol_audio_unpack.gui.task_models import (
+    AppContextInputSnapshot,
+    ExecutionTaskDraft,
+    ExecutionTaskParamsSnapshot,
+    ExecutionTaskResult,
+    QueuedExecutionTask,
+)
 from lol_audio_unpack.gui.theme import get_accent_text_color_pair
 from lol_audio_unpack.gui.view.execution.progress_state import build_global_progress_strip_state
 from lol_audio_unpack.gui.view.execution.selection_conflict_dialog import (
@@ -48,6 +57,7 @@ class ExecutionPage(SmoothScrollArea):
     task_queue_busy_changed = Signal(bool)
     log_lines_appended = Signal(object)
     global_progress_state_changed = Signal(object)
+    result_ready = Signal(object, object)
 
     def __init__(self, parent=None):
         super().__init__(parent=parent)
@@ -60,6 +70,7 @@ class ExecutionPage(SmoothScrollArea):
         self._entity_data_store = EntityDataStore(entity_types=("champions", "maps", "special"))
         self._is_task_running = False
         self._is_task_queue_busy = False
+        self._external_busy = False
         self._shared_data_state = SharedDataState(SharedDataPhase.BLOCKED, 0)
         self._current_global_progress_state = GlobalProgressStripState()
         self._selection_controller = ExecutionSelectionController()
@@ -85,6 +96,12 @@ class ExecutionPage(SmoothScrollArea):
             single_task_mode=True,
             parent=self,
         )
+        self.results_controller = TaskResultsController(
+            self.result_button, feedback_parent=self._feedback_parent, parent=self
+        )
+        self.results_controller.retry_requested.connect(self.submit_task)
+        self._queue_controller.result_ready.connect(self.results_controller.receive_result)
+        self._queue_controller.result_ready.connect(self.result_ready.emit)
         self.taskBuilderPanel.sync_state_from_widgets()
         self._setup_connections()
 
@@ -99,7 +116,11 @@ class ExecutionPage(SmoothScrollArea):
         title_label = SubtitleLabel("执行中心", self.view)
         self.subtitle_label = CaptionLabel("在这里补充自定义参数并创建任务。", self.view)
         self.subtitle_label.setWordWrap(True)
-        header_layout.addWidget(title_label)
+        title_row = QHBoxLayout()
+        title_row.addWidget(title_label, 1)
+        self.result_button = PushButton("查看本次结果", self.view)
+        title_row.addWidget(self.result_button)
+        header_layout.addLayout(title_row)
         header_layout.addWidget(self.subtitle_label)
         self.expandLayout.addLayout(header_layout)
 
@@ -156,12 +177,16 @@ class ExecutionPage(SmoothScrollArea):
         self._queue_controller.log_requested.connect(lambda event: self._log_gui_event(event.level, event.message))
         self._queue_controller.output_state_refresh_requested.connect(self.output_state_refresh_requested.emit)
         self._queue_controller.feedback_requested.connect(
-            lambda notice: show_feedback_infobar(
-                title=notice.title,
-                content=notice.content,
-                parent=self._feedback_parent(),
-                level=notice.level,
-                position=InfoBarPosition.TOP,
+            lambda notice: (
+                None
+                if notice.terminal
+                else show_feedback_infobar(
+                    title=notice.title,
+                    content=notice.content,
+                    parent=self._feedback_parent(),
+                    level=notice.level,
+                    position=InfoBarPosition.TOP,
+                )
             )
         )
         self.create_task_btn.clicked.connect(self._handle_primary_task_action)
@@ -202,6 +227,7 @@ class ExecutionPage(SmoothScrollArea):
             state: 当前 generation 的类型化共享状态。
         """
         self._shared_data_state = state
+        self.results_controller.set_busy(state.blocks_new_tasks or self._external_busy or self._is_task_running)
         self._sync_primary_action_button()
 
     def attach_runtime_log_sink(self, level: str = "INFO") -> None:
@@ -329,6 +355,7 @@ class ExecutionPage(SmoothScrollArea):
         if self._is_task_running == running:
             return
         self._is_task_running = running
+        self.results_controller.set_busy(running or self._external_busy or self._shared_data_state.blocks_new_tasks)
         self._sync_primary_action_button()
         self.task_running_changed.emit(running)
 
@@ -382,7 +409,9 @@ class ExecutionPage(SmoothScrollArea):
         display = describe_shared_data_state(self._shared_data_state)
         self.create_task_btn.setText(display.task_action_text)
         self.create_task_btn.setToolTip(display.task_block_reason)
-        self.create_task_btn.setEnabled(not self._shared_data_state.blocks_new_tasks)
+        self.create_task_btn.setEnabled(not self._shared_data_state.blocks_new_tasks and not self._external_busy)
+        if self._external_busy:
+            self.create_task_btn.setToolTip("正在扫描资源包，请等待完成。")
 
     def _handle_primary_task_action(self) -> None:
         """根据当前运行态分派创建或取消行为。"""
@@ -463,9 +492,48 @@ class ExecutionPage(SmoothScrollArea):
             )
             return
 
-        summary = self.taskBuilderPanel.current_task_config_summary()
-        self._queue_controller.enqueue_task(draft=draft, summary=summary)
+        version = self._shared_data_state.scan.version if self._shared_data_state.scan is not None else ""
+        draft = replace(draft, version=version)
+        self.submit_task(draft)
         self.taskBuilderPanel.reset_custom_inputs_to_defaults()
+
+    def set_external_busy(self, busy: bool) -> None:
+        """共享扫描之外的显式资源扫描也占用重任务执行入口。"""
+        self._external_busy = busy
+        self.results_controller.set_busy(busy or self._is_task_running or self._shared_data_state.blocks_new_tasks)
+        self._sync_primary_action_button()
+
+    def submit_audio_export(self, request: AudioExportRequest) -> None:
+        """把总览导出交给现有单任务 worker，保留总览浏览位置。"""
+        draft = ExecutionTaskDraft(
+            source="audio_export",
+            source_summary=request.entity_name,
+            context_input=self.gui_config.to_app_context_input_snapshot()
+            if self.gui_config
+            else AppContextInputSnapshot(),
+            task_params=ExecutionTaskParamsSnapshot(
+                run_extract=False,
+                run_mapping=False,
+                wav_enabled=True,
+                wav_format=request.options.format,
+                wav_workers=request.options.worker_count,
+            ),
+            export_request=request,
+            version=request.version,
+        )
+        self.submit_task(draft)
+
+    def submit_task(self, draft: ExecutionTaskDraft) -> None:
+        """统一检查全局忙碌状态，拒绝排队和并行重负载任务。"""
+        if self._is_task_running or self._external_busy or self._shared_data_state.blocks_new_tasks:
+            show_feedback_infobar(
+                parent=self._feedback_parent(),
+                title="暂时无法开始",
+                content="已有任务运行或共享数据尚未就绪，请等待完成后重试。",
+                level="warning",
+            )
+            return
+        self._queue_controller.enqueue_task(draft=draft, summary=draft.source_summary)
 
     def _debug_fill_mock_queue(self, count: int) -> str:
         """填充指定数量的 mock 队列项，方便调试全局进度状态。"""

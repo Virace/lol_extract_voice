@@ -18,7 +18,12 @@ pytestmark = pytest.mark.unit
 
 
 def _fake_stats(status: UnpackStageResult = UnpackStageResult.SUCCESS) -> SimpleNamespace:
-    return SimpleNamespace(overall_result=status, get_simple_summary=lambda: f"解包状态: {status.value}")
+    return SimpleNamespace(
+        overall_result=status,
+        get_simple_summary=lambda: f"解包状态: {status.value}",
+        file_failures=[],
+        binding_details=[],
+    )
 
 
 def test_build_transcode_paths_uses_version_and_optional_job_label(tmp_path: Path) -> None:
@@ -264,6 +269,8 @@ def test_execute_tasks_returns_input_ordered_results_for_mixed_entity_outcomes(
         status = UnpackStageResult.SUCCESS if champion_id == 1 else UnpackStageResult.WARNING
         return SimpleNamespace(
             overall_result=status,
+            file_failures=[],
+            binding_details=[],
             get_simple_summary=lambda: f"英雄 {champion_id} 的内部统计",
         )
 

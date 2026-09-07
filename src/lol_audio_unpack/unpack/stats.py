@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+from lol_audio_unpack.app.results import FailureDetail
 
 from ..manager.utils import build_metadata_payload
 from ..utils.common import dump_yaml, format_duration
@@ -121,6 +123,7 @@ class EntityUnpackStats:
     binding_completeness: str | None = None
     binding_details: list[dict[str, Any]] = field(default_factory=list)
     binding_wads: list[dict[str, Any]] = field(default_factory=list)
+    file_failures: list[FailureDetail] = field(default_factory=list)
 
     # === 阶段3: 数据组装统计 ===
     assembled_sub_entities: int = 0
@@ -313,8 +316,10 @@ class EntityUnpackStats:
         processable = [
             detail for detail in self.binding_details if detail["status"] in {"resolved", "ambiguous_identical"}
         ]
-        successful = [detail for detail in processable if detail["outcome"] == "success"]
-        has_failure = any(detail["outcome"] in {"failed", "unresolved"} for detail in self.binding_details)
+        successful = [detail for detail in processable if detail["outcome"] in {"success", "partial"}]
+        has_failure = any(
+            detail["outcome"] in {"failed", "unresolved", "partial", "write_failed"} for detail in self.binding_details
+        )
 
         # 全部是合法无内嵌音频的 BNK 时允许成功 no-op；这些空结果不能把真实失败抬成部分成功。
         if processable and all(detail["outcome"] == "no_audio" for detail in processable):
@@ -493,6 +498,8 @@ class EntityUnpackStats:
 
             report["sub_entities"][sub_stats.name] = sub_entity_data
 
+        if self.file_failures:
+            report["fileFailures"] = [asdict(item) for item in self.file_failures]
         metadata["report"] = report
         return metadata
 
