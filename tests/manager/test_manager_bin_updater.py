@@ -75,8 +75,9 @@ def test_process_champion_skins_reports_missing_bin_as_failure_input(tmp_path, m
     assert write_calls[0]["diagnostics"]["completeness"] == "failed"
 
 
-def test_champion_bank_migration_does_not_reparse_fresh_events(tmp_path, monkeypatch) -> None:
-    """banks 迁移时若 events 已新鲜，不应再次解析全部英雄事件。"""
+@pytest.mark.parametrize("event_version, expected_calls", [(1, []), (None, ["events"])])
+def test_champion_bank_migration_respects_event_schema(tmp_path, monkeypatch, event_version, expected_calls) -> None:
+    """banks 迁移复用完整事件缓存；旧缓存须重建，以恢复曾被过滤的 Base 声明。"""
     processor = m_champion_processor.ChampionBinProcessor.__new__(m_champion_processor.ChampionBinProcessor)
     processor.ctx = SimpleNamespace(config=SimpleNamespace(game_path=tmp_path, dev_mode=False), paths=SimpleNamespace())
     processor.force_update = False
@@ -85,6 +86,11 @@ def test_champion_bank_migration_does_not_reparse_fresh_events(tmp_path, monkeyp
     processor.game_path = tmp_path
     processor.champion_banks_dir = tmp_path / "banks" / "champions"
     processor.champion_events_dir = tmp_path / "events" / "champions"
+    write_data(
+        {"metadata": {"gameVersion": "16.16"}, "skinAudioVersion": event_version, "skins": {}},
+        processor.champion_events_dir / "1",
+        dev_mode=False,
+    )
     processor.bin_source = SimpleNamespace(
         _resolve_bank_bindings=lambda _references: [
             BankBinding(
@@ -168,7 +174,7 @@ def test_champion_bank_migration_does_not_reparse_fresh_events(tmp_path, monkeyp
     )
 
     assert result.status is UpdateStatus.SUCCESS
-    assert event_parse_calls == []
+    assert event_parse_calls == expected_calls
 
 
 def test_skip_events_ignores_missing_champion_event_artifact(tmp_path, monkeypatch) -> None:

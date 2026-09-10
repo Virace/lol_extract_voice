@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 import lol_audio_unpack.gui.view.overview_page as overview_page_module
 from lol_audio_unpack.app.artifacts import AudioIndexProgress, AudioRef
 from lol_audio_unpack.app.resource_pack import ResourcePackWadRef
@@ -17,6 +19,26 @@ from lol_audio_unpack.gui.controllers.overview_preview import (
 )
 from lol_audio_unpack.gui.shared_data import SharedDataPhase, SharedDataState
 from lol_audio_unpack.gui.view.overview_page import OverviewPage
+
+
+@pytest.mark.parametrize("result", [None, ("invalid",), ()])
+def test_index_failure_does_not_cache_false_empty(qtbot, tmp_path: Path, result) -> None:
+    """非法 worker 结果或遗漏已存在事件文件时，保留失败状态而不是成功空索引。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    source = tmp_path / "10.wem"
+    source.write_bytes(b"wem")
+    page._current_preview_entity_type = "champions"
+    page._current_preview_entity_id = "1"
+    page._current_event_audio_refs = (AudioRef("VO/10.wem", source, "10", "VO", "1000"),)
+    page._audio_refs_request = overview_page_module._AudioRefsRequest(page._audio_refs_token, "champions", "1")
+    page._audio_refs_worker = object()
+
+    page._on_audio_refs_loaded(result)
+
+    assert page._audio_refs_error
+    assert not page._audio_refs_loaded
+    assert ("champions", "1") not in page._audio_refs_cache
 
 
 def _build_preview_load_result() -> OverviewPreviewLoadResult:

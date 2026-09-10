@@ -7,12 +7,16 @@ from collections.abc import Mapping
 from PySide6.QtCore import QItemSelectionModel, QModelIndex, QSignalBlocker, Qt
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
 from qfluentwidgets import (
+    Action,
     BodyLabel,
     CaptionLabel,
+    FluentIcon,
     PrimaryPushButton,
     PushButton,
+    RoundMenu,
     SearchLineEdit,
     SegmentedWidget,
+    TransparentDropDownToolButton,
     isDarkTheme,
     qconfig,
 )
@@ -21,7 +25,6 @@ from lol_audio_unpack.app.resource_pack import ResourcePackWadRef
 from lol_audio_unpack.gui.common.font_compat import apply_line_edit_safe_font
 from lol_audio_unpack.gui.common.styles import resolve_fluent_entity_badge_colors
 from lol_audio_unpack.gui.components.overview_entity_list import OVERVIEW_ROW_ROLE, OverviewEntityListView
-from lol_audio_unpack.gui.components.special_content_tree import SpecialContentTreeView
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
 
 
@@ -99,7 +102,7 @@ class OverviewEntityListPanel(QWidget):
             parent: 父级控件。
         """
         super().__init__(parent)
-        self.entity_lists: dict[str, OverviewEntityListView | SpecialContentTreeView] = {}
+        self.entity_lists: dict[str, OverviewEntityListView] = {}
         self._special_availability_message: str | None = None
         self._special_catalog_notice: str | None = None
 
@@ -117,7 +120,21 @@ class OverviewEntityListPanel(QWidget):
         self.search_input = SearchLineEdit(self)
         self.search_input.setPlaceholderText("搜索英雄、别名或 ID")
         apply_line_edit_safe_font(self.search_input)
-        layout.addWidget(self.search_input)
+        search_row = QHBoxLayout()
+        search_row.setSpacing(8)
+        search_row.addWidget(self.search_input, 1)
+        self.catalog_menu_btn = TransparentDropDownToolButton(FluentIcon.MORE, self)
+        self.catalog_menu_btn.setToolTip("更多特殊内容操作")
+        self.catalog_menu_btn.setAccessibleName("更多特殊内容操作")
+        self.catalog_menu_btn.setVisible(False)
+        catalog_menu = RoundMenu(parent=self.catalog_menu_btn)
+        self.scan_resource_packs_action = Action("扫描本地 WAD…", catalog_menu)
+        self.scan_resource_packs_action.setToolTip("从所选本地 WAD 发现额外音频内容；经典英雄无需此步骤。")
+        self.scan_resource_packs_action.setEnabled(False)
+        catalog_menu.addAction(self.scan_resource_packs_action)
+        self.catalog_menu_btn.setMenu(catalog_menu)
+        search_row.addWidget(self.catalog_menu_btn)
+        layout.addLayout(search_row)
 
         self.special_availability_label = CaptionLabel("特殊内容需要可用的本地游戏数据。", self)
         self.special_availability_label.setWordWrap(True)
@@ -137,13 +154,10 @@ class OverviewEntityListPanel(QWidget):
         layout.addWidget(status_row)
 
         self.list_stack = QStackedWidget(self)
-        for entity_type in ("champions", "maps"):
+        for entity_type in ("champions", "maps", "special"):
             list_widget = OverviewEntityListView(self.list_stack)
             self.entity_lists[entity_type] = list_widget
             self.list_stack.addWidget(list_widget)
-        special_list = SpecialContentTreeView(self.list_stack)
-        self.entity_lists["special"] = special_list
-        self.list_stack.addWidget(special_list)
 
         self.selection_bar = QFrame(self)
         self.selection_bar.setObjectName("OverviewSelectionBar")
@@ -163,16 +177,11 @@ class OverviewEntityListPanel(QWidget):
         actions_layout.setSpacing(8)
 
         self.clear_selection_btn = PushButton("清空选择", self.selection_bar)
-        self.scan_resource_packs_btn = PushButton("添加/扫描历史资源包", self.selection_bar)
-        self.scan_resource_packs_btn.setToolTip("选择当前游戏 FINAL 目录中的 .wad.client 文件后进行有界扫描。")
-        self.scan_resource_packs_btn.setVisible(False)
-        self.scan_resource_packs_btn.setEnabled(False)
         self.sync_selection_btn = PrimaryPushButton("发送到执行中心", self.selection_bar)
         self.clear_selection_btn.setEnabled(False)
         self.sync_selection_btn.setEnabled(False)
 
         actions_layout.addStretch(1)
-        actions_layout.addWidget(self.scan_resource_packs_btn)
         actions_layout.addWidget(self.clear_selection_btn)
         actions_layout.addWidget(self.sync_selection_btn)
         selection_layout.addLayout(actions_layout)
@@ -193,7 +202,7 @@ class OverviewEntityListPanel(QWidget):
                 return entity_type
         return "champions"
 
-    def current_list(self) -> OverviewEntityListView | SpecialContentTreeView:
+    def current_list(self) -> OverviewEntityListView:
         """返回当前可见的列表控件。"""
         return self.entity_lists[self.current_entity_type()]
 
@@ -206,7 +215,7 @@ class OverviewEntityListPanel(QWidget):
         widget = self.entity_lists.get(entity_type)
         if widget is not None:
             self.list_stack.setCurrentWidget(widget)
-        self.scan_resource_packs_btn.setVisible(entity_type == "special")
+        self.catalog_menu_btn.setVisible(entity_type == "special")
         self._sync_special_availability_label()
 
     def set_selection_summary(self, text: str) -> None:
@@ -350,8 +359,8 @@ class OverviewEntityListPanel(QWidget):
         )
 
     def set_resource_pack_scan_enabled(self, enabled: bool) -> None:
-        """设置历史资源包扫描入口是否可执行。"""
-        self.scan_resource_packs_btn.setEnabled(enabled)
+        """设置本地 WAD 扫描入口是否可执行。"""
+        self.scan_resource_packs_action.setEnabled(enabled)
 
     def set_special_interaction_enabled(self, enabled: bool) -> None:
         """根据应用上下文就绪状态切换特殊内容目录的选择能力。"""

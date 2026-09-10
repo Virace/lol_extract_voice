@@ -49,7 +49,7 @@ STAGE_LABEL_BY_KEY = {
 ENTITY_SCOPE_LABEL_BY_TYPE = {
     "champion": "英雄",
     "map": "地图",
-    "resource_pack": "历史资源包",
+    "resource_pack": "本地资源包",
     "wav": "音频转码",
 }
 MAX_SUMMARY_ISSUES = 3
@@ -265,7 +265,7 @@ def _build_scope_label(
     if include_maps:
         scope_parts.append("地图")
     if include_resource_packs:
-        scope_parts.append("历史资源包")
+        scope_parts.append("本地资源包")
     return " + ".join(scope_parts) if scope_parts else "未选择目标"
 
 

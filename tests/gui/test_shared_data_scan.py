@@ -10,6 +10,7 @@ from loguru import logger
 
 import lol_audio_unpack.gui.service.data_loader as data_loader_module
 import lol_audio_unpack.gui.service.worker as worker_module
+from lol_audio_unpack.app.path_layout import format_entity_folder_name, format_sub_entity_folder_name
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader, build_scan_failure_result
 from lol_audio_unpack.gui.service.worker import SharedDataScanWorker
 from lol_audio_unpack.gui.shared_data import (
@@ -37,8 +38,12 @@ WORKER_GENERATION = 10
 def test_catalog_without_bin_cache_is_browsable_by_default(tmp_path: Path, require_resources: bool) -> None:
     """真实基础清单足以浏览；只有提前准备模式才要求全部资源缓存。"""
     ctx = SimpleNamespace(
-        config=SimpleNamespace(dev_mode=True, game_path=tmp_path / "game"),
-        paths=SimpleNamespace(manifest_path=tmp_path / "manifest", hash_path=tmp_path / "hashes"),
+        config=SimpleNamespace(
+            dev_mode=True, game_path=tmp_path / "game", group_by_type=False, include_types=("VO", "SFX")
+        ),
+        paths=SimpleNamespace(
+            manifest_path=tmp_path / "manifest", hash_path=tmp_path / "hashes", audio_path=tmp_path / "audios"
+        ),
         runtime_cache={"resolved_runtime_version": "16.17"},
         game_region="zh_CN",
     )
@@ -70,6 +75,26 @@ def test_catalog_without_bin_cache_is_browsable_by_default(tmp_path: Path, requi
         assert loader.load_mapping_preview("champions", "1") == (None, None, "")
     assert not (manifest / "banks").exists()
     assert not (manifest / "events").exists()
+
+    if not require_resources:
+        # 旧 binding 无法驱动解包，但元数据身份仍足以安全定位已有音频，不能缓存为假空。
+        write_data({"metadata": {"gameVersion": "16.17"}, "skins": {}}, manifest / "banks/champions/1", dev_mode=True)
+        audio_dir = ctx.paths.audio_path / "16.17/champions" / format_entity_folder_name("1", "annie", "Annie")
+        source = audio_dir / format_sub_entity_folder_name("1000", "基础皮肤") / "VO/10.wem"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"wem")
+        refs = loader.load_audio_refs("champions", "1")
+        assert len(refs) == 1 and refs[0].path == source.resolve()
+        assert loader.load_audio_roots("champions", "1") == (audio_dir,)
+        mapping = {
+            "skins": {
+                "1000": {
+                    "events": {"Base_VO": {"play": [10]}},
+                    "audioPaths": {"Base_VO": {"play": [source.relative_to(audio_dir).as_posix()]}},
+                }
+            }
+        }
+        assert loader.load_event_audio_refs("champions", "1", mapping) == refs
 
 
 def test_preparation_checks_events_after_extraction_only(monkeypatch, tmp_path: Path) -> None:

@@ -13,15 +13,125 @@ from loguru import logger
 import lol_audio_unpack.mapping.batch as mapping_batch
 import lol_audio_unpack.mapping.entity as mapping_entity
 import lol_audio_unpack.mapping.session as mapping_session
+from lol_audio_unpack.app.artifacts import enumerate_audio_refs, inspect_shared_copies, resolve_audio_refs
+from lol_audio_unpack.app.audio_scope import AudioScope, MappingNode
 from lol_audio_unpack.app.path_layout import format_entity_folder_name, format_sub_entity_folder_name
 from lol_audio_unpack.app.results import ResultStatus, StageResult
 from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
 from lol_audio_unpack.mapping import build_entity
 from lol_audio_unpack.model import AudioBank, AudioEntityData
 from lol_audio_unpack.model.binding import BankBinding, BindingDiagnostics, BindingRole, BindingStatus, Completeness
+from lol_audio_unpack.unpack import entity as unpack_entity
 
 FAKE_GAME_PATH = Path("FakeGame")
 FAKE_OUTPUT_PATH = Path("FakeOut")
+
+
+def test_shared_skin_extract_and_mapping_keep_full_changed_event(tmp_path: Path, monkeypatch) -> None:
+    """同事件四条扩展为六条：文件仅六份，事件保留六条，重叠导出选择只解析六个文件。"""
+    ctx = _build_fake_ctx(game_path=tmp_path / "game", cache_path=tmp_path / "cache")
+    reader = _FakeReader()
+    wad = ctx.game_path / "Game/voice.wad.client"
+    wad.parent.mkdir(parents=True)
+    wad.write_bytes(b"wad")
+    category = "Test_Base_VO"
+    expected_count = 6
+    banks = []
+    for skin_id, entries in (("1000", ("base",)), ("1013", ("base", "extra")), ("1014", ("base", "extra"))):
+        for entry in entries:
+            for kind in ("audio", "events"):
+                binding = BankBinding(
+                    category=category,
+                    path=f"assets/{entry}_{kind}.bnk",
+                    normalized_path="",
+                    kind="BNK",
+                    wad="Game/voice.wad.client",
+                    entry_hash=f"{entry}-{kind}",
+                    source_bin=f"data/{skin_id}.bin",
+                    role=BindingRole.LOCALIZED,
+                    status=BindingStatus.RESOLVED,
+                    sub_entity=skin_id,
+                )
+                banks.append(AudioBank(sub_id=skin_id, audio_type="VO", binding=binding))
+    entity = AudioEntityData(
+        entity_id="1",
+        entity_name="Test",
+        entity_alias="test",
+        entity_title=None,
+        entity_type="champion",
+        sub_entities={
+            key: {"name": name, "categories": {}}
+            for key, name in (("1000", "Base"), ("1013", "Skin"), ("1014", "Chroma"))
+        },
+        wad_root="Game/voice.wad.client",
+        resource_banks=tuple(banks),
+        binding_diagnostics=BindingDiagnostics(completeness=Completeness.COMPLETE),
+        skin_parents={"1000": None, "1013": "1000", "1014": "1013"},
+        events={key: {"events": {category: ["play"]}} for key in ("1000", "1013", "1014")},
+    )
+
+    def extract_files(raw: bytes) -> list:
+        """只隔离第三方 BNK 边界，保留本项目的文件归属与持久化流程。"""
+        if raw.endswith(b"_events.bnk"):
+            return []
+        ids = (1, 2, 3, 4) if b"base_" in raw else (5, 6)
+        return [
+            SimpleNamespace(id=value, data=b"wem", save_file=lambda path, value=value: path.write_bytes(bytes([value])))
+            for value in ids
+        ]
+
+    class SharedWad:
+        """返回声明路径作为解析器测试输入，支持真实 WAD 缓存的弱引用合同。"""
+
+        def extract(self, paths, **_kwargs):
+            """返回本轮明确请求的容器。"""
+            return [path.encode() for path in paths]
+
+    monkeypatch.setattr(unpack_entity, "_get_wad_instance", lambda *_args, **_kwargs: SharedWad())
+    monkeypatch.setattr(unpack_entity, "BNK", lambda raw: SimpleNamespace(extract_files=lambda: extract_files(raw)))
+    monkeypatch.setattr(
+        mapping_entity,
+        "_build_bound_category_mapping",
+        lambda bank, *_args, **_kw: (
+            _FakeAudioMapping({"play": [1, 2, 3, 4] if "base_" in bank.binding.path else [5, 6]}),
+            None,
+        ),
+    )
+
+    for _ in range(2):
+        stats = unpack_entity.unpack_entity(entity, reader, ctx=ctx, max_workers=2)
+        assert stats.overall_result.value == "success"
+        refs = enumerate_audio_refs(ctx, entity, reader.version)
+        assert len(refs) == expected_count
+        assert {ref.sub_entity for ref in refs} == {"1000", "1013"}
+
+    mapping = build_entity(entity, reader, ctx=ctx)
+    event = mapping["skins"]["1013"]
+    assert event["events"][category] == {"play": [1, 2, 3, 4, 5, 6]}
+    assert set(resolve_audio_refs(ctx, entity, reader.version, event["audioPaths"][category]["play"])) == set(refs)
+    assert "1014" not in mapping["skins"]
+    assert mapping["mappingDiagnostics"]["mappedWemCount"] == expected_count
+    mapping_path = ctx.paths.hash_path / reader.version / "champions/1.msgpack"
+    stat = mapping_path.stat()
+    root = refs[0].path.parents[2]
+    nodes = tuple(
+        MappingNode(mapping_path, "champions", "1", (stat.st_size, stat.st_mtime_ns), (skin, category, "play"))
+        for skin in ("1000", "1013")
+    )
+    scope = AudioScope(root, nodes=nodes)
+    assert set(scope.resolve_files()) == {ref.path for ref in refs}
+
+    legacy_dir = root / format_sub_entity_folder_name("1014", "Chroma") / "VO"
+    legacy_dir.mkdir(parents=True)
+    (legacy_dir / "1.wem").write_bytes(bytes([1]))
+    (legacy_dir / "2.wem").write_bytes(b"different")
+    (legacy_dir / "99.wem").write_bytes(b"unknown")
+    diagnostic = inspect_shared_copies(entity, enumerate_audio_refs(ctx, entity, reader.version))
+    assert diagnostic["sharedCopyPaths"] == [(legacy_dir / "1.wem").relative_to(root).as_posix()]
+    assert set(diagnostic["unverifiedSharedPaths"]) == {
+        (legacy_dir / name).relative_to(root).as_posix() for name in ("2.wem", "99.wem")
+    }
+    assert {path.name for path in legacy_dir.glob("*.wem")} == {"1.wem", "2.wem", "99.wem"}
 
 
 class _FakeReader:
@@ -592,7 +702,7 @@ def test_local_mapping_uses_binding_wad_namespace_and_path_level_audio_refs(
 
 @pytest.mark.parametrize("source", ["missing", "shared", "different_wad", "different_entry", "unresolved"])
 def test_local_mapping_without_events_writes_partial_diagnostics(tmp_path: Path, monkeypatch, source: str) -> None:
-    """仅同一物理 Base bank 可继承事件；缺失、冲突与不同资源仍不完整。"""
+    """同源 Base 只记录共享关系；缺失、冲突与不同资源仍不完整。"""
     binding = BankBinding(
         category="Test_Base_VO",
         path="assets/voice_events.bnk",
@@ -643,7 +753,11 @@ def test_local_mapping_without_events_writes_partial_diagnostics(tmp_path: Path,
     )
 
     if source == "shared":
-        assert result["skins"]["1001"]["events"] == {"Test_Base_VO": {"evt": [101]}}
+        assert "1001" not in result["skins"]
+        assert result["sharedAudio"]["1001"]["Test_Base_VO"] == {
+            "status": "shared",
+            "sources": [{"skinId": "1000", "category": "Test_Base_VO"}],
+        }
         assert result["mappingDiagnostics"]["completeness"] == "complete"
         assert result["mappingDiagnostics"]["missingEventCategories"] == []
     else:
@@ -664,9 +778,8 @@ def test_local_mapping_without_events_writes_partial_diagnostics(tmp_path: Path,
             get_champion_banks=lambda _id: {"skins": {}, "skinAudio": {"1001": {"VO": "shared", "SFX": "absent"}}},
         )
         integrated = mapping_entity.integrate_entity(entity_data, reader, result)
-        assert [skin["id"] for skin in integrated["data"]["skins"]] == [1000, 1001]
-        assert integrated["data"]["skins"][1]["skinNames"] == {"zh_CN": "炫彩"}
-        assert integrated["data"]["skins"][1]["events"]["Test_Base_VO"]["mapping"] == {"evt": [101]}
+        assert [skin["id"] for skin in integrated["data"]["skins"]] == [1000]
+        assert integrated["sharedAudio"] == result["sharedAudio"]
         assert integrated["data"]["skinAudio"]["1001"]["VO"] == "shared"
 
 

@@ -22,6 +22,7 @@ from lol_audio_unpack.app.results import FailureDetail
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.model import AudioBank, AudioEntityData
 from lol_audio_unpack.model.binding import SUCCESS_STATUSES
+from lol_audio_unpack.model.skin_audio import SkinAudio
 from lol_audio_unpack.runtime.wad import extract_wad, get_wad, resolve_bound_wad
 from lol_audio_unpack.utils.logging import performance_monitor
 
@@ -194,6 +195,8 @@ def _persist_bound_container(  # noqa: PLR0911, PLR0913, PLR0917
             if file_limits is not None and destination_path not in file_limits:
                 continue
             matched_paths.add(destination_path)
+            if destination_path in persisted_paths:
+                continue
             if destination_path.parent not in prepared_dirs:
                 destination_path.parent.mkdir(parents=True, exist_ok=True)
                 prepared_dirs.add(destination_path.parent)
@@ -294,7 +297,15 @@ def _unpack_bound_entity(  # noqa: PLR0913, PLR0917
     requested: dict[str, dict[tuple[str, str], AudioBank]] = {}
     active_banks: list[AudioBank] = []
 
-    for bank in entity_data.resource_banks:
+    banks = entity_data.resource_banks
+    if entity_data.entity_type == "champion":
+        audio = SkinAudio(banks, entity_data.skin_parents)
+        banks = audio.output_banks()
+        stats.shared_audio = audio.shared_payload()
+        if shared_count := len(entity_data.resource_banks) - len(banks):
+            logger.info("{} 复用 {} 条同源资源声明，只写出规范归属的音频", entity_data.entity_name, shared_count)
+
+    for bank in banks:
         binding = bank.binding
         if bank.audio_type in exclude_types:
             continue

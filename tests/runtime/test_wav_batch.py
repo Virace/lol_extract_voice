@@ -48,6 +48,8 @@ def test_batch_keeps_paths_counts_and_retry_evidence(tmp_path: Path, monkeypatch
     assert (result.success_count, result.failed_count, result.skipped_count) == (1, 1, 1)
     assert set(calls[0]) == {root / keys[0], root / keys[1]}
     assert result.status == "partial"
+    assert not (output / "skin/VO/1.wav").exists()
+    assert result.failures[0].output_path == str(output / "skin/VO/1.wav")
     original = result.report_path.read_bytes()
     retried = batch.retry_batch(result)
     assert calls[1] == (root / keys[1],)
@@ -59,6 +61,43 @@ def test_batch_keeps_paths_counts_and_retry_evidence(tmp_path: Path, monkeypatch
     assert (output / "skin/VO/1.wav").read_bytes() == b"wav"
     assert not (output / "base/VO/3.wav").exists()
     assert json.loads(original)["failed_count"] == 1
+    completed_calls = len(calls)
+    repeated = batch.run_batch(scope, output, options=WavOutputOptions(), report_root=tmp_path / "reports")
+    assert (repeated.success_count, repeated.skipped_count) == (0, 3)
+    assert len(calls) == completed_calls
+
+
+@pytest.mark.parametrize("crash", [False, True])
+def test_failed_overwrite_preserves_previous_wav(tmp_path: Path, monkeypatch, crash: bool) -> None:
+    """失败或中断都不发布半成品，也不能损坏用户之前成功生成的 WAV。"""
+    source = tmp_path / "audio/1.wem"
+    source.parent.mkdir()
+    source.write_bytes(b"wem")
+    destination = tmp_path / "wavs/1.wav"
+    destination.parent.mkdir()
+    destination.write_bytes(b"previous wav")
+
+    def transcode(sources, output_root, **_kwargs):
+        """模拟写入部分数据后失败，覆盖正式文件的责任仍由本项目承担。"""
+        output = output_root / "1.wav"
+        output.write_bytes(b"partial")
+        if crash:
+            raise RuntimeError("interrupted")
+        failed = BatchTranscodeItemResult(sources[0], output, 0, 0, "write failed")
+        return BatchTranscodeSummary(source.parent, output_root, 1, 1, (failed,))
+
+    monkeypatch.setattr(batch, "transcode_many", transcode)
+    result = batch.run_batch(
+        AudioScope(source.parent, files=("1.wem",)),
+        destination.parent,
+        options=WavOutputOptions(),
+        report_root=tmp_path / "reports",
+        overwrite=True,
+    )
+
+    assert result.status == "failed"
+    assert destination.read_bytes() == b"previous wav"
+    assert set(destination.parent.iterdir()) == {destination}
 
 
 def test_missing_selected_source_is_failure_even_with_old_output(tmp_path: Path) -> None:

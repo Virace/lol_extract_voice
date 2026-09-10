@@ -18,6 +18,7 @@ from lol_audio_unpack.app.path_layout import (
 )
 from lol_audio_unpack.manager.files import find_data_file
 from lol_audio_unpack.model import AudioEntityData
+from lol_audio_unpack.model.skin_audio import SkinAudio
 
 from .types import AppContext
 
@@ -214,6 +215,53 @@ def enumerate_audio_refs(
                         progress(AudioIndexProgress(current=current, total=total))
 
     return tuple(sorted(refs, key=lambda item: item.relative_path))
+
+
+def inspect_shared_copies(entity_data: AudioEntityData, refs: tuple[AudioRef, ...]) -> dict[str, list[str]]:
+    """只读核对纯共享皮肤目录中的旧文件，不删除或隐藏任何产物。
+
+    Args:
+        entity_data: 当前英雄的完整资源声明。
+        refs: 已通过路径边界检查的目录索引；应在后台任务中调用。
+
+    Returns:
+        有共享来源且逐字节相同的旧文件，以及内容不同、规范文件缺失或无法读取的待核对文件。
+    """
+    layout = SkinAudio(entity_data.resource_banks, entity_data.skin_parents)
+    groups: dict[tuple[str, str], list] = {}
+    for bank in entity_data.resource_banks:
+        groups.setdefault((bank.sub_id, bank.audio_type), []).append(bank)
+    owners = {
+        key: {layout.owner(bank).sub_id for bank in banks}
+        for key, banks in groups.items()
+        if all(layout.is_shared((bank.sub_id, bank.binding.category)) for bank in banks)
+    }
+    by_key: dict[tuple[str | None, str | None, str], list[AudioRef]] = {}
+    for ref in refs:
+        by_key.setdefault((ref.sub_entity, ref.audio_type, ref.wem_id), []).append(ref)
+    copies, unverified = [], []
+    for ref in refs:
+        source_ids = owners.get((ref.sub_entity, ref.audio_type))
+        if not source_ids:
+            continue
+        candidates = [source for owner in source_ids for source in by_key.get((owner, ref.audio_type, ref.wem_id), ())]
+        try:
+            same = any(_matches_audio(ref.path, source.path) for source in candidates)
+        except OSError:
+            same = False
+        (copies if same else unverified).append(ref.relative_path)
+    return {"sharedCopyPaths": copies, "unverifiedSharedPaths": unverified}
+
+
+def _matches_audio(first: Path, second: Path) -> bool:
+    """逐块确认内容相等，避免仅凭 ID、文件尺寸或旧比较缓存识别副本。"""
+    if first.stat().st_size != second.stat().st_size:
+        return False
+    with first.open("rb") as left, second.open("rb") as right:
+        while chunk := left.read(64 * 1024):
+            if chunk != right.read(len(chunk)):
+                return False
+        return not right.read(1)
 
 
 def resolve_audio_refs(
@@ -420,7 +468,7 @@ def resolve_mapping_path(
         entity_id: 实体 ID。
         version: 当前数据版本号。
         integrate_data: 指定是否只查整合版或只查普通版。
-            为 ``None`` 时先尝试整合版，再回退普通版。
+            为 ``None`` 时选择最近生成的映射，时间相同时优先整合版。
 
     Returns:
         命中的映射文件路径；不存在时返回 ``None``。
@@ -435,10 +483,8 @@ def resolve_mapping_path(
     dev_mode = getattr(ctx.config, "dev_mode", False)
 
     if integrate_data is None:
-        for base_path in base_paths:
-            if (resolved := find_data_file(base_path, dev_mode=dev_mode)) is not None:
-                return resolved
-        return None
+        candidates = [path for base in base_paths if (path := find_data_file(base, dev_mode=dev_mode)) is not None]
+        return max(candidates, key=lambda path: path.stat().st_mtime_ns, default=None)
 
     suffix = ".yml" if dev_mode else ".msgpack"
     for base_path in base_paths:
@@ -473,6 +519,7 @@ __all__ = [
     "AudioIndexProgress",
     "AudioRef",
     "enumerate_audio_refs",
+    "inspect_shared_copies",
     "resolve_audio_refs",
     "resolve_audio_paths",
     "resolve_mapping_path",

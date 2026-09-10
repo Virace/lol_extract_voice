@@ -58,6 +58,7 @@ from lol_audio_unpack.manager.errors import (
 from lol_audio_unpack.manager.files import find_data_file, read_data
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.model.binding import RESOURCE_SCHEMA_VERSION
+from lol_audio_unpack.model.skin_audio import SKIN_AUDIO_VERSION, SkinAudio
 from lol_audio_unpack.utils.common import sanitize_filename
 
 if TYPE_CHECKING:
@@ -735,7 +736,9 @@ class EntityDataLoader:
             "mapping_file": "",
         }
 
-    def _load_preview_entity(self, entity_type: GuiEntityType, entity_id: str) -> AudioEntityData | None:
+    def _load_preview_entity(
+        self, entity_type: GuiEntityType, entity_id: str, *, allow_unprepared: bool = False
+    ) -> AudioEntityData | None:
         """未准备资源是正常目录状态；部分解包的有效绑定仍可用于浏览已有结果。"""
         if entity_type == "resource_packs":
             return self._build_entity_data(entity_type, entity_id)
@@ -748,8 +751,13 @@ class EntityDataLoader:
             ResourceSchemaMismatchError,
             DataVersionMismatchError,
             _ArtifactCorruptError,
-        ):
-            # 缺失与旧缓存留到用户任务处理，避免全量目录扫描制造数百条错误通知。
+        ) as exc:
+            if allow_unprepared:
+                # 浏览既有产物只需要可靠身份和输出布局，不应被解包专用 binding 门禁阻止。
+                logger.info("{} {} 资源缓存暂不可用，按实体元数据只读浏览已有音频：{}", entity_type, entity_id, exc)
+                factory = AudioEntityData.from_champion if entity_type == "champions" else AudioEntityData.from_map
+                return factory(int(entity_id), self.data_reader, ctx=self.ctx, include_resources=False)
+            # 目录扫描仍保留未准备状态，不逐实体输出预期日志。
             return None
 
     def _localized_champion_name(self, champion: dict) -> str:
@@ -1152,6 +1160,17 @@ class EntityDataLoader:
             entity_type=entity_type,
             entity_id=str(entity_id),
         )
+        if entity_type == "champions" and isinstance(mapping_data, dict):
+            entity = self._load_preview_entity(entity_type, str(entity_id))
+            if entity is not None:
+                layout = SkinAudio(entity.resource_banks, entity.skin_parents)
+                mapping_data = {**mapping_data, "skins": layout.mapping_differences(mapping_data.get("skins", {}))}
+                mapping_data["sharedAudio"] = layout.shared_payload()
+            if mapping_data.get("skinAudioVersion") != SKIN_AUDIO_VERSION:
+                mapping_data = {
+                    **mapping_data,
+                    "previewNotice": "事件映射来自旧版共享规则，请重新生成映射；已有音频仍可浏览。",
+                }
         return mapping_path, mapping_data, json.dumps(raw_mapping_data, ensure_ascii=False, indent=2)
 
     def load_audio_refs(
@@ -1171,7 +1190,7 @@ class EntityDataLoader:
         Returns:
             按相对路径排序的 WEM 引用；同一 ID 的不同路径会保留为独立项。
         """
-        entity_data = self._load_preview_entity(entity_type, str(entity_id))
+        entity_data = self._load_preview_entity(entity_type, str(entity_id), allow_unprepared=True)
         if entity_data is None:
             return ()
         return enumerate_audio_refs(
@@ -1200,7 +1219,7 @@ class EntityDataLoader:
         paths = _mapping_audio_paths(mapping_data)
         if not paths:
             return ()
-        entity_data = self._load_preview_entity(entity_type, str(entity_id))
+        entity_data = self._load_preview_entity(entity_type, str(entity_id), allow_unprepared=True)
         if entity_data is None:
             return ()
         return resolve_audio_refs(self.ctx, entity_data, self.data_reader.version, paths)
@@ -1226,7 +1245,7 @@ class EntityDataLoader:
             roots = {root for ref in audio_refs if (root := self._resolve_audio_ref_root(ref)) is not None}
             return tuple(sorted(roots, key=lambda path: str(path).casefold()))
 
-        entity_data = self._load_preview_entity(entity_type, str(entity_id))
+        entity_data = self._load_preview_entity(entity_type, str(entity_id), allow_unprepared=True)
         if entity_data is None:
             return ()
         return resolve_entity_audio_paths(self.ctx, entity_data, self.data_reader.version)

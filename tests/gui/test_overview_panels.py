@@ -11,12 +11,12 @@ from PySide6.QtCore import Qt
 import lol_audio_unpack.gui.service.data_loader as data_loader_module
 from lol_audio_unpack.app.artifacts import AudioRef
 from lol_audio_unpack.app.resource_pack import ResourcePackWadRef, build_resource_pack_key
+from lol_audio_unpack.gui.components.overview_entity_list import OverviewEntityListView
 from lol_audio_unpack.gui.components.preview_tree import (
     extract_preview_modifiers,
     extract_tree_groups,
     filter_preview_mapping_data,
 )
-from lol_audio_unpack.gui.components.special_content_tree import SpecialContentTreeView
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
 from lol_audio_unpack.gui.controllers.overview_preview import (
     ALL_AUDIO_PREVIEW_MODE,
@@ -37,7 +37,7 @@ def _make_special_row(
     name: str,
     group_name: str,
 ) -> dict:
-    """构造特殊内容树行为测试使用的最小行。"""
+    """构造特殊内容列表行为测试使用的最小行。"""
     return {
         "id": key.partition(":")[2],
         "key": key,
@@ -141,89 +141,7 @@ def test_overview_entity_list_panel_can_build_selection_sync_request(qtbot) -> N
     )
 
 
-def test_special_content_tree_keeps_one_level_groups_and_restores_expansion_after_search(qtbot) -> None:
-    """特殊目录分组不可选，搜索和数据刷新不应丢失会话展开状态。"""
-    tree = SpecialContentTreeView()
-    qtbot.addWidget(tree)
-    rows = [
-        _make_special_row(
-            key="champion:60001",
-            mode_key="legacy_champions",
-            name="安妮",
-            group_name="旧版英雄",
-        ),
-        _make_special_row(
-            key="champion:66600",
-            mode_key="doom_bots",
-            name="厄加特",
-            group_name="末日人机",
-        ),
-        _make_special_row(
-            key="champion:77702",
-            mode_key="swarm",
-            name="金克丝",
-            group_name="无尽狂潮",
-        ),
-    ]
-
-    tree.set_rows(rows)
-    model = tree.model()
-    legacy_group = model.index(0, 0)
-    doom_group = model.index(1, 0)
-    assert [model.index(row, 0).data() for row in range(model.rowCount())] == [
-        "旧版英雄 (1)",
-        "末日人机 (1)",
-        "无尽狂潮 (1)",
-    ]
-    assert not bool(legacy_group.flags() & Qt.ItemFlag.ItemIsSelectable)
-    assert legacy_group.data(Qt.ItemDataRole.AccessibleTextRole) == "旧版英雄，1 项"
-    assert "可展开或折叠" in legacy_group.data(Qt.ItemDataRole.AccessibleDescriptionRole)
-    assert tree.isExpanded(doom_group) is True
-
-    tree.collapseAll()
-    tree.set_rows(rows)
-    assert tree.expanded_mode_keys() == set()
-
-    tree.set_keyword("末日人机")
-    assert tree.visible_row_count() == 1
-    assert tree.isExpanded(tree.model().index(0, 0)) is True
-    tree.set_keyword("")
-    assert tree.expanded_mode_keys() == set()
-
-
-def test_special_content_tree_clear_then_reload_restores_default_expansion(qtbot) -> None:
-    """数据清空后的重新加载应回到 profile 默认展开，而非沿用空模型状态。"""
-    tree = SpecialContentTreeView()
-    qtbot.addWidget(tree)
-    rows = [
-        _make_special_row(
-            key="champion:60001",
-            mode_key="legacy_champions",
-            name="安妮",
-            group_name="旧版英雄",
-        ),
-        _make_special_row(
-            key="champion:66600",
-            mode_key="doom_bots",
-            name="厄加特",
-            group_name="末日人机",
-        ),
-        _make_special_row(
-            key="champion:77702",
-            mode_key="swarm",
-            name="金克丝",
-            group_name="无尽狂潮",
-        ),
-    ]
-
-    tree.set_rows(rows)
-    tree.set_rows([])
-    tree.set_rows(rows)
-
-    assert tree.expanded_mode_keys() == {"doom_bots", "swarm"}
-
-
-def test_special_content_tree_keeps_hidden_search_selection_state_restorable(qtbot) -> None:
+def test_special_content_list_keeps_hidden_search_selection_state_restorable(qtbot) -> None:
     """搜索中刷新时，隐藏的 special key 不得被视为已删除。"""
     panel = OverviewEntityListPanel()
     qtbot.addWidget(panel)
@@ -277,9 +195,9 @@ def test_special_content_tree_keeps_hidden_search_selection_state_restorable(qtb
     assert special_tree.currentIndex().data(Qt.ItemDataRole.UserRole)["key"] == "champion:77702"
 
 
-def test_special_content_tree_disables_selection_until_shared_data_is_ready(qtbot) -> None:
+def test_special_content_list_disables_selection_until_shared_data_is_ready(qtbot) -> None:
     """共享数据未就绪时特殊目录可浏览但不可选择。"""
-    tree = SpecialContentTreeView()
+    tree = OverviewEntityListView()
     qtbot.addWidget(tree)
     tree.set_rows(
         [
@@ -292,8 +210,7 @@ def test_special_content_tree_disables_selection_until_shared_data_is_ready(qtbo
         ]
     )
     tree.set_interaction_enabled(False)
-    group = tree.model().index(0, 0)
-    item = tree.model().index(0, 0, group)
+    item = tree.model().index(0, 0)
 
     assert not bool(item.flags() & Qt.ItemFlag.ItemIsSelectable)
     assert tree.toolTip() == "共享数据就绪后可选择特殊内容。"
@@ -411,7 +328,7 @@ def test_stale_resource_pack_snapshot_is_not_selectable(monkeypatch, tmp_path: P
 def test_invalid_resource_pack_snapshot_is_not_selectable_or_synced(qtbot) -> None:
     """旧 artifact 的无效 source snapshot 只能浏览，不能进入执行任务。"""
     key = build_resource_pack_key("Legacy.wad.client", "MODE_LEGACY")
-    tree = SpecialContentTreeView()
+    tree = OverviewEntityListView()
     qtbot.addWidget(tree)
     tree.set_rows(
         [
@@ -427,8 +344,7 @@ def test_invalid_resource_pack_snapshot_is_not_selectable_or_synced(qtbot) -> No
             }
         ]
     )
-    group = tree.model().index(0, 0)
-    item = tree.model().index(0, 0, group)
+    item = tree.model().index(0, 0)
     panel = OverviewEntityListPanel()
     qtbot.addWidget(panel)
 

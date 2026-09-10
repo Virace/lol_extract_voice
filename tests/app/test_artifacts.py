@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -138,6 +139,11 @@ def test_resolve_mapping_path_prefers_integrated_then_raw_with_fallback_suffixes
         )
         == integrated_path
     )
+
+    # 新生成的原始映射必须接替旧整合产物，避免界面仍使用旧的重复目录引用。
+    old_time = integrated_path.stat().st_mtime_ns
+    os.utime(raw_path, ns=(old_time + 1_000_000_000, old_time + 1_000_000_000))
+    assert resolve_mapping_path(ctx, entity_dir="champions", entity_id="1", version=version) == raw_path
 
 
 def test_resolve_mapping_path_exact_mode_does_not_fall_back_to_other_suffixes(tmp_path: Path) -> None:
