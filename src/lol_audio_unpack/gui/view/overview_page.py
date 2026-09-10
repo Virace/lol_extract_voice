@@ -58,7 +58,6 @@ from lol_audio_unpack.gui.components.preview_tree import (
     extract_preview_modifiers,
     filter_preview_mapping_data,
 )
-from lol_audio_unpack.gui.components.special_content_tree import SpecialContentTreeView
 from lol_audio_unpack.gui.controllers import (
     OverviewPreviewController,
     PreviewPlaybackController,
@@ -197,7 +196,7 @@ class OverviewPage(QWidget):
         self._preview_audio_output_device_key = DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY
         self._resource_pack_scan_worker: TaskWorker | None = None
         self._task_busy = False
-        self._entity_lists: dict[str, OverviewEntityListView | SpecialContentTreeView] = {}
+        self._entity_lists: dict[str, OverviewEntityListView] = {}
         self._build_ui()
         self.export_controller = AudioExportController(
             self.audioPreviewPanel.export_bar,
@@ -354,7 +353,7 @@ class OverviewPage(QWidget):
         self.previewPanel.preview_search_input.textChanged.connect(self._on_preview_search_text_changed)
         self.sync_selection_btn.clicked.connect(self._sync_selected_entities)
         self.clear_selection_btn.clicked.connect(self._clear_selected_entities)
-        self.entityListPanel.scan_resource_packs_btn.clicked.connect(self._select_resource_pack_wads)
+        self.entityListPanel.scan_resource_packs_action.triggered.connect(self._select_resource_pack_wads)
         self.reveal_file_btn.clicked.connect(self._reveal_current_preview_target)
         self.previewPanel.resource_source_open_requested.connect(self._open_resource_info_source)
         self.audio_preview_tree.audio_ref_toggle_requested.connect(self._on_audio_preview_toggle_requested)
@@ -454,7 +453,7 @@ class OverviewPage(QWidget):
     def _current_entity_type(self) -> str:
         return self.nav_pivot.currentRouteKey() or "champions"
 
-    def _current_entity_list(self) -> OverviewEntityListView | SpecialContentTreeView:
+    def _current_entity_list(self) -> OverviewEntityListView:
         return self._entity_lists[self._current_entity_type()]
 
     def _ensure_loader(self) -> EntityDataLoader | None:
@@ -597,7 +596,7 @@ class OverviewPage(QWidget):
 
         if entity_type == "special":
             self.entityListPanel.set_special_catalog_notice(
-                "特殊内容资源尚未准备，需要更新实体数据后才能显示完整状态。"
+                "特殊内容资源尚未准备。"
                 if all(
                     str(row.get("audio", "")) == "未准备" and str(row.get("mapping", "")) == "未准备"
                     for row in source_rows
@@ -699,12 +698,12 @@ class OverviewPage(QWidget):
         final_root = game_root / "Game" / "DATA" / "FINAL"
         paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "选择要扫描的历史资源包",
+            "选择本地 WAD，发现额外音频内容（经典英雄无需扫描）",
             str(final_root if final_root.is_dir() else game_root),
             "WAD 文件 (*.wad.client)",
         )
         if not paths:
-            self.entityListPanel.set_special_catalog_notice("尚未选择历史资源包。")
+            self.entityListPanel.set_special_catalog_notice("尚未选择本地资源包。")
             return
 
         refs: list[ResourcePackWadRef] = []
@@ -716,7 +715,7 @@ class OverviewPage(QWidget):
                 errors.append(str(exc))
         refs = list(dict.fromkeys(refs))
         if not refs:
-            self.entityListPanel.set_special_catalog_notice(errors[0] if errors else "未选择可扫描的历史资源包。")
+            self.entityListPanel.set_special_catalog_notice(errors[0] if errors else "未选择可扫描的本地资源包。")
             return
 
         if errors:
@@ -753,7 +752,7 @@ class OverviewPage(QWidget):
     def _on_resource_pack_scan_started(self) -> None:
         """显示资源包扫描中的可观察状态。"""
         self.entityListPanel.set_resource_pack_scan_enabled(False)
-        self.entityListPanel.set_special_catalog_notice("正在扫描所选历史资源包…")
+        self.entityListPanel.set_special_catalog_notice("正在从所选 WAD 发现音频内容，完成后可选择并创建解包任务…")
 
     def _on_resource_pack_scan_finished(self, result: object) -> None:
         """合并最新已持久化 resource-pack 行，并展示聚合成本与状态。"""
@@ -776,7 +775,7 @@ class OverviewPage(QWidget):
         self.background_work_changed.emit(False)
         self.export_controller.set_busy(self._task_busy or self._shared_data_state.blocks_new_tasks)
         self.entityListPanel.set_resource_pack_scan_enabled(self._app_context is not None)
-        self.entityListPanel.set_special_catalog_notice(f"历史资源包扫描失败: {error}")
+        self.entityListPanel.set_special_catalog_notice(f"本地资源包扫描失败: {error}")
 
     @staticmethod
     def _resource_pack_scan_message(result: object) -> str:
@@ -800,11 +799,11 @@ class OverviewPage(QWidget):
         if any(str(getattr(pack, "status", "")) == "conflict" for pack in packs):
             return f"扫描发现冲突，未覆盖已有资源包 artifact（{cost_text}）。"
         if status == "complete" and packs:
-            return f"历史资源包扫描完成，发现 {len(packs)} 个资源包（{cost_text}）。"
+            return f"本地资源包扫描完成，发现 {len(packs)} 个资源包（{cost_text}）。"
         if status == "partial":
-            return f"历史资源包扫描部分完成，发现 {len(packs)} 个资源包（{cost_text}）。"
+            return f"本地资源包扫描部分完成，发现 {len(packs)} 个资源包（{cost_text}）。"
         reason = next((reason for reason in reasons if reason), "未发现可用资源包")
-        return f"历史资源包扫描失败: {reason}（{cost_text}）。"
+        return f"本地资源包扫描失败: {reason}（{cost_text}）。"
 
     def _on_nav_changed(self, _key: str) -> None:
         if self._current_preview_key is not None and self._current_preview_key[0] != _key:
@@ -1258,15 +1257,29 @@ class OverviewPage(QWidget):
             unavailable = f"{stats.unavailable_audio_count:,} 项（按映射项计数）"
             structure = f"{stats.skin_count:,} 分组 · {stats.audio_type_count:,} 类型 · {stats.event_count:,} 事件"
 
+        details = {
+            "当前对象": self._current_preview_entity_name,
+            "本地音频文件": local_files,
+            "映射可用文件": mapping_files,
+            "事件中的可用引用": references,
+            "不可用映射项": unavailable,
+            "映射结构": structure,
+        }
+        shared = (self._current_preview_mapping_data or {}).get("sharedAudio", {})
+        if shared:
+            category_count = sum(len(categories) for categories in shared.values())
+            details["皮肤共享来源"] = f"{len(shared)} 个皮肤、{category_count} 个分类复用资源，完整来源见原始数据。"
+            details["差异规则"] = "纯继承事件不重复展开；变化事件保留完整音频引用，共享文件只输出一份。"
+        diagnostics = (self._current_preview_mapping_data or {}).get("mappingDiagnostics", {})
+        copies = diagnostics.get("sharedCopyPaths", [])
+        unverified = diagnostics.get("unverifiedSharedPaths", [])
+        if copies or unverified:
+            details["旧目录核对"] = (
+                f"上次映射检查：{len(copies)} 个共享同内容副本，{len(unverified)} 个待核对文件。"
+                "文件均保留在全部音频中，具体路径见原始数据；不计为皮肤新增内容。"
+            )
         self.previewPanel.set_resource_info(
-            {
-                "当前对象": self._current_preview_entity_name,
-                "本地音频文件": local_files,
-                "映射可用文件": mapping_files,
-                "事件中的可用引用": references,
-                "不可用映射项": unavailable,
-                "映射结构": structure,
-            },
+            details,
             self._current_mapping_path,
             self._current_audio_roots,
         )
@@ -1311,6 +1324,7 @@ class OverviewPage(QWidget):
             return
 
         context = self._app_context
+        logger.debug("全部音频索引启动：{} {}", request.entity_type, request.entity_id)
         self._audio_refs_request = request
         self._audio_refs_error = None
         self._audio_refs_progress = AudioIndexProgress(current=0, total=0)
@@ -1346,9 +1360,18 @@ class OverviewPage(QWidget):
     def _on_audio_refs_loaded(self, result: object) -> None:
         """接收后台枚举结果，并拒绝覆盖已切换的实体。"""
         request = self._audio_refs_request
+        if not isinstance(result, list | tuple) or any(not isinstance(ref, AudioRef) for ref in result):
+            self._on_audio_refs_failed("后台索引返回了无效结果，请重新选择实体后重试")
+            return
+        refs = tuple(result)
+        if request is not None and self._audio_refs_request_is_current(request):
+            indexed_paths = {ref.path for ref in refs}
+            if any(ref.path not in indexed_paths and ref.path.is_file() for ref in self._current_event_audio_refs):
+                self._on_audio_refs_failed("索引与已确认的事件音频不一致，请重新选择实体或检查输出配置")
+                return
         self._audio_refs_worker = None
         self._audio_refs_request = None
-        refs = tuple(ref for ref in result if isinstance(ref, AudioRef)) if isinstance(result, list | tuple) else ()
+        logger.debug("全部音频索引完成：{}，{} 个文件", request, len(refs))
         if request is not None and self._audio_refs_request_is_current(request):
             self._audio_refs_cache[request.key] = refs
             self._current_audio_refs = refs
@@ -1369,6 +1392,7 @@ class OverviewPage(QWidget):
     def _on_audio_refs_failed(self, error: str) -> None:
         """记录当前实体的后台枚举失败，并继续处理最新待加载实体。"""
         request = self._audio_refs_request
+        logger.warning("全部音频索引失败：{}，{}", request, error)
         self._audio_refs_worker = None
         self._audio_refs_request = None
         if request is not None and self._audio_refs_request_is_current(request):
@@ -1434,7 +1458,7 @@ class OverviewPage(QWidget):
         labels = {
             "champions": "查看英雄状态，选好后可直接发送到执行中心。",
             "maps": "查看地图状态，选好后可直接发送到执行中心。",
-            "special": "查看当前游戏数据支持的特殊内容，选好后可直接发送到执行中心。",
+            "special": "经典召唤师峡谷等模式使用当前客户端资源，选择英雄后可直接发送到执行中心。",
         }
         self.subtitle_label.setText(labels.get(entity_type, "查看实体状态，选好后可直接发送到执行中心。"))
 

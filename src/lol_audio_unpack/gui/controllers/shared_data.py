@@ -38,6 +38,7 @@ def build_shared_entity_reader_signature(config) -> tuple[str | bool, ...]:
     return (
         overrides[SettingKey.GAME_PATH],
         overrides[SettingKey.GAME_REGION],
+        config.prepare_data_on_startup,
     )
 
 
@@ -377,7 +378,11 @@ class SharedDataController(QObject):
         if generation != self.generation or self.app_context is None or self._scan_worker is not None:
             return
         self._replace_state(phase=phase, progress=None)
-        worker = self._scan_worker_cls(self.app_context, generation)
+        worker = self._scan_worker_cls(
+            self.app_context,
+            generation,
+            require_resources=self._get_config().prepare_data_on_startup,
+        )
         worker.progress.connect(self._on_scan_progress_payload)
         worker.finished.connect(self._on_scan_finished_payload)
         worker.error.connect(self._on_scan_error_payload)
@@ -521,6 +526,7 @@ class SharedDataController(QObject):
             return
         scope = scope or SharedDataRepairScope(full=True)
         overrides = dict(config.to_app_context_settings())
+        prepare_resources = config.prepare_data_on_startup
 
         def run_prepare(signals) -> SharedDataPreparationResult:
             return self._prepare_shared_entity_data(
@@ -528,6 +534,7 @@ class SharedDataController(QObject):
                 generation=generation,
                 scope=scope,
                 force_update=force_update,
+                prepare_resources=prepare_resources,
                 progress_callback=signals.progress.emit,
             )
 

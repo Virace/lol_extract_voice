@@ -93,9 +93,20 @@ extract_result = app.extract(OperationOptions(champion_ids=(1, 103)), include_ma
 和 entry 的实际绑定判断；无声明不推断具体来源，也不等于资源丢失。该字段是 v2 的附加信息，
 旧清单没有该字段时保持未知，可通过“重新生成实体数据”补齐。
 
-映射会为指向相同物理 bank 的原皮肤共享分类复用已知事件；正常复用不再计为缺事件。
-独立资源缺失、不同 bank 或解析失败仍保留不完整诊断。整合映射保留 `skinAudio`，
-`mappingDiagnostics.sharedEventCategories` 列出本轮复用原皮肤事件的分类。
+英雄 events 与 mapping 使用 `skinAudioVersion: 1` 标识完整事件与共享来源规则。普通 update 会重建
+没有该标记的旧 events 缓存，恢复以前按 Base 名称过滤的皮肤声明。解包报告、原始及整合 mapping
+附带 `sharedAudio`：按皮肤 ID、category 记录 `status`（`shared` / `mixed` / `unknown`）和
+`sources`（`skinId`、`category`）；原始 v2 binding 不改变。
+
+同一英雄内的同源容器只在规范皮肤归属下落盘，优先基础皮肤及结构化父级。mapping 省略完全继承
+的事件；同名事件如果新增、替换或减少音频引用，保留它的完整列表。比如四条扩展到六条，六条均
+保留在该皮肤的事件中，前四条 `audioPaths` 引用原文件；不能按 ID 全局合并不同来源的音频。
+旧事件缓存中的相同物理 bank 可以复用已知 Base 事件，并在 `mappingDiagnostics.sharedEventCategories`
+记录兼容恢复；独立资源缺失、不同 bank 或解析失败仍保留不完整诊断。
+
+重新 mapping 会只读核对纯共享皮肤目录的旧文件：`mappingDiagnostics.sharedCopyPaths` 记录与
+规范来源逐字节相同的文件，`unverifiedSharedPaths` 记录内容不同、来源文件缺失或无法读取的文件。
+两类文件都保留；这些字段是上次映射的诊断快照，不代表已经清理。GUI 全部音频仍枚举实际目录。
 
 解包时，解析成功但没有内嵌 WEM 的 BNK 记录为 `no_audio`，正常跳过；音频可能由配套 WPK
 提供。空字节、容器解析失败或有条目却没有可写音频仍属于错误。炫彩与普通皮肤均按清单中的

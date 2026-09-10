@@ -10,6 +10,7 @@ from loguru import logger
 
 import lol_audio_unpack.gui.service.data_loader as data_loader_module
 import lol_audio_unpack.gui.service.worker as worker_module
+from lol_audio_unpack.app.path_layout import format_entity_folder_name, format_sub_entity_folder_name
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader, build_scan_failure_result
 from lol_audio_unpack.gui.service.worker import SharedDataScanWorker
 from lol_audio_unpack.gui.shared_data import (
@@ -23,6 +24,7 @@ from lol_audio_unpack.manager.errors import (
     SharedDataCorruptError,
     SharedDataMissingError,
 )
+from lol_audio_unpack.manager.files import write_data
 from lol_audio_unpack.model.binding import RESOURCE_SCHEMA_VERSION
 
 pytestmark = pytest.mark.unit
@@ -30,6 +32,94 @@ pytestmark = pytest.mark.unit
 EXPECTED_REQUIRED_COUNT = 2
 FAILING_CHAMPION_ID = 2
 WORKER_GENERATION = 10
+
+
+@pytest.mark.parametrize("require_resources", [False, True])
+def test_catalog_without_bin_cache_is_browsable_by_default(tmp_path: Path, require_resources: bool) -> None:
+    """真实基础清单足以浏览；只有提前准备模式才要求全部资源缓存。"""
+    ctx = SimpleNamespace(
+        config=SimpleNamespace(
+            dev_mode=True, game_path=tmp_path / "game", group_by_type=False, include_types=("VO", "SFX")
+        ),
+        paths=SimpleNamespace(
+            manifest_path=tmp_path / "manifest", hash_path=tmp_path / "hashes", audio_path=tmp_path / "audios"
+        ),
+        runtime_cache={"resolved_runtime_version": "16.17"},
+        game_region="zh_CN",
+    )
+    manifest = ctx.paths.manifest_path / "16.17"
+    write_data(
+        {
+            "metadata": {"gameVersion": "16.17"},
+            "champions": {"1": _champion(1, "Annie"), "60001": _champion(60001, "Jade_Annie")},
+            "maps": {"0": _map(0), "11": _map(11)},
+        },
+        manifest / "data",
+        dev_mode=True,
+    )
+    loader = EntityDataLoader(ctx)
+
+    result = loader.scan_catalog(1, require_resources=require_resources)
+
+    if require_resources:
+        assert result.readiness is SharedDataReadiness.FAILED
+        assert {problem.code for problem in result.problems} == {SharedDataProblemCode.BANK_ARTIFACT_MISSING}
+    else:
+        assert result.readiness is SharedDataReadiness.COMPLETE
+        assert result.champions.rows[0]["name"] == "Annie"
+        assert result.champions.unprepared_ids == ("1",)
+        assert result.maps.unprepared_ids == ("0", "11")
+        assert result.special.unprepared_ids == ("champion:60001",)
+        assert loader.load_audio_refs("champions", "1") == ()
+        assert loader.load_audio_roots("maps", "11") == ()
+        assert loader.load_mapping_preview("champions", "1") == (None, None, "")
+    assert not (manifest / "banks").exists()
+    assert not (manifest / "events").exists()
+
+    if not require_resources:
+        # 旧 binding 无法驱动解包，但元数据身份仍足以安全定位已有音频，不能缓存为假空。
+        write_data({"metadata": {"gameVersion": "16.17"}, "skins": {}}, manifest / "banks/champions/1", dev_mode=True)
+        audio_dir = ctx.paths.audio_path / "16.17/champions" / format_entity_folder_name("1", "annie", "Annie")
+        source = audio_dir / format_sub_entity_folder_name("1000", "基础皮肤") / "VO/10.wem"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"wem")
+        refs = loader.load_audio_refs("champions", "1")
+        assert len(refs) == 1 and refs[0].path == source.resolve()
+        assert loader.load_audio_roots("champions", "1") == (audio_dir,)
+        mapping = {
+            "skins": {
+                "1000": {
+                    "events": {"Base_VO": {"play": [10]}},
+                    "audioPaths": {"Base_VO": {"play": [source.relative_to(audio_dir).as_posix()]}},
+                }
+            }
+        }
+        assert loader.load_event_audio_refs("champions", "1", mapping) == refs
+
+
+def test_preparation_checks_events_after_extraction_only(monkeypatch, tmp_path: Path) -> None:
+    """已有绑定但缺英雄事件时，开启提前准备必须发现并补齐事件。"""
+    loader = _build_loader(monkeypatch, champions=[_champion(1, "Annie")], maps=[_map(0), _map(11)])
+    loader.data_reader.champion_events_dir = tmp_path / "champion-events"
+    loader.data_reader.map_events_dir = tmp_path / "map-events"
+    for entity_id in (0, 11):
+        write_data(
+            {"metadata": {"gameVersion": "16.16"}},
+            loader.data_reader.map_events_dir / str(entity_id),
+            dev_mode=False,
+        )
+
+    assert loader.scan_catalog(1).readiness is SharedDataReadiness.COMPLETE
+    pending = loader.scan_catalog(2, require_resources=True)
+    assert pending.champions.failures[0].code is SharedDataProblemCode.EVENT_ARTIFACT_MISSING
+    assert pending.all_blocking_problems_repairable is True
+
+    write_data(
+        {"metadata": {"gameVersion": "16.16"}, "skins": {}},
+        loader.data_reader.champion_events_dir / "1",
+        dev_mode=False,
+    )
+    assert loader.scan_catalog(3, require_resources=True).readiness is SharedDataReadiness.COMPLETE
 
 
 def test_optional_special_without_artifact_stays_unprepared_without_warning(tmp_path: Path) -> None:
@@ -297,7 +387,8 @@ def test_scan_worker_emits_one_typed_result_and_progress(monkeypatch) -> None:
         def __init__(self, _ctx) -> None:
             pass
 
-        def scan_catalog(self, generation: int, *, progress) -> SharedDataScanResult:
+        def scan_catalog(self, generation: int, *, progress, require_resources: bool) -> SharedDataScanResult:
+            assert require_resources is False
             progress(SimpleNamespace(generation=generation, stage_key="champions"))
             return expected
 

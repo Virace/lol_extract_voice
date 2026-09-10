@@ -67,14 +67,14 @@ SWARM_PROFILE = SpecialContentProfile(
 LEGACY_CHAMPIONS_PROFILE = SpecialContentProfile(
     mode_key="legacy_champions",
     prefix="Jade_",
-    display_name="旧版英雄",
-    english_name="Legacy Champions",
+    display_name="经典召唤师峡谷",
+    english_name="Classic Summoner's Rift",
 )
 HISTORICAL_RESOURCE_PACKS_PROFILE = SpecialContentProfile(
     mode_key="historical_resource_packs",
     prefix="",
-    display_name="历史资源包",
-    english_name="Historical Resource Packs",
+    display_name="本地资源包",
+    english_name="Local Resource Packs",
 )
 SPECIAL_CONTENT_PROFILES = (
     LEGACY_CHAMPIONS_PROFILE,

@@ -57,7 +57,7 @@ def should_display_overview_row(row: dict[str, Any]) -> bool:
     Returns:
         只要存在基础 ID，即认为该行可用于总览展示。
     """
-    return bool(str(row.get("id", "")).strip())
+    return bool(str(row.get("key", row.get("id", ""))).strip())
 
 
 def build_overview_item_text(row: dict[str, Any]) -> str:
@@ -69,7 +69,7 @@ def build_overview_item_text(row: dict[str, Any]) -> str:
     Returns:
         当前实体的展示名称。
     """
-    return str(row.get("name", "") or "")
+    return str(row.get("display_name", row.get("name", "")) or "")
 
 
 def _build_overview_item_tooltip(row: dict[str, Any]) -> str:
@@ -81,18 +81,14 @@ def _build_overview_item_tooltip(row: dict[str, Any]) -> str:
     Returns:
         多行 tooltip 文本。
     """
+    if row.get("tooltip"):
+        return str(row["tooltip"])
     entity_id = str(row.get("id", "")).strip()
     alias = str(row.get("alias", "")).strip() or "无 alias"
     mapping_path = str(row.get("mapping_file", "") or "当前还没有 mapping 文件")
     audio_status = str(row.get("audio", "未存在"))
     mapping_status = str(row.get("mapping", "未存在"))
-    return (
-        f"ID: {entity_id}\n"
-        f"Alias: {alias}\n"
-        f"音频: {audio_status}\n"
-        f"映射: {mapping_status}\n"
-        f"文件: {mapping_path}"
-    )
+    return f"ID: {entity_id}\nAlias: {alias}\n音频: {audio_status}\n映射: {mapping_status}\n文件: {mapping_path}"
 
 
 def _build_overview_list_styles() -> tuple[str, str]:
@@ -110,9 +106,7 @@ def _build_overview_idle_background() -> QColor:
 
 def _build_overview_interaction_colors() -> tuple[QColor, QColor, QColor]:
     """构造总览列表 hover/selected 的中性底色与主题 accent。"""
-    selection_accent = get_accent_preset(current_accent_preset_id()).scale.color(
-        300 if isDarkTheme() else 700
-    )
+    selection_accent = get_accent_preset(current_accent_preset_id()).scale.color(300 if isDarkTheme() else 700)
     return (
         resolve_fluent_neutral_surface("subtle_hover"),
         resolve_fluent_neutral_surface("subtle_selected"),
@@ -126,6 +120,7 @@ class OverviewEntityListModel(QAbstractListModel):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._rows: list[dict[str, Any]] = []
+        self._interactive = True
 
     def rowCount(self, parent: QModelIndex = EMPTY_MODEL_INDEX) -> int:
         """返回当前列表可展示的实体数量。"""
@@ -140,7 +135,7 @@ class OverviewEntityListModel(QAbstractListModel):
 
         row = self._rows[index.row()]
         value: Any = None
-        if role == Qt.ItemDataRole.DisplayRole:
+        if role in (Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.AccessibleTextRole):
             value = build_overview_item_text(row)
         elif role in (Qt.ItemDataRole.ToolTipRole, OVERVIEW_TOOLTIP_ROLE):
             value = _build_overview_item_tooltip(row)
@@ -149,7 +144,7 @@ class OverviewEntityListModel(QAbstractListModel):
         elif role in (Qt.ItemDataRole.UserRole, OVERVIEW_ROW_ROLE):
             value = dict(row)
         elif role == OVERVIEW_ENTITY_ID_ROLE:
-            value = str(row.get("id", "")).strip()
+            value = str(row.get("key", row.get("id", ""))).strip()
         elif role == OVERVIEW_ALIAS_ROLE:
             value = str(row.get("alias", "")).strip()
         elif role == OVERVIEW_AUDIO_STATUS_ROLE:
@@ -162,9 +157,26 @@ class OverviewEntityListModel(QAbstractListModel):
                     str(row.get("id", "")),
                     str(row.get("name", "")),
                     str(row.get("alias", "")),
+                    str(row.get("display_name", "")),
+                    str(row.get("search_text", "")),
                 )
             ).lower()
         return value
+
+    def flags(self, index: QModelIndex) -> Qt.ItemFlag:
+        """未就绪或来源快照失效的实体仍可浏览，但不可加入任务选择。"""
+        if not index.isValid() or not 0 <= index.row() < len(self._rows):
+            return Qt.ItemFlag.NoItemFlags
+        flags = Qt.ItemFlag.ItemIsEnabled
+        if self._interactive and self._rows[index.row()].get("selectable", True):
+            flags |= Qt.ItemFlag.ItemIsSelectable
+        return flags
+
+    def set_interaction_enabled(self, enabled: bool) -> None:
+        """更新选择门禁，保持列表和浏览位置。"""
+        self._interactive = enabled
+        if self._rows:
+            self.dataChanged.emit(self.index(0, 0), self.index(len(self._rows) - 1, 0))
 
     def set_rows(self, rows: list[dict[str, Any]]) -> None:
         """整体替换当前实体行数据。
@@ -179,7 +191,7 @@ class OverviewEntityListModel(QAbstractListModel):
 
     def entity_ids(self) -> set[str]:
         """返回当前 source model 中存在的实体 ID 集合。"""
-        return {str(row.get("id", "")).strip() for row in self._rows if str(row.get("id", "")).strip()}
+        return {str(row.get("key", row.get("id", ""))).strip() for row in self._rows}
 
 
 class OverviewEntityFilterModel(QSortFilterProxyModel):
@@ -381,6 +393,11 @@ class OverviewEntityListView(QListView):
         """更新当前关键字过滤。"""
         self._proxy_model.set_keyword(keyword)
 
+    def set_interaction_enabled(self, enabled: bool) -> None:
+        """同步选择门禁，同时允许滚动浏览已有目录。"""
+        self._source_model.set_interaction_enabled(enabled)
+        self.setToolTip("共享数据就绪后可选择特殊内容。" if not enabled else "")
+
     def visible_row_count(self) -> int:
         """返回当前代理模型中可见的行数。"""
         return self._proxy_model.rowCount()
@@ -423,8 +440,7 @@ class OverviewEntityListView(QListView):
             if index.isValid():
                 selection_model.select(
                     index,
-                    QItemSelectionModel.SelectionFlag.Select
-                    | QItemSelectionModel.SelectionFlag.Rows,
+                    QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
                 )
 
         current_index = self.find_index_by_entity_id(current_entity_id)

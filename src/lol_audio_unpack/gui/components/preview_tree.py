@@ -6,7 +6,17 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QAbstractItemModel, QEvent, QModelIndex, QPoint, QPointF, QRect, Qt, Signal
+from PySide6.QtCore import (
+    QAbstractItemModel,
+    QEvent,
+    QModelIndex,
+    QPersistentModelIndex,
+    QPoint,
+    QPointF,
+    QRect,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import QStyle, QStyleOptionViewItem, QTreeView
 from qfluentwidgets import (
@@ -19,7 +29,7 @@ from qfluentwidgets.components.widgets.scroll_bar import SmoothScrollDelegate
 
 from lol_audio_unpack.app.artifacts import AudioRef
 from lol_audio_unpack.app.audio_scope import MappingNode
-from lol_audio_unpack.app.audio_selection import AudioSelection
+from lol_audio_unpack.app.audio_selection import AudioChoice, AudioSelection
 from lol_audio_unpack.gui.common.styles import (
     build_fluent_tree_shell_theme_pair,
     resolve_fluent_neutral_surface,
@@ -210,6 +220,7 @@ class _PreviewTreeNode:
     children_loaded: bool = False
     key: tuple[str, ...] = ()
     members: frozenset[Path] | None = None
+    choices: tuple[AudioChoice, ...] | None = None
     missing_count: int = 0
 
     def row_in_parent(self) -> int:
@@ -772,17 +783,19 @@ class PreviewTreeModel(QAbstractItemModel):
         elif role == NODE_LOADED_ROLE:
             value = node.children_loaded
         elif role == Qt.ItemDataRole.CheckStateRole and self.selection_mode:
-            members = self.selection_paths(index)
-            count = self.audio_selection.count_paths(members) if self.audio_selection is not None else 0
+            choices = self.selection_choices(index)
+            total = sum(len(choice.paths) for choice in choices)
+            count = self.audio_selection.count_choices(choices) if self.audio_selection is not None else 0
             value = (
                 Qt.CheckState.Checked
-                if members and count == len(members)
+                if total and count == total
                 else (Qt.CheckState.PartiallyChecked if count else Qt.CheckState.Unchecked)
             )
         elif role == Qt.ItemDataRole.ToolTipRole and self.selection_mode:
-            members = self.selection_paths(index)
-            count = self.audio_selection.count_paths(members) if self.audio_selection is not None else 0
-            value = f"已选 {count}/{len(members)} 个可用音频；另有 {node.missing_count} 个对应文件不可用"
+            choices = self.selection_choices(index)
+            total = sum(len(choice.paths) for choice in choices)
+            count = self.audio_selection.count_choices(choices) if self.audio_selection is not None else 0
+            value = f"已选 {count}/{total} 个可用音频引用；另有 {node.missing_count} 个对应文件不可用"
         return value
 
     def selection_paths(self, index: QModelIndex) -> frozenset[Path]:
@@ -790,16 +803,29 @@ class PreviewTreeModel(QAbstractItemModel):
         node = self._node_from_index(index)
         if node is None:
             return frozenset()
-        if node.members is not None:
-            return node.members
+        if node.members is None:
+            node.members = frozenset().union(*(choice.paths for choice in self.selection_choices(index)))
+        return node.members
+
+    def selection_choices(self, index: QModelIndex) -> tuple[AudioChoice, ...]:
+        """保留完整事件身份；父节点聚合事件，单叶只修改所属事件中的路径。"""
+        node = self._node_from_index(index)
+        if node is None:
+            return ()
+        if node.choices is not None:
+            return node.choices
         if node.kind == "audio_id":
-            node.members = frozenset((node.audio_ref.path,)) if node.audio_ref is not None else frozenset()
             node.missing_count = int(node.audio_ref is None)
-            return node.members
+            node.choices = (
+                (AudioChoice(node.parent.key, frozenset((node.audio_ref.path,))),)
+                if node.audio_ref is not None and node.parent is not None
+                else ()
+            )
+            return node.choices
         group = self._scope_groups.get(node.key[0], {})
         events = group.get("events", {})
         paths = group.get("audioPaths", {})
-        members: set[Path] = set()
+        choices = []
         missing = 0
         for audio_type, event_group in events.items():
             if len(node.key) > 1 and str(audio_type) != node.key[1]:
@@ -814,6 +840,7 @@ class PreviewTreeModel(QAbstractItemModel):
                 has_paths, event_paths = _event_audio_paths(paths.get(audio_type, {}), event_name)
                 ids = {str(value) for value in audio_ids}
                 event_refs = _index_event_refs(event_paths, self._audio_refs_by_path)
+                members: set[Path] = set()
                 for audio_id in ids:
                     resolution = _resolve_event_audio_refs(
                         audio_id,
@@ -823,23 +850,25 @@ class PreviewTreeModel(QAbstractItemModel):
                     )
                     members.update(ref.path for ref in resolution.audio_refs)
                     missing += resolution.unavailable_count
-        node.members = frozenset(members)
+                if members:
+                    key = (node.key[0], str(audio_type), str(event_name))
+                    source = (
+                        replace(self.mapping_source, key=key) if has_paths and self.mapping_source is not None else None
+                    )
+                    choices.append(AudioChoice(key, frozenset(members), source))
+        node.choices = tuple(choices)
         node.missing_count = missing
-        return node.members
+        return node.choices
 
     def setData(self, index: QModelIndex, value: Any, role: int = int(Qt.ItemDataRole.EditRole)) -> bool:
         """把复选框动作交给共享选择，保留浏览焦点和懒加载树。"""
         if role != Qt.ItemDataRole.CheckStateRole or not self.selection_mode or self.audio_selection is None:
             return False
-        members = self.selection_paths(index)
-        if not members:
+        choices = self.selection_choices(index)
+        if not choices:
             return False
         checked = value in (Qt.CheckState.Checked, Qt.CheckState.Checked.value)
-        node = self.scope_node(index)
-        if node is not None:
-            self.audio_selection.set_node(node, members, checked)
-        else:
-            self.audio_selection.set_paths(members, checked)
+        self.audio_selection.set_choices(choices, checked)
         self.selection_changed.emit()
         return True
 
@@ -1125,6 +1154,7 @@ class PreviewTreeView(QTreeView):
     audio_context_menu_requested = Signal(object, QPoint)
     audio_ref_selected = Signal(object)
     node_export_requested = Signal(object, QPoint)
+    export_selection_requested = Signal(QModelIndex, QModelIndex)
 
     def _index_depth(self, index: QModelIndex) -> int:
         """返回当前节点深度。"""
@@ -1401,6 +1431,8 @@ class PreviewTreeView(QTreeView):
         """
         super().__init__(parent)
         self._hovered_index = QModelIndex()
+        self._ctrl_export_click = False
+        self._export_anchor = QPersistentModelIndex()
         self._active_audio_path: Path | None = None
         self._active_audio_progress = 0.0
         self._active_audio_is_playing = False
@@ -1427,6 +1459,7 @@ class PreviewTreeView(QTreeView):
 
     def _on_current_changed(self, current: QModelIndex, _previous: QModelIndex) -> None:
         """在用户选择精确事件叶子时上报其稳定音频引用。"""
+        self._export_anchor = QPersistentModelIndex()
         audio_ref = self._audio_ref_for_index(current)
         if audio_ref is not None:
             self.audio_ref_selected.emit(audio_ref)
@@ -1444,8 +1477,37 @@ class PreviewTreeView(QTreeView):
                 self.viewport().update()
         return super().viewportEvent(event)
 
+    def mousePressEvent(self, event) -> None:
+        """Ctrl 点击正文时请求导出多选，展开箭头和播放按钮保持原行为。"""
+        position = event.position().toPoint()
+        index = self.indexAt(position)
+        previous = QModelIndex(self._export_anchor)
+        option = QStyleOptionViewItem()
+        option.rect = self.visualRect(index)
+        body_click = (
+            event.button() == Qt.MouseButton.LeftButton
+            and index.isValid()
+            and self._content_rect(option, index).contains(position)
+            and not (
+                self.model().selection_mode
+                and audio_check_rect(self.visualRect(index), self.viewport().width()).contains(position)
+            )
+        )
+        ctrl_select = body_click and bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        self._ctrl_export_click = ctrl_select
+        super().mousePressEvent(event)
+        if event.button() == Qt.MouseButton.LeftButton:
+            # 导航焦点和播放动作不能充当自动多选的第一项，重建模型会使锚点失效。
+            self._export_anchor = QPersistentModelIndex(index) if body_click else QPersistentModelIndex()
+        if ctrl_select:
+            self.export_selection_requested.emit(index, previous)
+
     def mouseReleaseEvent(self, event) -> None:
         """拦截叶子行播放按钮点击，避免落入默认选择逻辑。"""
+        if event.button() == Qt.MouseButton.LeftButton and self._ctrl_export_click:
+            self._ctrl_export_click = False
+            event.accept()
+            return
         if event.button() == Qt.MouseButton.LeftButton:
             click_pos = event.position().toPoint()
             index = self._hovered_index_at_y(click_pos.y())
@@ -1505,8 +1567,8 @@ class PreviewTreeView(QTreeView):
         def visit(parent: QModelIndex) -> None:
             for row in range(model.rowCount(parent)):
                 index = model.index(row, 0, parent)
-                members = model.selection_paths(index) if only_selected else frozenset()
-                selected = model.audio_selection.count_paths(members) if model.audio_selection is not None else 0
+                choices = model.selection_choices(index) if only_selected else ()
+                selected = model.audio_selection.count_choices(choices) if model.audio_selection is not None else 0
                 self.setRowHidden(row, parent, only_selected and not selected)
                 if model.rowCount(index):
                     visit(index)

@@ -169,7 +169,8 @@ def test_resource_pack_batch_dispatches_string_task(monkeypatch: pytest.MonkeyPa
     assert result.status is ResultStatus.SUCCESS
 
 
-def test_file_write_failure_retries_only_selected_binding_and_wem(monkeypatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize("workers", [1, 4])
+def test_file_write_failure_retries_only_selected_binding_and_wem(monkeypatch, tmp_path: Path, workers: int) -> None:
     """容器内写入失败不阻断其他 WEM，重试只重读相关容器并补写失败文件。"""
     key = build_resource_pack_key("TFTCommon.wad.client", "MODE_TFT_NPC_ElderDragon_SFX")
     entity = _build_entity(key)
@@ -217,7 +218,9 @@ def test_file_write_failure_retries_only_selected_binding_and_wem(monkeypatch, t
             ]
         )
 
-    monkeypatch.setattr(unpack_entity, "_get_wad_instance", lambda *_args, **_kwargs: SimpleNamespace(extract=extract))
+    wad = _FakeWad()
+    monkeypatch.setattr(wad, "extract", extract)
+    monkeypatch.setattr(unpack_entity, "_get_wad_instance", lambda *_args, **_kwargs: wad)
     monkeypatch.setattr(unpack_entity, "BNK", parse)
     monkeypatch.setattr(AudioEntityData, "from_entity", staticmethod(lambda *_args, **_kwargs: entity))
     monkeypatch.setattr(
@@ -225,17 +228,70 @@ def test_file_write_failure_retries_only_selected_binding_and_wem(monkeypatch, t
         "unpack_resource_pack",
         lambda _key, reader, **kwargs: unpack_entity.unpack_entity(entity, reader, **kwargs),
     )
-    original = unpack_batch.execute_tasks([("resource_pack", key, "资源包")], reader, 1, ctx=ctx)
+    original = unpack_batch.execute_tasks([("resource_pack", key, "资源包")], reader, workers, ctx=ctx)
     assert original.status is ResultStatus.PARTIAL
     (failure,) = original.entities[0].failures
     assert failure.unit == "file" and Path(failure.output_path).name == "102.wem"
-    assert writes == [101, 102, 103]
+    assert sorted(writes) == [101, 102, 103]
     denied = False
     writes.clear()
     retried = unpack_batch.execute_tasks(
-        [("resource_pack", key, "资源包")], reader, 1, ctx=ctx, retry_entities=original.entities
+        [("resource_pack", key, "资源包")], reader, workers, ctx=ctx, retry_entities=original.entities
     )
     assert retried.status is ResultStatus.SUCCESS
     assert reads[-1] == (bank.binding.path,)
     assert writes == [102]
     assert retried.entities[0].artifacts == (failure.output_path,)
+
+
+def test_parallel_extract_reuses_containers_and_keeps_first_wem(monkeypatch, tmp_path: Path) -> None:
+    """共享容器只解析一次，同容器及跨容器重名 WEM 保留首次成功内容。"""
+    key = build_resource_pack_key("TFTCommon.wad.client", "MODE_TFT_NPC_ElderDragon_SFX")
+    entity = _build_entity(key)
+    bank = entity.resource_banks[0]
+    other = replace(bank, binding=replace(bank.binding, path="other.bnk", normalized_path="other.bnk", entry_hash="02"))
+    entity.resource_banks = (bank, bank, other)
+    wad_path = tmp_path / "game" / bank.binding.wad
+    wad_path.parent.mkdir(parents=True)
+    wad_path.write_bytes(b"wad")
+    ctx = SimpleNamespace(
+        game_path=tmp_path / "game",
+        audio_path=tmp_path / "audios",
+        report_path=tmp_path / "reports",
+        game_region="zh_CN",
+        include_types=("SFX",),
+        exclude_types=(),
+        group_by_type=True,
+        config=SimpleNamespace(dev_mode=False),
+    )
+    parsed: list[bytes] = []
+    persisted: list[Path] = []
+
+    def parse(raw: bytes):
+        """为每次物理容器解析提供含重名 ID 的独立字节。"""
+        parsed.append(raw)
+        contents = [(101, b"first"), (101, b"duplicate"), (102, b"unique")]
+        if raw == b"other.bnk":
+            contents = [(101, b"other")]
+        return SimpleNamespace(
+            extract_files=lambda: [
+                SimpleNamespace(id=number, data=data, save_file=lambda path, data=data: path.write_bytes(data))
+                for number, data in contents
+            ]
+        )
+
+    wad = _FakeWad()
+    monkeypatch.setattr(wad, "extract", lambda paths, **_kwargs: [path.encode() for path in paths])
+    monkeypatch.setattr(unpack_entity, "_get_wad_instance", lambda *_args, **_kwargs: wad)
+    monkeypatch.setattr(unpack_entity, "BNK", parse)
+    stats = unpack_entity.unpack_entity(
+        entity,
+        SimpleNamespace(version="16.16"),
+        ctx=ctx,
+        max_workers=4,
+        persisted_wem_callback=persisted.append,
+    )
+    assert stats.overall_result is UnpackStageResult.SUCCESS
+    assert parsed == [bank.binding.path.encode(), b"other.bnk"]
+    assert {path.name: path.read_bytes() for path in persisted} == {"101.wem": b"first", "102.wem": b"unique"}
+    assert len(persisted) == len({path.name for path in persisted})

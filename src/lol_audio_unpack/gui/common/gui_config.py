@@ -61,6 +61,7 @@ class GuiConfig:
         self._wav_format: str = "pcm16"
 
         # GUI 专有配置
+        self._prepare_data_on_startup: bool = False
         self._theme_mode: str = "Auto"  # Light, Dark, Auto
         self._accent_preset_id: str = DEFAULT_ACCENT_PRESET_ID
         self._theme_color: str = get_accent_preset(self._accent_preset_id).primary_hex
@@ -107,6 +108,7 @@ class GuiConfig:
         self._wav_format = str(wav_settings.get("wav_format", "pcm16") or "pcm16")
 
         # 2. GUI 专有配置统一走项目 INI，不再读取用户全局 QSettings。
+        self._prepare_data_on_startup = self._to_bool(_gui_value("prepare_data_on_startup", "false"))
         self._vgmstream_path = _gui_value("vgmstream_path", "")
 
         self._theme_mode = _gui_value("theme_mode", "Auto") or "Auto"
@@ -394,6 +396,16 @@ class GuiConfig:
     # ------------------------------------------------------------------
 
     @property
+    def prepare_data_on_startup(self) -> bool:
+        """返回是否在启动或版本切换后提前补齐实体资源与事件数据。"""
+        return self._prepare_data_on_startup
+
+    @prepare_data_on_startup.setter
+    def prepare_data_on_startup(self, value: bool) -> None:
+        """设置提前准备偏好；关闭时由所选任务按需准备。"""
+        self._prepare_data_on_startup = bool(value)
+
+    @property
     def theme_mode(self) -> str:
         """返回当前壳模式。"""
         return self._theme_mode
@@ -525,6 +537,7 @@ class GuiConfig:
             self._config_file,
             section=ConfigSection.GUI,
             values={
+                "prepare_data_on_startup": self._prepare_data_on_startup,
                 "vgmstream_path": self._vgmstream_path,
                 "theme_mode": self._theme_mode,
                 "accent_preset_id": self._accent_preset_id,

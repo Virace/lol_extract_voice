@@ -27,7 +27,34 @@ def _isolate_log_bridge_state(monkeypatch) -> None:
         log_bridge.remove_pyvgmstream_log_bridge(disable_log_callback_fn=lambda: None)
 
 
-def test_install_qt_message_bridge_forwards_qt_warning_to_loguru(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("message_type", "category", "message", "expected_level"),
+    [
+        (log_bridge.QtMsgType.QtWarningMsg, "qt.multimedia", "QIODevice::read (QBuffer): device not open", "WARNING"),
+        (
+            log_bridge.QtMsgType.QtWarningMsg,
+            "default",
+            "QFont::setPointSize: Point size <= 0 (-1), must be greater than 0",
+            None,
+        ),
+        (
+            log_bridge.QtMsgType.QtWarningMsg,
+            "default",
+            "QFont::setPointSize: Point size <= 0 (0), must be greater than 0",
+            "WARNING",
+        ),
+        (
+            log_bridge.QtMsgType.QtCriticalMsg,
+            "default",
+            "QFont::setPointSize: Point size <= 0 (-1), must be greater than 0",
+            "ERROR",
+        ),
+    ],
+)
+def test_qt_bridge_filters_only_known_font_warning(
+    monkeypatch, message_type, category, message, expected_level
+) -> None:
+    """仅静默指定的字号警告，其他警告和更高等级仍正常转发。"""
     installed_handler = None
     log_calls: list[tuple[str, str]] = []
 
@@ -41,13 +68,9 @@ def test_install_qt_message_bridge_forwards_qt_warning_to_loguru(monkeypatch) ->
     monkeypatch.setattr(log_bridge.logger, "log", lambda level, message: log_calls.append((level, message)))
 
     log_bridge.install_qt_message_bridge()
-    installed_handler(
-        log_bridge.QtMsgType.QtWarningMsg,
-        SimpleNamespace(category="qt.multimedia"),
-        "QIODevice::read (QBuffer): device not open",
-    )
+    installed_handler(message_type, SimpleNamespace(category=category), message)
 
-    assert log_calls == [("WARNING", "[Qt][qt.multimedia] QIODevice::read (QBuffer): device not open")]
+    assert log_calls == ([] if expected_level is None else [(expected_level, f"[Qt][{category}] {message}")])
 
 
 def test_install_qt_message_bridge_downgrades_qt_info_to_debug(monkeypatch) -> None:

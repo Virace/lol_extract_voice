@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -46,6 +46,7 @@ class AudioEntityData:
         events: 事件数据，仅映射流程需要；缺失时为 ``None``。
         resource_banks: resource schema v2 使用的逐条 bank binding 消费投影。
         binding_diagnostics: resource schema v2 artifact 的 binding 诊断；未提供时为 ``None``。
+        skin_parents: 英雄皮肤的直接共享比较来源；基础皮肤的父级为 ``None``。
     """
 
     entity_id: str
@@ -59,6 +60,7 @@ class AudioEntityData:
     events: dict[str, dict[str, Any]] | None = None
     resource_banks: tuple[AudioBank, ...] = ()
     binding_diagnostics: BindingDiagnostics | None = None
+    skin_parents: dict[str, str | None] = field(default_factory=dict)
 
     def get_sub_entity_info(self, sub_id: str) -> dict[str, Any] | None:
         """返回子实体的基础信息。
@@ -162,6 +164,7 @@ class AudioEntityData:
         include_events: bool = False,
         *,
         ctx: AppContext,
+        include_resources: bool = True,
     ) -> AudioEntityData:
         """从英雄数据构建音频实体。
 
@@ -170,6 +173,7 @@ class AudioEntityData:
             reader: 数据读取器实例。
             include_events: 是否附带事件数据。
             ctx: 运行时上下文。
+            include_resources: 是否读取资源绑定；只读产物浏览可仅构造元数据身份。
 
         Returns:
             AudioEntityData: 对应英雄的音频实体。
@@ -181,8 +185,8 @@ class AudioEntityData:
         if not champion:
             raise ValueError(f"数据中不存在英雄ID {champion_id}")
 
-        resource_bindings = reader.get_champion_resource_bindings(champion_id)
-        if resource_bindings is None:
+        resource_bindings = reader.get_champion_resource_bindings(champion_id) if include_resources else None
+        if include_resources and resource_bindings is None:
             raise ValueError(f"英雄ID {champion_id} 缺少 resource schema v2，请先重新运行 update")
 
         wad_info = champion.get("wad", {})
@@ -196,11 +200,14 @@ class AudioEntityData:
         wad_language = wad_info.get(language)
 
         skin_info_map = {}
+        base_id = next((str(skin["id"]) for skin in champion.get("skins", []) if skin.get("isBase")), None)
+        skin_parents: dict[str, str | None] = {}
         for skin in champion.get("skins", []):
             skin_id = skin.get("id")
             skin_id_str = str(skin_id)
             skin_name_raw = skin.get("skinNames", {}).get(language, skin.get("skinNames", {}).get("default", ""))
             is_base_skin = skin.get("isBase", False)
+            skin_parents[skin_id_str] = None if is_base_skin else base_id
             skin_name = "基础皮肤" if is_base_skin else skin_name_raw
             # 子实体名称在模型层就完成文件名安全化，
             # 后续 unpack / mapping / GUI 都直接复用同一份稳定值。
@@ -209,12 +216,17 @@ class AudioEntityData:
             # BIN 更新包含炫彩的独立 binding，消费者也必须识别其真实 ID。
             for chroma in skin.get("chromas", []):
                 chroma_id = str(chroma["id"])
+                skin_parents[chroma_id] = skin_id_str
                 names = chroma.get("chromaNames", {})
                 chroma_name = names.get(language, names.get("default", skin_name))
                 skin_info_map[chroma_id] = {"id": chroma["id"], "name": sanitize_filename(chroma_name)}
 
         sub_entities: dict[str, dict[str, Any]] = {}
-        resource_banks = _build_audio_banks(resource_bindings, reader)
+        resource_banks = _build_audio_banks(resource_bindings, reader) if resource_bindings is not None else ()
+        if not include_resources:
+            sub_entities = {
+                skin_id: {"name": info["name"], "categories": {}} for skin_id, info in skin_info_map.items()
+            }
         for bank in resource_banks:
             skin_info = skin_info_map.get(bank.sub_id)
             if skin_info is not None:
@@ -244,7 +256,8 @@ class AudioEntityData:
             wad_language=wad_language,
             events=events_data,
             resource_banks=resource_banks,
-            binding_diagnostics=resource_bindings.diagnostics,
+            binding_diagnostics=resource_bindings.diagnostics if resource_bindings is not None else None,
+            skin_parents=skin_parents,
         )
 
     @classmethod
@@ -255,6 +268,7 @@ class AudioEntityData:
         include_events: bool = False,
         *,
         ctx: AppContext,
+        include_resources: bool = True,
     ) -> AudioEntityData:
         """从地图数据构建音频实体。
 
@@ -263,6 +277,7 @@ class AudioEntityData:
             reader: 数据读取器实例。
             include_events: 是否附带事件数据。
             ctx: 运行时上下文。
+            include_resources: 是否读取资源绑定；只读产物浏览可仅构造元数据身份。
 
         Returns:
             AudioEntityData: 对应地图的音频实体。
@@ -274,8 +289,8 @@ class AudioEntityData:
         if not map_info:
             raise ValueError(f"数据中不存在地图ID {map_id}")
 
-        resource_bindings = reader.get_map_resource_bindings(map_id)
-        if resource_bindings is None:
+        resource_bindings = reader.get_map_resource_bindings(map_id) if include_resources else None
+        if include_resources and resource_bindings is None:
             raise ValueError(f"地图ID {map_id} 缺少 resource schema v2，请先重新运行 update")
 
         wad_info = map_info.get("wad", {})
@@ -296,7 +311,7 @@ class AudioEntityData:
         # 地图没有独立皮肤概念，但解包和映射都按“实体 -> 子实体”统一处理，
         # 因此这里把地图包装成唯一一个子实体，减少下游分支。
         sub_entities = {str(map_id): {"name": safe_map_name, "categories": {}}}
-        resource_banks = _build_audio_banks(resource_bindings, reader)
+        resource_banks = _build_audio_banks(resource_bindings, reader) if resource_bindings is not None else ()
 
         events_data = None
         if include_events:
@@ -316,7 +331,7 @@ class AudioEntityData:
             wad_language=wad_language,
             events=events_data,
             resource_banks=resource_banks,
-            binding_diagnostics=resource_bindings.diagnostics,
+            binding_diagnostics=resource_bindings.diagnostics if resource_bindings is not None else None,
         )
 
     @classmethod

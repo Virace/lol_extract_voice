@@ -10,14 +10,15 @@ from typing import TYPE_CHECKING, Any
 from league_tools import AudioEventMapper, WwiserManager
 from loguru import logger
 
-from lol_audio_unpack.app.artifacts import AudioRef, enumerate_audio_refs
+from lol_audio_unpack.app.artifacts import AudioRef, enumerate_audio_refs, inspect_shared_copies
 from lol_audio_unpack.app.path_layout import get_entity_path_component, get_output_dir_name
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.manager.files import write_data
 from lol_audio_unpack.manager.utils import build_metadata_payload
 from lol_audio_unpack.model import AudioBank, AudioEntityData
 from lol_audio_unpack.model.binding import SUCCESS_STATUSES, normalize_logical_path
-from lol_audio_unpack.runtime.wad import resolve_bound_wad
+from lol_audio_unpack.model.skin_audio import SKIN_AUDIO_VERSION, SkinAudio
+from lol_audio_unpack.runtime.wad import extract_wad, resolve_bound_wad
 from lol_audio_unpack.utils.logging import performance_monitor
 
 from . import session as mapping_session
@@ -64,6 +65,7 @@ def _build_mapping_result(entity_data: AudioEntityData, reader: DataReader) -> t
         base_data["championId"] = entity_data.entity_id
         base_data["alias"] = entity_data.entity_alias
         base_data["skins"] = {}
+        base_data["skinAudioVersion"] = SKIN_AUDIO_VERSION
         return base_data, "skins"
     if entity_data.entity_type == "map":
         base_data["mapId"] = entity_data.entity_id
@@ -163,7 +165,7 @@ def _build_bound_category_mapping(  # noqa: PLR0913
 
         def extract_bnk() -> None:
             """读取目标 entry，并只向已校验的 cache path 写入原始 BNK。"""
-            raws = wad_obj.extract([binding.path], raw=True)
+            raws = extract_wad(wad_obj, [binding.path], raw=True)
             raw = raws[0] if raws else None
             if raw is None:
                 raise FileNotFoundError(f"WAD未返回目标BNK entry: {binding.normalized_path}")
@@ -210,6 +212,11 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
 
     refs = enumerate_audio_refs(ctx, entity_data, reader.version)
     refs_by_key = _audio_ref_index(refs)
+    skin_audio = (
+        SkinAudio(entity_data.resource_banks, entity_data.skin_parents)
+        if entity_data.entity_type == "champion"
+        else None
+    )
     mapped_paths: set[str] = set()
     missing_events: list[dict[str, str]] = []
     unresolved: list[dict[str, str]] = []
@@ -230,8 +237,7 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
             event_banks.setdefault(key, []).append(bank)
 
     events = entity_data.events or {}
-    # 非基础皮肤的 Base 分类未重复保存事件；只允许相同物理 bank 复用已知事件，
-    # 避免把真正缺失的独立皮肤事件当作正常共享。
+    # 兼容旧事件缓存中省略的 Base 声明；仅相同物理来源可补齐，最终仍统一投影为差异。
     shared_events: dict[tuple[str, frozenset[tuple[str | None, str]]], list[str]] = {}
     if entity_data.entity_type == "champion":
         for key, banks in banks_by_category.items():
@@ -314,12 +320,14 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
 
         audio_paths: dict[str, list[str]] = {}
         audio_type = category_event_banks[0].audio_type
+        owner_ids = {skin_audio.owner(bank).sub_id for bank in category_banks} if skin_audio else {sub_id}
         for event_name, wem_ids in category_mapping.forward_mapping.items():
             paths = sorted(
                 {
                     ref.relative_path
                     for wem_id in wem_ids
-                    for ref in refs_by_key.get((sub_id, audio_type, str(wem_id)), ())
+                    for owner_id in owner_ids
+                    for ref in refs_by_key.get((owner_id, audio_type, str(wem_id)), ())
                 }
             )
             if paths:
@@ -328,13 +336,29 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
         if audio_paths:
             sub_result.setdefault("audioPaths", {})[category] = audio_paths
 
+    if skin_audio is not None:
+        mapping_result["sharedAudio"] = skin_audio.shared_payload()
+        mapping_result[mapping_data_key] = skin_audio.mapping_differences(mapping_result[mapping_data_key])
+        mapped_event_count = sum(
+            len(category)
+            for skin in mapping_result[mapping_data_key].values()
+            for category in skin.get("events", {}).values()
+        )
+        mapped_paths = {
+            path
+            for skin in mapping_result[mapping_data_key].values()
+            for category in skin.get("audioPaths", {}).values()
+            for paths in category.values()
+            for path in paths
+        }
+
     # 缺少 events 不是 extract 失败；它只是 mapping 的可观察 partial 状态。
     if not entity_data.events:
         logger.warning(f"{entity_data.entity_name} 缺少 events 数据，仅写入 mapping 诊断")
 
     total_wem_count = len(refs)
     if shared_categories:
-        logger.info(f"{entity_data.entity_name} 的 {len(shared_categories)} 个音频分类复用原皮肤事件，按正常共享处理")
+        logger.info(f"{entity_data.entity_name} 的 {len(shared_categories)} 个旧缓存分类已恢复共享来源，不重复展开")
     unmapped_wem_count = total_wem_count - len(mapped_paths)
     source_failed = (
         entity_data.binding_diagnostics is not None and entity_data.binding_diagnostics.completeness.value == "failed"
@@ -356,6 +380,16 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
         "errorCategories": errors,
         "sharedEventCategories": shared_categories,
     }
+    if skin_audio is not None:
+        legacy = inspect_shared_copies(entity_data, refs)
+        mapping_result["mappingDiagnostics"].update(legacy)
+        if legacy["sharedCopyPaths"] or legacy["unverifiedSharedPaths"]:
+            logger.warning(
+                "{} 的共享目录仍有旧文件：{} 个同内容副本，{} 个需核对；文件均已保留，可在全部音频中查看",
+                entity_data.entity_name,
+                len(legacy["sharedCopyPaths"]),
+                len(legacy["unverifiedSharedPaths"]),
+            )
     errored_event_count += sum(
         len(events.get(item["subEntity"], {}).get("events", {}).get(item["category"], [])) for item in errors
     )
@@ -471,7 +505,7 @@ def _build_category_mapping(  # noqa: PLR0913, PLR0917
             bnk_rel_path = bnk_paths[0]
             extract_key = (wad_path, bnk_rel_path)
             if not mapping_session._is_bnk_extracted(extract_key, runtime_cache=runtime_cache):
-                wad_obj.extract(bnk_paths, out_dir=version_cache_dir)
+                extract_wad(wad_obj, bnk_paths, out_dir=version_cache_dir)
                 mapping_session._mark_bnk_extracted(extract_key, runtime_cache=runtime_cache)
 
             bnk_path = version_cache_dir / bnk_rel_path
@@ -807,6 +841,9 @@ def integrate_entity(
         return {}
 
     integrated_data = {"metadata": mapping_result.get("metadata", {}), "data": {}}
+    for key in ("skinAudioVersion", "sharedAudio"):
+        if key in mapping_result:
+            integrated_data[key] = mapping_result[key]
     if diagnostics := mapping_result.get("mappingDiagnostics"):
         integrated_data["mappingDiagnostics"] = diagnostics
     wad_info = {"root": entity_data.wad_root}

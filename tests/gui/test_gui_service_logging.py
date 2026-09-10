@@ -20,16 +20,12 @@ def _build_loader() -> EntityDataLoader:
 def test_entity_data_loader_logs_warning_with_exception_on_init_failure(monkeypatch) -> None:
     """初始化失败时应以带异常的 warning 记录，并继续向上抛出。"""
     loader = _build_loader()
-    loader.data_reader = SimpleNamespace(version="16.3", get_champions=lambda: [])
+    loader.data_reader = SimpleNamespace(
+        version="16.3", get_champions=lambda: (_ for _ in ()).throw(RuntimeError("init boom"))
+    )
     opt_calls: list[dict[str, object]] = []
     warnings: list[str] = []
 
-    monkeypatch.setattr(loader, "_load_raw_entities", lambda _entity_type: ("16.3", []))
-    monkeypatch.setattr(
-        loader,
-        "_ensure_bank_dataset_ready",
-        lambda _entity_type: (_ for _ in ()).throw(RuntimeError("init boom")),
-    )
     monkeypatch.setattr(
         data_loader_module,
         "logger",
