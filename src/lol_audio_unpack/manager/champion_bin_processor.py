@@ -13,7 +13,7 @@ from league_tools.formats import BIN
 from loguru import logger
 
 from lol_audio_unpack.manager.bin_source import BinBatch, BinSource
-from lol_audio_unpack.manager.files import needs_update, write_data
+from lol_audio_unpack.manager.files import needs_update, read_data, write_data
 from lol_audio_unpack.manager.update_result import UpdateEntityResult
 from lol_audio_unpack.model.binding import (
     RESOURCE_SCHEMA_VERSION,
@@ -25,6 +25,7 @@ from lol_audio_unpack.model.binding import (
     build_diagnostics,
 )
 from lol_audio_unpack.model.progress import OperationProgress, ProgressEvent
+from lol_audio_unpack.model.skin_audio import SKIN_AUDIO_VERSION
 from lol_audio_unpack.utils.logging import performance_monitor
 
 if TYPE_CHECKING:
@@ -188,6 +189,11 @@ class ChampionBinProcessor:
             self.force_update,
             dev_mode=self._is_dev_mode(),
         )
+        if self.process_events and not events_need_update:
+            cached_events = read_data(events_file_base, dev_mode=self._is_dev_mode())
+            events_need_update = cached_events.get("skinAudioVersion") != SKIN_AUDIO_VERSION
+            if events_need_update:
+                logger.info("英雄 {} 的事件缓存需要补齐完整皮肤声明，将重新生成", champion_id)
         if not banks_need_update and not events_need_update:
             logger.trace(f"英雄 {champion_id} ({alias}) 的数据已是最新，跳过处理")
             return UpdateEntityResult.success("champion", champion_id, entity_name=alias_raw)
@@ -238,7 +244,7 @@ class ChampionBinProcessor:
             try:
                 bin_file = BIN(bin_raw)
                 references.extend(self._collect_bank_references(bin_file, path, skin_id))
-                if events_need_update and (skin_events := self._extract_skin_events(bin_file, base_skin_id, skin_id)):
+                if events_need_update and (skin_events := self._extract_skin_events(bin_file)):
                     champion_skin_events[skin_id] = skin_events
                 parsed_skins.add(skin_id)
 
@@ -296,6 +302,7 @@ class ChampionBinProcessor:
             final_event_data = self.bin_source._create_base_data(
                 champion_id, "champion", alias=alias, skins=champion_skin_events
             )
+            final_event_data["skinAudioVersion"] = SKIN_AUDIO_VERSION
             artifacts.append(write_data(final_event_data, events_file_base, dev_mode=self._is_dev_mode()))
 
         if completeness is Completeness.FAILED:
@@ -430,14 +437,14 @@ class ChampionBinProcessor:
         else:
             logger.warning(message)
 
-    def _extract_skin_events(self, bin_file: BIN, base_skin_id: str | None, current_skin_id: str) -> dict | None:
-        """
-        提取一个皮肤BIN文件中的所有事件数据
+    def _extract_skin_events(self, bin_file: BIN) -> dict | None:
+        """完整保留皮肤事件声明，差异由消费者按物理来源和事件关系判断。
 
-        :param bin_file: BIN文件对象
-        :param base_skin_id: 基础皮肤ID，用于过滤基础皮肤事件
-        :param current_skin_id: 当前皮肤ID
-        :returns: 皮肤事件数据字典，无数据时返回None
+        Args:
+            bin_file: 当前皮肤的已解析 BIN。
+
+        Returns:
+            事件数据；没有任何声明时返回 ``None``。
         """
         skin_events = {}
         if bin_file.theme_music:
@@ -448,8 +455,7 @@ class ChampionBinProcessor:
             if group.music:
                 skin_events["music"] = group.music.to_dict()
             for event_data in group.bank_units:
-                if base_skin_id and current_skin_id != base_skin_id and "_Base_" in event_data.category:
-                    continue
+                # Base 命名不能证明无新增事件；提前过滤会永久丢失皮肤对共享媒体的新用法。
                 if event_data.events:
                     category = event_data.category
                     if category not in events_by_category:

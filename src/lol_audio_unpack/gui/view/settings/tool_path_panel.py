@@ -13,7 +13,7 @@ from lol_audio_unpack.gui.view.settings.cards import (
 
 
 class BaseSettingsPanel:
-    """承载输出目录、游戏区域与分组设置。"""
+    """承载输出目录、游戏区域、分组与数据准备设置。"""
 
     def __init__(self, *, parent: QWidget) -> None:
         self.group = SettingCardGroup("基础设置", parent)
@@ -34,10 +34,16 @@ class BaseSettingsPanel:
             "按类型分组输出",
             "开: audios/类型/英雄/…   关(默认): audios/英雄/类型/…",
         )
+        self.prepareDataCard = LocalizedSwitchSettingCard(
+            FIF.SYNC,
+            "提前准备数据",
+            "启动时准备当前版本的数据，缩短后续任务的等待时间。",
+        )
 
         self.group.addSettingCard(self.outputPathCard)
         self.group.addSettingCard(self.gameRegionCard)
         self.group.addSettingCard(self.groupByTypeCard)
+        self.group.addSettingCard(self.prepareDataCard)
 
 
 class ToolPathPanel:

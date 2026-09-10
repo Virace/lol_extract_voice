@@ -121,7 +121,7 @@ def describe_shared_data_state(state: SharedDataState) -> SharedDataDisplay:  # 
     problem_text = state.problem.message if state.problem is not None else ""
 
     if state.phase is SharedDataPhase.BLOCKED:
-        detail = problem_text or "配置有效目录后会自动检查并准备实体数据。"
+        detail = problem_text or "配置有效目录后会自动加载英雄和地图列表。"
         return SharedDataDisplay(
             "需要配置共享数据",
             "等待配置",
@@ -200,7 +200,7 @@ def describe_shared_data_state(state: SharedDataState) -> SharedDataDisplay:  # 
         detail = (
             f"已加载 {summary.champion_loaded} 个英雄和 {summary.map_loaded} 张地图。"
             if summary is not None
-            else "全部必需实体已通过完整复检。"
+            else "英雄和地图目录已就绪。"
         )
         return SharedDataDisplay(
             "运行环境已就绪",

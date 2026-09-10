@@ -89,6 +89,9 @@ def normalize_mapping(  # noqa: PLR0911
         return mapping_data
 
     normalized = _build_mapping_preview_base(mapping_data.get("metadata"))
+    for key in ("skinAudioVersion", "sharedAudio", "mappingDiagnostics"):
+        if key in mapping_data:
+            normalized[key] = mapping_data[key]
 
     if entity_type == "champions":
         skins_payload = data_payload.get("skins")

@@ -108,7 +108,10 @@ def test_run_tree_uses_version_roots(tmp_path: Path, monkeypatch: pytest.MonkeyP
     def fake_transcode_many(sources, output_root_arg: Path, **kwargs):
         assert tuple(sources) == (input_root / "sample.wem",)
         calls.append((Path(kwargs["input_root"]), Path(output_root_arg)))
-        return BatchTranscodeSummary(kwargs["input_root"], output_root_arg, 1, 0, ())
+        output = output_root_arg / "sample.wav"
+        output.write_bytes(b"wav")
+        item = BatchTranscodeItemResult(sources[0], output, 1, 3, None)
+        return BatchTranscodeSummary(kwargs["input_root"], output_root_arg, 1, 0, (item,))
 
     monkeypatch.setattr(wav_batch, "transcode_many", fake_transcode_many)
 
@@ -119,12 +122,8 @@ def test_run_tree_uses_version_roots(tmp_path: Path, monkeypatch: pytest.MonkeyP
         job_label="cli-test",
     )
 
-    assert calls == [
-        (
-            tmp_path / "audios" / "15.8",
-            tmp_path / "wavs" / "15.8",
-        )
-    ]
+    assert len(calls) == 1 and calls[0][0] == input_root
+    assert (tmp_path / "wavs" / "15.8" / "sample.wav").read_bytes() == b"wav"
     assert payload["processed_file_count"] == 1
     assert payload["failed_file_count"] == 0
 
@@ -150,7 +149,10 @@ def test_run_tree_uses_selected_audio_roots_when_provided(tmp_path: Path, monkey
     def fake_transcode_many(sources, output_root_arg: Path, **kwargs):
         assert tuple(sources) == (selected_root / "sample.wem",)
         calls.append((Path(kwargs["input_root"]), Path(output_root_arg)))
-        return BatchTranscodeSummary(kwargs["input_root"], output_root_arg, 1, 0, ())
+        output = output_root_arg / "sample.wav"
+        output.write_bytes(b"wav")
+        item = BatchTranscodeItemResult(sources[0], output, 1, 3, None)
+        return BatchTranscodeSummary(kwargs["input_root"], output_root_arg, 1, 0, (item,))
 
     monkeypatch.setattr(wav_batch, "transcode_many", fake_transcode_many)
 
@@ -161,12 +163,9 @@ def test_run_tree_uses_selected_audio_roots_when_provided(tmp_path: Path, monkey
         audio_roots=(selected_root,),
     )
 
-    assert calls == [
-        (
-            selected_root,
-            tmp_path / "wavs" / "15.8" / "champions" / "1-annie",
-        )
-    ]
+    assert len(calls) == 1 and calls[0][0] == selected_root
+    assert (tmp_path / "wavs" / "15.8" / "champions" / "1-annie" / "sample.wav").read_bytes() == b"wav"
+    assert not (tmp_path / "wavs" / "15.8" / "champions" / "2-olaf").exists()
     assert payload["processed_file_count"] == 1
     assert payload["failed_file_count"] == 0
 

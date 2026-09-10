@@ -22,23 +22,29 @@ class SharedDataScanWorker(QThread):
     progress = Signal(object)
     error = Signal(object)
 
-    def __init__(self, app_context: AppContext, generation: int):
+    def __init__(self, app_context: AppContext, generation: int, *, require_resources: bool = False):
         """初始化完整目录扫描线程。
 
         Args:
             app_context: 当前有效应用上下文。
             generation: 结果所属的上下文代数。
+            require_resources: 是否同时要求资源绑定和事件缓存完整。
         """
         super().__init__()
         self.app_context = app_context
         self.generation = generation
+        self.require_resources = require_resources
 
     def run(self) -> None:
         """执行完整扫描；预期数据问题仍通过 finished 返回 typed result。"""
         logger.debug(f"SharedDataScanWorker 线程启动: generation={self.generation}")
         try:
             loader = EntityDataLoader(self.app_context)
-            result = loader.scan_catalog(self.generation, progress=self.progress.emit)
+            result = loader.scan_catalog(
+                self.generation,
+                progress=self.progress.emit,
+                require_resources=self.require_resources,
+            )
         except Exception as exc:  # noqa: BLE001
             result = build_scan_failure_result(self.generation, exc)
             problem = result.problems[0]

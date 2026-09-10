@@ -92,18 +92,21 @@ class MapBinProcessor:
         # 预处理公共地图(ID 0)的事件数据和Banks数据
         common_event_sources: CommonEventSourceIndex = {}
         common_banks_set = set()
-        if "0" in maps:
+        pending = [self._needs_update(map_id) for map_id in maps]
+        prepare_banks = any(banks for banks, _events in pending)
+        prepare_events = any(events for _banks, events in pending)
+        if "0" in maps and (prepare_banks or prepare_events):
             logger.debug("正在预处理公共地图(ID 0)的数据...")
             try:
                 # 预处理事件数据
-                if map_events := self._process_map_events_for_id("0", maps["0"]):
+                if prepare_events and (map_events := self._process_map_events_for_id("0", maps["0"])):
                     if "events" in map_events:
                         for category, events_list in map_events["events"].items():
                             for event_string in events_list:
                                 common_event_sources.setdefault(event_string, set()).add(f"地图 0/{category}")
 
                 # 预处理Banks数据
-                if map_banks := self._process_map_banks_for_id("0", maps["0"]):
+                if prepare_banks and (map_banks := self._process_map_banks_for_id("0", maps["0"])):
                     if "banks" in map_banks:
                         for paths_list in map_banks["banks"].values():
                             for path in paths_list:
@@ -182,6 +185,23 @@ class MapBinProcessor:
             )
         )
 
+    def _needs_update(self, map_id: str) -> tuple[bool, bool]:
+        """返回 banks/events 的更新需求，缓存齐全时不再预读公共地图 BIN。"""
+        banks = needs_update(
+            self.map_banks_dir / map_id,
+            self.version,
+            self.force_update,
+            dev_mode=self._is_dev_mode(),
+            resource_schema=RESOURCE_SCHEMA_VERSION,
+        )
+        events = self.process_events and needs_update(
+            self.map_events_dir / map_id,
+            self.version,
+            self.force_update,
+            dev_mode=self._is_dev_mode(),
+        )
+        return banks, events
+
     def _process_single_map(
         self,
         map_id: str,
@@ -189,30 +209,21 @@ class MapBinProcessor:
         common_event_sources: CommonEventSourceIndex | None = None,
         common_banks_set: set | None = None,
     ) -> UpdateEntityResult:
-        """
-        处理单个地图的Banks和Events数据
+        """处理单个地图的资源与事件缓存。
 
-        :param map_id: 地图ID
-        :param map_data: 地图数据字典
-        :param common_event_sources: 公共事件来源索引，用于事件去重和总结
-        :param common_banks_set: 公共Banks集合，用于去重
+        Args:
+            map_id: 地图 ID。
+            map_data: 基础地图数据。
+            common_event_sources: 用于事件去重及说明的公共事件来源。
+            common_banks_set: 用于旧 banks 投影去重的公共路径集合。
+
+        Returns:
+            包含本次解析诊断与已落盘产物的逐实体结果。
         """
         banks_file_base = self.map_banks_dir / map_id
         events_file_base = self.map_events_dir / map_id
 
-        banks_need_update = needs_update(
-            banks_file_base,
-            self.version,
-            self.force_update,
-            dev_mode=self._is_dev_mode(),
-            resource_schema=RESOURCE_SCHEMA_VERSION,
-        )
-        events_need_update = self.process_events and needs_update(
-            events_file_base,
-            self.version,
-            self.force_update,
-            dev_mode=self._is_dev_mode(),
-        )
+        banks_need_update, events_need_update = self._needs_update(map_id)
         if not banks_need_update and not events_need_update:
             logger.trace(f"地图 {map_id} 的数据已是最新，跳过处理")
             return UpdateEntityResult.success("map", map_id, entity_name=self._get_map_name(map_data))
@@ -228,21 +239,23 @@ class MapBinProcessor:
         bank_bindings = self.bin_source._resolve_bank_bindings(references)
         map_banks = self._binding_map_banks(bank_bindings)
 
-        # 写入Banks数据
-        completeness = Completeness.COMPLETE
+        # 即使只补事件，也必须保留本次 BIN 解析失败，不能沿用旧 banks 的成功状态。
+        index_metrics, index_errors = self.bin_source._resource_index_diagnostics()
+        diagnostics = build_diagnostics(
+            batch.bindings,
+            bank_bindings,
+            index=index_metrics,
+            index_errors=index_errors,
+        )
+        completeness = diagnostics.completeness
+        self._log_binding_summary(f"地图 {map_id}", completeness, diagnostics.to_dict())
         artifacts: list[Path] = []
+        # 写入Banks数据
         if banks_need_update:
             map_banks_data = self.bin_source._create_base_data(
                 map_id, "map", name=self._get_map_name(map_data), banks=map_banks
             )
 
-            index_metrics, index_errors = self.bin_source._resource_index_diagnostics()
-            diagnostics = build_diagnostics(
-                batch.bindings,
-                bank_bindings,
-                index=index_metrics,
-                index_errors=index_errors,
-            )
             resource = ResourceBindings(
                 entity_type="map",
                 entity_id=map_id,
@@ -251,8 +264,6 @@ class MapBinProcessor:
                 diagnostics=diagnostics,
             )
             map_banks_data.update(resource.to_payload())
-            self._log_binding_summary(f"地图 {map_id}", diagnostics.completeness, diagnostics.to_dict())
-            completeness = diagnostics.completeness
 
             # 对非公共地图进行去重处理
             if map_id != "0" and common_banks_set:
@@ -268,11 +279,11 @@ class MapBinProcessor:
             )
             if dedup_summary:
                 self._record_map_event_dedup_summary(map_id, map_data, dedup_summary)
-            if map_events:
-                final_event_data = self.bin_source._create_base_data(
-                    map_id, "map", name=self._get_map_name(map_data), map=map_events
-                )
-                artifacts.append(write_data(final_event_data, events_file_base, dev_mode=self._is_dev_mode()))
+            # 空结果也证明当前版本已解析，不能让“没有事件”永远被当成“尚未准备”。
+            final_event_data = self.bin_source._create_base_data(
+                map_id, "map", name=self._get_map_name(map_data), map=map_events or {}
+            )
+            artifacts.append(write_data(final_event_data, events_file_base, dev_mode=self._is_dev_mode()))
 
         if completeness is Completeness.FAILED:
             return UpdateEntityResult.incomplete(

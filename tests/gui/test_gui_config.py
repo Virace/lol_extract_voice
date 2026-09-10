@@ -94,6 +94,7 @@ def test_gui_config_uses_defaults_when_project_ini_is_missing() -> None:
     cfg.load()
 
     assert cfg.preview_audio_volume_percent == DEFAULT_PREVIEW_VOLUME_PERCENT
+    assert cfg.prepare_data_on_startup is False
 
 
 def test_gui_config_load_reads_gui_section_from_project_ini(tmp_path: Path) -> None:
@@ -103,6 +104,7 @@ def test_gui_config_load_reads_gui_section_from_project_ini(tmp_path: Path) -> N
     config_file.write_text(
         (
             "[gui]\n"
+            "prepare_data_on_startup = true\n"
             "vgmstream_path = tools/vgmstream/vgmstream-cli.exe\n"
             "theme_mode = Dark\n"
             "accent_preset_id = purple\n"
@@ -122,6 +124,7 @@ def test_gui_config_load_reads_gui_section_from_project_ini(tmp_path: Path) -> N
     cfg.load()
 
     assert cfg.vgmstream_path == "tools/vgmstream/vgmstream-cli.exe"
+    assert cfg.prepare_data_on_startup is True
     assert cfg.theme_mode == "Dark"
     assert cfg.accent_preset_id == "purple"
     assert cfg.theme_color.lower() == get_accent_preset("purple").primary_hex.lower()
@@ -140,6 +143,7 @@ def test_gui_config_save_persists_gui_state_to_project_ini(tmp_path: Path) -> No
     cfg = GuiConfig()
     cfg._config_file = config_file
     cfg.vgmstream_path = "tools/vgmstream/vgmstream-cli.exe"
+    cfg.prepare_data_on_startup = True
     cfg.theme_mode = "Dark"
     cfg.accent_preset_id = "orange"
     cfg.page_smooth_scroll_enabled = True
@@ -157,6 +161,7 @@ def test_gui_config_save_persists_gui_state_to_project_ini(tmp_path: Path) -> No
     reloaded.load()
 
     assert reloaded.vgmstream_path == "tools/vgmstream/vgmstream-cli.exe"
+    assert reloaded.prepare_data_on_startup is True
     assert reloaded.theme_mode == "Dark"
     assert reloaded.accent_preset_id == "orange"
     assert reloaded.theme_color.lower() == get_accent_preset("orange").primary_hex.lower()

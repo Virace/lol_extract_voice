@@ -93,6 +93,12 @@ def install_qt_message_bridge() -> None:
         return
 
     def _qt_message_handler(message_type, context, message) -> None:
+        # 仅屏蔽已知的无效字号噪声，其余 Qt 警告仍保留诊断能力。
+        if (
+            message_type == QtMsgType.QtWarningMsg
+            and message == "QFont::setPointSize: Point size <= 0 (-1), must be greater than 0"
+        ):
+            return
         category = getattr(context, "category", "") or "qt"
         logger.log(
             _resolve_qt_log_level(message_type),

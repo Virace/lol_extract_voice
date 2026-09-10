@@ -49,6 +49,7 @@ class SharedDataProblemCode(str, Enum):
     DATASET_STALE = "dataset_stale"
     DATASET_EMPTY = "dataset_empty"
     BANK_ARTIFACT_MISSING = "bank_artifact_missing"
+    EVENT_ARTIFACT_MISSING = "event_artifact_missing"
     RESOURCE_SCHEMA_MISMATCH = "resource_schema_mismatch"
     RESOURCE_BINDING_INCOMPLETE = "resource_binding_incomplete"
     MAP_COMMON_MISSING = "map_common_missing"
@@ -65,6 +66,7 @@ class SharedDataProblemCode(str, Enum):
             self.DATASET_STALE,
             self.DATASET_EMPTY,
             self.BANK_ARTIFACT_MISSING,
+            self.EVENT_ARTIFACT_MISSING,
             self.RESOURCE_SCHEMA_MISMATCH,
             self.RESOURCE_BINDING_INCOMPLETE,
             self.MAP_COMMON_MISSING,
@@ -124,7 +126,7 @@ class SharedDataSectionResult:
 
     @property
     def unprepared_count(self) -> int:
-        """返回可选但尚未准备的条目数。"""
+        """返回基础目录已知但尚未准备资源的条目数。"""
         return len(self.unprepared_ids)
 
     @property

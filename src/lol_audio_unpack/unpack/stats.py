@@ -123,6 +123,7 @@ class EntityUnpackStats:
     binding_completeness: str | None = None
     binding_details: list[dict[str, Any]] = field(default_factory=list)
     binding_wads: list[dict[str, Any]] = field(default_factory=list)
+    shared_audio: dict[str, dict[str, dict]] = field(default_factory=dict)
     file_failures: list[FailureDetail] = field(default_factory=list)
 
     # === 阶段3: 数据组装统计 ===
@@ -439,6 +440,8 @@ class EntityUnpackStats:
                 "bindings": self.binding_details,
                 "wads": self.binding_wads,
             }
+        if self.shared_audio:
+            report["sharedAudio"] = self.shared_audio
 
         # WAD文件信息
         if self.vo_wad_info.wad_path:

@@ -161,6 +161,12 @@ BIN 更新会保留每个英雄或地图的 `success` / `partial` / `failed` 事
 - `unpack_resource_pack`
 - `unpack_resource_packs`
 
+`unpack_entity`、`unpack_champion`、`unpack_map` 和 `unpack_resource_pack` 支持
+关键字参数 `max_workers=1`，用于 v2 binding 路径中实体内部的 WEM 写出并发。
+直接调用并启用并发时，`persisted_wem_callback` 会从写出线程触发，调用方需保证回调线程安全。
+应用批处理入口会协调回调，并从 `OperationOptions.max_workers` 的总配额中分配实体与写出并发，
+不会为每个实体额外启动一整套同规模写线程。默认保持整实体解包、原始 ID 与现有目录布局。
+
 ### 3.3 `lol_audio_unpack.mapping`
 
 提供映射入口：

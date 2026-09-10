@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from loguru import logger
+
 from lol_audio_unpack.app.artifacts import AudioRef
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 
@@ -68,9 +70,31 @@ class OverviewPreviewController:
                 placeholder_message="当前配置尚未完成初始化，暂时无法读取预览内容。",
             )
 
-        mapping_path, mapping_data, preview_content = loader.load_mapping_preview(entity_type, entity_id)
-        event_audio_refs = loader.load_event_audio_refs(entity_type, entity_id, mapping_data)
-        audio_roots = loader.load_audio_roots(entity_type, entity_id)
+        try:
+            mapping_path, mapping_data, preview_content = loader.load_mapping_preview(entity_type, entity_id)
+            event_audio_refs = loader.load_event_audio_refs(entity_type, entity_id, mapping_data)
+            audio_roots = loader.load_audio_roots(entity_type, entity_id)
+        except (OSError, ValueError) as exc:
+            logger.opt(exception=exc).warning("实体预览读取失败：{} {}", entity_type, entity_id)
+            return OverviewPreviewLoadResult(
+                entity_id=entity_id,
+                mapping_path=None,
+                mapping_data=None,
+                preview_content="",
+                available_audio_ids=set(),
+                group_label_map={},
+                placeholder_message=f"无法读取实体音频信息：{exc}。请检查输出目录或重新准备实体数据。",
+            )
+        if mapping_path is None and not event_audio_refs and not audio_roots:
+            return OverviewPreviewLoadResult(
+                entity_id=entity_id,
+                mapping_path=None,
+                mapping_data=None,
+                preview_content="",
+                available_audio_ids=set(),
+                group_label_map={},
+                placeholder_message="尚未解包",
+            )
         available_audio_ids = {ref.wem_id for ref in event_audio_refs}
         group_label_map = self._build_preview_group_label_map(
             entity_type=entity_type,
@@ -90,7 +114,11 @@ class OverviewPreviewController:
             audio_refs_loaded=False,
             audio_roots=audio_roots,
             default_preview_mode=EVENT_PREVIEW_MODE if mapping_path is not None else ALL_AUDIO_PREVIEW_MODE,
-            mapping_notice=None if mapping_path is not None else f"{entity_name} 尚未生成事件映射。",
+            mapping_notice=(
+                str(mapping_data.get("previewNotice") or "") or None
+                if mapping_path is not None and isinstance(mapping_data, dict)
+                else f"{entity_name} 尚未生成事件映射。"
+            ),
         )
 
     def _build_preview_group_label_map(

@@ -1,6 +1,6 @@
 [project]
 name = "lol-audio-unpack"
-version = "3.9.0"
+version = "3.9.1"
 description = "英雄联盟游戏音频文件解包工具"
 authors = [
     { name = "Virace", email = "Virace@aliyun.com" }
@@ -9,7 +9,7 @@ dependencies = [
     "python-dotenv>=1.2.3",
     "msgpack>=1.2.1",
     "ruamel-yaml>=0.18.14",
-    "league-tools>=1.2.0",
+    "league-tools>=1.2.1",
     "pyvgmstream>=0.1.0",
 ]
 readme = "README.md"

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QObject, QPoint, Signal
+from PySide6.QtCore import QModelIndex, QObject, QPoint, Qt, Signal
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 from qfluentwidgets import Action, CheckBox, RoundMenu
 
@@ -42,6 +42,10 @@ class AudioExportController(QObject):
         audio_list.source_model.selection_changed.connect(self.refresh)
         tree.expanded.connect(self.refresh)
         tree.node_export_requested.connect(self._show_node_menu)
+        tree.export_selection_requested.connect(lambda index, previous: self._select_from_ctrl(tree, index, previous))
+        audio_list.export_selection_requested.connect(
+            lambda index, previous: self._select_from_ctrl(audio_list, index, previous)
+        )
         bar.mode_button.clicked.connect(self.toggle_mode)
         bar.all_button.clicked.connect(self.select_all)
         bar.clear_button.clicked.connect(self.clear)
@@ -137,6 +141,38 @@ class AudioExportController(QObject):
         """全选源目录，与搜索和当前展开状态无关。"""
         self.selection.select_all()
         self.refresh()
+
+    def _select_from_ctrl(self, view, index: QModelIndex, previous: QModelIndex) -> None:
+        """第二个不同的可用条目触发选择模式，后续 Ctrl 点击切换完整节点范围。"""
+        if self.request is None or not self.request.targets:
+            return
+
+        def has_audio(item: QModelIndex) -> bool:
+            if view is self.tree:
+                return bool(view.model().selection_paths(item))
+            return view.audio_ref_at(item) is not None
+
+        if not has_audio(index):
+            return
+        model = view.model()
+        if not self.mode:
+            if not previous.isValid() or previous == index or not has_audio(previous):
+                return
+            # 先冻结明确点击的两项，再通知模式切换，防止索引刷新和旧范围污染本次选择。
+            if view is self.tree:
+                self.selection.select_only(
+                    choices=(*model.selection_choices(previous), *model.selection_choices(index))
+                )
+            else:
+                self.selection.select_only(paths=(view.audio_ref_at(previous).path, view.audio_ref_at(index).path))
+            self.toggle_mode()
+            return
+        state = index.data(Qt.ItemDataRole.CheckStateRole)
+        model.setData(
+            index,
+            Qt.CheckState.Unchecked if state == Qt.CheckState.Checked else Qt.CheckState.Checked,
+            Qt.ItemDataRole.CheckStateRole,
+        )
 
     def clear(self) -> None:
         """清空右侧音频选择。"""

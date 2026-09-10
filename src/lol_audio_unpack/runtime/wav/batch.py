@@ -177,21 +177,23 @@ def run_batch(  # noqa: PLR0913
     unconfirmed_count = 0
     try:
         if pending:
-            if output_file is None:
-                summary = transcode(output_root)
-            else:
-                output_file.parent.mkdir(parents=True, exist_ok=True)
-                with TemporaryDirectory(prefix=".wav-export-", dir=output_file.parent) as scratch:
-                    summary = transcode(Path(scratch))
-                    if summary.success_count:
-                        summary.results[0].output_path.replace(output_file)
-            # 上游 processed_count 是已处理总数，其中包含 failed_count。
-            success_count = summary.success_count
-            failures.extend(
-                WavFailure(str(item.source_path), str(output_file or item.output_path), item.error)
-                for item in summary.results
-                if item.error is not None
-            )
+            destination = output_file.parent if output_file is not None else output_root
+            destination.mkdir(parents=True, exist_ok=True)
+            # 暂存与最终输出位于同一卷；只有上游确认成功后才原子替换，失败残留不能被下次跳过。
+            with TemporaryDirectory(prefix=".wav-export-", dir=destination) as scratch:
+                summary = transcode(Path(scratch))
+                for item in summary.results:
+                    output = output_file or build_output_path(item.source_path, audio_root=root, wav_root=output_root)
+                    if item.error is not None:
+                        failures.append(WavFailure(str(item.source_path), str(output), item.error))
+                        continue
+                    try:
+                        output.parent.mkdir(parents=True, exist_ok=True)
+                        item.output_path.replace(output)
+                    except OSError as exc:
+                        failures.append(WavFailure(str(item.source_path), str(output), str(exc)))
+                    else:
+                        success_count += 1
     except Exception as exc:  # noqa: BLE001
         logger.exception("WAV 批处理异常中止：{}", operation_id)
         # 没有上游终态快照时不猜测成功范围；精确输入仍保留供诊断和显式替换。

@@ -1,3 +1,5 @@
+"""全局运行环境、数据准备与界面偏好设置页。"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -220,6 +222,7 @@ class SettingPage(SmoothScrollArea):
         self.outputPathCard = self.baseSettingsPanel.outputPathCard
         self.gameRegionCard = self.baseSettingsPanel.gameRegionCard
         self.groupByTypeCard = self.baseSettingsPanel.groupByTypeCard
+        self.prepareDataCard = self.baseSettingsPanel.prepareDataCard
         self.expandLayout.addWidget(self.baseGroup)
 
     # 3. 工具配置 -------------------------------------------------------
@@ -284,6 +287,7 @@ class SettingPage(SmoothScrollArea):
         apply_path_card_label(self.outputPathCard, cfg.output_path, f"./{get_default_output_relative_path()}")
         self.gameRegionCard.setValue(cfg.game_region)
         self.groupByTypeCard.setChecked(cfg.group_by_type)
+        self.prepareDataCard.setChecked(cfg.prepare_data_on_startup)
 
         # 工具配置
         apply_path_card_label(self.wwiserCard, cfg.wwiser_path, f"./{get_default_wwiser_relative_path()}")
@@ -315,6 +319,7 @@ class SettingPage(SmoothScrollArea):
         cfg = self._cfg
         cfg.game_region = self.gameRegionCard.value()
         cfg.group_by_type = self.groupByTypeCard.isChecked()
+        cfg.prepare_data_on_startup = self.prepareDataCard.isChecked()
         cfg.wav_workers = int(self.wavWorkersCard.value())
         cfg.wav_timeout = int(self.wavTimeoutCard.value())
         cfg.wav_retries = int(self.wavRetriesCard.value())
@@ -409,6 +414,7 @@ class SettingPage(SmoothScrollArea):
         # 基础设置
         self.gameRegionCard.comboBox.currentTextChanged.connect(self._save_config)
         self.groupByTypeCard.checkedChanged.connect(self._save_config)
+        self.prepareDataCard.checkedChanged.connect(self._save_config)
         self.wavWorkersCard.comboBox.currentTextChanged.connect(lambda _value: self._save_wav_defaults())
         self.wavTimeoutCard.comboBox.currentTextChanged.connect(lambda _value: self._save_wav_defaults())
         self.wavRetriesCard.comboBox.currentTextChanged.connect(lambda _value: self._save_wav_defaults())

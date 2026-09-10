@@ -5,7 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QAbstractListModel, QModelIndex, QPoint, QPointF, QRect, QSortFilterProxyModel, Qt, Signal
+from PySide6.QtCore import (
+    QAbstractListModel,
+    QModelIndex,
+    QPersistentModelIndex,
+    QPoint,
+    QPointF,
+    QRect,
+    QSortFilterProxyModel,
+    Qt,
+    Signal,
+)
 from PySide6.QtGui import QPainter, QPolygonF
 from PySide6.QtWidgets import QListView, QStyle, QStyledItemDelegate, QStyleOptionViewItem
 from qfluentwidgets import CustomStyleSheet, isDarkTheme, setCustomStyleSheet, setStyleSheet
@@ -301,11 +311,14 @@ class AudioListView(QListView):
     audio_ref_toggle_requested = Signal(object)
     audio_context_menu_requested = Signal(object, QPoint)
     audio_ref_selected = Signal(object)
+    export_selection_requested = Signal(QModelIndex, QModelIndex)
 
     def __init__(self, parent=None) -> None:
         """初始化音频列表视图与其源/筛选模型。"""
         super().__init__(parent)
         self._active_audio_path: Path | None = None
+        self._ctrl_export_click = False
+        self._export_anchor = QPersistentModelIndex()
         self._active_audio_progress = 0.0
         self._is_playing = False
         self._is_paused = False
@@ -401,12 +414,39 @@ class AudioListView(QListView):
 
     def _on_current_changed(self, current: QModelIndex, _previous: QModelIndex) -> None:
         """在选择一条平铺音频时上报其精确引用。"""
+        self._export_anchor = QPersistentModelIndex()
         ref = self.audio_ref_at(current)
         if ref is not None:
             self.audio_ref_selected.emit(ref)
 
+    def mousePressEvent(self, event) -> None:
+        """Ctrl 点击正文时把前后浏览项交给共享导出选择。"""
+        position = event.position().toPoint()
+        index = self.indexAt(position)
+        previous = QModelIndex(self._export_anchor)
+        body_click = (
+            event.button() == Qt.MouseButton.LeftButton
+            and index.isValid()
+            and position.x() > self.audio_control_rect(index).right()
+            and not (
+                self.source_model.selection_mode
+                and audio_check_rect(self.visualRect(index), self.viewport().width()).contains(position)
+            )
+        )
+        ctrl_select = body_click and bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        self._ctrl_export_click = ctrl_select
+        super().mousePressEvent(event)
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._export_anchor = QPersistentModelIndex(index) if body_click else QPersistentModelIndex()
+        if ctrl_select:
+            self.export_selection_requested.emit(index, previous)
+
     def mouseReleaseEvent(self, event) -> None:
         """在播放按钮上发出精确音频引用，其他区域保持默认选择。"""
+        if event.button() == Qt.MouseButton.LeftButton and self._ctrl_export_click:
+            self._ctrl_export_click = False
+            event.accept()
+            return
         if event.button() == Qt.MouseButton.LeftButton:
             index = self.indexAt(event.position().toPoint())
             if self.source_model.selection_mode and audio_check_rect(

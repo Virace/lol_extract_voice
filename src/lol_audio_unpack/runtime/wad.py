@@ -3,11 +3,47 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from pathlib import Path
+from weakref import WeakKeyDictionary
 
 from league_tools import WAD
 
 from lol_audio_unpack.model.binding import normalize_wad_identity
+
+_read_locks: WeakKeyDictionary[WAD, threading.Lock] = WeakKeyDictionary()
+_locks_guard = threading.Lock()
+
+
+def extract_wad(
+    wad: WAD,
+    paths: list[str],
+    *,
+    out_dir: str | Path | Callable = "",
+    raw: bool = False,
+) -> list:
+    """在上游声明并发读能力前，以对象级锁保护完整提取调用。
+
+    Args:
+        wad: 本轮缓存的 WAD 读取器。
+        paths: 按原顺序提取的逻辑路径。
+        out_dir: 输出目录或路径生成函数。
+        raw: 是否直接返回条目数据。
+
+    Returns:
+        与输入路径逐项对应的提取结果。
+    """
+    options = {"raw": True} if raw else {}
+    if out_dir:
+        options["out_dir"] = out_dir
+    if getattr(wad, "thread_safe_reads", False) is True:
+        return wad.extract(paths, **options)
+    # 已发布的 league-tools 1.2.0 共用 seek/read 游标；兼容层随 WAD 回收，
+    # 新版已在读取内部加锁时不再串行化其解压与写盘。
+    with _locks_guard:
+        lock = _read_locks.setdefault(wad, threading.Lock())
+    with lock:
+        return wad.extract(paths, **options)
 
 
 def resolve_bound_wad(game_path: Path, wad_identity: str) -> Path:
