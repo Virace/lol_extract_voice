@@ -141,6 +141,7 @@ class OnboardingTourController:
         *,
         window,
         config,
+        home_page,
         setting_page,
         execution_page,
         overview_page,
@@ -152,6 +153,7 @@ class OnboardingTourController:
         Args:
             window: 主窗口对象，需要提供 ``switchTo``。
             config: GUI 配置对象，需要提供引导状态方法。
+            home_page: 主页实例。
             setting_page: 设置页实例。
             execution_page: 执行中心实例。
             overview_page: 实体总览实例。
@@ -161,6 +163,7 @@ class OnboardingTourController:
 
         self._window = window
         self._config = config
+        self._home_page = home_page
         self._setting_page = setting_page
         self._execution_page = execution_page
         self._overview_page = overview_page
@@ -322,6 +325,7 @@ class OnboardingTourController:
         """返回步骤名称对应的页面对象。"""
 
         return {
+            "home": self._home_page,
             "settings": self._setting_page,
             "execution": self._execution_page,
             "overview": self._overview_page,
@@ -386,6 +390,7 @@ class OnboardingTourController:
         route_key = page.objectName() if page is not None and callable(getattr(page, "objectName", None)) else ""
         if not route_key:
             route_key = {
+                "home": "HomePage",
                 "settings": "SettingPage",
                 "execution": "ExecutionPage",
                 "overview": "OverviewPage",
@@ -397,7 +402,7 @@ class OnboardingTourController:
             return None
 
     def _build_steps(self) -> tuple[TourStep, ...]:
-        """构建第一版新手引导步骤。"""
+        """围绕目录设置、页面用途与常用操作构建基础引导。"""
 
         return (
             TourStep(
@@ -405,7 +410,7 @@ class OnboardingTourController:
                 page_name="navigation",
                 target=lambda: self._target_nav_for("settings"),
                 title="先打开全局设置",
-                content="全局设置在左侧导航栏底部。请点击这个入口，进入设置页后我会继续说明游戏目录和输出目录。",
+                content="这里设置游戏目录和保存位置。点击左侧「全局设置」，先选好游戏目录。",
                 allow_next=False,
                 wait_for_page_name="settings",
             ),
@@ -413,68 +418,50 @@ class OnboardingTourController:
                 key="game-path",
                 page_name="settings",
                 target=lambda: getattr(self._setting_page, "gamePathCard", None),
-                title="游戏位置",
-                content="这里选择英雄联盟游戏数据位置。可以选已安装客户端或外部准备目录的根、Game 目录或 LeagueClient 目录，程序会自动识别真正的数据根目录。",
+                title="选择游戏目录",
+                content="点「选择文件夹」，选择英雄联盟的安装文件夹，程序会自动识别。下方工具路径不用填，程序已自带所需功能。",
             ),
             TourStep(
                 key="output-path",
                 page_name="settings",
                 target=lambda: getattr(self._setting_page, "outputPathCard", None),
                 title="输出目录",
-                content="输出目录保存导出的 .wem、可选 .wav、事件映射文件和报告。建议选一个容易找到的空文件夹，不要放进游戏安装目录。",
+                content="提取的音频会保存在这里。可以保持默认，也可以换到方便找到的文件夹；不要选游戏安装目录。",
             ),
             TourStep(
-                key="execution-entry",
-                page_name="navigation",
-                target=lambda: self._target_nav_for("execution"),
-                title="打开执行中心",
-                content="执行中心在左侧导航栏。请点击它，进入后我会说明怎样选择目标、音频范围和任务类型。",
-                allow_next=False,
-                wait_for_page_name="execution",
+                key="prepare-data",
+                page_name="settings",
+                target=lambda: getattr(self._setting_page, "prepareDataCard", None),
+                title="提前准备数据：通常不用开启",
+                content="程序会在你使用时自动准备所需数据。只有想在每次启动时提前准备、减少后续等待，才需要开启。",
+            ),
+            TourStep(
+                key="home",
+                page_name="home",
+                target=lambda: self._target_nav_for("home"),
+                title="主页：查看状态",
+                content="这里查看游戏是否就绪，也能快速打开音频保存目录。遇到问题时，按页面提示操作即可。",
             ),
             TourStep(
                 key="task-scope",
                 page_name="execution",
                 target=lambda: getattr(self._execution_page, "taskBuilderPanel", None),
-                title="创建任务",
-                content="执行中心决定这次要处理哪些英雄或地图，以及要做解包、转码还是事件映射。先选少量目标测试，再扩大范围更稳。",
-            ),
-            TourStep(
-                key="audio-range",
-                page_name="execution",
-                target=lambda: getattr(self._execution_page, "vo_filter", None),
-                title="音频范围",
-                content="VO 是英雄语音，通常是台词和播报；SFX 是技能、环境等音效；MUSIC 是音乐。默认先处理 VO，适合大多数语音导出需求。",
+                title="执行中心：提取音频",
+                content="这里负责提取音频。可以从实体总览选择英雄并发送到这里，也可以手动填写英雄 ID。其余选项保持默认，点底部「创建任务」即可。",
             ),
             TourStep(
                 key="wav-transcode",
                 page_name="execution",
                 target=lambda: getattr(self._execution_page, "wav_task_cb", None),
-                title="音频转码",
-                content="解包会得到原始 .wem。只有勾选音频转码后，格式选项才会启用，用来额外导出 wav 等更容易播放的文件。",
-            ),
-            TourStep(
-                key="event-mapping",
-                page_name="execution",
-                target=lambda: getattr(self._execution_page, "mapping_task_cb", None),
-                title="事件映射",
-                content="事件映射用于把游戏事件名和音频文件关联起来。想查某句语音对应哪个事件时再勾选；只想导出音频可以不选。",
-            ),
-            TourStep(
-                key="overview-entry",
-                page_name="navigation",
-                target=lambda: self._target_nav_for("overview"),
-                title="打开实体总览",
-                content="实体总览在左侧导航栏。请点击它，进入后我会说明如何查看英雄、地图和事件音频。",
-                allow_next=False,
-                wait_for_page_name="overview",
+                title="音频转码：试听不用勾选",
+                content="程序可以直接试听，也能在实体总览里挑选几条导出。只有想把本次任务的音频整批保存为 WAV 文件时，才需要勾选。",
             ),
             TourStep(
                 key="overview-list",
                 page_name="overview",
                 target=lambda: getattr(self._overview_page, "entityListPanel", None),
-                title="实体总览",
-                content="这里查看英雄和地图的数据状态，也可以把选中的实体发送到执行中心，避免手动输入编号或别名。",
+                title="实体总览：找音频、选对象",
+                content="在左侧查找英雄、地图或特殊内容。需要提取音频时，勾选对象，再点「发送到执行中心」，不用手动填写编号。",
             ),
             TourStep(
                 key="overview-preview",
@@ -484,47 +471,22 @@ class OnboardingTourController:
                     "previewPanel",
                     getattr(self._overview_page, "audio_preview_tree", None),
                 ),
-                title="事件与音频预览",
-                content="更新和映射完成后，可以在这里查看事件树、音频列表和试听结果。看不到内容时，通常需要先更新数据或执行映射。",
-            ),
-            TourStep(
-                key="item-lookup-entry",
-                page_name="navigation",
-                target=lambda: self._target_nav_for("item_lookup"),
-                title="打开装备查询",
-                content="装备查询在左侧导航栏。它是独立的装备 ID 工具，不需要先更新或解包语音数据。",
-                allow_next=False,
-                wait_for_page_name="item_lookup",
+                title="试听并保存喜欢的音频",
+                content="在右侧点播放按钮试听；想保存时，点「选择导出」，选好音频后点「导出 WAV」。如果提示「尚未解包」，先到执行中心创建任务。",
             ),
             TourStep(
                 key="item-lookup-search",
                 page_name="item_lookup",
                 target=lambda: getattr(self._item_lookup_page, "search_input", None),
-                title="搜索装备 ID",
-                content="这里可以按装备名称、关键词或 ID 过滤官网装备数据。页面加载失败时，不会影响解包和事件映射功能。",
+                title="装备查询：查找并复制编号",
+                content="输入装备名称或 ID，选择游戏模式，再点击装备卡片复制编号。这是独立工具，不用先提取音频。",
             ),
             TourStep(
-                key="item-lookup-modes",
-                page_name="item_lookup",
-                target=lambda: getattr(self._item_lookup_page, "mode_tabs", None),
-                title="区分模式并复制 ID",
-                content="普通模式和斗魂竞技场可能有同名不同 ID。先切换模式确认来源，再点击装备卡片复制 ID。",
-            ),
-            TourStep(
-                key="settings-tools-entry",
-                page_name="navigation",
-                target=lambda: self._target_nav_for("settings"),
-                title="回到全局设置",
-                content="最后回到全局设置，看一下高级工具路径。请点击左侧的全局设置入口。",
-                allow_next=False,
-                wait_for_page_name="settings",
-            ),
-            TourStep(
-                key="advanced-tools",
-                page_name="settings",
-                target=lambda: getattr(self._setting_page, "wwiserCard", None),
-                title="高级工具",
-                content="wwiser 和 vgmstream-cli 现在不是普通流程必填项。默认会使用内置能力；遇到高级兼容需求时，再按文档设置这些路径。",
+                key="ready",
+                page_name="execution",
+                target=lambda: getattr(self._execution_page, "taskBuilderPanel", None),
+                title="可以开始使用了",
+                content="选好要处理的英雄或地图后，点击「创建任务」即可。",
             ),
         )
 
