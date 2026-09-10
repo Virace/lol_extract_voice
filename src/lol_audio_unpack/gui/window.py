@@ -240,6 +240,7 @@ class MainWindow(FluentWindow):
         self._onboarding_controller = OnboardingTourController(
             window=self,
             config=cfg,
+            home_page=self.homeInterface,
             setting_page=self.settingInterface,
             execution_page=self.executionInterface,
             overview_page=self.overviewInterface,
