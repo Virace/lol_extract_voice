@@ -67,6 +67,7 @@ class AudioExportBar(QWidget):
 
         self.mode_button = PushButton("选择导出", self.context_bar)
         self.mode_button.setAccessibleName("音频选择模式")
+        self.mode_button.setToolTip("点击进入选择模式，或按住 Ctrl 点击第二个条目开始多选")
         self.mode_button.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         context_layout.addWidget(self.mode_button)
 
