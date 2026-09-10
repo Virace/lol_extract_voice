@@ -568,25 +568,17 @@ def test_entity_data_loader_incremental_resource_pack_targets_skip_champion_cata
     assert rows == {"champions": [], "special": [{"id": key, "key": key, "name": "厄加特"}]}
 
 
-def test_entity_data_loader_propagates_shared_bank_root_missing_error(monkeypatch) -> None:
-    """共享 banks 根缺失必须上抛，交由既有自动准备和刷新回退处理。"""
+def test_entity_data_loader_propagates_shared_metadata_missing_error() -> None:
+    """基础目录缺失仍须上抛；资源按需准备不能掩盖元数据不可读。"""
     loader = data_loader_module.EntityDataLoader.__new__(data_loader_module.EntityDataLoader)
     loader.ctx = SimpleNamespace(game_region="zh_CN")
     loader.data_reader = SimpleNamespace(
         version="16.16",
-        get_champions=lambda: [
-            {"id": 6, "alias": "Urgot", "names": {"zh_CN": "厄加特"}},
-            {"id": 66600, "alias": "Ruby_Urgot"},
-        ],
+        get_champions=lambda: (_ for _ in ()).throw(SharedDataMissingError("基础目录未准备")),
     )
-    monkeypatch.setattr(
-        loader,
-        "_ensure_bank_dataset_ready",
-        lambda _entity_type: (_ for _ in ()).throw(SharedDataMissingError("共享 banks 未准备")),
-    )
-    with pytest.raises(SharedDataMissingError, match="共享 banks 未准备"):
+    with pytest.raises(SharedDataMissingError, match="基础目录未准备"):
         loader.load_champion_catalog()
-    with pytest.raises(SharedDataMissingError, match="共享 banks 未准备"):
+    with pytest.raises(SharedDataMissingError, match="基础目录未准备"):
         loader.load_champion_rows_by_targets(special_targets=("champion:66600",))
 
 

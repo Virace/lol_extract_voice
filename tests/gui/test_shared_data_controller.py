@@ -17,7 +17,7 @@ from lol_audio_unpack.gui.controllers.shared_data import (
     build_shared_context_loading_message,
     build_shared_entity_reader_signature,
 )
-from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
+from lol_audio_unpack.gui.service.data_loader import EntityDataLoader, build_scan_failure_result
 from lol_audio_unpack.gui.shared_data import (
     SharedDataFailure,
     SharedDataPhase,
@@ -32,6 +32,7 @@ from lol_audio_unpack.gui.shared_data import (
     SharedDataSectionResult,
 )
 from lol_audio_unpack.gui.task_models import OutputStateRefreshRequest
+from lol_audio_unpack.manager.errors import SharedDataMissingError
 from lol_audio_unpack.manager.files import write_data
 from lol_audio_unpack.model.binding import RESOURCE_SCHEMA_VERSION
 from lol_audio_unpack.model.progress import OperationProgress
@@ -48,6 +49,7 @@ class _FakeConfig:
     game_path = "game"
     game_region = "zh_CN"
     group_by_type = False
+    prepare_data_on_startup = False
     console_log_level = "INFO"
     file_log_level = "DEBUG"
 
@@ -108,9 +110,10 @@ class _FakeScanWorker:
 
     instances = []
 
-    def __init__(self, app_context, generation: int) -> None:
+    def __init__(self, app_context, generation: int, *, require_resources: bool = False) -> None:
         self.app_context = app_context
         self.generation = generation
+        self.require_resources = require_resources
         self.progress = _FakeSignal()
         self.finished = _FakeSignal()
         self.error = _FakeSignal()
@@ -347,7 +350,7 @@ def test_shared_data_reader_signature_tracks_local_inputs() -> None:
 
     signature = build_shared_entity_reader_signature(cfg)
 
-    assert signature == ("game", "zh_CN")
+    assert signature == ("game", "zh_CN", False)
     assert build_shared_context_loading_message(cfg) == "正在读取本地共享数据…"
 
 
@@ -504,13 +507,18 @@ def test_shared_data_controller_reloads_for_reader_and_scan_signature_changes() 
     controller.on_context_input_changed(cfg)
     controller.flush_pending_runtime_entity_refresh()
 
+    cfg.prepare_data_on_startup = True
+    controller.on_context_input_changed(cfg)
+    controller.flush_pending_runtime_entity_refresh()
+
     assert len(reconfigure_payloads) == 1
     assert reconfigure_payloads[0].log_dir == Path("logs/runtime")
     assert [call[1]["trigger"] for call in reload_calls] == [
         SharedDataPrepareTrigger.CONTEXT_CHANGE,
         SharedDataPrepareTrigger.CONTEXT_CHANGE,
+        SharedDataPrepareTrigger.CONTEXT_CHANGE,
     ]
-    assert [call[1]["generation"] for call in reload_calls] == [1, 2]
+    assert [call[1]["generation"] for call in reload_calls] == [1, 2, 3]
 
 
 def test_shared_data_controller_publishes_ready_only_from_complete_scan() -> None:
@@ -539,6 +547,40 @@ def test_shared_data_controller_publishes_ready_only_from_complete_scan() -> Non
     assert [payload.entity_type for payload in rows] == ["champions", "special", "maps"]
     assert notices == []
     assert states[-1].blocks_new_tasks is False
+
+
+@pytest.mark.parametrize("prepare_resources", [False, True])
+def test_controller_applies_preparation_preference_through_verification(prepare_resources) -> None:
+    """首次缺基础目录时，无论开关状态都准备并复检，但资源范围遵守用户偏好。"""
+    _FakeScanWorker.instances.clear()
+    started = []
+    requested = []
+
+    def prepare(_settings, **kwargs):
+        requested.append(kwargs["prepare_resources"])
+        return SharedDataPreparationResult(kwargs["generation"], kwargs["scope"], StageResult("update"))
+
+    controller = _build_controller(
+        task_worker_cls=_FakeTaskWorker,
+        data_load_worker_cls=_FakeScanWorker,
+        start_worker_fn=started.append,
+        prepare_shared_entity_data_fn=prepare,
+    )
+    controller._get_config().prepare_data_on_startup = prepare_resources
+    controller.bootstrap()
+    started[0].run()
+    scan = _FakeScanWorker.instances[-1]
+    assert scan.require_resources is prepare_resources
+    scan.finished.emit(build_scan_failure_result(controller.generation, SharedDataMissingError("missing")))
+    started[1].run()
+    verified = _FakeScanWorker.instances[-1]
+    assert verified.require_resources is prepare_resources
+    verified.finished.emit(_scan_result(controller.generation))
+
+    assert requested == [prepare_resources]
+    assert controller.state.phase is SharedDataPhase.READY
+    assert not controller.state.blocks_new_tasks
+    controller.shutdown_background_work()
 
 
 @pytest.mark.parametrize(
@@ -770,6 +812,8 @@ def test_legacy_schema_fixture_uses_normal_update_adapter_then_verifies_ready(
     champion_banks_dir = tmp_path / "champion-banks"
     map_banks_dir = tmp_path / "map-banks"
     resource_pack_banks_dir = tmp_path / "resource-pack-banks"
+    champion_events_dir = tmp_path / "champion-events"
+    map_events_dir = tmp_path / "map-events"
     champion_banks_dir.mkdir()
     map_banks_dir.mkdir()
     resource_pack_banks_dir.mkdir()
@@ -811,6 +855,8 @@ def test_legacy_schema_fixture_uses_normal_update_adapter_then_verifies_ready(
             champion_banks_dir=champion_banks_dir,
             map_banks_dir=map_banks_dir,
             resource_pack_banks_dir=resource_pack_banks_dir,
+            champion_events_dir=champion_events_dir,
+            map_events_dir=map_events_dir,
             _champion_banks_cache={},
             _map_banks_cache={},
             get_champions=lambda: champions,
@@ -822,7 +868,7 @@ def test_legacy_schema_fixture_uses_normal_update_adapter_then_verifies_ready(
             "entity_type": entity_type,
         }
         loader.load_resource_pack_rows = lambda **_kwargs: []
-        return loader.scan_catalog(generation)
+        return loader.scan_catalog(generation, require_resources=True)
 
     class _FixtureApp:
         """用原子写入模拟核心 update 完成 schema 迁移。"""
@@ -847,6 +893,8 @@ def test_legacy_schema_fixture_uses_normal_update_adapter_then_verifies_ready(
                 map_banks_dir / "11",
             ):
                 write_data(ready_payload, base_path, dev_mode=True)
+            for base_path in (champion_events_dir / "1", map_events_dir / "0", map_events_dir / "11"):
+                write_data({"metadata": {"gameVersion": "16.16"}}, base_path, dev_mode=True)
             progress_callback(OperationProgress("update", "champion_banks", "finished", 1, 1))
             return StageResult("update", status=ResultStatus.SUCCESS)
 
@@ -859,6 +907,7 @@ def test_legacy_schema_fixture_uses_normal_update_adapter_then_verifies_ready(
         start_worker_fn=started_workers.append,
         prepare_shared_entity_data_fn=window_module._prepare_shared_entity_data,
     )
+    controller._get_config().prepare_data_on_startup = True
 
     controller.load_initial_data()
     started_workers[0].run()

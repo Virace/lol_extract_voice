@@ -27,6 +27,7 @@ from qfluentwidgets import (
 from lol_audio_unpack import __version__
 from lol_audio_unpack.app.context import create_app_context
 from lol_audio_unpack.app.facade import LolAudioUnpackApp
+from lol_audio_unpack.app.results import StageResult
 from lol_audio_unpack.app.types import OperationOptions
 from lol_audio_unpack.gui.common import (
     apply_smooth_scroll_enabled,
@@ -80,6 +81,7 @@ from lol_audio_unpack.gui.view.item_lookup_page import ItemLookupPage
 from lol_audio_unpack.gui.view.overview_page import OverviewPage
 from lol_audio_unpack.gui.view.setting_page import SettingPage
 from lol_audio_unpack.gui.workers import TaskWorker
+from lol_audio_unpack.manager.errors import SharedDataNotReadyError
 from lol_audio_unpack.model.progress import OperationProgress
 from lol_audio_unpack.utils.logging import setup_logging
 
@@ -98,17 +100,29 @@ def _log_window_stage(stage: str, startup_begin: float, previous_mark: float) ->
     return current_mark
 
 
-def _prepare_shared_entity_data(
+def _prepare_shared_entity_data(  # noqa: PLR0913
     shared_settings: dict[str, str | bool],
     *,
     generation: int,
     scope: SharedDataRepairScope,
     force_update: bool,
+    prepare_resources: bool = False,
     progress_callback: Callable[[OperationProgress], None],
 ) -> SharedDataPreparationResult:
-    """按扫描证据执行一次后端共享数据准备并保留 typed result。"""
+    """按偏好准备基础目录或完整资源；仅成功返回才进入目录复检。"""
     app_context = create_app_context(settings=dict(shared_settings))
     app = LolAudioUnpackApp(app_context)
+    if not prepare_resources:
+        logger.info("开始准备基础实体目录；资源数据将在任务中按需准备")
+        progress_callback(OperationProgress("update", "data", "started"))
+        try:
+            app.prepare_update_data(force_update=force_update)
+        except (SharedDataNotReadyError, OSError) as exc:
+            logger.opt(exception=True).error("基础实体目录准备失败")
+            return SharedDataPreparationResult(generation, scope, StageResult.from_error("update", exc))
+        progress_callback(OperationProgress("update", "data", "finished"))
+        logger.info("基础实体目录准备完成")
+        return SharedDataPreparationResult(generation, scope, StageResult("update"))
     options = OperationOptions(
         force_update=force_update,
         champion_ids=None if scope.full or not scope.champion_ids else scope.champion_ids,

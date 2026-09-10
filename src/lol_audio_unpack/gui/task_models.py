@@ -105,7 +105,7 @@ class ExecutionTaskParamsSnapshot:
         return OperationOptions(
             max_workers=self.max_workers,
             force_update=self.run_update,
-            process_events=True,
+            process_events=self.run_mapping,
             integrate_data=self.integrate_data,
             champion_ids=self.champion_ids,
             map_ids=self.map_ids,

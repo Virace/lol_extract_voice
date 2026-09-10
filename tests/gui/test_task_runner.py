@@ -19,6 +19,7 @@ from lol_audio_unpack.gui.task_models import (
     QueuedExecutionTask,
 )
 from lol_audio_unpack.gui.window import _prepare_shared_entity_data
+from lol_audio_unpack.model.progress import OperationProgress
 
 EXPECTED_CONTEXT_COUNT_WITH_UPDATE = 2
 PREPARE_GENERATION = 3
@@ -104,6 +105,14 @@ class _ReadyMapBanksReader:
         return {"banks": {"VO": [["map.wpk"]]}}
 
 
+class _PreparedApp:
+    """为消费阶段测试提供已具备当前缓存的 update 边界。"""
+
+    def update(self, _options, *, target: str, progress_callback) -> StageResult:
+        """已有资源时普通准备成功且不生成新产物。"""
+        return _stage("update")
+
+
 def _install_fake_runtime(monkeypatch, tmp_path: Path, app_cls: type) -> None:
     """为结果状态测试安装最小运行时上下文与门面。"""
     runtime_context = SimpleNamespace(
@@ -146,6 +155,7 @@ def test_prepare_shared_entity_data_passes_local_settings_to_app_context(monkeyp
         generation=PREPARE_GENERATION,
         scope=SharedDataRepairScope(full=False, champion_ids=(1,)),
         force_update=True,
+        prepare_resources=True,
         progress_callback=progress_callback,
     )
 
@@ -158,6 +168,97 @@ def test_prepare_shared_entity_data_passes_local_settings_to_app_context(monkeyp
     assert callback is progress_callback
     assert result.generation == PREPARE_GENERATION
     assert result.stage_result.status is ResultStatus.SUCCESS
+
+
+@pytest.mark.parametrize("error", [None, PermissionError("目录不可写")])
+def test_default_startup_prepares_catalog_without_bin_update(monkeypatch, error) -> None:
+    """启动默认只读取基础数据，不得因清单缺失进入全量 BIN 更新。"""
+    calls = []
+
+    class FakeApp:
+        """隔离基础数据准备与 BIN 更新两个应用边界。"""
+
+        def __init__(self, _ctx) -> None:
+            """基础准备不依赖运行时资源对象。"""
+
+        def prepare_update_data(self, *, force_update: bool) -> None:
+            """记录基础目录准备策略。"""
+            calls.append(force_update)
+            if error is not None:
+                raise error
+
+        def update(self, *_args, **_kwargs):
+            """默认启动不应调用完整实体更新。"""
+            pytest.fail("默认启动不得解析所有实体 BIN")
+
+    monkeypatch.setattr(window_module, "create_app_context", lambda **_kwargs: object())
+    monkeypatch.setattr(window_module, "LolAudioUnpackApp", FakeApp)
+    progress = []
+
+    result = _prepare_shared_entity_data(
+        {"GAME_PATH": "game"},
+        generation=1,
+        scope=SharedDataRepairScope(full=True),
+        force_update=False,
+        progress_callback=progress.append,
+    )
+
+    assert calls == [False]
+    if error is None:
+        assert result.stage_result.status is ResultStatus.SUCCESS
+        assert [(item.stage_key, item.event) for item in progress] == [("data", "started"), ("data", "finished")]
+    else:
+        assert result.stage_result.status is ResultStatus.FAILED
+        assert result.stage_result.error_type == "PermissionError"
+        assert [item.event for item in progress] == ["started"]
+
+
+@pytest.mark.parametrize(("run_extract", "run_mapping"), [(True, False), (False, True), (True, True)])
+def test_task_prepares_selected_entities_before_consumption(monkeypatch, tmp_path, run_extract, run_mapping) -> None:
+    """任务自动准备只覆盖所选目标，事件按需开启，且准备与消费共用上下文。"""
+    task = _build_task(run_extract=run_extract, run_mapping=run_mapping, champion_ids=(1,))
+    calls = []
+
+    class FakeApp:
+        """用依赖就绪状态验证准备与消费的真实先后关系。"""
+
+        def __init__(self, ctx) -> None:
+            """仅当前运行时实例持有准备状态。"""
+            self.ctx = ctx
+            self.prepared = False
+
+        def update(self, options, *, target, progress_callback):
+            """检查目标与缓存策略，并发布可观察准备进度。"""
+            assert options.champion_ids == (1,)
+            assert options.map_ids is None
+            assert options.process_events is run_mapping
+            assert options.force_update is False
+            assert target == "skin"
+            self.prepared = True
+            calls.append("prepare")
+            progress_callback(OperationProgress("update", "champion_banks", "advanced", 1, 1))
+            return _stage("update")
+
+        def extract(self, _options, **_kwargs):
+            """只允许消费已经准备的目标。"""
+            assert self.prepared
+            calls.append("extract")
+            return _stage("extract")
+
+        def mapping(self, _options, **_kwargs):
+            """映射复用任务准备的事件数据。"""
+            assert self.prepared
+            calls.append("mapping")
+            return _stage("mapping")
+
+    _install_fake_runtime(monkeypatch, tmp_path, FakeApp)
+    progress = []
+    result = task_runner.run_execution_task(task, SimpleNamespace(progress=SimpleNamespace(emit=progress.append)))
+
+    expected = ["prepare", *(["extract"] if run_extract else []), *(["mapping"] if run_mapping else [])]
+    assert calls == expected
+    assert result.run_result.status is ResultStatus.SUCCESS
+    assert any(item.stage_key == "update" and item.current == 1 for item in progress)
 
 
 def test_run_execution_task_runs_stages_in_order_and_reuses_runtime_context(monkeypatch, tmp_path: Path) -> None:
@@ -199,7 +300,7 @@ def test_run_execution_task_runs_stages_in_order_and_reuses_runtime_context(monk
 
     monkeypatch.setattr(task_runner, "create_app_context", _create_app_context)
 
-    class FakeApp:
+    class FakeApp(_PreparedApp):
         def __init__(self, app_context) -> None:
             self.ctx = app_context
             app_instances.append(self)
@@ -208,7 +309,7 @@ def test_run_execution_task_runs_stages_in_order_and_reuses_runtime_context(monk
             reader_owners.append(self)
             return reader
 
-        def update(self, _options, *, target: str) -> StageResult:
+        def update(self, _options, *, target: str, progress_callback=None) -> StageResult:
             assert target == "all"
             events.append("update")
             return _stage("update")
@@ -252,7 +353,7 @@ def test_run_execution_task_reports_partial_and_only_completes_productive_stages
         champion_ids=(1, 2),
     )
 
-    class FakeApp:
+    class FakeApp(_PreparedApp):
         def __init__(self, app_context) -> None:
             self.ctx = app_context
 
@@ -280,7 +381,7 @@ def test_run_execution_task_summary_separates_stages_and_explains_issue(monkeypa
     """一个英雄跨阶段执行时，通知必须保留阶段归属与实际错误原因。"""
     task = _build_task(champion_ids=(1,))
 
-    class FakeApp:
+    class FakeApp(_PreparedApp):
         def __init__(self, app_context) -> None:
             self.ctx = app_context
 
@@ -314,16 +415,17 @@ def test_run_execution_task_summary_separates_stages_and_explains_issue(monkeypa
     assert "voice.wpk 读取失败" in extract_progress.message
 
 
-def test_run_execution_task_stops_dependencies_after_failed_update(monkeypatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize("run_update", [False, True])
+def test_run_execution_task_stops_dependencies_after_failed_update(monkeypatch, tmp_path: Path, run_update) -> None:
     """前置更新失败后不得再启动依赖的解包与映射阶段。"""
-    task = _build_task(run_update=True, champion_ids=(1,))
+    task = _build_task(run_update=run_update, champion_ids=(1,))
     events: list[str] = []
 
-    class FakeApp:
+    class FakeApp(_PreparedApp):
         def __init__(self, app_context) -> None:
             self.ctx = app_context
 
-        def update(self, _options, *, target: str) -> StageResult:
+        def update(self, _options, *, target: str, progress_callback=None) -> StageResult:
             assert target == "skin"
             events.append("update")
             return StageResult.from_error("update", RuntimeError("data update failed"))
@@ -357,11 +459,11 @@ def test_run_execution_task_does_not_complete_partial_update_without_artifacts(
         run_mapping=False,
     )
 
-    class FakeApp:
+    class FakeApp(_PreparedApp):
         def __init__(self, app_context) -> None:
             self.ctx = app_context
 
-        def update(self, _options, *, target: str) -> StageResult:
+        def update(self, _options, *, target: str, progress_callback=None) -> StageResult:
             assert target == "all"
             return StageResult("update", status=ResultStatus.PARTIAL)
 
@@ -386,7 +488,7 @@ def test_run_execution_task_skips_wav_after_failed_extract_but_runs_mapping(
     )
     events: list[str] = []
 
-    class FakeApp:
+    class FakeApp(_PreparedApp):
         def __init__(self, app_context) -> None:
             self.ctx = app_context
 
@@ -424,7 +526,7 @@ def test_run_execution_task_limits_wav_to_successful_extract_artifacts(monkeypat
     )
     wav_targets: list[tuple[int, ...] | None] = []
 
-    class FakeApp:
+    class FakeApp(_PreparedApp):
         def __init__(self, app_context) -> None:
             self.ctx = app_context
 
@@ -457,7 +559,7 @@ def test_run_execution_task_successful_no_op_has_no_completed_product_stage(
     """合法 no-op 是 success，但不能伪造已产生产物的步骤。"""
     task = _build_task(run_mapping=False, champion_ids=(1,))
 
-    class FakeApp:
+    class FakeApp(_PreparedApp):
         def __init__(self, app_context) -> None:
             self.ctx = app_context
 
@@ -477,7 +579,7 @@ def test_run_execution_task_successful_no_op_has_no_completed_product_stage(
 def test_later_exception_preserves_completed_extract(monkeypatch, tmp_path: Path) -> None:
     """映射步骤抛出异常仍须保留先前解包成功及其产物。"""
 
-    class FakeApp:
+    class FakeApp(_PreparedApp):
         def __init__(self, context):
             self.ctx = context
 
@@ -526,7 +628,7 @@ def test_run_execution_task_allows_wav_stage_without_extract(monkeypatch, tmp_pa
     )
     monkeypatch.setattr(task_runner, "create_app_context", lambda *, settings: runtime_context)
 
-    class FakeApp:
+    class FakeApp(_PreparedApp):
         def __init__(self, app_context) -> None:
             self.ctx = app_context
 
@@ -584,7 +686,7 @@ def test_run_execution_task_rejects_missing_map_banks_before_runtime_steps(
 
     reader = FakeReader()
 
-    class FakeApp:
+    class FakeApp(_PreparedApp):
         def __init__(self, app_context) -> None:
             self.ctx = app_context
 
@@ -600,7 +702,7 @@ def test_run_execution_task_rejects_missing_map_banks_before_runtime_steps(
 
     result = task_runner.run_execution_task(task, signals)
     assert result.run_result.status is ResultStatus.FAILED
-    assert "地图基础数据仍未准备完成" in result.run_result.stages[-1].error_message
+    assert "所选地图的数据准备未完成" in result.run_result.stages[-1].error_message
 
 
 def test_run_execution_task_preserves_special_targets_for_app_facade(monkeypatch, tmp_path: Path) -> None:
@@ -620,7 +722,7 @@ def test_run_execution_task_preserves_special_targets_for_app_facade(monkeypatch
 
     monkeypatch.setattr(task_runner, "create_app_context", lambda **_kwargs: runtime_context)
 
-    class FakeApp:
+    class FakeApp(_PreparedApp):
         def __init__(self, app_context) -> None:
             self.ctx = app_context
 
@@ -651,7 +753,7 @@ def test_resource_pack_only_task_excludes_champion_and_map_runtime_scope(monkeyp
 
     monkeypatch.setattr(task_runner, "create_app_context", lambda **_kwargs: runtime_context)
 
-    class FakeApp:
+    class FakeApp(_PreparedApp):
         def __init__(self, app_context) -> None:
             self.ctx = app_context
 

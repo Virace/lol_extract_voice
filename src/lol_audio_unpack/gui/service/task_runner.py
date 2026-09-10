@@ -25,6 +25,7 @@ from lol_audio_unpack.gui.task_models import (
     ExecutionTaskResult,
     QueuedExecutionTask,
 )
+from lol_audio_unpack.model.progress import OperationProgress
 from lol_audio_unpack.runtime.wav.batch import WavBatchResult, read_batch_result, retry_batch, run_batch
 from lol_audio_unpack.unpack.batch import execute_tasks as execute_extract_tasks
 
@@ -33,13 +34,14 @@ if TYPE_CHECKING:
 
 
 STAGE_KEY_BY_STEP_NAME = {
+    "准备任务数据": "update",
     "前置强制更新": "update",
     "音频解包": "extract",
     "音频转码": "wav",
     "事件映射": "mapping",
 }
 STAGE_LABEL_BY_KEY = {
-    "update": "前置强制更新",
+    "update": "数据准备",
     "extract": "音频解包",
     "wav": "音频转码",
     "mapping": "事件映射",
@@ -63,7 +65,7 @@ def _stage_produced_output(result: StageResult) -> bool:
     if result.status not in {ResultStatus.SUCCESS, ResultStatus.PARTIAL}:
         return False
     if result.stage == "update":
-        # GUI 的 update 始终是显式 force update；成功返回表示基础 artifact 已完成换代。
+        # 普通准备与显式重建共用 update；成功返回才表示本轮前置条件已满足。
         if result.status is ResultStatus.SUCCESS:
             return result.note != "当前目标不需要更新。"
         return _stage_has_artifacts(result)
@@ -321,9 +323,7 @@ def _ensure_map_banks_ready(
     if not missing_ids:
         return
 
-    raise RuntimeError(
-        f"地图基础数据仍未准备完成，缺少地图 banks: {missing_ids[:10]}。请等待后台数据准备完成后再创建任务。"
-    )
+    raise RuntimeError(f"所选地图的数据准备未完成，缺少地图 banks: {missing_ids[:10]}。请查看任务日志并重试。")
 
 
 def _run_audio_export(task: QueuedExecutionTask, signals: WorkerSignals) -> ExecutionTaskResult:
@@ -492,6 +492,9 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
         include_resource_packs=include_resource_packs,
     )
     steps = task_params.selected_steps()
+    if not task_params.run_update and (task_params.run_extract or task_params.run_mapping):
+        # 所选目标的准备属于当前任务，不依赖用户提前开启全量准备或手动勾选更新。
+        steps = ("准备任务数据", *steps)
     completed_steps: list[str] = []
     stage_results: list[StageResult] = []
     extract_result: StageResult | None = None
@@ -523,17 +526,34 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
             stage_result: StageResult | None = None
             logger.info(f"[执行中心] 任务 #{task.task_id} 开始{step_name}")
 
-            if step_name == "前置强制更新":
+            if step_name in {"准备任务数据", "前置强制更新"}:
+
+                def emit_prepare_progress(progress: OperationProgress) -> None:
+                    _emit_stage_progress(
+                        signals,
+                        stage_key="update",
+                        entity_scope_label=ENTITY_SCOPE_LABEL_BY_TYPE.get(progress.entity_type, task_scope_label),
+                        current=progress.current or 0,
+                        total=progress.total or 0,
+                        message="正在准备所选对象的数据…",
+                    )
+
                 _emit_stage_progress(
                     signals,
                     stage_key=stage_key,
                     entity_scope_label=task_scope_label,
                     current=0,
-                    total=1,
-                    message="正在强制刷新基础数据…",
+                    message="正在强制刷新所选数据…" if task_params.run_update else "正在检查所选对象的数据…",
                 )
-                update_app = create_runtime_app(_build_runtime_settings(task, force_bp_vo=True))
-                stage_result = _require_stage_result(update_app.update(options, target=target), stage_key)
+                if task_params.run_update:
+                    update_app = create_runtime_app(_build_runtime_settings(task, force_bp_vo=True))
+                else:
+                    runtime_app = create_runtime_app(runtime_settings)
+                    update_app = runtime_app
+                stage_result = _require_stage_result(
+                    update_app.update(options, target=target, progress_callback=emit_prepare_progress),
+                    stage_key,
+                )
             elif step_name == "音频解包":
 
                 def emit_extract_progress(
@@ -673,7 +693,10 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     logger.debug(f"[执行中心] 任务 #{task.task_id} 事件映射未返回增量进度")
 
             resolved_result = _require_stage_result(stage_result, stage_key)
-            stage_results.append(resolved_result)
+            # 自动准备是依赖检查；其成功不能把后续全失败任务聚合成“部分成功”。
+            # 非成功结果仍保留在报告中，避免丢失前置阶段的失败对象和恢复线索。
+            if step_name != "准备任务数据" or resolved_result.status is not ResultStatus.SUCCESS:
+                stage_results.append(resolved_result)
             if resolved_result.stage == "extract":
                 extract_result = resolved_result
             _emit_terminal_stage_progress(
@@ -681,7 +704,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                 resolved_result,
                 entity_scope_label=task_scope_label,
             )
-            if _stage_produced_output(resolved_result):
+            if step_name != "准备任务数据" and _stage_produced_output(resolved_result):
                 completed_steps.append(step_name)
             if resolved_result.status is ResultStatus.CANCELLED:
                 break

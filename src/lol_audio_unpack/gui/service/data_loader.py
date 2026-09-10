@@ -74,11 +74,16 @@ class _ResourceBindingIncompleteError(ValueError):
     """表示 v2 artifact 的 binding diagnostics 尚未完整。"""
 
 
+class _EventDataMissingError(ValueError):
+    """表示提前准备所需的事件缓存缺失或过期。"""
+
+
 _PROBLEM_MESSAGES = {
     SharedDataProblemCode.DATASET_MISSING: "当前版本的实体基础数据不存在。",
     SharedDataProblemCode.DATASET_STALE: "实体基础数据与当前版本不兼容。",
     SharedDataProblemCode.DATASET_EMPTY: "实体基础数据没有形成必需目录。",
     SharedDataProblemCode.BANK_ARTIFACT_MISSING: "共享 banks artifact 缺失或尚未生成。",
+    SharedDataProblemCode.EVENT_ARTIFACT_MISSING: "事件数据缺失或需要更新。",
     SharedDataProblemCode.RESOURCE_SCHEMA_MISMATCH: "共享 banks artifact 仍使用旧版资源结构。",
     SharedDataProblemCode.RESOURCE_BINDING_INCOMPLETE: "共享 banks artifact 的资源绑定尚未完整。",
     SharedDataProblemCode.MAP_COMMON_MISSING: "地图目录缺少 Common 地图 0。",
@@ -93,6 +98,8 @@ def _classify_scan_error(error: BaseException, *, dataset: bool = False) -> tupl
     """把扫描异常映射为不依赖文案的稳定问题分类。"""
     if isinstance(error, ResourceSchemaMismatchError):
         code = SharedDataProblemCode.RESOURCE_SCHEMA_MISMATCH
+    elif isinstance(error, _EventDataMissingError):
+        code = SharedDataProblemCode.EVENT_ARTIFACT_MISSING
     elif isinstance(error, _ResourceBindingIncompleteError):
         code = SharedDataProblemCode.RESOURCE_BINDING_INCOMPLETE
     elif isinstance(error, DataVersionMismatchError):
@@ -298,7 +305,9 @@ class EntityDataLoader:
 
         raise SharedDataMissingError(f"{entity_type} 共享 bank 数据目录不存在，请先运行更新程序。path={bank_root}")
 
-    def _preload_bank_artifact(self, entity_type: Literal["champions", "maps"], entity_id: str) -> None:
+    def _preload_bank_artifact(
+        self, entity_type: Literal["champions", "maps"], entity_id: str, *, require_complete: bool = True
+    ) -> None:
         """静默校验并缓存扫描所需的单实体 banks artifact。
 
         预期的缺失、旧 schema 与损坏由完整扫描统一聚合；这里不在逐实体边界打印 traceback。
@@ -324,8 +333,19 @@ class EntityDataLoader:
         diagnostics = payload.get("diagnostics")
         if not isinstance(diagnostics, dict):
             raise _ArtifactCorruptError(f"{entity_type} {entity_id} banks artifact 缺少 diagnostics")
-        if diagnostics.get("completeness") != "complete":
+        if require_complete and diagnostics.get("completeness") != "complete":
             raise _ResourceBindingIncompleteError(f"{entity_type} {entity_id} resource bindings 未完整")
+
+    def _check_event_artifact(self, entity_type: Literal["champions", "maps"], entity_id: str) -> None:
+        """提前准备包含事件缓存；仅做过解包的实体仍需补齐此部分。"""
+        root = self.data_reader.champion_events_dir if entity_type == "champions" else self.data_reader.map_events_dir
+        dev_mode = bool(self.ctx.config.dev_mode)
+        base = root / entity_id
+        if find_data_file(base, dev_mode=dev_mode) is None:
+            raise _EventDataMissingError(f"{entity_type} {entity_id} 缺少事件缓存")
+        payload = read_data(base, dev_mode=dev_mode, log_errors=False)
+        if not isinstance(payload, dict) or payload.get("metadata", {}).get("gameVersion") != self.data_reader.version:
+            raise _EventDataMissingError(f"{entity_type} {entity_id} 事件缓存不可用")
 
     @staticmethod
     def _emit_scan_progress(  # noqa: PLR0913
@@ -360,7 +380,7 @@ class EntityDataLoader:
             self._first_scan_unexpected = error
         return SharedDataFailure(entity_id, code, message)
 
-    def _scan_required_section(
+    def _scan_required_section(  # noqa: PLR0913
         self,
         entity_type: Literal["champions", "maps"],
         raw_entities: list[dict],
@@ -368,6 +388,7 @@ class EntityDataLoader:
         version: str,
         generation: int,
         progress: Callable[[SharedDataProgress], None] | None,
+        require_resources: bool,
     ) -> SharedDataSectionResult:
         """扫描一个必需普通目录并保留全部成功与失败事实。"""
         entities_by_id: dict[str, dict] = {}
@@ -404,16 +425,19 @@ class EntityDataLoader:
         )
 
         root_error: BaseException | None = None
-        try:
-            self._ensure_bank_dataset_ready(entity_type)
-        except Exception as exc:  # noqa: BLE001
-            root_error = exc
+        if require_resources:
+            try:
+                self._ensure_bank_dataset_ready(entity_type)
+            except Exception as exc:  # noqa: BLE001
+                root_error = exc
 
         for index, (entity_id, entity) in enumerate(entities_by_id.items(), start=1):
             try:
                 if root_error is not None:
                     raise root_error
-                self._preload_bank_artifact(entity_type, entity_id)
+                if require_resources:
+                    self._preload_bank_artifact(entity_type, entity_id)
+                    self._check_event_artifact(entity_type, entity_id)
                 row = self._build_entity_row(entity_type, entity, version)
                 if str(row.get("id", "")) != entity_id:
                     raise _ArtifactCorruptError(f"{entity_type} {entity_id} 行身份不一致")
@@ -443,6 +467,7 @@ class EntityDataLoader:
             expected_ids=expected_ids,
             rows=tuple(rows),
             failures=tuple(failures),
+            unprepared_ids=tuple(str(row["id"]) for row in rows if row.get("audio") == "未准备"),
         )
 
     def _scan_special_section(
@@ -562,12 +587,14 @@ class EntityDataLoader:
         generation: int,
         *,
         progress: Callable[[SharedDataProgress], None] | None = None,
+        require_resources: bool = False,
     ) -> SharedDataScanResult:
         """在一个 generation 内完整扫描普通与可选实体目录。
 
         Args:
             generation: 当前共享上下文代数。
             progress: 可选结构化扫描进度回调。
+            require_resources: 开启提前准备时要求绑定和事件完整；默认只要求基础目录可读。
 
         Returns:
             同时包含英雄、地图、特殊内容和聚合问题的原子快照。
@@ -587,6 +614,7 @@ class EntityDataLoader:
             version=version,
             generation=generation,
             progress=progress,
+            require_resources=require_resources,
         )
         special_result = self._scan_special_section(
             champions,
@@ -600,6 +628,7 @@ class EntityDataLoader:
             version=version,
             generation=generation,
             progress=progress,
+            require_resources=require_resources,
         )
 
         problems: list[SharedDataProblem] = []
@@ -633,9 +662,11 @@ class EntityDataLoader:
         summary = result.summary
         log_message = (
             f"共享实体目录扫描完成: readiness={result.readiness.value}; "
+            f"require_resources={require_resources}; "
             f"champions expected={summary.champion_expected} loaded={summary.champion_loaded} "
-            f"failed={summary.champion_failed}; maps expected={summary.map_expected} "
-            f"loaded={summary.map_loaded} failed={summary.map_failed}; "
+            f"failed={summary.champion_failed} unprepared={champion_result.unprepared_count}; "
+            f"maps expected={summary.map_expected} loaded={summary.map_loaded} "
+            f"failed={summary.map_failed} unprepared={map_result.unprepared_count}; "
             f"special discovered={summary.special_discovered} unprepared={summary.special_unprepared}"
         )
         if self._first_scan_unexpected is not None:
@@ -678,9 +709,48 @@ class EntityDataLoader:
         }
 
     def _build_entity_row(self, entity_type: GuiEntityType, entity_dict: dict, version: str) -> dict:
-        """将单个原始实体字典转换为 GUI 行数据。"""
-        entity_data = self._build_entity_data(entity_type, str(entity_dict["id"]))
-        return self._build_row_from_entity_data(entity_type, entity_data, version)
+        """基础目录独立于 BIN；已有资源时补充实际输出状态。"""
+        entity_id = str(entity_dict["id"])
+        entity_data = self._load_preview_entity(entity_type, entity_id)
+        if entity_data is not None:
+            return self._build_row_from_entity_data(entity_type, entity_data, version)
+
+        names = entity_dict.get("names", {})
+        name = names.get(self.ctx.game_region, names.get("default", ""))
+        if entity_type == "champions":
+            alias = entity_dict.get("alias", "")
+            titles = entity_dict.get("titles", {})
+            title = titles.get(self.ctx.game_region, titles.get("default", ""))
+        else:
+            alias = "common" if entity_id == "0" else entity_dict.get("mapStringId", "")
+            title = ""
+        name = sanitize_filename(name or alias or entity_id)
+        return {
+            "id": entity_id,
+            "name": f"{name}·{sanitize_filename(title)}" if title else name,
+            "alias": str(alias).lower(),
+            "audio": "未准备",
+            "mapping": "未准备",
+            "entity_type": entity_type,
+            "mapping_file": "",
+        }
+
+    def _load_preview_entity(self, entity_type: GuiEntityType, entity_id: str) -> AudioEntityData | None:
+        """未准备资源是正常目录状态；部分解包的有效绑定仍可用于浏览已有结果。"""
+        if entity_type == "resource_packs":
+            return self._build_entity_data(entity_type, entity_id)
+        try:
+            self._preload_bank_artifact(entity_type, entity_id, require_complete=False)
+            return self._build_entity_data(entity_type, entity_id)
+        except (
+            SharedDataMissingError,
+            SharedDataCorruptError,
+            ResourceSchemaMismatchError,
+            DataVersionMismatchError,
+            _ArtifactCorruptError,
+        ):
+            # 缺失与旧缓存留到用户任务处理，避免全量目录扫描制造数百条错误通知。
+            return None
 
     def _localized_champion_name(self, champion: dict) -> str:
         """读取当前区域的英雄名，缺失时交由 special profile 回退基础 alias。"""
@@ -914,7 +984,6 @@ class EntityDataLoader:
         try:
             version = self.data_reader.version
             champions = self.data_reader.get_champions()
-            self._ensure_bank_dataset_ready("champions")
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=True).warning(f"Error initializing data for champions: {exc}")
             raise
@@ -976,7 +1045,6 @@ class EntityDataLoader:
         try:
             version = self.data_reader.version
             champions = champions if champions is not None else self.data_reader.get_champions()
-            self._ensure_bank_dataset_ready("champions")
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=True).warning(f"Error initializing data for champions: {exc}")
             raise
@@ -1020,7 +1088,6 @@ class EntityDataLoader:
 
         try:
             version, raw_data = self._load_raw_entities(entity_type)
-            self._ensure_bank_dataset_ready(entity_type)
         except Exception as e:
             logger.opt(exception=True).warning(f"Error initializing data for {entity_type}: {e}")
             raise
@@ -1043,7 +1110,6 @@ class EntityDataLoader:
         target_ids = set(entity_ids)
         try:
             version, raw_data = self._load_raw_entities(entity_type)
-            self._ensure_bank_dataset_ready(entity_type)
         except Exception as e:
             logger.opt(exception=True).warning(f"Error initializing data for {entity_type}: {e}")
             raise
@@ -1105,7 +1171,9 @@ class EntityDataLoader:
         Returns:
             按相对路径排序的 WEM 引用；同一 ID 的不同路径会保留为独立项。
         """
-        entity_data = self._build_entity_data(entity_type, str(entity_id))
+        entity_data = self._load_preview_entity(entity_type, str(entity_id))
+        if entity_data is None:
+            return ()
         return enumerate_audio_refs(
             self.ctx,
             entity_data,
@@ -1132,7 +1200,9 @@ class EntityDataLoader:
         paths = _mapping_audio_paths(mapping_data)
         if not paths:
             return ()
-        entity_data = self._build_entity_data(entity_type, str(entity_id))
+        entity_data = self._load_preview_entity(entity_type, str(entity_id))
+        if entity_data is None:
+            return ()
         return resolve_audio_refs(self.ctx, entity_data, self.data_reader.version, paths)
 
     def load_audio_roots(
@@ -1156,7 +1226,9 @@ class EntityDataLoader:
             roots = {root for ref in audio_refs if (root := self._resolve_audio_ref_root(ref)) is not None}
             return tuple(sorted(roots, key=lambda path: str(path).casefold()))
 
-        entity_data = self._build_entity_data(entity_type, str(entity_id))
+        entity_data = self._load_preview_entity(entity_type, str(entity_id))
+        if entity_data is None:
+            return ()
         return resolve_entity_audio_paths(self.ctx, entity_data, self.data_reader.version)
 
     def _resolve_audio_ref_root(self, ref: AudioRef) -> Path | None:

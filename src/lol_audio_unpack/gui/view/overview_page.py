@@ -597,7 +597,7 @@ class OverviewPage(QWidget):
 
         if entity_type == "special":
             self.entityListPanel.set_special_catalog_notice(
-                "特殊内容资源尚未准备，需要更新实体数据后才能显示完整状态。"
+                "特殊内容资源尚未准备。"
                 if all(
                     str(row.get("audio", "")) == "未准备" and str(row.get("mapping", "")) == "未准备"
                     for row in source_rows

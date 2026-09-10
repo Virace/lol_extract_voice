@@ -1,3 +1,5 @@
+"""英雄与地图 BIN 更新、缓存复用及逐实体结果测试。"""
+
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -7,8 +9,9 @@ from lol_audio_unpack.manager import bin_source as m_bin_source
 from lol_audio_unpack.manager import bin_updater as m_bin_updater
 from lol_audio_unpack.manager import champion_bin_processor as m_champion_processor
 from lol_audio_unpack.manager import map_bin_processor as m_map_processor
+from lol_audio_unpack.manager.files import needs_update, read_data, write_data
 from lol_audio_unpack.manager.update_result import UpdateEntityResult, UpdateStatus
-from lol_audio_unpack.model.binding import BankBinding, BinBinding, BindingRole, BindingStatus
+from lol_audio_unpack.model.binding import RESOURCE_SCHEMA_VERSION, BankBinding, BinBinding, BindingRole, BindingStatus
 from lol_audio_unpack.utils.run_summary import get_or_create_run_summary
 
 pytestmark = pytest.mark.unit
@@ -196,7 +199,7 @@ def test_skip_events_ignores_missing_champion_event_artifact(tmp_path, monkeypat
 
 
 def test_skip_events_ignores_missing_map_event_artifact(tmp_path, monkeypatch) -> None:
-    """显式跳过 events 时，已就绪地图 banks 不应因 events 缺失而重复读取 BIN。"""
+    """只解包时复用实际 banks 缓存，连公共地图预处理也不能重复读取 BIN。"""
     processor = m_map_processor.MapBinProcessor.__new__(m_map_processor.MapBinProcessor)
     processor.ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False), runtime_cache={})
     processor.force_update = False
@@ -205,24 +208,70 @@ def test_skip_events_ignores_missing_map_event_artifact(tmp_path, monkeypatch) -
     processor.languages = []
     processor.map_banks_dir = tmp_path / "banks" / "maps"
     processor.map_events_dir = tmp_path / "events" / "maps"
-    processor.bin_source = SimpleNamespace()
-    monkeypatch.setattr(
-        m_map_processor,
-        "needs_update",
-        lambda base_path, *_args, **_kwargs: "events" in Path(base_path).parts,
+    processor._progress_callback = None
+    processor.bin_source = SimpleNamespace(
+        _load_map_bin_file=lambda *_args: pytest.fail("缓存齐全时不应预读公共地图 BIN"),
     )
+    maps = {
+        str(entity_id): {"binPath": f"data/maps/map{entity_id}.bin", "names": {"default": f"Map{entity_id}"}}
+        for entity_id in (0, 11)
+    }
+    for entity_id in maps:
+        write_data(
+            {"metadata": {"gameVersion": "16.16"}, "resourceSchemaVersion": RESOURCE_SCHEMA_VERSION},
+            processor.map_banks_dir / entity_id,
+            dev_mode=False,
+        )
     monkeypatch.setattr(
         processor,
         "_load_map_resource",
         lambda *_args, **_kwargs: pytest.fail("skip-events 不应读取地图 BIN"),
     )
 
-    result = processor._process_single_map(
-        "11",
-        {"binPath": "data/maps/shipping/map11/map11.bin", "names": {"default": "Map11"}},
-    )
+    results = processor._update_maps({"maps": maps})
 
-    assert result.status is UpdateStatus.SUCCESS
+    assert all(result.status is UpdateStatus.SUCCESS for result in results)
+    assert not list(processor.map_events_dir.iterdir())
+
+
+def test_map_event_preparation_reports_missing_bin_with_cached_banks(tmp_path) -> None:
+    """只补事件时 BIN 读取失败必须失败，不能借旧 banks 缓存伪装就绪。"""
+    path = "data/maps/map11.bin"
+    batch = m_bin_source.BinBatch(
+        raws={},
+        bindings=[
+            BinBinding(
+                path=path,
+                normalized_path=path,
+                wad=None,
+                entry_hash="0000000000000011",
+                status=BindingStatus.MISSING,
+                role=BindingRole.ROOT,
+            )
+        ],
+    )
+    source = SimpleNamespace(
+        _load_map_bin_resource=lambda *_args: m_bin_source.LoadedBin(None, batch),
+        _resolve_bank_bindings=lambda _references: [],
+        _resource_index_diagnostics=lambda: ({}, []),
+    )
+    processor = m_map_processor.MapBinProcessor(
+        source,
+        ctx=SimpleNamespace(config=SimpleNamespace(dev_mode=False)),
+        version="16.17",
+        force_update=False,
+        process_events=True,
+        map_banks_dir=tmp_path / "banks",
+        map_events_dir=tmp_path / "events",
+    )
+    cached = {"metadata": {"gameVersion": "16.17"}, "resourceSchemaVersion": RESOURCE_SCHEMA_VERSION}
+    write_data(cached, processor.map_banks_dir / "11", dev_mode=False)
+
+    result = processor._process_single_map("11", {"binPath": path, "names": {"default": "Map11"}})
+
+    assert result.status is UpdateStatus.FAILED
+    assert not processor.map_events_dir.exists()
+    assert read_data(processor.map_banks_dir / "11", dev_mode=False) == cached
 
 
 def test_update_includes_common_map_in_targeted_scope(tmp_path, monkeypatch):
@@ -431,11 +480,9 @@ def test_process_single_map_records_note_when_common_dedup_removes_all_events(tm
         _load_map_bin_resource=lambda *_args, **_kwargs: m_bin_source.LoadedBin(fake_bin, batch),
         _resolve_bank_bindings=lambda _references: [],
         _resource_index_diagnostics=lambda: ({"requests": 1}, []),
-        _create_base_data=lambda _id, _type, **payload: payload,
+        _create_base_data=lambda _id, _type, **payload: {"metadata": {"gameVersion": "16.3"}, **payload},
     )
 
-    monkeypatch.setattr(m_map_processor, "needs_update", lambda *args, **kwargs: True)
-    monkeypatch.setattr(m_map_processor, "write_data", lambda *args, **kwargs: tmp_path / "artifact.msgpack")
     processor._process_single_map(
         "33",
         {
@@ -451,6 +498,12 @@ def test_process_single_map_records_note_when_common_dedup_removes_all_events(tm
         "地图 33 (Map33) 的事件在与 地图 0 的公共事件去重后为空" in note for note in summary.stages["update"].notes
     )
     assert any("category=AMB_SFX" in detail for detail in summary.stages["update"].debug_details)
+    events = processor.map_events_dir / "33"
+    assert read_data(events, dev_mode=False)["map"] == {}
+    assert not needs_update(events, "16.3", False, dev_mode=False)
+    monkeypatch.setattr(processor, "_load_map_resource", lambda *_args: pytest.fail("空事件缓存应复用"))
+    result = processor._process_single_map("33", {"names": {"default": "Map33"}})
+    assert result.status is UpdateStatus.SUCCESS
 
 
 def test_update_champions_logs_simple_progress_messages(tmp_path, monkeypatch):
@@ -510,6 +563,9 @@ def test_update_maps_logs_simple_progress_messages(tmp_path, monkeypatch):
     )
     processor.map_banks_dir = tmp_path / "banks" / "maps"
     processor.map_events_dir = tmp_path / "events" / "maps"
+    processor.force_update = False
+    processor.process_events = False
+    processor.version = "16.3"
     progress_events = []
     processor._progress_callback = progress_events.append
     processed_ids: list[str] = []

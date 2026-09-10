@@ -71,6 +71,16 @@ class OverviewPreviewController:
         mapping_path, mapping_data, preview_content = loader.load_mapping_preview(entity_type, entity_id)
         event_audio_refs = loader.load_event_audio_refs(entity_type, entity_id, mapping_data)
         audio_roots = loader.load_audio_roots(entity_type, entity_id)
+        if mapping_path is None and not event_audio_refs and not audio_roots:
+            return OverviewPreviewLoadResult(
+                entity_id=entity_id,
+                mapping_path=None,
+                mapping_data=None,
+                preview_content="",
+                available_audio_ids=set(),
+                group_label_map={},
+                placeholder_message="尚未解包",
+            )
         available_audio_ids = {ref.wem_id for ref in event_audio_refs}
         group_label_map = self._build_preview_group_label_map(
             entity_type=entity_type,

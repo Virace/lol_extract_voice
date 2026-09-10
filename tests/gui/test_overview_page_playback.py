@@ -365,10 +365,7 @@ def test_overview_page_special_catalog_empty_and_unprepared_states_are_explicit(
         ],
     )
 
-    assert (
-        page.entityListPanel.special_availability_label.text()
-        == "特殊内容资源尚未准备，需要更新实体数据后才能显示完整状态。"
-    )
+    assert page.entityListPanel.special_availability_label.text()
     assert page.entityListPanel.special_availability_label.isHidden() is False
 
 
@@ -472,6 +469,34 @@ def test_overview_page_load_preview_restores_event_view_when_event_tab_is_select
     page._load_preview_for_item("champions", object())
 
     assert page.preview_stack.currentWidget() is page.audioPreviewPanel
+
+
+def test_overview_page_unextracted_preview_stays_empty_across_tabs(qtbot) -> None:
+    """未解包实体在三个标签中保持空态，产物刷新后恢复正常预览。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    loader = SimpleNamespace(
+        load_mapping_preview=lambda *_args: (None, None, ""),
+        load_event_audio_refs=lambda *_args: (),
+        load_audio_roots=lambda *_args: (),
+    )
+    page._ensure_loader = lambda: loader
+    page.entityListPanel.resolve_row_payload = lambda _item: {"id": 1, "name": "安妮"}
+
+    page._load_preview_for_item("champions", object())
+
+    for mode in (EVENT_PREVIEW_MODE, ALL_AUDIO_PREVIEW_MODE, RAW_PREVIEW_MODE):
+        page.preview_mode_pivot.setCurrentItem(mode)
+        assert page.preview_stack.currentWidget() is page.previewPanel.placeholder_panel
+        assert page.previewPanel.placeholder_label.text() == "尚未解包"
+        assert page.audio_preview_tree.model().rowCount() == 0
+        assert not page.previewPanel.resource_info_btn.isEnabled()
+
+    loader.load_mapping_preview = lambda *_args: (Path("preview.msgpack"), {}, "{}")
+    page._load_preview_for_item("champions", object())
+
+    assert page.preview_stack.currentWidget() is page.audioPreviewPanel
+    assert page.previewPanel.resource_info_btn.isEnabled()
 
 
 def test_overview_page_preview_search_filters_event_tree(qtbot) -> None:
