@@ -40,6 +40,8 @@ class _FakeWindow(QWidget):
         super().__init__()
         self.resize(420, 320)
         self.switched: list[object] = []
+        self.homeNav = QWidget(self)
+        self.homeNav.setGeometry(12, 8, 120, 36)
         self.settingNav = QWidget(self)
         self.settingNav.setGeometry(12, 250, 120, 42)
         self.executionNav = QWidget(self)
@@ -63,6 +65,7 @@ class _FakeWindow(QWidget):
 
     def _navigation_widget(self, route_key: str) -> QWidget:
         items = {
+            "HomePage": self.homeNav,
             "SettingPage": self.settingNav,
             "ExecutionPage": self.executionNav,
             "OverviewPage": self.overviewNav,
@@ -137,6 +140,7 @@ def _build_controller(qtbot, monkeypatch, *, should_show: bool = True, active: b
         "SettingPage",
         gamePathCard=None if missing_first else _widget(qtbot),
         outputPathCard=_widget(qtbot),
+        prepareDataCard=_widget(qtbot),
         wwiserCard=_widget(qtbot),
     )
     execution_page = _page(
@@ -161,9 +165,11 @@ def _build_controller(qtbot, monkeypatch, *, should_show: bool = True, active: b
         mode_tabs=_widget(qtbot),
     )
     config = _FakeConfig(should_show=should_show)
+    home_page = _page(qtbot, "HomePage")
     controller = OnboardingTourController(
         window=window,
         config=config,
+        home_page=home_page,
         setting_page=setting_page,
         execution_page=execution_page,
         overview_page=overview_page,
@@ -171,6 +177,7 @@ def _build_controller(qtbot, monkeypatch, *, should_show: bool = True, active: b
         has_active_work=lambda: active,
     )
     pages = SimpleNamespace(
+        home=home_page,
         setting=setting_page,
         execution=execution_page,
         overview=overview_page,
@@ -220,43 +227,38 @@ def test_onboarding_walks_complete_navigation_and_page_flow(qtbot, monkeypatch) 
     assert previous_tip.closed is True
     assert created[-1]["target"] is pages.setting.gamePathCard
 
-    for target in (pages.setting.outputPathCard, window.executionNav):
+    for target in (pages.setting.outputPathCard, pages.setting.prepareDataCard, window.homeNav):
         previous_tip = created[-1]["tip"]
         controller._next()
         assert previous_tip.closed is True
         assert created[-1]["target"] is target
 
-    window.stackedWidget.setCurrentWidget(pages.execution)
+    assert window.stackedWidget.currentWidget() is pages.home
+    controller._next()
+    assert window.stackedWidget.currentWidget() is pages.execution
     assert created[-1]["target"] is pages.execution.taskBuilderPanel
     for target in (
-        pages.execution.vo_filter,
         pages.execution.wav_task_cb,
-        pages.execution.mapping_task_cb,
-        window.overviewNav,
+        pages.overview.entityListPanel,
     ):
         controller._next()
         assert created[-1]["target"] is target
 
-    window.stackedWidget.setCurrentWidget(pages.overview)
-    assert created[-1]["target"] is pages.overview.entityListPanel
-    for target in (pages.overview.previewPanel, window.itemLookupNav):
+    assert window.stackedWidget.currentWidget() is pages.overview
+    for target in (pages.overview.previewPanel, pages.item_lookup.search_input):
         controller._next()
         assert created[-1]["target"] is target
 
-    window.stackedWidget.setCurrentWidget(pages.item_lookup)
-    assert created[-1]["target"] is pages.item_lookup.search_input
+    assert window.stackedWidget.currentWidget() is pages.item_lookup
     controller._next()
-    assert created[-1]["target"] is pages.item_lookup.mode_tabs
-    controller._next()
-    assert created[-1]["target"] is window.settingNav
-
-    window.stackedWidget.setCurrentWidget(pages.setting)
-    assert created[-1]["target"] is pages.setting.wwiserCard
+    assert window.stackedWidget.currentWidget() is pages.execution
+    assert created[-1]["target"] is pages.execution.taskBuilderPanel
     final_tip = created[-1]["tip"]
     controller._next()
 
     assert config.completed == [GUIDE_VERSION]
     assert final_tip.closed is True
+    assert window.stackedWidget.currentWidget() is pages.execution
 
 
 def test_route_change_waits_before_showing_page_step(qtbot, monkeypatch) -> None:
@@ -287,6 +289,7 @@ def test_route_change_waits_before_showing_page_step(qtbot, monkeypatch) -> None
     controller = OnboardingTourController(
         window=window,
         config=_FakeConfig(),
+        home_page=_page(qtbot, "HomePage"),
         setting_page=setting_page,
         execution_page=_page(qtbot, "ExecutionPage"),
         overview_page=_page(qtbot, "OverviewPage"),
@@ -370,6 +373,7 @@ def test_close_before_delayed_show_prevents_tip_creation(qtbot, monkeypatch) -> 
     controller = OnboardingTourController(
         window=window,
         config=_FakeConfig(),
+        home_page=_page(qtbot, "HomePage"),
         setting_page=setting_page,
         execution_page=execution_page,
         overview_page=overview_page,
