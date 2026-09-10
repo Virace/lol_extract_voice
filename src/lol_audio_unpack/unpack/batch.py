@@ -199,6 +199,11 @@ def execute_tasks(  # noqa: PLR0913
             "ctx": ctx,
             "persisted_wem_callback": capture_artifact(index, forward_wem=True),
         }
+        # 多实体优先沿用实体并发，少量实体才把空余配额分给文件写出；
+        # 避免每个实体再各自启动 max_workers 个写线程。
+        write_workers = max_workers // min(total_tasks, max_workers) if max_workers > 1 else 1
+        if write_workers > 1:
+            common_kwargs["max_workers"] = write_workers
         if retry_entities:
             previous = next(
                 item

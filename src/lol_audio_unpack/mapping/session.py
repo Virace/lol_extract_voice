@@ -83,12 +83,14 @@ class RuntimeCache:
         extract_cache: 本轮已提取的 ``(wad_identity, bnk_rel_path)`` 集合。
         hirc_cache: 已解析的 HIRC 缓存。
         cache_lock: 多线程模式下的缓存互斥锁。
+        extract_locks: 精确 bank key 的提取锁，不阻塞其他资源。
     """
 
     wad_cache: dict[Path, WAD] = field(default_factory=dict)
     extract_cache: set[tuple[str, str]] = field(default_factory=set)
     hirc_cache: dict[tuple[str, str, str], ParsedHIRC] = field(default_factory=dict)
     cache_lock: threading.Lock | None = None
+    extract_locks: dict[tuple[str, str], threading.Lock] = field(default_factory=dict)
 
 
 def _get_wad(
@@ -155,6 +157,9 @@ def _mark_bnk_extracted(
 
     if cache_lock is None:
         extract_cache.add(key)
+        return
+    with cache_lock:
+        extract_cache.add(key)
 
 
 def _extract_bnk_once(
@@ -185,16 +190,17 @@ def _extract_bnk_once(
         extract_cache.add(key)
         return True
 
-    # check、磁盘写入与 mark 必须处于同一临界区；否则并发实体会同时写同一 cache 文件。
+    # 同一 bank 的 check/write/mark 仍然串行，慢提取不能持有全局缓存锁。
     with cache_lock:
-        if key in extract_cache:
-            return False
+        key_lock = runtime_cache.extract_locks.setdefault(key, threading.Lock())
+    with key_lock:
+        with cache_lock:
+            if key in extract_cache:
+                return False
         extract()
-        extract_cache.add(key)
+        with cache_lock:
+            extract_cache.add(key)
         return True
-        return
-    with cache_lock:
-        extract_cache.add(key)
 
 
 def _get_cached_hirc(  # noqa: PLR0913, PLR0917

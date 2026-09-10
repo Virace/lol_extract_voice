@@ -767,6 +767,34 @@ def test_extract_bnk_once_is_atomic_for_concurrent_same_key() -> None:
     assert calls == ["extract"]
 
 
+def test_extract_bnk_does_not_block_unrelated_banks() -> None:
+    """一个 bank 等待磁盘时，不同 bank 仍可完成提取，失败项允许重试。"""
+    started = Event()
+    release = Event()
+    cache = mapping_session.RuntimeCache(cache_lock=Lock())
+    key = ("Game/first.wad.client", "first.bnk")
+
+    def blocked() -> None:
+        """保持首个提取在临界区中，直到独立提取完成。"""
+        started.set()
+        assert release.wait(timeout=3)
+        raise OSError("暂时不可读")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(mapping_session._extract_bnk_once, key, blocked, cache)
+        assert started.wait(timeout=2)
+        second = executor.submit(
+            mapping_session._extract_bnk_once, ("Game/second.wad.client", "second.bnk"), lambda: None, cache
+        )
+        try:
+            assert second.result(timeout=2) is True
+        finally:
+            release.set()
+        with pytest.raises(OSError, match="暂时不可读"):
+            first.result(timeout=2)
+    assert mapping_session._extract_bnk_once(key, lambda: None, cache) is True
+
+
 def test_integrated_local_mapping_keeps_failed_diagnostics_without_legacy_banks(tmp_path: Path, monkeypatch) -> None:
     """全量 binding 未解析时，integrated 输出仍应保存 failed 诊断。"""
     binding = BankBinding(

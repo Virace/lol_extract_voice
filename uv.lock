@@ -52,7 +52,7 @@ wheels = [
 
 [[package]]
 name = "league-tools"
-version = "1.2.0"
+version = "1.2.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "loguru" },
@@ -62,9 +62,9 @@ dependencies = [
     { name = "xxhash" },
     { name = "zstd" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/13/ac/56a91db03cae124c8eb2465d192c7aea215d2e612e022b718c46fa2e766f/league_tools-1.2.0.tar.gz", hash = "sha256:ab05563b1de98b699038d63c30f2a30de445e4f1e333aa55e4420563e01b5774", size = 134399, upload-time = "2026-07-21T09:53:15.342Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/27/df/e3205c953429fd41d2f654898eb19d0257d5d679d1ac619f37b2123c923f/league_tools-1.2.1.tar.gz", hash = "sha256:9321d3c733cc7bcdc978de636184b560e424ee4b9e43a050030aaedfcefb98f6", size = 135116, upload-time = "2026-09-10T17:46:36.857Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/99/ad/8d063b5d38c6c3790931285abb35f8a441e150f41120d348f301433add10/league_tools-1.2.0-py3-none-any.whl", hash = "sha256:950c71038d900ef0b6ead84587051e39cf6d00ad8b00c16a690375607b001e12", size = 101765, upload-time = "2026-07-21T09:53:13.923Z" },
+    { url = "https://files.pythonhosted.org/packages/67/8b/61b807a1db4ffa974b08963cf4de2861719c725c9c6c66f0fae08ac4d8b0/league_tools-1.2.1-py3-none-any.whl", hash = "sha256:191ed05f35c117851d590ba7dcd4677438599f1f5dbe6731eb1458d053c83282", size = 102326, upload-time = "2026-09-10T17:46:35.491Z" },
 ]
 
 [[package]]
@@ -113,7 +113,7 @@ gui-test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "league-tools", specifier = ">=1.2.0" },
+    { name = "league-tools", specifier = ">=1.2.1" },
     { name = "msgpack", specifier = ">=1.2.1" },
     { name = "pyside6", marker = "extra == 'gui'", specifier = ">=6.11.2" },
     { name = "pyside6-fluent-widgets", marker = "extra == 'gui'", specifier = ">=1.11.3" },

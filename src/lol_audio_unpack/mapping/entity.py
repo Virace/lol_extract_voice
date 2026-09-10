@@ -17,7 +17,7 @@ from lol_audio_unpack.manager.files import write_data
 from lol_audio_unpack.manager.utils import build_metadata_payload
 from lol_audio_unpack.model import AudioBank, AudioEntityData
 from lol_audio_unpack.model.binding import SUCCESS_STATUSES, normalize_logical_path
-from lol_audio_unpack.runtime.wad import resolve_bound_wad
+from lol_audio_unpack.runtime.wad import extract_wad, resolve_bound_wad
 from lol_audio_unpack.utils.logging import performance_monitor
 
 from . import session as mapping_session
@@ -163,7 +163,7 @@ def _build_bound_category_mapping(  # noqa: PLR0913
 
         def extract_bnk() -> None:
             """读取目标 entry，并只向已校验的 cache path 写入原始 BNK。"""
-            raws = wad_obj.extract([binding.path], raw=True)
+            raws = extract_wad(wad_obj, [binding.path], raw=True)
             raw = raws[0] if raws else None
             if raw is None:
                 raise FileNotFoundError(f"WAD未返回目标BNK entry: {binding.normalized_path}")
@@ -471,7 +471,7 @@ def _build_category_mapping(  # noqa: PLR0913, PLR0917
             bnk_rel_path = bnk_paths[0]
             extract_key = (wad_path, bnk_rel_path)
             if not mapping_session._is_bnk_extracted(extract_key, runtime_cache=runtime_cache):
-                wad_obj.extract(bnk_paths, out_dir=version_cache_dir)
+                extract_wad(wad_obj, bnk_paths, out_dir=version_cache_dir)
                 mapping_session._mark_bnk_extracted(extract_key, runtime_cache=runtime_cache)
 
             bnk_path = version_cache_dir / bnk_rel_path

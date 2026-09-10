@@ -1,6 +1,8 @@
 """验证共享 WAD 运行时访问器的行为。"""
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier, Event
 
 import pytest
 
@@ -45,3 +47,34 @@ def test_resolve_bound_wad_rejects_symlink_escape(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="越出游戏根目录"):
         runtime_wad.resolve_bound_wad(game_root, "Game/escape.wad.client")
+
+
+def test_extract_wad_protects_legacy_shared_reader() -> None:
+    """旧上游共用游标时，应用适配层保证并发调用的返回内容各自正确。"""
+    first = Event()
+    second = Event()
+    start = Barrier(2)
+
+    class LegacyWad:
+        """模拟只支持串行读取的外部 WAD 接口。"""
+
+        def extract(self, paths, **_kwargs):
+            """以共享游标表示当前目标，暴露未保护读取的交错结果。"""
+            self.current = paths[0]
+            if not first.is_set():
+                first.set()
+                second.wait(0.1)
+            else:
+                second.set()
+            return [self.current.encode()]
+
+    wad = LegacyWad()
+
+    def extract(path: str) -> list[bytes]:
+        """同时请求同一读取器中的两个目标。"""
+        start.wait(timeout=2)
+        return runtime_wad.extract_wad(wad, [path], raw=True)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(extract, ["first", "second"]))
+    assert results == [[b"first"], [b"second"]]
