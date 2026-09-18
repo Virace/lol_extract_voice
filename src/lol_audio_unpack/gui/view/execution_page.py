@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from time import monotonic
 from typing import Any
 
 from loguru import logger
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QHBoxLayout, QMessageBox, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import CaptionLabel, InfoBarPosition, PushButton, SmoothScrollArea, SubtitleLabel, qconfig
 
@@ -42,7 +43,7 @@ from lol_audio_unpack.gui.task_models import (
     QueuedExecutionTask,
 )
 from lol_audio_unpack.gui.theme import get_accent_text_color_pair
-from lol_audio_unpack.gui.view.execution.progress_state import build_global_progress_strip_state
+from lol_audio_unpack.gui.view.execution.progress_state import build_elapsed_text, build_global_progress_strip_state
 from lol_audio_unpack.gui.view.execution.selection_conflict_dialog import (
     ask_selection_conflict_resolution,
 )
@@ -73,6 +74,11 @@ class ExecutionPage(SmoothScrollArea):
         self._external_busy = False
         self._shared_data_state = SharedDataState(SharedDataPhase.BLOCKED, 0)
         self._current_global_progress_state = GlobalProgressStripState()
+        self._started_at: float | None = None
+        self._elapsed_seconds: float | None = None
+        self._elapsed_timer = QTimer(self)
+        self._elapsed_timer.setInterval(100)
+        self._elapsed_timer.timeout.connect(self._refresh_elapsed_time)
         self._selection_controller = ExecutionSelectionController()
         self._log_controller = ExecutionLogController(
             initial_lines=(
@@ -355,6 +361,15 @@ class ExecutionPage(SmoothScrollArea):
         if self._is_task_running == running:
             return
         self._is_task_running = running
+        if running:
+            # 整轮任务只启动一次时钟，实体与阶段切换都不重置，系统校时也不影响耗时。
+            self._started_at = monotonic()
+            self._elapsed_seconds = 0.0
+            self._elapsed_timer.start()
+        else:
+            self._elapsed_seconds = self._read_elapsed_seconds()
+            self._started_at = None
+            self._elapsed_timer.stop()
         self.results_controller.set_busy(running or self._external_busy or self._shared_data_state.blocks_new_tasks)
         self._sync_primary_action_button()
         self.task_running_changed.emit(running)
@@ -389,10 +404,30 @@ class ExecutionPage(SmoothScrollArea):
             note_text=note_text,
             progress_current=progress_current,
             progress_total=progress_total,
+            elapsed_seconds=self._read_elapsed_seconds(),
         )
-        if next_global_progress_state == self._current_global_progress_state:
+        self._publish_progress_state(next_global_progress_state)
+
+    def _read_elapsed_seconds(self) -> float | None:
+        if self._started_at is not None:
+            return max(monotonic() - self._started_at, 0.0)
+        return self._elapsed_seconds
+
+    def _refresh_elapsed_time(self) -> None:
+        """无进度事件时也刷新耗时，仅替换时间以保留阶段提示和真实计数。"""
+        if not self._is_task_running:
             return
-        self._current_global_progress_state = next_global_progress_state
+        self._publish_progress_state(
+            replace(
+                self._current_global_progress_state,
+                rate_text=build_elapsed_text(self._read_elapsed_seconds(), running=True),
+            )
+        )
+
+    def _publish_progress_state(self, state: GlobalProgressStripState) -> None:
+        if state == self._current_global_progress_state:
+            return
+        self._current_global_progress_state = state
         self.global_progress_state_changed.emit(self._current_global_progress_state)
 
     def current_global_progress_state(self) -> GlobalProgressStripState:
@@ -555,6 +590,7 @@ class ExecutionPage(SmoothScrollArea):
 
     def shutdown_background_tasks(self) -> None:
         """在窗口关闭前清理执行中心后台任务引用。"""
+        self._elapsed_timer.stop()
         self._queue_controller.shutdown()
 
     def current_log_text(self) -> str:

@@ -450,7 +450,13 @@ class ExecutionQueueController(QObject):
         self._after_task_stopped(task.task_id)
         logger.warning(f"[队列] 任务 #{task.task_id} 已被强制结束")
         self.task_queue_busy_changed.emit(self.has_incomplete_tasks())
-        self.progress_display_requested.emit(QueueProgressUpdate())
+        self.progress_display_requested.emit(
+            QueueProgressUpdate(
+                note_text=cancelled_message,
+                progress_current=progress_current,
+                progress_total=progress_total,
+            )
+        )
         cancelled_result = ExecutionTaskResult(
             (),
             "任务已强制结束，完成范围未知。",
