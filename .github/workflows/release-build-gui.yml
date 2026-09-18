@@ -60,6 +60,17 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v8.2.0
 
+      - name: Install verification dependencies
+        run: uv sync --frozen --extra gui --group gui-test
+
+      - name: Verify offline behavior
+        run: uv run --no-sync pytest -q
+
+      - name: Verify GUI behavior
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run --no-sync pytest tests/gui -q
+
       - name: Build GUI package
         shell: pwsh
         run: |

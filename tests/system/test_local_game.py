@@ -9,8 +9,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from lol_audio_unpack.app import LolAudioUnpackApp, OperationOptions, ResultStatus, create_app_context
+from lol_audio_unpack.app.artifacts import resolve_audio_refs, resolve_mapping_path
+from lol_audio_unpack.app.mapping_preview import normalize_mapping
 from lol_audio_unpack.manager import DataReader
-from lol_audio_unpack.manager.files import find_data_file
+from lol_audio_unpack.manager.files import find_data_file, read_data
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.model.binding import BindingRole, Completeness
 
@@ -129,16 +131,33 @@ def _extract_new_wems(
     return set(audio_root.rglob("*.wem")) - before_wems
 
 
-def _verify_mapping(output_path: Path, version: str) -> None:
-    """验证普通英雄、旧版英雄和地图均生成原始 mapping 产物。"""
-    hash_root = output_path / "hashes" / version
-    champion_mapping = find_data_file(hash_root / "champions" / str(CHAMPION_ID), dev_mode=False)
-    jade_mapping = find_data_file(hash_root / "champions" / str(JADE_CHAMPION_ID), dev_mode=False)
-    map_mapping = find_data_file(hash_root / "maps" / str(MAP_ID), dev_mode=False)
-
-    assert champion_mapping is not None, "未生成英雄 mapping"
-    assert jade_mapping is not None, "未生成 Jade_Fiddlesticks mapping"
-    assert map_mapping is not None, "未生成地图 mapping"
+def _verify_mapping(ctx: AppContext, reader: DataReader, *, integrate_data: bool) -> None:
+    """用预览共用的路径解析合同验证真实映射可以定位到本轮解包文件。"""
+    for entity_type, entity_id, group in (
+        ("champion", CHAMPION_ID, "champions"),
+        ("champion", JADE_CHAMPION_ID, "champions"),
+        ("map", COMMON_MAP_ID, "maps"),
+        ("map", MAP_ID, "maps"),
+    ):
+        label = f"{group}/{entity_id}"
+        path = resolve_mapping_path(
+            ctx, entity_dir=group, entity_id=entity_id, version=reader.version, integrate_data=integrate_data
+        )
+        assert path is not None, f"未生成 mapping: {label}"
+        mapping = normalize_mapping(read_data(path), entity_type=group, entity_id=str(entity_id))
+        root = "skins" if entity_type == "champion" else "map"
+        paths = {
+            relative
+            for item in mapping[root].values()
+            for events in item.get("audioPaths", {}).values()
+            for values in events.values()
+            for relative in values
+        }
+        assert paths, f"mapping 存在但没有任何可播放路径: {label}"
+        entity = AudioEntityData.from_entity(entity_type, entity_id, reader, ctx=ctx)
+        refs = resolve_audio_refs(ctx, entity, reader.version, paths)
+        assert {ref.relative_path for ref in refs} == paths, f"mapping 路径不能全部定位到本地 WEM: {label}"
+        assert all(ref.path.stat().st_size > 0 for ref in refs), f"mapping 指向空音频文件: {label}"
 
 
 def test_local_pipeline_updates_extracts_and_maps(tmp_path: Path) -> None:
@@ -190,6 +209,14 @@ def test_local_pipeline_updates_extracts_and_maps(tmp_path: Path) -> None:
     )
     assert jade_wems, "Jade_Fiddlesticks 解包未生成 WEM"
 
+    common_wems = _extract_new_wems(
+        app,
+        OperationOptions(map_ids=(COMMON_MAP_ID,), max_workers=2),
+        audio_root,
+        include_champions=False,
+    )
+    assert common_wems, "公共地图 0 解包未生成 WEM"
+
     map_wems = _extract_new_wems(
         app,
         OperationOptions(map_ids=(MAP_ID,), max_workers=2),
@@ -212,13 +239,17 @@ def test_local_pipeline_updates_extracts_and_maps(tmp_path: Path) -> None:
     assert (report_root / "maps" / f"_{MAP_ID}_metadata.yaml").is_file()
     assert (report_root / "maps" / f"_{TFT_MAP_ID}_metadata.yaml").is_file()
 
-    champion_mapping_result = app.mapping(OperationOptions(champion_ids=(CHAMPION_ID, JADE_CHAMPION_ID), max_workers=2))
-    map_mapping_result = app.mapping(
-        OperationOptions(map_ids=(MAP_ID,), max_workers=2),
-        include_champions=False,
-    )
-    assert champion_mapping_result.status is ResultStatus.SUCCESS
-    assert map_mapping_result.status is ResultStatus.SUCCESS
-    assert all(entity.artifacts for entity in champion_mapping_result.entities)
-    assert all(entity.artifacts for entity in map_mapping_result.entities)
-    _verify_mapping(output_path, reader.version)
+    # 复用同一批真实 WEM，同时覆盖 CLI 默认格式与 GUI 常用整合格式。
+    for integrate_data in (False, True):
+        champion_mapping_result = app.mapping(
+            OperationOptions(champion_ids=(CHAMPION_ID, JADE_CHAMPION_ID), max_workers=2, integrate_data=integrate_data)
+        )
+        map_mapping_result = app.mapping(
+            OperationOptions(map_ids=(COMMON_MAP_ID, MAP_ID), max_workers=2, integrate_data=integrate_data),
+            include_champions=False,
+        )
+        assert champion_mapping_result.status is ResultStatus.SUCCESS
+        assert map_mapping_result.status is ResultStatus.SUCCESS
+        assert all(entity.artifacts for entity in champion_mapping_result.entities)
+        assert all(entity.artifacts for entity in map_mapping_result.entities)
+        _verify_mapping(ctx, reader, integrate_data=integrate_data)

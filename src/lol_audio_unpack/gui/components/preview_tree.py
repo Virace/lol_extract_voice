@@ -216,6 +216,7 @@ class _PreviewTreeNode:
     audio_ref: AudioRef | None = None
     is_available: bool = False
     is_ambiguous: bool = False
+    missing_path: str | None = None
     children: list[_PreviewTreeNode] | None = None
     children_loaded: bool = False
     key: tuple[str, ...] = ()
@@ -791,6 +792,15 @@ class PreviewTreeModel(QAbstractItemModel):
                 if total and count == total
                 else (Qt.CheckState.PartiallyChecked if count else Qt.CheckState.Unchecked)
             )
+        elif role == Qt.ItemDataRole.ToolTipRole and node.kind == "audio_id":
+            if node.audio_ref is not None:
+                value = str(node.audio_ref.path)
+            elif node.missing_path is not None:
+                value = f"映射记录的文件未找到，无法播放。\n相对路径：{node.missing_path}"
+            elif node.is_ambiguous:
+                value = "同一 ID 对应多个文件，请到全部音频选择。"
+            else:
+                value = "仅有音频 ID，尚无对应的可播放文件。"
         elif role == Qt.ItemDataRole.ToolTipRole and self.selection_mode:
             choices = self.selection_choices(index)
             total = sum(len(choice.paths) for choice in choices)
@@ -1079,11 +1089,12 @@ class PreviewTreeModel(QAbstractItemModel):
             if resolution.missing_paths:
                 children.extend(
                     _PreviewTreeNode(
-                        label=f"{audio_id_text}（映射路径当前不可用：{path}）",
+                        label=f"{audio_id_text}（文件未找到）",
                         kind="audio_id",
                         payload=None,
                         parent=node,
                         audio_id=audio_id_text,
+                        missing_path=path,
                         children=[],
                         children_loaded=True,
                     )
@@ -1092,12 +1103,10 @@ class PreviewTreeModel(QAbstractItemModel):
             if resolution.audio_refs or resolution.missing_paths:
                 continue
 
-            has_audio_paths = bool(payload.get("has_audio_paths"))
             if resolution.is_ambiguous:
                 label = f"{audio_id_text}（多个路径，请到全部音频选择）"
-            elif has_audio_paths:
-                label = f"{audio_id_text}（映射路径当前不可用）"
             else:
+                # 事件有路径字段，不代表其中每个 ID 都已有落盘路径。
                 label = audio_id_text
             children.append(
                 _PreviewTreeNode(

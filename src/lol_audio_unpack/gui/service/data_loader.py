@@ -754,7 +754,12 @@ class EntityDataLoader:
         ) as exc:
             if allow_unprepared:
                 # 浏览既有产物只需要可靠身份和输出布局，不应被解包专用 binding 门禁阻止。
-                logger.info("{} {} 资源缓存暂不可用，按实体元数据只读浏览已有音频：{}", entity_type, entity_id, exc)
+                if isinstance(exc, SharedDataMissingError):
+                    logger.debug("[总览预览] {} {} 尚未准备资源数据，按实体元数据浏览", entity_type, entity_id)
+                else:
+                    logger.warning(
+                        "[总览预览] {} {} 资源数据损坏或不兼容，按实体元数据浏览：{}", entity_type, entity_id, exc
+                    )
                 factory = AudioEntityData.from_champion if entity_type == "champions" else AudioEntityData.from_map
                 return factory(int(entity_id), self.data_reader, ctx=self.ctx, include_resources=False)
             # 目录扫描仍保留未准备状态，不逐实体输出预期日志。
