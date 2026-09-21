@@ -34,12 +34,34 @@ from lol_audio_unpack.gui.shared_data import (
 from lol_audio_unpack.gui.task_models import OutputStateRefreshRequest
 from lol_audio_unpack.manager.errors import SharedDataMissingError
 from lol_audio_unpack.manager.files import write_data
+from lol_audio_unpack.manager.source_inventory import SourceEntity, SourceInventory, SourceLanguage
 from lol_audio_unpack.model.binding import RESOURCE_SCHEMA_VERSION
 from lol_audio_unpack.model.progress import OperationProgress
 
 EXPECTED_SCAN_COUNT_AFTER_VERIFICATION = 2
 EXPECTED_FIXTURE_MAP_COUNT = 2
 CURRENT_GENERATION = 2
+
+
+def test_auto_prepare_uses_available_ordinary_scope_only():
+    """自动准备跳过缺源与默认隐藏英雄，不把空地图范围升级为全量。"""
+    controller = _build_controller(task_worker_cls=_FakeTaskWorker)
+    controller._get_config().prepare_data_on_startup = True
+    language = SourceLanguage(
+        "zh_CN",
+        (
+            SourceEntity("champion", "1", "Annie", (), (), "Annie"),
+            SourceEntity("champion", "2", "Olaf", ("missing",), ("missing",), "Olaf"),
+            SourceEntity("champion", "60001", "Jade Annie", (), (), "Jade_Annie"),
+            SourceEntity("map", "0", "Common", ("missing",), ("missing",)),
+        ),
+    )
+    controller.app_context = SimpleNamespace(
+        runtime_cache={"source_inventory": SourceInventory(Path("game"), 0, (language,))}
+    )
+    controller.start_prepare(scope=SharedDataRepairScope(full=True))
+    assert controller._prepare_scope == SharedDataRepairScope(full=False, champion_ids=(1,), map_ids=())
+    controller.shutdown_background_work()
 
 
 class _FakeConfig:
@@ -849,6 +871,7 @@ def test_legacy_schema_fixture_uses_normal_update_adapter_then_verifies_ready(
     def scan_fixture(generation: int) -> SharedDataScanResult:
         """使用真实 catalog 扫描逻辑读取当前 fixture artifact。"""
         loader = EntityDataLoader.__new__(EntityDataLoader)
+        loader._source_entities = {}
         loader.ctx = context
         loader.data_reader = SimpleNamespace(
             version="16.16",

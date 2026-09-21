@@ -261,6 +261,22 @@ class EntityDataLoader:
         """
         self.ctx = app_context
         self.data_reader = DataReader(app_context)
+        inventory = app_context.runtime_cache.get("source_inventory")
+        language = inventory.get_language(app_context.game_region) if inventory else None
+        self._source_entities = {(item.kind, item.key): item for item in language.entities} if language else {}
+
+    def _apply_source_status(self, row: dict) -> dict:
+        """缺源只禁用新任务选择，不抹去已有音频与映射状态。"""
+        if not self._source_entities:
+            return row
+        kind = "champion" if row["entity_type"] == "champions" else "map"
+        source = self._source_entities.get((kind, str(row["id"])))
+        if source is not None:
+            row["selectable"] = source.available
+            row["source_missing"] = source.missing
+            if source.missing:
+                row["tooltip"] = f"{row['name']}\n缺少必需文件：\n" + "\n".join(source.missing)
+        return row
 
     def _build_entity_data(self, entity_type: GuiEntityType, entity_id: str) -> AudioEntityData:
         """按 GUI 实体类型构造对应的实体数据对象。
@@ -434,15 +450,18 @@ class EntityDataLoader:
 
         for index, (entity_id, entity) in enumerate(entities_by_id.items(), start=1):
             try:
-                if root_error is not None:
+                kind = "champion" if entity_type == "champions" else "map"
+                source = self._source_entities.get((kind, entity_id))
+                source_available = source is None or source.available
+                if root_error is not None and source_available:
                     raise root_error
-                if require_resources:
+                if require_resources and source_available:
                     self._preload_bank_artifact(entity_type, entity_id)
                     self._check_event_artifact(entity_type, entity_id)
                 row = self._build_entity_row(entity_type, entity, version)
                 if str(row.get("id", "")) != entity_id:
                     raise _ArtifactCorruptError(f"{entity_type} {entity_id} 行身份不一致")
-                rows.append(row)
+                rows.append(self._apply_source_status(row))
             except Exception as exc:  # noqa: BLE001
                 failures.append(self._failure_from_error(entity_id, exc))
             self._emit_scan_progress(
@@ -508,7 +527,7 @@ class EntityDataLoader:
                 row = self._build_special_row(champion, version, display_name=display_name)
                 if row is None:
                     raise _ArtifactCorruptError(f"特殊内容 {item.key} 无法构造目录行")
-                rows.append(row)
+                rows.append(self._apply_source_status(row))
             except Exception as exc:  # noqa: BLE001
                 failures.append(self._failure_from_error(item.key, exc))
             processed_count += 1

@@ -437,7 +437,7 @@ class OverviewEntityListView(QListView):
         selection_model.clearSelection()
         for entity_id in selected_ids:
             index = self.find_index_by_entity_id(entity_id)
-            if index.isValid():
+            if index.isValid() and index.flags() & Qt.ItemFlag.ItemIsSelectable:
                 selection_model.select(
                     index,
                     QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
@@ -462,7 +462,7 @@ class OverviewEntityListView(QListView):
         return {
             str(index.data(OVERVIEW_ENTITY_ID_ROLE))
             for index in selection_model.selectedRows()
-            if str(index.data(OVERVIEW_ENTITY_ID_ROLE) or "")
+            if str(index.data(OVERVIEW_ENTITY_ID_ROLE) or "") and index.flags() & Qt.ItemFlag.ItemIsSelectable
         }
 
     def refresh_theme(self) -> None:

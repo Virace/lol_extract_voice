@@ -35,6 +35,7 @@ from lol_audio_unpack.runtime.wav import TranscodeTarget, run_tree
 from lol_audio_unpack.unpack import unpack_all, unpack_champions, unpack_maps, unpack_resource_packs
 
 from .artifacts import resolve_audio_paths
+from .preflight import SourcePreflightError, check_source_files
 from .resource_pack import partition_special_targets
 from .results import EntityResult, ResultStatus, StageResult
 from .special_content import merge_champion_ids
@@ -43,6 +44,7 @@ from .types import AppContext, OperationOptions
 
 UPDATE_PREPARED_KEY = "update_data_prepared_force"
 EXPECTED_STAGE_ERRORS = (
+    SourcePreflightError,
     SharedDataNotReadyError,
     OSError,
 )
@@ -107,6 +109,27 @@ class LolAudioUnpackApp:
     def _describe_mapping_backend(self) -> str:
         """返回 mapping 流程使用的 HIRC 后端。"""
         return describe_hirc_backend(self.ctx)
+
+    def _check_source(
+        self, opts: OperationOptions, *, include_champions: bool = True, include_maps: bool = True
+    ) -> None:
+        """重新检查本次标准实体与显式资源包，失败发生在任何源处理写入之前。"""
+        wads = [ref.identity for ref in opts.resource_pack_wads]
+        for key in self._resource_pack_targets(opts):
+            payload = self._get_reader().get_resource_pack_banks(key)
+            source = (payload or {}).get("resourcePack", {}).get("source", {})
+            if not source.get("wad"):
+                raise SourcePreflightError(f"资源包 {key} 缺少物理来源，请重新选择 WAD")
+            wads.append(source["wad"])
+        check_source_files(
+            self.ctx,
+            champion_ids=opts.champion_ids,
+            map_ids=opts.map_ids,
+            include_champions=include_champions,
+            include_maps=include_maps,
+            resource_wads=wads,
+            resource_only=self._has_resource_pack_targets(opts) and opts.champion_ids is None and opts.map_ids is None,
+        )
 
     @staticmethod
     def _log_stage_result(result: StageResult, *, label: str, success_detail: str | None = None) -> None:
@@ -406,6 +429,9 @@ class LolAudioUnpackApp:
         self._reset_reader()
         try:
             try:
+                self._check_source(
+                    opts, include_champions=target in {"all", "skin"}, include_maps=target in {"all", "map"}
+                )
                 if progress_callback is not None:
                     progress_callback(OperationProgress("update", "data", "started"))
                 self.prepare_update_data(force_update=opts.force_update)
@@ -551,6 +577,7 @@ class LolAudioUnpackApp:
         """
         opts = self._resolve_operation_options(opts)
         try:
+            self._check_source(opts, include_champions=include_champions, include_maps=include_maps)
             reader = self._get_reader()
             logger.info(
                 f"音频类型配置 - 包含: {list(self.ctx.config.include_types)}, "
@@ -635,6 +662,7 @@ class LolAudioUnpackApp:
         opts = self._resolve_operation_options(opts)
         try:
             backend_label = self._describe_mapping_backend()
+            self._check_source(opts, include_champions=include_champions, include_maps=include_maps)
             reader = self._get_reader()
 
             logger.info(f"缓存路径: {self.ctx.paths.cache_path}")

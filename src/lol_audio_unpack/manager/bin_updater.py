@@ -167,7 +167,7 @@ class BinUpdater:
         map_ids = list(normalized_map_ids) if normalized_map_ids is not None else None
 
         # 根据传入的IDs构建筛选后的数据
-        if champion_ids or map_ids:
+        if champion_ids is not None or map_ids is not None:
             # 精确模式：根据具体ID筛选数据
             filtered_data = self._filter_data_by_ids(data, champion_ids, map_ids)
             champion_count = len(filtered_data.get("champions", {}))

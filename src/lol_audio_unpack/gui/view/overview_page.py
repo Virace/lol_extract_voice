@@ -328,6 +328,13 @@ class OverviewPage(QWidget):
 
     def clear_data(self) -> None:
         """清空页面缓存并恢复占位内容。"""
+        if any(self._selected_entity_ids.values()):
+            InfoBar.warning(
+                "目标选择已清除",
+                "来源目录正在刷新，请在检查完成后重新选择任务目标。",
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+            )
         self._entity_data_store.clear()
         self.entityListPanel.set_special_catalog_notice(None)
         self._selected_entity_ids = {"champions": set(), "maps": set(), "special": set()}
@@ -554,7 +561,20 @@ class OverviewPage(QWidget):
     def _prune_entity_state(self, entity_type: str) -> None:
         """移除已经不在当前 source model 中的选择与预览状态。"""
         available_ids = self._entity_lists[entity_type].entity_ids()
-        self._selected_entity_ids[entity_type] &= available_ids
+        selectable_ids = {
+            str(row.get("key", row.get("id", "")))
+            for row in self._entity_data_store.rows_for(entity_type)
+            if row.get("selectable", True)
+        }
+        removed = self._selected_entity_ids[entity_type] - selectable_ids
+        self._selected_entity_ids[entity_type] &= selectable_ids
+        if removed:
+            InfoBar.warning(
+                "部分目标已移出选择",
+                f"{len(removed)} 个目标已不可用，请查看文件缺失提示。",
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+            )
         current_preview_id = self._current_preview_ids.get(entity_type)
         if current_preview_id is not None and current_preview_id not in available_ids:
             self._current_preview_ids[entity_type] = None

@@ -30,6 +30,23 @@ from lol_audio_unpack.gui.view.overview.preview_panel import OverviewPreviewPane
 from lol_audio_unpack.manager.errors import SharedDataMissingError
 
 
+def test_missing_source_is_not_selected_but_remains_current_for_preview(qtbot) -> None:
+    """全选与恢复不包含缺源行，当前浏览项仍可定位到其已有音频。"""
+    view = OverviewEntityListView()
+    qtbot.addWidget(view)
+    view.set_rows(
+        [
+            {"id": "1", "name": "Annie", "selectable": True},
+            {"id": "2", "name": "Olaf", "selectable": False, "audio": "已存在"},
+        ]
+    )
+    view.selectAll()
+    assert view.selected_entity_ids() == {"1"}
+    view.restore_state({"1", "2"}, "2")
+    assert view.selected_entity_ids() == {"1"}
+    assert view.currentIndex() == view.find_index_by_entity_id("2")
+
+
 def _make_special_row(
     *,
     key: str,

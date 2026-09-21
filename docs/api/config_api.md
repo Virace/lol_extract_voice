@@ -138,6 +138,9 @@ GUI 只读取 `[app]`。其余 section 仅供 CLI 配置文件模式使用；启
 - `GROUP_BY_TYPE = False`
 - `WITH_BP_VO = False`
 
+上述语言默认值用于未显式提供参数的 CLI/API。GUI 首次配置保持“请选择”，只在发现唯一
+有效语言时自动选中；主动留空会持久化，刷新不重新填充。显式空语言不能执行源处理任务。
+
 ## 6. 上下文构建
 
 ```python
@@ -147,6 +150,7 @@ def create_app_context(
     force_reload: bool = False,
     dev_mode: bool = False,
     runtime_cache: dict[str, Any] | None = None,
+    allow_empty_language: bool = False,
 ) -> AppContext
 ```
 

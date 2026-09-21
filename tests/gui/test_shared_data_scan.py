@@ -25,6 +25,7 @@ from lol_audio_unpack.manager.errors import (
     SharedDataMissingError,
 )
 from lol_audio_unpack.manager.files import write_data
+from lol_audio_unpack.manager.source_inventory import SourceEntity
 from lol_audio_unpack.model.binding import RESOURCE_SCHEMA_VERSION
 
 pytestmark = pytest.mark.unit
@@ -162,6 +163,7 @@ def _map(entity_id: int) -> dict:
 def _build_loader(monkeypatch, *, champions: list[dict], maps: list[dict]) -> EntityDataLoader:
     """构造只保留目录扫描边界的轻量 loader。"""
     loader = EntityDataLoader.__new__(EntityDataLoader)
+    loader._source_entities = {}
     loader.ctx = SimpleNamespace(
         config=SimpleNamespace(dev_mode=False, game_path=Path("C:/Game")),
         game_region="zh_CN",
@@ -195,6 +197,35 @@ def _build_loader(monkeypatch, *, champions: list[dict], maps: list[dict]) -> En
         },
     )
     return loader
+
+
+def test_missing_source_keeps_row_and_skips_resource_repair(monkeypatch) -> None:
+    """缺源实体保留已有产物状态，禁选且不因缺 banks 触发自动重建循环。"""
+    loader = _build_loader(monkeypatch, champions=[_champion(1, "Annie")], maps=[_map(0)])
+    source = SourceEntity("champion", "1", "Annie", ("Annie.ja_JP.wad.client",), ("Annie.ja_JP.wad.client",))
+    loader._source_entities = {("champion", "1"): source}
+    preload = []
+    monkeypatch.setattr(loader, "_preload_bank_artifact", lambda kind, key: preload.append((kind, key)))
+    monkeypatch.setattr(loader, "_check_event_artifact", lambda *_: None)
+    monkeypatch.setattr(
+        loader,
+        "_build_entity_row",
+        lambda kind, entity, _: {
+            "id": str(entity["id"]),
+            "name": "Annie",
+            "entity_type": kind,
+            "audio": "已存在",
+            "mapping": "已存在",
+        },
+    )
+    scan = loader.scan_catalog(1, require_resources=True)
+    row = scan.champions.rows[0]
+    assert scan.readiness is SharedDataReadiness.COMPLETE
+    assert not row["selectable"]
+    assert row["audio"] == row["mapping"] == "已存在"
+    assert source.missing[0] in row["tooltip"]
+    assert ("champions", "1") not in preload
+    assert ("maps", "0") in preload
 
 
 def test_scan_catalog_complete_ignores_unprepared_optional_special(monkeypatch) -> None:

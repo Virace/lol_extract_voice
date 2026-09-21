@@ -1,3 +1,5 @@
+"""验证应用上下文输入、配置优先级与输出初始化边界。"""
+
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -44,6 +46,31 @@ def _build_settings(tmp_path: Path) -> dict[str, object]:
         "GAME_REGION": "zh_CN",
         "EXCLUDE_TYPE": "SFX,MUSIC",
     }
+
+
+def test_explicit_empty_language_requires_discovery_context(tmp_path: Path) -> None:
+    """GUI 发现允许留空，公共源处理默认拒绝显式空值且不创建输出。"""
+    settings = _build_settings(tmp_path)
+    settings["GAME_REGION"] = ""
+    with pytest.raises(AppContextValidationError, match="请选择"):
+        create_app_context(settings=settings)
+    assert not (tmp_path / "output").exists()
+    ctx = create_app_context(settings=settings, allow_empty_language=True)
+    assert ctx.game_region == ""
+
+
+def test_source_check_precedes_output_logging(tmp_path: Path, monkeypatch) -> None:
+    """初始化的源检查失败时不得触发文件日志初始化。"""
+    calls = []
+    monkeypatch.setattr(app_pkg, "setup_logging", lambda **_: calls.append("file logging"))
+
+    def reject(_ctx):
+        raise ValueError("missing source")
+
+    with pytest.raises(ValueError, match="missing source"):
+        setup_app(settings=_build_settings(tmp_path), source_check=reject)
+    assert calls == []
+    assert not (tmp_path / "output").exists()
 
 
 def test_create_app_context_builds_typed_context_from_settings(tmp_path: Path) -> None:

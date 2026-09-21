@@ -43,7 +43,7 @@ def find_bp_vo_source(
         命中的语音文件路径；未找到时返回 ``None``。
     """
     manifest_root = Path(ctx.paths.manifest_path) / reader.version / "lobby"
-    # 复用 AppContext 已标准化的语言区域，避免本层再自行补 fallback；default 仍作兜底候选。
+    # 本地化语音只能来自所选语言；共享 SFX 的物理命名空间固定为 default。
     region = ctx.game_region
     region_candidates: list[str] = []
 
@@ -52,8 +52,8 @@ def find_bp_vo_source(
         region_lower = region.lower()
         if region_lower not in region_candidates:
             region_candidates.append(region_lower)
-    if "default" not in region_candidates:
-        region_candidates.append("default")
+    if category == "champion-sfx-audios":
+        region_candidates = ["default"]
 
     for region_name in region_candidates:
         candidate = manifest_root / region_name / category / f"{champion_id}.ogg"

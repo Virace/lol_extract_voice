@@ -1,3 +1,5 @@
+"""验证大厅语音归属、共享音效与可见输出。"""
+
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -13,6 +15,21 @@ from lol_audio_unpack.utils.common import load_yaml
 from lol_audio_unpack.utils.path_constants import format_entity_folder_name
 
 pytestmark = pytest.mark.unit
+
+
+def test_localized_voice_never_falls_back_to_default(tmp_path):
+    """有英语语音也不能冒充缺失的当前语言；SFX 继续读取共享目录。"""
+    lobby = tmp_path / "16.18" / "lobby"
+    for category in ("champion-ban-vo", "champion-sfx-audios"):
+        path = lobby / "default" / category / "1.ogg"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"default audio")
+    ctx = SimpleNamespace(paths=SimpleNamespace(manifest_path=tmp_path), game_region="ja_JP")
+    reader = SimpleNamespace(version="16.18")
+    assert unpack_bp_vo.find_bp_vo_source(reader, "1", "champion-ban-vo", ctx=ctx) is None
+    assert unpack_bp_vo.find_bp_vo_source(reader, "1", "champion-sfx-audios", ctx=ctx) == (
+        lobby / "default" / "champion-sfx-audios" / "1.ogg"
+    )
 
 
 def test_attach_bp_vo_to_champion_fallback_copy_when_link_fails(tmp_path, monkeypatch):

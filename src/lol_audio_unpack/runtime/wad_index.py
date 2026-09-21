@@ -161,7 +161,8 @@ class WadIndex:
     ):
         """初始化索引并冻结本次运行的候选 WAD 集合。"""
         self.game_root = game_root.resolve()
-        self.region = region
+        # default 仅是 LCU 命名空间；GAME 英语使用独立 en_US WAD。
+        self.region = "en_US" if region.casefold() == "default" else region
         self.cache = cache or WadTocCache()
         self.hash_path = hash_path
         if root_wads is None or localized_wads is None:

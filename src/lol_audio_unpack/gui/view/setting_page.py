@@ -35,6 +35,7 @@ from lol_audio_unpack.gui.common.page_style import (
     apply_page_content_margins,
     configure_transparent_scroll_page,
 )
+from lol_audio_unpack.gui.components.source_missing_dialog import SourceMissingDialog
 from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
 from lol_audio_unpack.gui.controllers.game_path_resolver import resolve_game_path as resolve_selected_game_path
 from lol_audio_unpack.gui.controllers.onboarding_state import GUIDE_VERSION
@@ -45,6 +46,7 @@ from lol_audio_unpack.gui.controllers.path_picker import (
     pick_directory,
     pick_file,
 )
+from lol_audio_unpack.gui.controllers.resource_language import ResourceLanguageController
 from lol_audio_unpack.gui.theme import (
     apply_accent_preset,
     apply_shell_mode,
@@ -61,6 +63,7 @@ from lol_audio_unpack.gui.view.settings.tool_path_panel import (
     ToolPathPanel,
     WavSettingsPanel,
 )
+from lol_audio_unpack.manager.source_inventory import SourceInventory, SourceLanguage
 from lol_audio_unpack.utils.runtime_paths import (
     get_default_output_relative_path,
     get_default_vgmstream_relative_path,
@@ -121,6 +124,7 @@ class SettingPage(SmoothScrollArea):
     wwiser_path_changed = Signal(str)
     vgmstream_path_changed = Signal(str)
     shared_context_input_changed = Signal()
+    source_refresh_requested = Signal()
     smooth_scroll_changed = Signal(bool, bool)
     log_drawer_auto_collapse_changed = Signal(bool)
     log_levels_changed = Signal(object)
@@ -149,6 +153,11 @@ class SettingPage(SmoothScrollArea):
         self._build_ui()
         previous_mark = _log_setting_stage("_build_ui 完成", startup_begin, previous_mark)
         self._load_config()
+        self.language_controller = ResourceLanguageController(
+            self._cfg, self.gameRegionCard, self._confirm_language, self
+        )
+        self.language_controller.changed.connect(self.shared_context_input_changed)
+        self.baseSettingsPanel.refreshButton.clicked.connect(self.source_refresh_requested)
         previous_mark = _log_setting_stage("_load_config 完成", startup_begin, previous_mark)
         apply_smooth_scroll_enabled(self, self._cfg.page_smooth_scroll_enabled)
         self._connect_signals()
@@ -317,7 +326,6 @@ class SettingPage(SmoothScrollArea):
     ) -> None:
         """将各控件当前值写入 GuiConfig 并持久化。"""
         cfg = self._cfg
-        cfg.game_region = self.gameRegionCard.value()
         cfg.group_by_type = self.groupByTypeCard.isChecked()
         cfg.prepare_data_on_startup = self.prepareDataCard.isChecked()
         cfg.wav_workers = int(self.wavWorkersCard.value())
@@ -332,6 +340,17 @@ class SettingPage(SmoothScrollArea):
         cfg.save()
         if emit_shared_context_input_change:
             self.shared_context_input_changed.emit()
+
+    def set_source_inventory(self, inventory: SourceInventory) -> None:
+        """在共享目录 generation 完成时同步语言状态。"""
+        self.language_controller.apply_inventory(inventory)
+
+    def _confirm_language(self, language: SourceLanguage) -> bool:
+        """缺失语言只能在查看影响范围后使用可用部分。"""
+        inventory = self.language_controller.inventory
+        previous = inventory.get_language(self._cfg.game_region) if inventory else None
+        value = previous.locale if previous and previous.available_count else ""
+        return bool(SourceMissingDialog(language, self.window(), previous=value).exec())
 
     def _save_theme_config(self) -> None:
         """保存主题配置到 GuiConfig。"""
@@ -412,7 +431,6 @@ class SettingPage(SmoothScrollArea):
         self.onboardingResetCard.clicked.connect(self._reset_onboarding_state)
 
         # 基础设置
-        self.gameRegionCard.comboBox.currentTextChanged.connect(self._save_config)
         self.groupByTypeCard.checkedChanged.connect(self._save_config)
         self.prepareDataCard.checkedChanged.connect(self._save_config)
         self.wavWorkersCard.comboBox.currentTextChanged.connect(lambda _value: self._save_wav_defaults())

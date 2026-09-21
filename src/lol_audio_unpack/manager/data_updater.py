@@ -58,7 +58,9 @@ class DataUpdater:
             raise ValueError("GAME_PATH 和 MANIFEST_PATH 必须在配置中设置")
 
         if languages is None:
-            game_region = self.ctx.config.game_region or "zh_CN"
+            game_region = self.ctx.config.game_region
+            if not game_region:
+                raise ValueError("请选择游戏资源语言")
             self.languages: list[str] = [game_region]
         else:
             self.languages: list[str] = languages
@@ -121,6 +123,7 @@ class DataUpdater:
         wad_path_base = f"{champions_rel_base}/{alias}"
         return {
             "root": f"{wad_path_base}.wad.client",
+            "default": f"{wad_path_base}.en_US.wad.client",
             **{lang: f"{wad_path_base}.{lang}.wad.client" for lang in self.process_languages if lang != "default"},
         }
 
@@ -133,6 +136,7 @@ class DataUpdater:
         wad_path_base = f"{maps_rel_base}/{wad_prefix}"
         return {
             "root": f"{wad_path_base}.wad.client",
+            "default": f"{wad_path_base}.en_US.wad.client",
             **{lang: f"{wad_path_base}.{lang}.wad.client" for lang in self.process_languages if lang != "default"},
         }
 
@@ -493,10 +497,8 @@ class DataUpdater:
                 map_data["binPath"] = f"data/maps/shipping/{wad_prefix.lower()}/{wad_prefix.lower()}.bin"
                 map_bin_count += 1
                 wad_info = self._build_map_wad_info(wad_prefix)
-                if (self.game_path / wad_info["root"]).exists():
-                    map_data["wad"] = wad_info
-                else:
-                    logger.warning(f"地图 {wad_prefix} 的WAD文件不存在，已跳过: {self.game_path / wad_info['root']}")
+                # 元数据保留完整名单与物理规则，存在性由来源预检单独表达。
+                map_data["wad"] = wad_info
 
                 final_maps[str(map_id)] = map_data
             final_result["maps"] = final_maps

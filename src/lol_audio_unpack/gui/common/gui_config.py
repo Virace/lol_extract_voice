@@ -50,7 +50,8 @@ class GuiConfig:
         # 内部缓存 — CLI 共享配置
         self._game_path: str = ""
         self._output_path: str = ""
-        self._game_region: str = "zh_CN"
+        self._game_region: str = ""
+        self._language_explicit = False
         self._group_by_type: bool = False
         self._wwiser_path: str = ""
         self._vgmstream_path: str = ""
@@ -98,7 +99,8 @@ class GuiConfig:
         # 1. 读取共享配置
         self._game_path = _shared_value(SettingKey.GAME_PATH, "")
         self._output_path = _shared_value(SettingKey.OUTPUT_PATH, "")
-        self._game_region = _shared_value(SettingKey.GAME_REGION, "zh_CN")
+        self._game_region = _shared_value(SettingKey.GAME_REGION, "")
+        self._language_explicit = self._to_bool(_gui_value("language_explicit", str(bool(self._game_region))))
         self._group_by_type = self._to_bool(_shared_value(SettingKey.GROUP_BY_TYPE, "false"))
         self._wwiser_path = _shared_value(SettingKey.WWISER_PATH, "")
         self._wav_enabled = bool(wav_settings.get("wav", False))
@@ -308,12 +310,23 @@ class GuiConfig:
 
     @property
     def game_region(self) -> str:
-        """Language / region tag, e.g. ``"zh_CN"``."""
+        """返回资源语言代码；空字符串表示尚未选择。"""
         return self._game_region
 
     @game_region.setter
     def game_region(self, v: str) -> None:
+        """记录用户的显式语言选择，包括主动留空。"""
         self._game_region = v
+        self._language_explicit = True
+
+    @property
+    def language_explicit(self) -> bool:
+        """返回用户是否已有语言偏好，包括主动留空。"""
+        return self._language_explicit
+
+    def apply_discovered_language(self, locale: str) -> None:
+        """保存目录发现派生的语言，不把自动恢复空值记为用户主动留空。"""
+        self._game_region = locale
 
     @property
     def group_by_type(self) -> bool:
@@ -538,6 +551,7 @@ class GuiConfig:
             section=ConfigSection.GUI,
             values={
                 "prepare_data_on_startup": self._prepare_data_on_startup,
+                "language_explicit": self._language_explicit,
                 "vgmstream_path": self._vgmstream_path,
                 "theme_mode": self._theme_mode,
                 "accent_preset_id": self._accent_preset_id,

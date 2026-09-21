@@ -16,6 +16,37 @@ DEFAULT_PREVIEW_VOLUME_PERCENT = 10
 EXPECTED_PREVIEW_VOLUME_PERCENT = 42
 
 
+def test_language_empty_preference_survives_reload(tmp_path: Path) -> None:
+    """区分未选择与主动留空，空值保存不能恢复默认中文。"""
+    cfg = GuiConfig()
+    cfg._config_file = tmp_path / "language.ini"
+    cfg.load()
+    assert cfg.game_region == ""
+    assert not cfg.language_explicit
+    cfg.game_region = ""
+    cfg.save()
+    restored = GuiConfig()
+    restored._config_file = cfg._config_file
+    restored.load()
+    assert restored.game_region == ""
+    assert restored.language_explicit
+
+
+def test_automatic_language_is_not_an_explicit_preference(tmp_path: Path) -> None:
+    """自动发现的语言保存后仍允许随目录恢复，用户手动选择则形成偏好。"""
+    cfg = GuiConfig()
+    cfg._config_file = tmp_path / "language.ini"
+    cfg.apply_discovered_language("ja_JP")
+    cfg.save()
+    cfg.load()
+    assert cfg.game_region == "ja_JP"
+    assert not cfg.language_explicit
+    cfg.game_region = "ja_JP"
+    cfg.save()
+    cfg.load()
+    assert cfg.language_explicit
+
+
 def test_gui_config_load_reads_wav_command_defaults(tmp_path: Path) -> None:
     """应从标准 INI 的 wav 分组读取 WAV 相关默认值。"""
     config_file = tmp_path / "lol-audio-unpack.ini"

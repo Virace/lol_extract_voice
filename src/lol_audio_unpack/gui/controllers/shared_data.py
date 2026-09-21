@@ -9,6 +9,7 @@ from loguru import logger
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from lol_audio_unpack.app.results import ResultStatus, StageResult
+from lol_audio_unpack.app.targets import should_hide_champion_by_default
 from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.gui.controllers.contracts import (
     EntityRowsPayload,
@@ -66,6 +67,7 @@ class SharedDataController(QObject):
 
     state_changed = Signal(object)
     app_context_changed = Signal(object)
+    source_inventory_changed = Signal(object)
     shared_data_cleared = Signal()
     entity_data_replaced = Signal(object)
     entity_rows_updated = Signal(object)
@@ -289,7 +291,8 @@ class SharedDataController(QObject):
             )
         )
 
-        worker = self._task_worker_cls(lambda: self._create_app_context(settings=config.to_app_context_settings()))
+        settings = dict(config.to_app_context_settings())
+        worker = self._task_worker_cls(lambda: self._create_app_context(settings=settings))
         worker.signals.finished.connect(self._on_shared_context_build_payload)
         worker.signals.failed.connect(self._on_shared_context_build_error)
         self.build_worker = worker
@@ -323,6 +326,21 @@ class SharedDataController(QObject):
         self.app_context = app_context
         self.app_context_changed.emit(app_context)
         self.shared_data_cleared.emit()
+        inventory = getattr(app_context, "runtime_cache", {}).get("source_inventory")
+        if inventory is not None:
+            inventory = replace(inventory, generation=generation)
+            app_context.runtime_cache["source_inventory"] = inventory
+            self.source_inventory_changed.emit(inventory)
+            # 自动选中或清空语言会启动新 generation，不能再发布旧上下文的目录。
+            if generation != self.generation:
+                return
+            language = inventory.get_language(app_context.config.game_region)
+            if language is None or not language.available_count:
+                problem = SharedDataProblem(
+                    SharedDataProblemCode.CONFIGURATION_REQUIRED, "language", "请选择可用的游戏资源语言。"
+                )
+                self._publish_terminal(SharedDataPhase.BLOCKED, problem=problem)
+                return
         self._start_scan(generation, SharedDataPhase.CHECKING)
 
     def on_shared_context_build_failed(
@@ -527,6 +545,25 @@ class SharedDataController(QObject):
         scope = scope or SharedDataRepairScope(full=True)
         overrides = dict(config.to_app_context_settings())
         prepare_resources = config.prepare_data_on_startup
+        inventory = getattr(self.app_context, "runtime_cache", {}).get("source_inventory")
+        language = inventory.get_language(config.game_region) if inventory else None
+        if prepare_resources and language is not None:
+            # 自动准备只覆盖界面已判定可用的实体；用户任务另在启动时复核原始范围。
+            champions = tuple(
+                int(item.key)
+                for item in language.entities
+                if item.kind == "champion"
+                and item.available
+                and (scope.full or int(item.key) in scope.champion_ids)
+                and (not scope.full or not should_hide_champion_by_default({"id": item.key, "alias": item.alias}))
+            )
+            maps = tuple(
+                int(item.key)
+                for item in language.entities
+                if item.kind == "map" and item.available and (scope.full or int(item.key) in scope.map_ids)
+            )
+            scope = SharedDataRepairScope(full=False, champion_ids=champions, map_ids=maps)
+            self._prepare_scope = scope
 
         def run_prepare(signals) -> SharedDataPreparationResult:
             return self._prepare_shared_entity_data(

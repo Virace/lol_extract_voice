@@ -163,7 +163,7 @@ def test_prepare_shared_entity_data_passes_local_settings_to_app_context(monkeyp
     options, target, callback = update_calls[0]
     assert target == "all"
     assert options.champion_ids == (1,)
-    assert options.map_ids is None
+    assert options.map_ids == ()
     assert options.force_update is True
     assert callback is progress_callback
     assert result.generation == PREPARE_GENERATION

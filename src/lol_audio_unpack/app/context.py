@@ -86,7 +86,7 @@ def _build_settings(
                 logger.debug(f"忽略空的配置项: {key}=None")
                 continue
             if isinstance(value, str) and not value.strip():
-                if key == SettingKey.EXCLUDE_TYPE:
+                if key in (SettingKey.EXCLUDE_TYPE, SettingKey.GAME_REGION):
                     merged[key] = ""
                     continue
                 logger.debug(f"忽略空白配置项: {key}")
@@ -110,7 +110,7 @@ def _build_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConfig:
         runtime_root=runtime_root,
     )
 
-    game_region = str(settings.get(SettingKey.GAME_REGION, "zh_CN") or "zh_CN")
+    game_region = str(settings.get(SettingKey.GAME_REGION, "zh_CN")).strip()
     if game_region.lower() == "en_us":
         game_region = "default"
 
@@ -171,6 +171,7 @@ def create_app_context(
     force_reload: bool = False,
     dev_mode: bool = False,
     runtime_cache: dict[str, Any] | None = None,
+    allow_empty_language: bool = False,
 ) -> AppContext:
     """构建 ``AppContext``。
 
@@ -179,6 +180,7 @@ def create_app_context(
         force_reload: 兼容参数，当前仅保留签名，不影响行为。
         dev_mode: 是否启用开发模式。
         runtime_cache: 可选运行时缓存。
+        allow_empty_language: GUI 目录发现可保留空语言；源处理入口仍须在执行前验证。
 
     Returns:
         构建完成的 ``AppContext``。
@@ -190,6 +192,8 @@ def create_app_context(
 
     raw_settings = _build_settings(settings=settings)
     app_config = _build_config(settings=raw_settings, dev_mode=dev_mode)
+    if not app_config.game_region and not allow_empty_language:
+        raise AppContextValidationError("请选择游戏资源语言")
     validate_local_source(app_config.game_path)
     app_paths = _build_paths(app_config)
     return AppContext(config=app_config, paths=app_paths, runtime_cache=runtime_cache or {})

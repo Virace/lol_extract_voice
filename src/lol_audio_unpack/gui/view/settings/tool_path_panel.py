@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QWidget
 from qfluentwidgets import FluentIcon as FIF
-from qfluentwidgets import PushSettingCard, SettingCardGroup
+from qfluentwidgets import PushSettingCard, SettingCardGroup, ToolButton
 
 from lol_audio_unpack.gui.view.settings.cards import (
     ComboRowSettingCard,
@@ -25,10 +25,14 @@ class BaseSettingsPanel:
         )
         self.gameRegionCard = ComboRowSettingCard(
             FIF.LANGUAGE,
-            "游戏区域",
-            "语音文件的区域标识，影响实际加载的语音资源",
-            ["zh_CN", "en_US", "ja_JP", "ko_KR", "fr_FR", "de_DE", "es_ES", "pt_BR", "ru_RU"],
+            "资源语言",
+            "根据游戏目录检查可用语言；选择前可查看缺失文件。",
+            ["请选择"],
+            {"请选择": ""},
         )
+        self.refreshButton = ToolButton(FIF.SYNC, self.gameRegionCard)
+        self.refreshButton.setToolTip("重新检查资源文件")
+        self.gameRegionCard.hBoxLayout.addWidget(self.refreshButton)
         self.groupByTypeCard = LocalizedSwitchSettingCard(
             FIF.FOLDER,
             "按类型分组输出",
