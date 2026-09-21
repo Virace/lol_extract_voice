@@ -208,7 +208,7 @@ wav_format = pcm16
 说明：
 
 - 当动作列表包含 `wav` 时，CLI 会执行一个独立的 `WAV 转码` stage。
-- `WAV 转码` stage 会直接消费当前版本默认 `audios/<version>` 输出树，并调用 `transcode_tree(...)` 批量生成镜像 WAV。
+- `WAV 转码` stage 消费当前版本/语言的 `audios/<version>/<region>` 输出树，按内容与转换方案复用已完成 WAV；需要转换的内容通过共用批处理生成镜像 WAV。
 
 ### 4.7 `mapping`
 

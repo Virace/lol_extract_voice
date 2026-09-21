@@ -478,9 +478,6 @@ class MainWindow(FluentWindow):
         hi = self.homeInterface
         cfg = si.config
         self._shared_data_controller.source_inventory_changed.connect(si.set_source_inventory)
-        si.source_refresh_requested.connect(
-            lambda: self._shared_data_controller.request_shared_data_reload(show_notice=True, allow_auto_prepare=True)
-        )
         bind_shared_data_controller_signals(
             self._shared_data_controller,
             home_page=self.homeInterface,

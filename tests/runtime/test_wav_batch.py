@@ -11,6 +11,7 @@ from pyvgmstream.transcode import BatchTranscodeItemResult, BatchTranscodeSummar
 from lol_audio_unpack.app.audio_scope import AudioScope
 from lol_audio_unpack.app.types import WavOutputOptions
 from lol_audio_unpack.runtime.wav import batch
+from tests.factories import make_wav
 
 pytestmark = pytest.mark.unit
 
@@ -23,7 +24,7 @@ def test_batch_keeps_paths_counts_and_retry_evidence(tmp_path: Path, monkeypatch
     for key in keys:
         source = root / key
         source.parent.mkdir(parents=True, exist_ok=True)
-        source.write_bytes(b"wem")
+        source.write_bytes(key.encode())
     existing = output / "base/VO/2.wav"
     existing.parent.mkdir(parents=True, exist_ok=True)
     existing.write_bytes(b"existing")
@@ -36,7 +37,7 @@ def test_batch_keeps_paths_counts_and_retry_evidence(tmp_path: Path, monkeypatch
             target = (output_root / source.relative_to(input_root)).with_suffix(".wav")
             target.parent.mkdir(parents=True, exist_ok=True)
             failed = len(calls) <= options.max_retries and source == root / "skin/VO/1.wem"
-            target.write_bytes(b"failed-remnant" if failed else b"wav")
+            target.write_bytes(b"failed-remnant" if failed else make_wav())
             results.append(BatchTranscodeItemResult(source, target, 0, 0, "unknown format" if failed else None))
         return BatchTranscodeSummary(
             input_root, output_root, len(results), sum(not item.success for item in results), tuple(results)
@@ -60,13 +61,99 @@ def test_batch_keeps_paths_counts_and_retry_evidence(tmp_path: Path, monkeypatch
     assert retried.report_path != result.report_path
     assert result.report_path.read_bytes() == original
     assert existing.read_bytes() == b"existing"
-    assert (output / "skin/VO/1.wav").read_bytes() == b"wav"
+    assert (output / "skin/VO/1.wav").read_bytes() == make_wav()
     assert not (output / "base/VO/3.wav").exists()
     assert json.loads(original)["failed_count"] == 1
     completed_calls = len(calls)
     repeated = batch.run_batch(scope, output, options=WavOutputOptions(), report_root=tmp_path / "reports")
     assert (repeated.success_count, repeated.skipped_count) == (0, 3)
     assert len(calls) == completed_calls
+
+
+@pytest.mark.parametrize("external", [False, True])
+@pytest.mark.parametrize("failure", ["read", "decode", "validate", "publish"])
+def test_file_task_recovers_without_switching_backend(tmp_path, monkeypatch, external, failure):
+    """偶发失败重置完整文件任务，已成功文件、后端、预检与最终报告保持稳定。"""
+    root = tmp_path / "audio"
+    root.mkdir()
+    sources = [root / "1.wem", root / "2.wem"]
+    for source in sources:
+        source.write_bytes(source.name.encode())
+    calls, probes, snapshots = [], [], []
+    failed = False
+
+    def fail_once(stage):
+        nonlocal failed
+        if failure == stage and not failed:
+            failed = True
+            raise PermissionError("temporarily occupied")
+
+    identify = batch.WavCache.identify
+    publish = batch.replace_file
+
+    def read(cache, source):
+        if source == sources[1]:
+            fail_once("read")
+        return identify(cache, source)
+
+    def deliver(output, writer, **kwargs):
+        if output.name == "2.wav":
+            fail_once("publish")
+        return publish(output, writer, **kwargs)
+
+    def convert(pending, destination, *, input_root, **kwargs):
+        calls.append(tuple(pending))
+        items = []
+        for source in pending:
+            output = destination / source.relative_to(input_root).with_suffix(".wav")
+            output.parent.mkdir(parents=True, exist_ok=True)
+            error = None
+            try:
+                if source == sources[1]:
+                    fail_once("decode")
+                    fail_once("validate")
+            except PermissionError as exc:
+                output.write_bytes(b"partial")
+                error = str(exc) if failure == "decode" else None
+            else:
+                output.write_bytes(make_wav())
+            items.append(BatchTranscodeItemResult(source, output, 0, output.stat().st_size, error))
+        callback = kwargs["progress" if external else "progress_callback"]
+        failed_count = sum(not item.success for item in items)
+        callback(batch.BatchTranscodeProgress(len(items), len(items), failed_count))
+        return BatchTranscodeSummary(input_root, destination, len(items), failed_count, tuple(items))
+
+    def wrong_backend(*args, **kwargs):
+        pytest.fail("任务重试不得切换后端")
+
+    monkeypatch.setattr(batch.WavCache, "identify", read)
+    monkeypatch.setattr(batch, "replace_file", deliver)
+    monkeypatch.setattr(batch, "require_tool", lambda *args, **kwargs: probes.append(kwargs))
+    monkeypatch.setattr(batch, "transcode_external", convert if external else wrong_backend)
+    monkeypatch.setattr(batch, "transcode_many", wrong_backend if external else convert)
+    options = WavOutputOptions(backend_path="vgmstream-cli.exe" if external else None)
+    result = batch.run_batch(
+        AudioScope(root, directories=(".",)),
+        tmp_path / "out",
+        options=options,
+        report_root=tmp_path / "reports",
+        progress=snapshots.append,
+    )
+
+    assert failed
+    assert result.status == "success"
+    assert (result.success_count, result.failed_count, result.skipped_count) == (2, 0, 0)
+    assert result.failures == ()
+    assert len(probes) == 1 and probes[0]["path"] == options.backend_path
+    assert sum(sources[0] in call for call in calls) == 1
+    assert calls[-1] == (sources[1],)
+    assert all((tmp_path / "out" / source.with_suffix(".wav").name).read_bytes() == make_wav() for source in sources)
+    assert snapshots[-1] == batch.BatchTranscodeProgress(2, 2, 0)
+    assert all(snapshot.total_count == len(sources) for snapshot in snapshots)
+    assert [item.completed_count for item in snapshots] == sorted(item.completed_count for item in snapshots)
+    assert all(item.completed_count < len(sources) for item in snapshots[:-1])
+    assert list((tmp_path / "reports").glob("*/summary.json")) == [result.report_path]
+    assert json.loads(result.report_path.read_text(encoding="utf-8"))["success_count"] == len(sources)
 
 
 @pytest.mark.parametrize("crash", [False, True])

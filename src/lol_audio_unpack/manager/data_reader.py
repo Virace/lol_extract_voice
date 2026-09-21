@@ -41,7 +41,7 @@ class DataReader:
     AUDIO_TYPE_SFX = "SFX"
     AUDIO_TYPE_MUSIC = "MUSIC"
 
-    def __init__(self, ctx: AppContext):
+    def __init__(self, ctx: AppContext, *, read_only: bool = False):
         """
         初始化数据读取器
 
@@ -49,6 +49,7 @@ class DataReader:
 
         Args:
             ctx: 运行时上下文。
+            read_only: 浏览时禁止写回未知类别记录；所有读取统一使用新布局。
         """
         self.ctx = ctx
         self.game_path = Path(self.ctx.config.game_path)
@@ -58,7 +59,8 @@ class DataReader:
             raise ValueError("GAME_PATH 和 MANIFEST_PATH 必须在配置中设置")
 
         self.version: str = resolve_game_version(self.ctx)
-        self.version_manifest_path: Path = self.manifest_path / self.version
+        self.version_manifest_path: Path = self.ctx.version_path("manifest", self.version)
+        self.read_only = read_only
 
         # 使用固定 MessagePack 路径，旧格式由独立工具转换；
         # 当前边界负责把缺失与损坏分类，避免底层和 GUI 重复记录 traceback。
@@ -219,7 +221,7 @@ class DataReader:
     @performance_monitor(level="DEBUG")
     def write_unknown_categories(self) -> None:
         """将本次运行中收集到的所有未知分类写入到文件中"""
-        if not self.unknown_categories:
+        if self.read_only or not self.unknown_categories:
             return
 
         try:

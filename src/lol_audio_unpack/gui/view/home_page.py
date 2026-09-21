@@ -282,7 +282,8 @@ class HomePage(SmoothScrollArea):
         display = describe_shared_data_state(state)
         self.environment_status.set_status(display.status_text, role=display.status_role)
         self.entity_data_card.setDisplayText(display.card_text)
-        self.entity_data_card.setDetailText(display.detail_text)
+        elapsed = f" · 已用 {state.elapsed_seconds:.1f}s" if state.active else ""
+        self.entity_data_card.setDetailText(display.detail_text + elapsed)
         self.entity_data_card.set_status_role(display.status_role)
 
         if state.active and display.has_determinate_progress:

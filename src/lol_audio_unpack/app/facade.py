@@ -13,6 +13,7 @@ from threading import Lock
 
 from loguru import logger
 
+from lol_audio_unpack.app.library import library_session
 from lol_audio_unpack.manager import (
     BinUpdater,
     DataReader,
@@ -251,7 +252,7 @@ class LolAudioUnpackApp:
             entities = (EntityResult("wav", "batch", entity_status, artifacts=(wav_root,)),)
         if raw_status == "success" and failed_count == 0:
             note = (
-                f"已转换 {processed_count} 个文件，跳过已有输出 {skipped_count} 个。"
+                f"已生成 {processed_count} 个文件，实际转换 {payload.get('converted_file_count', processed_count)}、复用 {payload.get('reused_file_count', 0)}，跳过已有输出 {skipped_count} 个。"
                 if processed_count or skipped_count
                 else "没有待转换的音频文件。"
             )
@@ -293,7 +294,8 @@ class LolAudioUnpackApp:
         self._reset_reader()
         try:
             if not self._is_update_prepared(force_update=force_update):
-                DataUpdater(force_update=force_update, ctx=self.ctx).check_and_update()
+                with library_session(self.ctx):
+                    DataUpdater(force_update=force_update, ctx=self.ctx).check_and_update()
                 self.ctx.runtime_cache[UPDATE_PREPARED_KEY] = force_update
         finally:
             # DataUpdater 即使失败也可能已替换部分 artifact，不能复用调用前的缓存。
@@ -315,10 +317,11 @@ class LolAudioUnpackApp:
         self._reset_reader()
         try:
             reader = self._get_reader()
-            return ResourcePackDiscovery(self.ctx, reader=reader).discover(
-                opts.resource_pack_wads,
-                version=reader.version,
-            )
+            with library_session(self.ctx):
+                return ResourcePackDiscovery(self.ctx, reader=reader).discover(
+                    opts.resource_pack_wads,
+                    version=reader.version,
+                )
         finally:
             # discovery 以 pair transaction 写 banks/events，任何退出都需丢弃旧分区 cache。
             self._reset_reader()
@@ -445,48 +448,49 @@ class LolAudioUnpackApp:
                 )
                 if opts.wav_output.enabled:
                     self.check_tools(opts)
-                if progress_callback is not None:
-                    progress_callback(OperationProgress("update", "data", "started"))
-                self.prepare_update_data(force_update=opts.force_update)
-                if progress_callback is not None:
-                    progress_callback(OperationProgress("update", "data", "finished"))
-                has_resource_pack_scope = self._has_resource_pack_targets(opts)
-                run_standard_update = (
-                    not has_resource_pack_scope or opts.champion_ids is not None or opts.map_ids is not None
-                )
-                child_results: list[StageResult] = []
-                if run_standard_update:
-                    updater_kwargs = {
-                        "force_update": opts.force_update,
-                        "process_events": opts.process_events,
-                        "ctx": self.ctx,
-                    }
+                with library_session(self.ctx):
                     if progress_callback is not None:
-                        updater_kwargs["progress_callback"] = progress_callback
-                    updater = BinUpdater(
-                        **updater_kwargs,
+                        progress_callback(OperationProgress("update", "data", "started"))
+                    self.prepare_update_data(force_update=opts.force_update)
+                    if progress_callback is not None:
+                        progress_callback(OperationProgress("update", "data", "finished"))
+                    has_resource_pack_scope = self._has_resource_pack_targets(opts)
+                    run_standard_update = (
+                        not has_resource_pack_scope or opts.champion_ids is not None or opts.map_ids is not None
                     )
-                    update_results = updater.update(
-                        target=target,
-                        champion_ids=self._to_str_ids(opts.champion_ids),
-                        map_ids=self._to_str_ids(opts.map_ids),
+                    child_results: list[StageResult] = []
+                    if run_standard_update:
+                        updater_kwargs = {
+                            "force_update": opts.force_update,
+                            "process_events": opts.process_events,
+                            "ctx": self.ctx,
+                        }
+                        if progress_callback is not None:
+                            updater_kwargs["progress_callback"] = progress_callback
+                        updater = BinUpdater(
+                            **updater_kwargs,
+                        )
+                        update_results = updater.update(
+                            target=target,
+                            champion_ids=self._to_str_ids(opts.champion_ids),
+                            map_ids=self._to_str_ids(opts.map_ids),
+                        )
+                        child_results.append(self._adapt_update_results(update_results))
+                    if opts.resource_pack_wads:
+                        discovery_result = self.discover_resource_packs(opts)
+                        logger.info(
+                            "资源包发现结束：status={}，packs={}，candidate={}，payload_reads={}",
+                            discovery_result.status,
+                            len(discovery_result.packs),
+                            discovery_result.cost["candidateEntries"],
+                            discovery_result.cost["payloadReads"],
+                        )
+                        child_results.append(self._adapt_discovery_result(discovery_result))
+                    result = StageResult.combine(
+                        "update",
+                        child_results,
+                        note="当前目标不需要更新。" if not child_results else None,
                     )
-                    child_results.append(self._adapt_update_results(update_results))
-                if opts.resource_pack_wads:
-                    discovery_result = self.discover_resource_packs(opts)
-                    logger.info(
-                        "资源包发现结束：status={}，packs={}，candidate={}，payload_reads={}",
-                        discovery_result.status,
-                        len(discovery_result.packs),
-                        discovery_result.cost["candidateEntries"],
-                        discovery_result.cost["payloadReads"],
-                    )
-                    child_results.append(self._adapt_discovery_result(discovery_result))
-                result = StageResult.combine(
-                    "update",
-                    child_results,
-                    note="当前目标不需要更新。" if not child_results else None,
-                )
             except EXPECTED_STAGE_ERRORS as exc:
                 result = StageResult.from_error("update", exc)
         finally:

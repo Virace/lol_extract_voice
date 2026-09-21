@@ -192,15 +192,16 @@ def scan_inventory(game_path: Path, *, generation: int = 0, language: str | None
         if not isinstance(declarations, dict):
             raise SourceDiscoveryError("LCU 语言声明不是字典")
         declarations = {str(key).casefold(): value for key, value in declarations.items()}
-        locales = set(declarations)
-        locales.add("en_us")
-        if language is None:
-            for folder in ("Champions", "Maps/Shipping"):
-                for file in (root / FINAL_ROOT / folder).glob("*.wad.client"):
-                    if match := _LOCALE.search(file.name):
-                        locales.add(match[1].casefold())
-        else:
-            locales = {"en_us" if language.casefold() == "default" else language.casefold()}
+        # 声明不是安装证据：至少一个对应的 game-data 包实际存在才进入语言列表。
+        locales = {
+            locale
+            for locale, names in declarations.items()
+            if any((root / path).is_file() for path in _bundle_paths(names))
+        }
+        if any((root / path).is_file() for path in common):
+            locales.add("en_us")
+        if language is not None:
+            locales &= {"en_us" if language.casefold() == "default" else language.casefold()}
         aliases = {item["id"]: item["alias"] for item in champions}
         languages = []
         for raw_locale in sorted(locales):

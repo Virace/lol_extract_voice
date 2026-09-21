@@ -191,6 +191,12 @@ def setup_app(
 `game_path` 可以指向已安装客户端，也可以指向外部工具准备的等价目录。两者必须满足同一个
 [已准备本地数据源合同](./prepared_source.md)，程序不提供下载或网络回退。
 
+版本产物统一由 `ctx.version_path(kind, version)` 定位，在对应根下加入版本和规范化语言；
+例如 `ctx.version_path("manifest", "16.18")` 返回 `manifest/16.18/zh_CN`。
+`kind` 使用 `manifest`、`audio`、`wav`、`hash`、`report` 等 `AppPaths` 路径前缀。
+`default` 英语规范化为 `en_US`；GUI 空语言使用只读占位 `_unselected`，不能执行源处理任务。
+硬链接、完整搬迁及旧目录一次性迁移规则见[资源库说明](./library_api.md)。
+
 ## 8. 配置示例
 
 GUI 的“提前准备数据”保存在独立偏好分组，默认关闭：

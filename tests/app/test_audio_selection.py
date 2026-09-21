@@ -84,10 +84,10 @@ def test_node_scope_resolves_in_background_and_rejects_changed_mapping(
     selection.set_paths((members[0],), False)
     (scope,) = selection.build_scopes((root,), prefixes={root: prefix})
     assert scope.files == () and scope.directories == () and len(scope.nodes) == 1
-    assert scope.resolve_files() == (members[1],)
+    assert scope.resolve_files() == (members[1], root / "3.wem")
     selection.undo()
     (scope,) = selection.build_scopes((root,), prefixes={root: prefix})
-    assert set(scope.resolve_files()) == set(members)
+    assert set(scope.resolve_files()) == {*members, root / "3.wem"}
     mapping_path.write_bytes(msgpack.packb({}))
     with pytest.raises(ValueError, match="映射已变化"):
         scope.resolve_files()

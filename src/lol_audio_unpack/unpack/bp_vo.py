@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import os
-import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from lol_audio_unpack.app.outputs import save_outputs
 from lol_audio_unpack.app.path_layout import format_entity_folder_name, get_output_dir_name
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.model import AudioEntityData
+from lol_audio_unpack.utils.atomic import replace_file
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
@@ -42,7 +43,7 @@ def find_bp_vo_source(
     Returns:
         命中的语音文件路径；未找到时返回 ``None``。
     """
-    manifest_root = Path(ctx.paths.manifest_path) / reader.version / "lobby"
+    manifest_root = ctx.version_path("manifest", reader.version) / "lobby"
     # 本地化语音只能来自所选语言；共享 SFX 的物理命名空间固定为 default。
     region = ctx.game_region
     region_candidates: list[str] = []
@@ -63,25 +64,30 @@ def find_bp_vo_source(
     return None
 
 
-def link_or_copy(source: Path, target: Path) -> str:
-    """优先创建硬链接，失败时回退为复制。
+def link_audio(source: Path, target: Path) -> str:
+    """创建硬链接，失败时保留原目标并报告错误。
 
     Args:
         source: 源文件路径。
         target: 目标文件路径。
 
     Returns:
-        实际写入模式，可能为 ``hardlink`` 或 ``copy``。
+        实际写入模式 ``hardlink``。
     """
-    if target.exists():
-        target.unlink()
-
-    try:
-        os.link(source, target)
+    if target.is_file() and source.samefile(target):
         return "hardlink"
-    except OSError:
-        shutil.copy2(source, target)
-        return "copy"
+    mode = "hardlink"
+
+    def write(temp: Path) -> None:
+        temp.unlink()
+        try:
+            os.link(source, temp)
+        except OSError as exc:
+            logger.error("大厅音频硬链接失败，保留原文件：{} | {}", target, exc)
+            raise
+
+    replace_file(target, write, write_stage="lobby")
+    return mode
 
 
 def attach_bp_vo(
@@ -105,7 +111,7 @@ def attach_bp_vo(
     if not bool(ctx.config.with_bp_vo):
         return ()
 
-    audio_root = Path(ctx.paths.audio_path)
+    audio_root = ctx.version_path("audio", reader.version)
     entity_folder = format_entity_folder_name(
         entity.entity_id,
         entity.entity_alias,
@@ -132,11 +138,19 @@ def attach_bp_vo(
             continue
 
         target = target_dir / target_name
-        mode = link_or_copy(source, target)
+        mode = link_audio(source, target)
         persisted_paths.append(target)
         if persisted_artifact_callback is not None:
             persisted_artifact_callback(target)
         logger.debug(f"大厅音频已写入: {target} (mode={mode})")
+    save_outputs(
+        ctx.config.output_path,
+        reader.version,
+        ctx.game_region,
+        entity.entity_type,
+        str(entity.entity_id),
+        persisted_paths,
+    )
     return tuple(persisted_paths)
 
 
@@ -148,4 +162,4 @@ def _build_lobby_dir(
     entity_folder: str,
 ) -> Path:
     """构建统一大厅音频输出目录。"""
-    return audio_root / version / get_output_dir_name(entity_type) / entity_folder / "lobby"
+    return audio_root / get_output_dir_name(entity_type) / entity_folder / "lobby"

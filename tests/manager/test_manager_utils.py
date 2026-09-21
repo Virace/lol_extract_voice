@@ -10,6 +10,7 @@ import lol_audio_unpack.manager.files as mfiles
 from lol_audio_unpack.app import game_version
 from lol_audio_unpack.manager import utils as mutils
 from lol_audio_unpack.manager.errors import ArtifactWriteError, SharedDataCorruptError
+from lol_audio_unpack.utils import atomic
 
 pytestmark = pytest.mark.unit
 
@@ -250,7 +251,7 @@ def test_write_data_preserves_existing_file_when_fsync_fails(tmp_path, monkeypat
     target = base.with_suffix(".msgpack")
     target.parent.mkdir(parents=True)
     target.write_bytes(b"old-data")
-    monkeypatch.setattr(mfiles.os, "fsync", lambda _fd: (_ for _ in ()).throw(OSError("disk full")))
+    monkeypatch.setattr(atomic.os, "fsync", lambda _fd: (_ for _ in ()).throw(OSError("disk full")))
 
     with pytest.raises(ArtifactWriteError) as raised:
         mfiles.write_data({"k": "v"}, base, dev_mode=False)
@@ -265,7 +266,7 @@ def test_write_data_preserves_existing_file_when_replace_fails(tmp_path, monkeyp
     target = base.with_suffix(".msgpack")
     target.parent.mkdir(parents=True)
     target.write_bytes(b"old-data")
-    monkeypatch.setattr(mfiles.os, "replace", lambda _source, _target: (_ for _ in ()).throw(OSError("busy")))
+    monkeypatch.setattr(atomic.os, "replace", lambda _source, _target: (_ for _ in ()).throw(OSError("busy")))
 
     with pytest.raises(ArtifactWriteError) as raised:
         mfiles.write_data({"k": "v"}, base, dev_mode=False)

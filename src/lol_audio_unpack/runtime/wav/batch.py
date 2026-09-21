@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -17,8 +19,10 @@ from pyvgmstream.transcode import BatchTranscodeProgress, transcode_many
 
 from ...app.audio_scope import AudioScope, MappingNode
 from ...app.types import WavOutputOptions
-from ..probe import require_tool
+from ...utils.atomic import replace_file
+from ..probe import require_tool, validate_wav
 from ._runtime import build_output_path, resolve_decode_config
+from .cache import WavCache
 from .external import transcode_external
 
 _PROGRESS_INTERVAL = 0.1
@@ -58,6 +62,8 @@ class WavBatchResult:
     error_message: str | None = None
     unconfirmed_count: int = 0
     report_error: str | None = None
+    converted_count: int = 0
+    reused_count: int = 0
 
     @property
     def status(self) -> str:
@@ -97,6 +103,8 @@ def run_batch(  # noqa: PLR0913
     output_file: Path | None = None,
     parent_id: str | None = None,
     prechecked: bool = False,
+    cache: WavCache | None = None,
+    managed: bool = False,
 ) -> WavBatchResult:
     """在调用方后台执行转码任务，并按统一次数限制重试失败文件。
 
@@ -110,6 +118,8 @@ def run_batch(  # noqa: PLR0913
         output_file: 单文件另存为目标；使用临时目录避免覆盖同 ID 的其他文件。
         parent_id: 失败重试所关联的原操作身份。
         prechecked: 当前冻结任务已通过相同后端和参数的启动预检。
+        cache: 当前输出的内容与格式记录；省略时仅在本批次归并同内容。
+        managed: 输出属于管理目录，成功后登记当前格式；普通导出始终独立复制。
 
     Returns:
         带有独立报告地址的批处理事实。
@@ -118,6 +128,7 @@ def run_batch(  # noqa: PLR0913
         raise ValueError("max_retries must be positive")
     started = monotonic()
     checked = prechecked
+    cache = cache or WavCache(options)
     result: WavBatchResult | None = None
     total = 0
     completed = 0
@@ -133,7 +144,7 @@ def run_batch(  # noqa: PLR0913
         if result is None:
             total = snapshot.total_count
         base = result.success_count + result.skipped_count if result is not None else 0
-        # 后端完成仍需落盘；自动重试期间保持总量和进度，不提前显示完成。
+        # 后端完成仍需校验与落盘；自动重试期间保持总量和进度，不提前显示完成。
         completed = max(completed, min(max(0, total - 1), base + snapshot.completed_count - snapshot.failed_count))
         if progress is not None:
             progress(BatchTranscodeProgress(completed, total, 0))
@@ -149,6 +160,8 @@ def run_batch(  # noqa: PLR0913
             output_file=output_file,
             parent_id=parent_id,
             check_tool=check_tool,
+            cache=cache,
+            managed=managed,
         )
         if result is None:
             result = current
@@ -158,6 +171,8 @@ def run_batch(  # noqa: PLR0913
                 result,
                 success_count=result.success_count + current.success_count,
                 skipped_count=result.skipped_count + current.skipped_count,
+                converted_count=result.converted_count + current.converted_count,
+                reused_count=result.reused_count + current.reused_count,
                 failures=current.failures,
                 failed_count=current.failed_count,
                 error_message=current.error_message,
@@ -183,6 +198,7 @@ def run_batch(  # noqa: PLR0913
         )
     else:
         logger.success("WAV 批处理结束：成功 {}、跳过 {} 个文件", result.success_count, result.skipped_count)
+    logger.info("WAV 内容统计：实际转换 {}、复用 {}", result.converted_count, result.reused_count)
     return result
 
 
@@ -197,8 +213,10 @@ def _run_attempt(  # noqa: PLR0913
     output_file: Path | None,
     parent_id: str | None,
     check_tool: Callable[[], None],
+    cache: WavCache,
+    managed: bool,
 ) -> WavBatchResult:
-    """重新读取输入并完成一次转码与原子落盘，不在工具适配层重试。"""
+    """重新读取输入并完成一次校验、转码与原子落盘，不在工具适配层重试。"""
     started = monotonic()
     operation_id = uuid4().hex
     output_root = Path(output_root).expanduser().resolve()
@@ -230,6 +248,9 @@ def _run_attempt(  # noqa: PLR0913
         raise ValueError("另存为文件只支持一个精确音频")
     skipped = 0
     pending: list[Path] = []
+    groups: dict[str, list[tuple[Path, Path]]] = {}
+    digests: dict[Path, str] = {}
+    cached: dict[str, Path] = {}
     failures: list[WavFailure] = []
     logger.info("开始 WAV 批处理：{}，扫描 {} 个文件，覆盖={}", operation_id, len(sources), overwrite)
     for source in sources:
@@ -237,10 +258,22 @@ def _run_attempt(  # noqa: PLR0913
         # 已确认的精确输入消失时，不能因旧输出存在而静默跳过。
         if not source.is_file():
             failures.append(WavFailure(str(source), str(output), "对应 WEM 文件不可用，请恢复输入后重试。"))
-        elif output.exists() and not overwrite:
+        elif output.exists() and not overwrite and not managed:
             skipped += 1
         else:
-            pending.append(source)
+            try:
+                identity = cache.identify(source)
+            except (OSError, ValueError) as exc:
+                failures.append(WavFailure(str(source), str(output), str(exc)))
+                continue
+            if identity.digest not in groups:
+                if identity.cached is not None:
+                    cached[identity.digest] = identity.cached
+                else:
+                    pending.append(source)
+                groups[identity.digest] = []
+            groups[identity.digest].append((source, output))
+            digests[source.resolve()] = identity.digest
 
     finished = Event()
     last_emit = 0.0
@@ -278,34 +311,60 @@ def _run_attempt(  # noqa: PLR0913
         )
 
     success_count = 0
+    converted_count = 0
+    reused_count = 0
     error_message = None
     unconfirmed_count = 0
+
+    def deliver(digest: str, source: Path, *, reused: bool) -> None:
+        nonlocal success_count, reused_count
+        for index, (original, output) in enumerate(groups[digest]):
+            try:
+                if source != output:
+                    replace_file(output, lambda temp: shutil.copyfile(source, temp), write_stage="wav-export")
+                if managed:
+                    cache.record(digest, output)
+            except (OSError, ValueError) as exc:
+                failures.append(WavFailure(str(original), str(output), str(exc)))
+            else:
+                success_count += 1
+                reused_count += int(reused or index > 0)
+
     try:
-        if pending:
-            check_tool()
-            destination = output_file.parent if output_file is not None else output_root
-            destination.mkdir(parents=True, exist_ok=True)
-            # 暂存与最终输出位于同一卷；只有上游确认成功后才原子替换，失败残留不能被下次跳过。
-            with TemporaryDirectory(prefix=".wav-export-", dir=destination) as scratch:
-                summary = transcode(Path(scratch))
-                for item in summary.results:
-                    output = output_file or build_output_path(item.source_path, audio_root=root, wav_root=output_root)
-                    if item.error is not None:
-                        logger.error("WAV 转码失败 {}：{}", item.source_path, item.error)
-                        failures.append(WavFailure(str(item.source_path), str(output), item.error))
-                        continue
-                    try:
-                        output.parent.mkdir(parents=True, exist_ok=True)
-                        item.output_path.replace(output)
-                    except OSError as exc:
-                        failures.append(WavFailure(str(item.source_path), str(output), str(exc)))
-                    else:
-                        success_count += 1
+        writer = cache.library
+        with writer if writer is not None and not writer.is_writing else nullcontext(writer):
+            for digest, path in cached.items():
+                try:
+                    deliver(digest, path, reused=True)
+                except (OSError, ValueError, RuntimeError) as exc:
+                    failures.extend(WavFailure(str(src), str(out), str(exc)) for src, out in groups[digest])
+            if pending:
+                check_tool()
+                destination = output_file.parent if output_file is not None else output_root
+                destination.mkdir(parents=True, exist_ok=True)
+                # 相同内容只交给上游一次；完整验证后分发到固定目标，不保留隐藏的转换缓存。
+                with TemporaryDirectory(prefix=".wav-export-", dir=destination) as scratch:
+                    summary = transcode(Path(scratch))
+                    for item in summary.results:
+                        digest = digests[item.source_path.resolve()]
+                        error = item.error
+                        if error is None:
+                            try:
+                                validate_wav(item.output_path)
+                            except (OSError, ValueError, RuntimeError) as exc:
+                                error = str(exc)
+                            else:
+                                converted_count += 1
+                                deliver(digest, item.output_path, reused=False)
+                        if error is not None:
+                            logger.error("WAV 转码失败 {}：{}", item.source_path, error)
+                            failures.extend(WavFailure(str(src), str(out), error) for src, out in groups[digest])
+            cache.commit(writer)
     except Exception as exc:  # noqa: BLE001
         logger.exception("WAV 批处理异常中止：{}", operation_id)
         # 没有上游终态快照时不猜测成功范围；精确输入仍保留供诊断和显式替换。
         error_message = f"{type(exc).__name__}: {exc}（未取得可靠完成结果）"
-        unconfirmed_count = len(pending)
+        unconfirmed_count = max(0, len(sources) - skipped - success_count - len(failures))
     finally:
         finished.set()
     result = WavBatchResult(
@@ -324,6 +383,8 @@ def _run_attempt(  # noqa: PLR0913
         parent_id,
         error_message,
         unconfirmed_count,
+        converted_count=converted_count,
+        reused_count=reused_count,
     )
     return result
 
@@ -393,4 +454,6 @@ def read_batch_result(path: Path) -> WavBatchResult:
         error_message=payload.get("error_message"),
         unconfirmed_count=payload.get("unconfirmed_count", 0),
         report_error=payload.get("report_error"),
+        converted_count=payload.get("converted_count", payload["success_count"]),
+        reused_count=payload.get("reused_count", 0),
     )

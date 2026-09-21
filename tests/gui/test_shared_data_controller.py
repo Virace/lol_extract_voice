@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import lol_audio_unpack.gui.controllers.shared_data as shared_data_module
 import lol_audio_unpack.gui.window as window_module
 from lol_audio_unpack.app.resource_pack import ResourcePackWadRef, build_resource_pack_key
 from lol_audio_unpack.app.results import ResultStatus, StageResult
@@ -41,6 +42,7 @@ from lol_audio_unpack.model.progress import OperationProgress
 EXPECTED_SCAN_COUNT_AFTER_VERIFICATION = 2
 EXPECTED_FIXTURE_MAP_COUNT = 2
 CURRENT_GENERATION = 2
+STARTUP_ELAPSED = 4.5
 
 
 def test_auto_prepare_uses_available_ordinary_scope_only():
@@ -403,7 +405,7 @@ def test_shared_data_controller_load_initial_data_starts_worker_and_emits_typed_
     assert states[-1].active is True
     assert create_calls == []
 
-    worker.func()
+    worker.func(worker.signals)
 
     assert len(create_calls) == 1
     assert create_calls[0]["settings"]["GAME_PATH"] == "game"
@@ -874,6 +876,7 @@ def test_legacy_schema_fixture_uses_normal_update_adapter_then_verifies_ready(
         loader._source_entities = {}
         loader.ctx = context
         loader.data_reader = SimpleNamespace(
+            legacy=False,
             version="16.16",
             champion_banks_dir=champion_banks_dir,
             map_banks_dir=map_banks_dir,
@@ -1022,3 +1025,27 @@ def test_shared_data_controller_shutdown_background_work_stops_short_workers() -
     assert champions_worker.quit_called is True
     assert maps_worker.request_interruption_called is True
     assert maps_worker.quit_called is True
+
+
+def test_startup_elapsed_advances_without_worker_progress(qtbot, monkeypatch):
+    """后台停留在单个文件时，界面仍独立显示累计耗时。"""
+    clock = [10.0]
+    monkeypatch.setattr(shared_data_module, "monotonic", lambda: clock[0])
+    controller = _build_controller(task_worker_cls=_FakeTaskWorker, start_worker_fn=lambda _worker: None)
+    controller.load_initial_data()
+    assert controller.elapsed_timer.isActive()
+    clock[0] += STARTUP_ELAPSED
+    controller.elapsed_timer.timeout.emit()
+    assert controller.state.elapsed_seconds == STARTUP_ELAPSED
+    assert controller.state.progress is None
+    controller.build_worker.signals.progress.emit(
+        SharedDataProgress(controller.generation, "library_migration", "started")
+    )
+    assert not controller.build_timeout_timer.isActive()
+    controller.build_worker.signals.progress.emit(
+        SharedDataProgress(controller.generation, "source_inventory", "started")
+    )
+    assert controller.state.progress.stage_key == "source_inventory"
+    assert controller.build_timeout_timer.isActive()
+    controller.shutdown_background_work()
+    assert not controller.elapsed_timer.isActive()

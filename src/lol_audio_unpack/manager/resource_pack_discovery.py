@@ -607,7 +607,7 @@ class ResourcePackDiscovery:
 
     def _artifact_dir(self, version: str, kind: str) -> Path:
         """返回当前版本 resource-pack artifact group 根目录。"""
-        return Path(self.ctx.paths.manifest_path) / version / kind / RESOURCE_PACK_GROUP
+        return self.ctx.version_path("manifest", version) / kind / RESOURCE_PACK_GROUP
 
     def _is_dev_mode(self) -> bool:
         """返回当前 artifact serializer 是否应使用开发格式。"""

@@ -67,6 +67,25 @@ def test_common_dependency_blocks_maps_and_lcu_dependency_blocks_language(local_
     assert {entity.key for entity in japanese.entities if not entity.available} == {"0", "11"}
     (local_catalog / inventory.LCU_ROOT / "ja_JP-assets.wad").unlink()
     japanese = inventory.scan_inventory(local_catalog).get_language("ja_JP")
+    assert japanese is None
+    assert inventory.scan_inventory(local_catalog, language="ja_JP").languages == ()
+
+
+def test_declared_but_absent_game_data_is_not_a_candidate(monkeypatch, local_catalog):
+    """声明和 GAME 语音均不能替代本地 game-data 的安装标志。"""
+    champions, maps, metadata = inventory.read_catalog(local_catalog)
+    metadata["perLocaleAssetBundles"]["zh_TW"] = ["zh_TW-assets.wad"]
+    monkeypatch.setattr(inventory, "read_catalog", lambda _: (champions, maps, metadata))
+    (local_catalog / inventory.FINAL_ROOT / "Champions/MonkeyKing.zh_TW.wad.client").touch()
+    assert inventory.scan_inventory(local_catalog).get_language("zh_TW") is None
+
+
+def test_present_game_data_with_missing_dependency_remains_visible(monkeypatch, local_catalog):
+    """有安装标志但依赖不完整的语言仍可展示具体缺失原因。"""
+    champions, maps, metadata = inventory.read_catalog(local_catalog)
+    metadata["perLocaleAssetBundles"]["ja_JP"].append("ja_JP-extra.wad")
+    monkeypatch.setattr(inventory, "read_catalog", lambda _: (champions, maps, metadata))
+    japanese = inventory.scan_inventory(local_catalog).get_language("ja_JP")
     assert japanese.status == "unavailable"
     assert len(japanese.entities) == ENTITY_COUNT
 

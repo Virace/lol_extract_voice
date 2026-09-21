@@ -65,13 +65,17 @@
 
 ## 3. 输出目录约定
 
-- `manifest/<version>/data.*`：基础聚合数据（英雄/地图元信息）
-- `manifest/<version>/banks/**`：分类后的 bank 路径及 local v2 resource bindings；物理 WAD 只保存游戏根相对路径
-- `manifest/<version>/events/**`：事件数据
-- `audios/<version>/...`：解包出的 `.wem`
-- `wavs/<version>/...`：独立 `WAV 转码` stage 输出
-- `hashes/<version>/...`：映射结果或整合结果
-- `reports/<version>/...`：解包、转码与汇总报告
+- `manifest/<version>/<region>/data.msgpack`：基础聚合数据（英雄/地图元信息）
+- `manifest/<version>/<region>/banks/**`：分类后的 bank 路径及 local v2 resource bindings；物理 WAD 只保存游戏根相对路径
+- `manifest/<version>/<region>/events/**`：事件数据
+- `audios/<version>/<region>/...`：保留原 ID 的可见 `.wem`
+- `audios/_data/**` 与 `audios/_index/<version>/<region>.msgpack`：原始内容对象与归属索引
+- `wavs/<version>/<region>/...`：固定位置的 WAV 输出；格式变化时替换同一文件，不保存隐藏派生对象
+- `hashes/<version>/<region>/...`：映射结果或整合结果
+- `reports/<version>/<region>/...`：解包、转码与汇总报告
+
+管理目录可能通过硬链接共享内容；编辑前先复制到库外或导出独立副本。
+搬迁、备份、旧目录一次性迁移和转换复用合同见[资源库说明](./library_api.md)。
 
 ## 4. 数据格式约定
 
@@ -88,6 +92,9 @@
 `manager.utils.read_data(...)` 只读取同一基础路径的 `.msgpack`，不回退旧 YAML/JSON。
 缺失返回空字典；损坏或顶层不是字典时抛出 `SharedDataCorruptError`，不当作空库覆盖。
 `needs_update(...)` 仅用于可再生元数据，可把损坏识别为需要重新生成。
+
+应用启动的一次性旧目录迁移会读取旧 JSON/YAML 元数据并转为 MessagePack；完成后移除旧位置，
+不在正常读取器中增加旧格式或旧路径回退。
 
 只有历史文件、没有游戏源时，可使用独立离线转换入口：
 

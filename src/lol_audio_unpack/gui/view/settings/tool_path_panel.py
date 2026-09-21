@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QWidget
 from qfluentwidgets import FluentIcon as FIF
-from qfluentwidgets import PushButton, PushSettingCard, SettingCardGroup, ToolButton
+from qfluentwidgets import PushButton, PushSettingCard, SettingCardGroup
 
 from lol_audio_unpack.gui.view.settings.cards import (
     ComboRowSettingCard,
@@ -30,9 +30,6 @@ class BaseSettingsPanel:
             ["请选择"],
             {"请选择": ""},
         )
-        self.refreshButton = ToolButton(FIF.SYNC, self.gameRegionCard)
-        self.refreshButton.setToolTip("重新检查资源文件")
-        self.gameRegionCard.hBoxLayout.addWidget(self.refreshButton)
         self.groupByTypeCard = LocalizedSwitchSettingCard(
             FIF.FOLDER,
             "按类型分组输出",
@@ -70,8 +67,9 @@ class ToolPathPanel:
 
         self.wwiserClear = PushButton("清除", self.wwiserCard)
         self.vgmstreamClear = PushButton("清除", self.vgmstreamCard)
-        self.wwiserCard.hBoxLayout.addWidget(self.wwiserClear)
-        self.vgmstreamCard.hBoxLayout.addWidget(self.vgmstreamClear)
+        for card, clear in ((self.wwiserCard, self.wwiserClear), (self.vgmstreamCard, self.vgmstreamClear)):
+            card.hBoxLayout.insertWidget(card.hBoxLayout.indexOf(card.button), clear)
+            card.hBoxLayout.insertSpacing(card.hBoxLayout.indexOf(card.button), 8)
         self.group.addSettingCard(self.wwiserCard)
         self.group.addSettingCard(self.vgmstreamCard)
 

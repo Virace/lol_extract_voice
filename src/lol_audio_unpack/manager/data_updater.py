@@ -66,7 +66,7 @@ class DataUpdater:
             self.languages: list[str] = languages
 
         self.version: str = resolve_game_version(self.ctx)
-        self.version_manifest_path: Path = self.manifest_path / self.version
+        self.version_manifest_path: Path = self.ctx.version_path("manifest", self.version)
         self.data_file_base: Path = self.version_manifest_path / "data"
         self.process_languages: list[str] = self._prepare_language_list(self.languages)
         self.force_update = force_update
@@ -327,7 +327,7 @@ class DataUpdater:
                 target_dir.mkdir(parents=True, exist_ok=True)
 
                 for source_file in source_dir.glob("*.ogg"):
-                    shutil.copy2(source_file, target_dir / source_file.name)
+                    copy_file_atomic(source_file, target_dir / source_file.name)
                     copied_count += 1
 
         if copied_count > 0:

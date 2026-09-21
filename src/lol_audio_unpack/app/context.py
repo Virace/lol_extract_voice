@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,7 @@ from lol_audio_unpack.utils.runtime_paths import (
 )
 
 from .local_source import validate_local_source
+from .migration import migrate_library
 from .types import (
     AppConfig,
     AppContext,
@@ -169,13 +170,14 @@ def _build_paths(app_config: AppConfig) -> AppPaths:
     )
 
 
-def create_app_context(
+def create_app_context(  # noqa: PLR0913
     *,
     settings: Mapping[str, Any] | None = None,
     force_reload: bool = False,
     dev_mode: bool = False,
     runtime_cache: dict[str, Any] | None = None,
     allow_empty_language: bool = False,
+    progress_callback: Callable | None = None,
 ) -> AppContext:
     """构建 ``AppContext``。
 
@@ -185,6 +187,7 @@ def create_app_context(
         dev_mode: 是否启用开发模式。
         runtime_cache: 可选运行时缓存。
         allow_empty_language: GUI 目录发现可保留空语言；源处理入口仍须在执行前验证。
+        progress_callback: 已有目录一次性迁移的进度回调，应在后台调用。
 
     Returns:
         构建完成的 ``AppContext``。
@@ -198,6 +201,10 @@ def create_app_context(
     app_config = _build_config(settings=raw_settings, dev_mode=dev_mode)
     if not app_config.game_region and not allow_empty_language:
         raise AppContextValidationError("请选择游戏资源语言")
+    # 旧文件迁移不消费游戏源；没有旧输出时不创建目录。新任务仍须通过下方输入预检。
+    migrate_library(
+        app_config.output_path, region=app_config.game_region or "en_US", progress_callback=progress_callback
+    )
     validate_local_source(app_config.game_path)
     app_paths = _build_paths(app_config)
     return AppContext(config=app_config, paths=app_paths, runtime_cache=runtime_cache or {})

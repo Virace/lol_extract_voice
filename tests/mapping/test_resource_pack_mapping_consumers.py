@@ -14,6 +14,7 @@ from lol_audio_unpack.app.resource_pack import build_resource_pack_key
 from lol_audio_unpack.mapping import batch as mapping_batch
 from lol_audio_unpack.model import AudioBank, AudioEntityData
 from lol_audio_unpack.model.binding import BankBinding, BindingDiagnostics, BindingRole, BindingStatus, Completeness
+from tests.factories import make_context, publish_media
 
 
 def _build_entity(key: str) -> AudioEntityData:
@@ -46,7 +47,8 @@ def _build_entity(key: str) -> AudioEntityData:
 
 def _build_ctx(tmp_path: Path) -> SimpleNamespace:
     """提供 bound mapping 所需的最小本地上下文。"""
-    return SimpleNamespace(
+    return make_context(
+        tmp_path,
         game_path=tmp_path / "game",
         cache_path=tmp_path / "cache",
         hash_path=tmp_path / "hashes",
@@ -57,11 +59,7 @@ def _build_ctx(tmp_path: Path) -> SimpleNamespace:
 
 def _write_flat_audio(ctx: SimpleNamespace, entity: AudioEntityData, version: str) -> None:
     """创建一个已 extract 的 flat WEM，供 mapping coverage 使用。"""
-    component = get_entity_path_component(entity.entity_type, entity.entity_id)
-    folder = format_entity_folder_name(component, entity.entity_alias, entity.entity_name)
-    wem_path = ctx.paths.audio_path / version / "SFX" / "resource_packs" / folder / "101.wem"
-    wem_path.parent.mkdir(parents=True)
-    wem_path.write_bytes(b"wem")
+    publish_media(ctx, entity, entity.resource_banks[0], version, 101, b"wem")
 
 
 def test_resource_pack_mapping_keeps_flat_audio_when_events_missing_and_writes_safe_key(
@@ -95,7 +93,7 @@ def test_resource_pack_mapping_keeps_flat_audio_when_events_missing_and_writes_s
         {"subEntity": key, "category": "MODE_TFT_NPC_ElderDragon_SFX"}
     ]
     assert result["mappingDiagnostics"]["unmappedWemCount"] == 1
-    assert written[0][1] == ctx.hash_path / reader.version / "resource_packs" / component
+    assert written[0][1] == ctx.version_path("hash", reader.version) / "resource_packs" / component
     assert ":" not in written[0][1].name
 
 
@@ -203,15 +201,15 @@ def test_resource_pack_integrated_mapping_has_readable_stable_structure(
         "namespace": "MODE_TFT_NPC_ElderDragon_SFX",
         "wad": {"root": "Game/DATA/FINAL/TFTCommon.wad.client"},
     }
-    assert written[0][1] == ctx.hash_path / reader.version / "integrated" / "resource_packs" / component
+    assert written[0][1] == ctx.version_path("hash", reader.version) / "integrated" / "resource_packs" / component
 
 
-def test_resource_pack_mapping_batch_dispatches_string_task(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resource_pack_mapping_batch_dispatches_string_task(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """mapping batch 必须将 resource-pack string key 发送到专用 builder。"""
     key = build_resource_pack_key("TFTCommon.wad.client", "MODE_TFT_NPC_ElderDragon_SFX")
     calls: list[str] = []
     reader = SimpleNamespace(version="16.16")
-    ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False))
+    ctx = make_context(tmp_path, config=SimpleNamespace(dev_mode=False))
     monkeypatch.setattr(mapping_batch, "build_resource_pack", lambda value, *_args, **_kwargs: calls.append(value))
     monkeypatch.setattr(mapping_batch.mapping_session, "describe_hirc_backend", lambda _ctx: "native")
     monkeypatch.setattr(mapping_batch.mapping_session, "_create_wwiser_manager", lambda _ctx: object())

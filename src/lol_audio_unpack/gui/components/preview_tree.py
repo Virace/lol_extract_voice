@@ -280,6 +280,22 @@ def _event_audio_paths(
     return True, tuple(str(path).replace("\\", "/").strip("/") for path in raw_paths if str(path).strip())
 
 
+class _LazyRefs(dict):
+    """只为已展开或明确选择的事件路径构造引用，不检查媒体文件。"""
+
+    def __init__(self, refs, resolver):
+        super().__init__(refs)
+        self.resolver = resolver
+
+    def get(self, key, default=None):
+        """按需解析一个路径；当前实体切换时整个字典释放。"""
+        if key not in self and self.resolver is not None:
+            ref = self.resolver(key)
+            if ref is not None:
+                self[key] = ref
+        return super().get(key, default)
+
+
 def _index_event_refs(
     audio_paths: tuple[str, ...], refs_by_path: dict[str, AudioRef]
 ) -> dict[str, _EventAudioResolution]:
@@ -639,6 +655,7 @@ class PreviewTreeModel(QAbstractItemModel):
         audio_refs: tuple[AudioRef, ...],
         group_label_map: dict[str, str] | None = None,
         selection_mapping: dict[str, Any] | None = None,
+        resolve_ref=None,
     ) -> None:
         """替换当前预览树数据。
 
@@ -664,7 +681,8 @@ class PreviewTreeModel(QAbstractItemModel):
             )
 
         self.beginResetModel()
-        self._audio_refs_by_id, self._audio_refs_by_path = _build_audio_ref_indexes(audio_refs)
+        self._audio_refs_by_id, refs_by_path = _build_audio_ref_indexes(audio_refs)
+        self._audio_refs_by_path = _LazyRefs(refs_by_path, resolve_ref)
         self._root_nodes = root_nodes
         self._scope_groups = {
             str(key): value

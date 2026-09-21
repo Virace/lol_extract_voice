@@ -18,10 +18,12 @@ def _build_updater(game_path: Path, version: str = "16.3"):
     updater.ctx = SimpleNamespace(
         config=SimpleNamespace(
             game_path=game_path,
+            output_path=game_path,
             game_region="zh_CN",
             dev_mode=False,
             with_bp_vo=False,
         ),
+        runtime_cache={},
         paths=SimpleNamespace(
             game_maps_path=game_path / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping",
             game_champion_path=game_path / "Game" / "DATA" / "FINAL" / "Champions",
@@ -510,7 +512,7 @@ def test_extract_wad_data_writes_default_sfx_audio_into_region_output(tmp_path, 
     assert extracted_outputs[0].read_bytes() == b"sfx"
 
 
-def test_persist_bp_vo_files_copies_new_sfx_category(tmp_path):
+def test_persist_bp_vo_files_keeps_sfx_in_lobby(tmp_path):
     updater = _build_updater(tmp_path)
     updater.version_manifest_path = tmp_path / "manifest" / updater.version
     updater.process_languages = ["zh_CN"]
@@ -524,6 +526,7 @@ def test_persist_bp_vo_files_copies_new_sfx_category(tmp_path):
 
     target_file = updater.version_manifest_path / "lobby" / "zh_CN" / "champion-sfx-audios" / "1.ogg"
     assert target_file.read_bytes() == b"sfx"
+    assert not (tmp_path / "audios/_data").exists()
 
 
 def test_merge_and_build_data_logs_bin_metadata_summary(tmp_path):

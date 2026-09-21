@@ -58,7 +58,7 @@ class BinUpdater:
         self.force_update = force_update
         self.process_events = process_events
         self.version: str = resolve_game_version(self.ctx)
-        self.version_manifest_path: Path = self.manifest_path / self.version
+        self.version_manifest_path: Path = self.ctx.version_path("manifest", self.version)
         self.data_file_base: Path = self.version_manifest_path / "data"
         self.champion_banks_dir: Path = self.version_manifest_path / "banks" / "champions"
         self.map_banks_dir: Path = self.version_manifest_path / "banks" / "maps"

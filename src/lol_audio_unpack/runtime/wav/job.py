@@ -13,9 +13,10 @@ from loguru import logger
 from pyvgmstream.transcode import BatchTranscodeProgress
 
 from ...app.audio_scope import AudioScope
+from ...app.library import with_library
 from ...app.types import AppContext, WavOutputOptions
-from ..probe import require_tool
 from .batch import WavBatchResult, run_batch
+from .cache import WavCache
 
 
 @dataclass(slots=True, frozen=True)
@@ -46,12 +47,12 @@ def build_transcode_paths(*, ctx: AppContext, version: str, job_label: str | Non
     Returns:
         TranscodePaths: 当前版本对应的音频、WAV 和报告目录。
     """
-    report_root = Path(ctx.paths.report_path) / version / "transcode_wav"
+    report_root = ctx.version_path("report", version) / "transcode_wav"
     if job_label is not None:
         report_root = report_root / job_label
     return TranscodePaths(
-        audio_root=Path(ctx.paths.audio_path) / version,
-        wav_root=Path(ctx.paths.wav_path) / version,
+        audio_root=ctx.version_path("audio", version),
+        wav_root=ctx.version_path("wav", version),
         report_root=report_root,
     )
 
@@ -96,6 +97,7 @@ def _write_reports(
     )
 
 
+@with_library
 def run_tree(  # noqa: PLR0913
     *,
     ctx: AppContext,
@@ -174,8 +176,8 @@ def run_tree(  # noqa: PLR0913
     skipped_count = 0
     unconfirmed_count = 0
     batch_reports: list[str] = []
-    if not ctx.runtime_cache.get("tools_prechecked"):
-        require_tool("wav", path=wav_output.backend_path, options=wav_output)
+    cache = WavCache(wav_output, ctx.config.output_path, version, ctx.config.game_region)
+    cache.library = ctx.runtime_cache["library_writer"]
     batches: list[WavBatchResult] = []
     batch_errors: list[str] = []
     failures: list[dict[str, Any]] = []
@@ -197,7 +199,10 @@ def run_tree(  # noqa: PLR0913
             options=wav_output,
             report_root=report_root,
             progress=emit_progress,
-            prechecked=True,
+            prechecked=bool(ctx.runtime_cache.get("tools_prechecked")),
+            cache=cache,
+            overwrite=True,
+            managed=True,
         )
         processed_count += summary.success_count
         batches.append(summary)
@@ -238,6 +243,8 @@ def run_tree(  # noqa: PLR0913
         "processed_file_count": processed_count,
         "failed_file_count": failed_count,
         "skipped_file_count": skipped_count,
+        "converted_file_count": sum(batch.converted_count for batch in batches),
+        "reused_file_count": sum(batch.reused_count for batch in batches),
         "unconfirmed_file_count": unconfirmed_count,
         "errors": batch_errors,
         "batch_reports": batch_reports,

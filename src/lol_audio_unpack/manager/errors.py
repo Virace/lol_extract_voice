@@ -12,7 +12,7 @@ CLI 报错与 GUI 自动准备判定都需要识别"共享数据尚未就绪、�
 
 from __future__ import annotations
 
-from pathlib import Path
+from lol_audio_unpack.utils.atomic import ArtifactWriteError
 
 # 同时用于异常消息和字符串边界判定的文案标记，集中维护避免多处漂移。
 SHARED_DATA_NOT_READY_MARKERS: tuple[str, ...] = (
@@ -22,22 +22,6 @@ SHARED_DATA_NOT_READY_MARKERS: tuple[str, ...] = (
     "数据版本与游戏版本严重不匹配",
     "resource schema v2",
 )
-
-
-class ArtifactWriteError(OSError):
-    """结构化 artifact 未能完整替换目标文件。
-
-    原始异常通过异常链保留，调用方无需从日志文本推断失败原因。
-
-    Args:
-        path: 原本要替换的正式目标路径。
-        stage: 失败阶段，例如 ``serialize``、``fsync`` 或 ``replace``。
-    """
-
-    def __init__(self, path: Path, stage: str) -> None:
-        self.path = Path(path)
-        self.stage = stage
-        super().__init__(f"artifact 写入失败（{stage}）: {self.path}")
 
 
 class SharedDataNotReadyError(Exception):

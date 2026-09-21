@@ -26,7 +26,9 @@ from lol_audio_unpack.manager.errors import (
 )
 from lol_audio_unpack.manager.files import write_data
 from lol_audio_unpack.manager.source_inventory import SourceEntity
+from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.model.binding import RESOURCE_SCHEMA_VERSION
+from tests.factories import make_context, make_library_view
 
 pytestmark = pytest.mark.unit
 
@@ -38,7 +40,8 @@ WORKER_GENERATION = 10
 @pytest.mark.parametrize("require_resources", [False, True])
 def test_catalog_without_bin_cache_is_browsable_by_default(tmp_path: Path, require_resources: bool) -> None:
     """真实基础清单足以浏览；只有提前准备模式才要求全部资源缓存。"""
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(
             dev_mode=True, game_path=tmp_path / "game", group_by_type=False, include_types=("VO", "SFX")
         ),
@@ -48,7 +51,7 @@ def test_catalog_without_bin_cache_is_browsable_by_default(tmp_path: Path, requi
         runtime_cache={"resolved_runtime_version": "16.17"},
         game_region="zh_CN",
     )
-    manifest = ctx.paths.manifest_path / "16.17"
+    manifest = ctx.version_path("manifest", "16.17")
     write_data(
         {
             "metadata": {"gameVersion": "16.17"},
@@ -78,12 +81,19 @@ def test_catalog_without_bin_cache_is_browsable_by_default(tmp_path: Path, requi
     assert not (manifest / "events").exists()
 
     if not require_resources:
-        # 旧 binding 无法驱动解包，但元数据身份仍足以安全定位已有音频，不能缓存为假空。
+        # BIN 缓存不是浏览新库的前提；媒体身份和路径由内容索引提供。
         write_data({"metadata": {"gameVersion": "16.17"}, "skins": {}}, manifest / "banks/champions/1", dev_mode=True)
-        audio_dir = ctx.paths.audio_path / "16.17/champions" / format_entity_folder_name("1", "annie", "Annie")
-        source = audio_dir / format_sub_entity_folder_name("1000", "基础皮肤") / "VO/10.wem"
-        source.parent.mkdir(parents=True)
-        source.write_bytes(b"wem")
+        entity = AudioEntityData(
+            "1",
+            "Annie",
+            "annie",
+            None,
+            "champion",
+            {"1000": {"name": "基础皮肤", "categories": {}}},
+            "Game/a.wad.client",
+        )
+        _, source = make_library_view(ctx, entity, "16.17", media_id=10)
+        audio_dir = source.parents[2]
         refs = loader.load_audio_refs("champions", "1")
         assert len(refs) == 1 and refs[0].path == source.resolve()
         assert loader.load_audio_roots("champions", "1") == (audio_dir,)
@@ -128,6 +138,7 @@ def test_optional_special_without_artifact_stays_unprepared_without_warning(tmp_
     loader = EntityDataLoader.__new__(EntityDataLoader)
     loader.ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False), game_region="zh_CN")
     loader.data_reader = DataReader.__new__(DataReader)
+    loader.data_reader.legacy = False
     loader.data_reader.champion_banks_dir = tmp_path / "banks"
     loader.data_reader._champion_banks_cache = {}
     messages = []
@@ -169,6 +180,7 @@ def _build_loader(monkeypatch, *, champions: list[dict], maps: list[dict]) -> En
         game_region="zh_CN",
     )
     loader.data_reader = SimpleNamespace(
+        legacy=False,
         version="16.16",
         get_champions=lambda: champions,
         get_maps=lambda: maps,

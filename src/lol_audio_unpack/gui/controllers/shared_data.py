@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from time import monotonic
 
 from loguru import logger
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -22,6 +23,7 @@ from lol_audio_unpack.gui.shared_data import (
     SharedDataPrepareTrigger,
     SharedDataProblem,
     SharedDataProblemCode,
+    SharedDataProgress,
     SharedDataReadiness,
     SharedDataRepairScope,
     SharedDataScanResult,
@@ -128,6 +130,10 @@ class SharedDataController(QObject):
         self._notice_keys: set[tuple[int, str]] = set()
         self._pending_progress: tuple[int, object] | None = None
         self._closed = False
+        self._started_at = monotonic()
+        self.elapsed_timer = QTimer(self)
+        self.elapsed_timer.setInterval(250)
+        self.elapsed_timer.timeout.connect(self._refresh_elapsed)
 
         self._champions_worker = None
         self._maps_worker = None
@@ -153,10 +159,22 @@ class SharedDataController(QObject):
             return
         if not state.active or (state.phase is not self.state.phase and state.progress is None):
             self._clear_pending_progress()
+        if state.active:
+            if not self.elapsed_timer.isActive():
+                self.elapsed_timer.start()
+            state = replace(state, elapsed_seconds=monotonic() - self._started_at)
+        else:
+            self.elapsed_timer.stop()
+            state = replace(state, elapsed_seconds=self.state.elapsed_seconds)
         self.state = state
         self.is_loading_shared_data = state.phase in {SharedDataPhase.CHECKING, SharedDataPhase.VERIFYING}
         self.is_preparing_shared_data = state.phase is SharedDataPhase.PREPARING
         self.state_changed.emit(state)
+
+    def _refresh_elapsed(self) -> None:
+        """独立于后台文件吞吐更新耗时，耗时较长的单文件也有界面反馈。"""
+        if self.state.active and not self._closed:
+            self._publish_state(self.state)
 
     def _replace_state(self, **changes) -> None:
         """在当前 generation 上发布部分字段变更。"""
@@ -256,6 +274,7 @@ class SharedDataController(QObject):
         """使旧回调失效并初始化新 generation 的流程字段。"""
         self._clear_pending_progress()
         self.generation += 1
+        self._started_at = monotonic()
         self._trigger = trigger
         self.auto_prepare_attempted = False
         self._prepare_result = None
@@ -292,12 +311,32 @@ class SharedDataController(QObject):
         )
 
         settings = dict(config.to_app_context_settings())
-        worker = self._task_worker_cls(lambda: self._create_app_context(settings=settings))
+
+        def build(signals):
+            def publish(progress):
+                signals.progress.emit(
+                    SharedDataProgress(generation, progress.stage_key, progress.event, progress.current, progress.total)
+                )
+
+            return self._create_app_context(settings=settings, progress_callback=publish)
+
+        worker = self._task_worker_cls(build, pass_signals=True)
+        worker.signals.progress.connect(self._on_build_progress)
         worker.signals.finished.connect(self._on_shared_context_build_payload)
         worker.signals.failed.connect(self._on_shared_context_build_error)
         self.build_worker = worker
         self.build_timeout_timer.start()
         self._start_worker(worker)
+
+    def _on_build_progress(self, progress) -> None:
+        """只接收当前上下文的后台启动进度。"""
+        if progress.generation != self.generation or self.build_worker is None:
+            return
+        if progress.stage_key == "library_migration":
+            self.build_timeout_timer.stop()
+        elif progress.stage_key == "source_inventory" and not self.build_timeout_timer.isActive():
+            self.build_timeout_timer.start()
+        self._publish_progress(progress.generation, progress)
 
     def _on_shared_context_build_payload(self, app_context) -> None:
         """在 controller 所在线程消费当前 build owner 的结果。"""
@@ -937,6 +976,7 @@ class SharedDataController(QObject):
     def shutdown_background_work(self) -> None:
         """在窗口关闭前失效 generation 并停止接受后台回调。"""
         self._closed = True
+        self.elapsed_timer.stop()
         self.generation += 1
         self.runtime_entity_refresh_timer.stop()
         self.build_timeout_timer.stop()

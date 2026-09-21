@@ -4,14 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from lol_audio_unpack.app.path_layout import (
-    AUDIO_TYPE_MUSIC,
-    AUDIO_TYPE_SFX,
-    AUDIO_TYPE_VO,
     DIR_RESOURCE_PACKS,
-    ENTITY_NAME_SEPARATOR,
     format_entity_folder_name,
     get_entity_path_component,
     get_output_dir_name,
@@ -19,11 +15,11 @@ from lol_audio_unpack.app.path_layout import (
 from lol_audio_unpack.manager.files import find_data_file
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.model.skin_audio import SkinAudio
+from lol_audio_unpack.runtime.library import MediaRef
+from lol_audio_unpack.runtime.library.types import relative_path
 
+from .outputs import load_outputs, output_summary, split_audio
 from .types import AppContext
-
-_MIN_AUDIO_REF_PARTS = 2
-_INDEXED_AUDIO_TYPES = (AUDIO_TYPE_VO, AUDIO_TYPE_SFX, AUDIO_TYPE_MUSIC)
 
 
 @dataclass(frozen=True)
@@ -32,7 +28,7 @@ class AudioRef:
 
     Args:
         relative_path: 相对于逻辑实体输出根的 POSIX 路径，也是持久化键。
-        path: 已通过实体根目录 containment 校验的运行时绝对路径。
+        path: 由安全逻辑路径生成的绝对路径；实际使用时再核对文件与重解析点。
         wem_id: 原始 WEM ID（文件 stem）。
         audio_type: 可由输出布局可靠推导的音频类型。
         sub_entity: 可由输出布局可靠推导的逻辑子实体 ID。
@@ -43,6 +39,9 @@ class AudioRef:
     wem_id: str
     audio_type: str | None
     sub_entity: str | None
+    media: MediaRef | None = None
+    root: Path | None = None
+    region: str | None = None
 
     @property
     def key(self) -> str:
@@ -76,33 +75,11 @@ def resolve_audio_paths(
         version: 当前数据版本号。
 
     Returns:
-        实际存在的音频输出目录列表。
+        输出清单已记录的实体目录列表，不检查磁盘上的瞬时状态。
     """
-    audio_base = Path(ctx.paths.audio_path)
-    entity_dir = get_output_dir_name(entity_data.entity_type)
-    entity_folder = format_entity_folder_name(
-        get_entity_path_component(entity_data.entity_type, entity_data.entity_id),
-        entity_data.entity_alias,
-        entity_data.entity_name,
-        entity_data.entity_title,
-    )
-    audio_root = audio_base / version
-
-    if ctx.config.group_by_type:
-        grouped_paths = tuple(
-            candidate
-            for audio_type in ctx.config.include_types
-            if (candidate := audio_root / audio_type / entity_dir / entity_folder).exists()
-        )
-        lobby_dir = audio_root / entity_dir / entity_folder / "lobby"
-        if lobby_dir.exists():
-            return (*grouped_paths, lobby_dir)
-        return grouped_paths
-
-    candidate = audio_root / entity_dir / entity_folder
-    if candidate.exists():
-        return (candidate,)
-    return ()
+    return output_summary(
+        ctx.config.output_path, version, ctx.game_region, entity_data.entity_type, str(entity_data.entity_id)
+    )[1]
 
 
 def enumerate_audio_refs(
@@ -112,7 +89,7 @@ def enumerate_audio_refs(
     *,
     progress: Callable[[AudioIndexProgress], None] | None = None,
 ) -> tuple[AudioRef, ...]:
-    """枚举实体实际输出的 WEM，并拒绝经 symlink 逃逸的路径。
+    """读取实体已登记的音频路径，文件与 symlink 检查留到实际使用时。
 
     Args:
         ctx: 当前应用上下文。
@@ -123,98 +100,16 @@ def enumerate_audio_refs(
     Returns:
         按稳定 POSIX 相对路径排序的 WEM 引用。
     """
-    version_root = (Path(ctx.paths.audio_path) / version).resolve()
-    refs: list[AudioRef] = []
-    seen: set[str] = set()
-    roots: list[tuple[Path, Path, str | None, tuple[Path, ...]]] = []
+    refs = []
+    for path in load_outputs(
+        ctx.config.output_path, version, ctx.game_region, entity_data.entity_type, str(entity_data.entity_id)
+    ):
+        root, logical, audio_type, sub_id = split_audio(path)
+        refs.append(AudioRef(logical, path, path.stem, audio_type, sub_id, root=root, region=ctx.game_region))
+    refs = tuple(refs)
     if progress is not None:
-        progress(AudioIndexProgress(current=0, total=0))
-
-    for entity_root in _resolve_audio_ref_roots(ctx, entity_data, version):
-        if not entity_root.is_dir():
-            continue
-        try:
-            resolved_root = entity_root.resolve(strict=True)
-            resolved_root.relative_to(version_root)
-        except (OSError, ValueError):
-            continue
-
-        audio_type_prefix = _grouped_audio_type(entity_root, version_root) if ctx.config.group_by_type else None
-        roots.append((entity_root, resolved_root, audio_type_prefix, tuple(entity_root.rglob("*.wem"))))
-
-    total = sum(len(candidates) for _entity_root, _resolved_root, _prefix, candidates in roots)
-    if progress is not None:
-        progress(AudioIndexProgress(current=0, total=total))
-
-    current = 0
-    last_percent = 0
-    resolved_parents: dict[tuple[Path, Path], Path | None] = {}
-    for entity_root, resolved_root, audio_type_prefix, candidates in roots:
-        for candidate in candidates:
-            current += 1
-            try:
-                parent_key = resolved_root, candidate.parent
-                if parent_key not in resolved_parents:
-                    try:
-                        resolved_parent = candidate.parent.resolve(strict=True)
-                        resolved_parent.relative_to(resolved_root)
-                        resolved_parent.relative_to(version_root)
-                    except (OSError, ValueError):
-                        resolved_parent = None
-                    resolved_parents[parent_key] = resolved_parent
-                else:
-                    resolved_parent = resolved_parents[parent_key]
-
-                resolved_path: Path | None = None
-                if resolved_parent is not None:
-                    candidate_path = resolved_parent / candidate.name
-                    try:
-                        if candidate_path.is_symlink():
-                            resolved_path = candidate_path.resolve(strict=True)
-                            resolved_path.relative_to(resolved_root)
-                            resolved_path.relative_to(version_root)
-                        else:
-                            resolved_path = candidate_path
-                    except (OSError, ValueError):
-                        resolved_path = None
-
-                if resolved_path is None or not resolved_path.is_file():
-                    continue
-
-                try:
-                    physical_relative = candidate.relative_to(entity_root)
-                except ValueError:
-                    continue
-                if ctx.config.group_by_type:
-                    prefix = "lobby" if entity_root.name == "lobby" else audio_type_prefix
-                    if prefix is None:
-                        continue
-                    logical_relative = Path(prefix) / physical_relative
-                else:
-                    logical_relative = physical_relative
-                relative = logical_relative.as_posix()
-
-                if relative in seen:
-                    continue
-                seen.add(relative)
-                audio_type, sub_entity = _describe_audio_ref(entity_data, logical_relative, ctx=ctx)
-                refs.append(
-                    AudioRef(
-                        relative_path=relative,
-                        path=resolved_path,
-                        wem_id=candidate.stem,
-                        audio_type=audio_type,
-                        sub_entity=sub_entity,
-                    )
-                )
-            finally:
-                if progress is not None:
-                    percent = current * 100 // total if total else 100
-                    if percent > last_percent:
-                        last_percent = percent
-                        progress(AudioIndexProgress(current=current, total=total))
-
-    return tuple(sorted(refs, key=lambda item: item.relative_path))
+        progress(AudioIndexProgress(len(refs), len(refs)))
+    return refs
 
 
 def inspect_shared_copies(entity_data: AudioEntityData, refs: tuple[AudioRef, ...]) -> dict[str, list[str]]:
@@ -246,7 +141,12 @@ def inspect_shared_copies(entity_data: AudioEntityData, refs: tuple[AudioRef, ..
             continue
         candidates = [source for owner in source_ids for source in by_key.get((owner, ref.audio_type, ref.wem_id), ())]
         try:
-            same = any(_matches_audio(ref.path, source.path) for source in candidates)
+            same = any(
+                ref.media.object.digest == source.media.object.digest
+                if ref.media is not None and source.media is not None
+                else _matches_audio(ref.path, source.path)
+                for source in candidates
+            )
         except OSError:
             same = False
         (copies if same else unverified).append(ref.relative_path)
@@ -269,187 +169,51 @@ def resolve_audio_refs(
     entity_data: AudioEntityData,
     version: str,
     relative_paths: Iterable[str],
+    *,
+    roots: tuple[Path, ...] | None = None,
 ) -> tuple[AudioRef, ...]:
     """只解析调用方明确给出的实体内 WEM 相对路径。
 
-    该入口用于事件 mapping 的精确路径，不递归扫描实体输出目录。每个候选仍执行
-    实体根与版本根 containment 校验，因此不会为了预览性能放宽 symlink 边界。
+    该入口仅解析事件 mapping 路径；重解析点和文件存在性留到播放、导出时检查。
+    地图的两种布局均使用类型开头的逻辑路径，依据输出摘要选根，不探测每个媒体。
 
     Args:
         ctx: 当前应用上下文。
         entity_data: 实体数据对象。
         version: 当前数据版本号。
         relative_paths: 相对于逻辑实体输出根的 WEM 路径。
+        roots: 已读取的输出根摘要，预览逐项解析时复用。
 
     Returns:
-        已存在且通过 containment 校验的稳定音频引用。
+        通过逻辑路径校验的音频引用，不保证磁盘文件仍存在。
     """
-    version_root = (Path(ctx.paths.audio_path) / version).resolve()
-    roots: dict[str, Path] = {}
-    for entity_root in _resolve_audio_ref_roots(ctx, entity_data, version):
-        if not entity_root.is_dir():
-            continue
-        try:
-            resolved_root = entity_root.resolve(strict=True)
-            resolved_root.relative_to(version_root)
-        except (OSError, ValueError):
-            continue
-
-        if ctx.config.group_by_type:
-            prefix = "lobby" if entity_root.name == "lobby" else _grouped_audio_type(entity_root, version_root)
-            if prefix is None:
-                continue
-        else:
-            prefix = ""
-        roots[prefix] = resolved_root
-
-    refs: list[AudioRef] = []
-    seen: set[str] = set()
-    resolved_parents: dict[tuple[Path, tuple[str, ...]], Path | None] = {}
-    for raw_path in relative_paths:
-        relative = str(raw_path).replace("\\", "/").strip("/")
-        logical_path = PurePosixPath(relative)
-        if (
-            not relative
-            or relative in seen
-            or logical_path.is_absolute()
-            or ".." in logical_path.parts
-            or logical_path.suffix.casefold() != ".wem"
-        ):
-            continue
-
-        parts = logical_path.parts
-        if ctx.config.group_by_type:
-            if len(parts) < _MIN_AUDIO_REF_PARTS:
-                continue
-            resolved_root = roots.get(parts[0])
-            physical_parts = parts[1:]
-        else:
-            resolved_root = roots.get("")
-            physical_parts = parts
-        if resolved_root is None or not physical_parts:
-            continue
-
-        parent_parts = tuple(physical_parts[:-1])
-        parent_key = resolved_root, parent_parts
-        if parent_key not in resolved_parents:
-            try:
-                resolved_parent = resolved_root.joinpath(*parent_parts).resolve(strict=True)
-                resolved_parent.relative_to(resolved_root)
-                resolved_parent.relative_to(version_root)
-            except (OSError, ValueError):
-                resolved_parent = None
-            resolved_parents[parent_key] = resolved_parent
-        else:
-            resolved_parent = resolved_parents[parent_key]
-        if resolved_parent is None:
-            continue
-
-        candidate_path = resolved_parent / physical_parts[-1]
-        try:
-            if candidate_path.is_symlink():
-                resolved_path = candidate_path.resolve(strict=True)
-                resolved_path.relative_to(resolved_root)
-                resolved_path.relative_to(version_root)
-            else:
-                resolved_path = candidate_path
-        except (OSError, ValueError):
-            continue
-        if not resolved_path.is_file():
-            continue
-
-        seen.add(relative)
-        audio_type, sub_entity = _describe_audio_ref(entity_data, Path(*parts), ctx=ctx)
-        refs.append(
-            AudioRef(
-                relative_path=relative,
-                path=resolved_path,
-                wem_id=logical_path.stem,
-                audio_type=audio_type,
-                sub_entity=sub_entity,
-            )
-        )
-
-    return tuple(sorted(refs, key=lambda item: item.relative_path))
-
-
-def _resolve_audio_ref_roots(
-    ctx: AppContext,
-    entity_data: AudioEntityData,
-    version: str,
-) -> tuple[Path, ...]:
-    """返回索引所需的全部已存在实体根，不受本次 include types 限制。"""
-    if not ctx.config.group_by_type:
-        return resolve_audio_paths(ctx, entity_data, version)
-
-    audio_root = Path(ctx.paths.audio_path) / version
-    entity_dir = get_output_dir_name(entity_data.entity_type)
-    entity_folder = format_entity_folder_name(
+    folder = format_entity_folder_name(
         get_entity_path_component(entity_data.entity_type, entity_data.entity_id),
         entity_data.entity_alias,
         entity_data.entity_name,
         entity_data.entity_title,
     )
-    roots = tuple(
-        candidate
-        for audio_type in _INDEXED_AUDIO_TYPES
-        if (candidate := audio_root / audio_type / entity_dir / entity_folder).is_dir()
-    )
-    lobby_root = audio_root / entity_dir / entity_folder / "lobby"
-    return (*roots, lobby_root) if lobby_root.is_dir() else roots
-
-
-def _grouped_audio_type(entity_root: Path, version_root: Path) -> str | None:
-    """从 grouped 实体根相对版本目录的位置读取音频类型。"""
-    try:
-        relative_parts = entity_root.resolve(strict=True).relative_to(version_root).parts
-    except (OSError, ValueError):
-        return None
-    return relative_parts[0] if relative_parts and entity_root.name != "lobby" else None
-
-
-def _describe_audio_ref(  # noqa: PLR0911
-    entity_data: AudioEntityData,
-    relative_path: Path,
-    *,
-    ctx: AppContext,
-) -> tuple[str | None, str | None]:
-    """按现有 grouped/non-grouped 输出布局推导 WEM 归属。"""
-    parts = relative_path.parts
-
-    if ctx.config.group_by_type:
-        if len(parts) < _MIN_AUDIO_REF_PARTS:
-            return None, None
-        audio_type = "LOBBY" if parts[0] == "lobby" else parts[0]
-        content_parts = parts[1:-1]
-    else:
-        if len(parts) < _MIN_AUDIO_REF_PARTS:
-            return None, None
-        content_parts = parts[:-1]
-        if content_parts and content_parts[0] == "lobby":
-            return "LOBBY", None
-        if entity_data.entity_type == "champion" and len(content_parts) >= _MIN_AUDIO_REF_PARTS:
-            audio_type = content_parts[1]
-            content_parts = content_parts[:1]
-        elif entity_data.entity_type == "map" and content_parts:
-            audio_type = content_parts[0]
-            content_parts = ()
-        elif entity_data.entity_type == "resource_pack" and content_parts:
-            audio_type = content_parts[0]
-            content_parts = ()
-        else:
-            return None, None
-
-    if entity_data.entity_type == "map":
-        return audio_type, str(entity_data.entity_id)
-    if entity_data.entity_type == "resource_pack":
-        return audio_type, str(entity_data.entity_id)
-    if not content_parts:
-        return audio_type, None
-
-    folder = content_parts[0]
-    sub_id, separator, _name = folder.partition(ENTITY_NAME_SEPARATOR)
-    return audio_type, sub_id if separator and sub_id.isdigit() else None
+    base = ctx.version_path("audio", version)
+    entity = Path(get_output_dir_name(entity_data.entity_type)) / folder
+    if roots is None and entity_data.entity_type != "champion":
+        roots = resolve_audio_paths(ctx, entity_data, version)
+    refs = []
+    for value in sorted(set(relative_paths)):
+        try:
+            logical = relative_path(value)
+        except ValueError:
+            continue
+        parts = Path(logical).parts
+        if len(parts) < 2 or Path(logical).suffix.lower() not in {".wem", ".ogg"}:  # noqa: PLR2004
+            continue
+        grouped = parts[0] in {"VO", "SFX", "MUSIC"}
+        if grouped and entity_data.entity_type != "champion":
+            grouped = base / parts[0] / entity in (roots or ())
+        root = base / parts[0] / entity if grouped else base / entity
+        path = root.joinpath(*parts[1:]) if grouped else root / logical
+        _, _, audio_type, sub_id = split_audio(path)
+        refs.append(AudioRef(logical, path, path.stem, audio_type, sub_id, root=root, region=ctx.game_region))
+    return tuple(refs)
 
 
 def resolve_mapping_path(
@@ -473,7 +237,7 @@ def resolve_mapping_path(
     Returns:
         命中的映射文件路径；不存在时返回 ``None``。
     """
-    hash_root = Path(ctx.paths.hash_path) / version
+    hash_root = ctx.version_path("hash", version)
     base_paths = _build_mapping_bases(
         hash_root=hash_root,
         entity_dir=entity_dir,

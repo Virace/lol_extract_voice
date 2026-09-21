@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from lol_audio_unpack.runtime.library.types import normalize_region, resolve_path
+
 from .resource_pack import ResourcePackWadRef
 
 
@@ -86,6 +88,15 @@ class AppContext:
     config: AppConfig
     paths: AppPaths
     runtime_cache: dict[str, Any] = field(default_factory=dict)
+
+    def version_path(self, kind: str, version: str) -> Path:
+        """返回固定版本/区域产物根，源任务必须先选定语言。
+
+        空语言仅供 GUI 只读发现使用，不得将其回填成某种语言。
+        """
+        root = Path(getattr(self.paths, f"{kind}_path"))
+        region = normalize_region(self.game_region) if self.game_region else "_unselected"
+        return resolve_path(root, f"{version}/{region}")
 
     @property
     def game_path(self) -> Path:

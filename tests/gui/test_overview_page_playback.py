@@ -19,9 +19,10 @@ from lol_audio_unpack.gui.controllers.overview_preview import (
 )
 from lol_audio_unpack.gui.shared_data import SharedDataPhase, SharedDataState
 from lol_audio_unpack.gui.view.overview_page import OverviewPage
+from tests.factories import make_context
 
 
-@pytest.mark.parametrize("result", [None, ("invalid",), ()])
+@pytest.mark.parametrize("result", [None, ("invalid",)])
 def test_index_failure_does_not_cache_false_empty(qtbot, tmp_path: Path, result) -> None:
     """非法 worker 结果或遗漏已存在事件文件时，保留失败状态而不是成功空索引。"""
     page = OverviewPage()
@@ -79,6 +80,7 @@ def test_overview_page_special_preview_uses_stable_state_key_and_champion_loader
     }
 
     page._load_preview_for_item("special", object())
+    qtbot.waitUntil(lambda: not page._preview_workers)
 
     assert page._current_preview_ids["special"] == "champion:66600"
     assert calls == [
@@ -187,6 +189,7 @@ def test_overview_page_reports_audio_scan_and_defers_hidden_model_reset(qtbot) -
     page._audio_list_ready = True
 
     page._load_preview_for_item("maps", object())
+    qtbot.waitUntil(lambda: not page._preview_workers)
 
     assert scheduled == []
     assert page.audio_list.model().rowCount() == 1
@@ -264,6 +267,7 @@ def test_overview_page_reuses_current_preview_models_when_page_is_resynced(qtbot
     page.nav_pivot.setCurrentItem("maps")
     current = page.entityListPanel.find_index_by_entity_id("maps", "22")
     page._current_entity_list().setCurrentIndex(current)
+    qtbot.waitUntil(lambda: not page._preview_workers)
     page.preview_mode_pivot.setCurrentItem(ALL_AUDIO_PREVIEW_MODE)
 
     event_resets: list[bool] = []
@@ -282,6 +286,7 @@ def test_overview_page_reuses_current_preview_models_when_page_is_resynced(qtbot
     page.set_entity_data("maps", [{"id": 22, "name": "云顶之弈", "audio": "已存在"}])
 
     expected_reload_count = 2
+    qtbot.waitUntil(lambda: not page._preview_workers)
     assert len(calls) == expected_reload_count
 
 
@@ -330,11 +335,13 @@ def test_overview_page_rejects_stale_all_audio_worker_result(qtbot) -> None:
     page._audio_refs_pool = SimpleNamespace(start=scheduled.append)
 
     page._load_preview_for_item("maps", object())
+    qtbot.waitUntil(lambda: not page._preview_workers)
     page.preview_mode_pivot.setCurrentItem(ALL_AUDIO_PREVIEW_MODE)
     first_worker = scheduled[0]
 
     current_row.update(id=22, name="云顶之弈")
     page._load_preview_for_item("maps", object())
+    qtbot.waitUntil(lambda: not page._preview_workers)
     page.preview_mode_pivot.setCurrentItem(ALL_AUDIO_PREVIEW_MODE)
     first_worker.signals.finished.emit((first_ref,))
 
@@ -489,6 +496,7 @@ def test_overview_page_load_preview_restores_event_view_when_event_tab_is_select
     page.preview_mode_pivot.setCurrentItem("audio")
 
     page._load_preview_for_item("champions", object())
+    qtbot.waitUntil(lambda: not page._preview_workers)
 
     assert page.preview_stack.currentWidget() is page.audioPreviewPanel
 
@@ -501,11 +509,13 @@ def test_overview_page_unextracted_preview_stays_empty_across_tabs(qtbot) -> Non
         load_mapping_preview=lambda *_args: (None, None, ""),
         load_event_audio_refs=lambda *_args: (),
         load_audio_roots=lambda *_args: (),
+        _load_preview_entity=lambda *_args, **_kwargs: None,
     )
     page._ensure_loader = lambda: loader
     page.entityListPanel.resolve_row_payload = lambda _item: {"id": 1, "name": "安妮"}
 
     page._load_preview_for_item("champions", object())
+    qtbot.waitUntil(lambda: not page._preview_workers)
 
     for mode in (EVENT_PREVIEW_MODE, ALL_AUDIO_PREVIEW_MODE, RAW_PREVIEW_MODE):
         page.preview_mode_pivot.setCurrentItem(mode)
@@ -516,6 +526,7 @@ def test_overview_page_unextracted_preview_stays_empty_across_tabs(qtbot) -> Non
 
     loader.load_mapping_preview = lambda *_args: (Path("preview.msgpack"), {}, "{}")
     page._load_preview_for_item("champions", object())
+    qtbot.waitUntil(lambda: not page._preview_workers)
 
     assert page.preview_stack.currentWidget() is page.audioPreviewPanel
     assert page.previewPanel.resource_info_btn.isEnabled()
@@ -556,6 +567,7 @@ def test_overview_page_preview_search_filters_event_tree(qtbot) -> None:
     page.entityListPanel.resolve_row_payload = lambda _item: {"id": 1, "name": "盖伦"}
 
     page._load_preview_for_item("champions", object())
+    qtbot.waitUntil(lambda: not page._preview_workers)
     page.previewPanel.preview_search_input.setText("Baron")
 
     assert "匹配事件 1" in page.audio_preview_summary_label.text()
@@ -586,35 +598,38 @@ def test_overview_page_audio_menu_uses_exact_ref_without_toggling_playback(qtbot
     assert stopped == []
 
 
-def test_overview_page_reveal_wav_reuses_existing_file(qtbot, tmp_path, monkeypatch) -> None:
+def test_overview_page_reveal_wav_checks_existing_file_in_background(qtbot, tmp_path, monkeypatch) -> None:
+    """已有 WAV 也交给后台验证缓存，不能仅凭存在性跳过完整验证。"""
     page = OverviewPage()
     qtbot.addWidget(page)
-    wem_path = tmp_path / "audios" / "15.10" / "champions" / "1" / "VO" / "1001.wem"
-    wav_path = tmp_path / "wavs" / "15.10" / "champions" / "1" / "VO" / "1001.wav"
+    wem_path = tmp_path / "audios" / "15.10" / "zh_CN" / "champions" / "1" / "VO" / "1001.wem"
+    wav_path = tmp_path / "wavs" / "15.10" / "zh_CN" / "champions" / "1" / "VO" / "1001.wav"
     wav_path.parent.mkdir(parents=True)
     wav_path.write_bytes(b"RIFF....WAVE")
-    page._app_context = SimpleNamespace(
+    page._app_context = make_context(
+        tmp_path,
         paths=SimpleNamespace(
             audio_path=tmp_path / "audios",
             wav_path=tmp_path / "wavs",
-        )
+        ),
     )
     page._loader = SimpleNamespace(data_reader=SimpleNamespace(version="15.10"))
     opened: list[Path] = []
-    transcoded: list[tuple[Path, Path]] = []
+    submitted = []
 
     monkeypatch.setattr(page, "_reveal_file_path", lambda path: opened.append(Path(path)) or True)
     monkeypatch.setattr(
-        overview_page_module,
-        "transcode_wav",
-        lambda source, target, *, wav_format: transcoded.append((Path(source), Path(target))) or Path(target),
-        raising=False,
+        page.export_controller,
+        "export_file",
+        lambda source, target, **kwargs: submitted.append((source, target, kwargs)),
     )
 
     page._reveal_wav(wem_path)
 
-    assert opened == [wav_path]
-    assert transcoded == []
+    assert opened == []
+    export_path = wav_path
+    assert submitted == [(wem_path, export_path, {"overwrite": True, "reveal": True})]
+    assert wav_path.read_bytes() == b"RIFF....WAVE"
 
 
 def test_overview_page_defaults_to_all_audio_without_mapping_and_uses_selected_exact_path(qtbot) -> None:
@@ -650,6 +665,7 @@ def test_overview_page_defaults_to_all_audio_without_mapping_and_uses_selected_e
     page.entityListPanel.resolve_row_payload = lambda _item: {"id": 1, "name": "盖伦"}
 
     page._load_preview_for_item("champions", object())
+    qtbot.waitUntil(lambda: not page._preview_workers)
 
     assert page.preview_mode_pivot.currentRouteKey() == ALL_AUDIO_PREVIEW_MODE
     assert page.preview_stack.currentWidget() is page.audioPreviewPanel
@@ -694,6 +710,7 @@ def test_overview_page_mode_switch_keeps_event_summary_and_does_not_stop_playbac
     page.entityListPanel.resolve_row_payload = lambda _item: {"id": 1, "name": "盖伦"}
 
     page._load_preview_for_item("champions", object())
+    qtbot.waitUntil(lambda: not page._preview_workers)
     event_summary = page.audio_preview_summary_label.text()
     assert page.preview_path_edit.text() == "preview.msgpack"
     event_model = page.audio_preview_tree.model()
@@ -770,6 +787,7 @@ def test_overview_page_keeps_selected_audio_ref_per_preview_mode(qtbot) -> None:
     page.entityListPanel.resolve_row_payload = lambda _item: {"id": 1, "name": "盖伦"}
 
     page._load_preview_for_item("champions", object())
+    qtbot.waitUntil(lambda: not page._preview_workers)
     page.preview_mode_pivot.setCurrentItem(ALL_AUDIO_PREVIEW_MODE)
     first_index = page.audio_list.model().index(0, 0)
     page.audio_list.setCurrentIndex(first_index)
@@ -826,6 +844,7 @@ def test_overview_page_raw_mode_clears_visible_search_and_restores_mode_queries(
     page.entityListPanel.resolve_row_payload = lambda _item: {"id": 1, "name": "盖伦"}
 
     page._load_preview_for_item("champions", object())
+    qtbot.waitUntil(lambda: not page._preview_workers)
     search = page.previewPanel.preview_search_input
     search.setText("event")
     page.preview_mode_pivot.setCurrentItem(ALL_AUDIO_PREVIEW_MODE)

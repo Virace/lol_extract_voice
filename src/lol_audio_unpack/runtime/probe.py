@@ -34,7 +34,6 @@ class ToolProbe:
     path: str | None
     kind: str = "ok"
     detail: str = ""
-    cache_only: bool = False
 
     @property
     def success(self) -> bool:

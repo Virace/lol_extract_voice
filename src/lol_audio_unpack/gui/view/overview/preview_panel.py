@@ -223,6 +223,7 @@ class OverviewPreviewPanel(QWidget):
     """承载总览页右侧 Tab、搜索/来源槽位和资源预览。"""
 
     resource_source_open_requested = Signal(object)
+    resource_info_requested = Signal()
 
     def __init__(self, *, audio_summary_placeholder: str, parent: QWidget | None = None) -> None:
         """初始化右侧资源预览面板。
@@ -409,6 +410,7 @@ class OverviewPreviewPanel(QWidget):
 
     def show_resource_info(self) -> ResourceInfoDialog | None:
         """打开当前实体的资源信息对话框。"""
+        self.resource_info_requested.emit()
         if not self._resource_info_details:
             return None
         self._close_resource_info_dialog()
@@ -424,6 +426,13 @@ class OverviewPreviewPanel(QWidget):
         self._resource_info_dialog = dialog
         dialog.open()
         return dialog
+
+    def show_loading(self, message: str) -> None:
+        """切换实体时显示加载提示，延后释放隐藏的大音频模型。"""
+        self.preview_path_edit.clear()
+        self.placeholder_label.setText(message)
+        self._is_placeholder_visible = True
+        self.preview_stack.setCurrentWidget(self.placeholder_panel)
 
     def show_placeholder(self, message: str) -> None:
         """显示空态提示并清理路径、资源统计和预览数据。

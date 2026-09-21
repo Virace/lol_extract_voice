@@ -9,8 +9,11 @@ from types import SimpleNamespace
 import pytest
 
 from lol_audio_unpack.app.artifacts import AudioIndexProgress, enumerate_audio_refs, resolve_audio_refs
+from lol_audio_unpack.app.outputs import save_outputs
 from lol_audio_unpack.app.path_layout import format_entity_folder_name, format_sub_entity_folder_name
+from lol_audio_unpack.gui.controllers.overview_preview import OverviewPreviewController
 from lol_audio_unpack.model import AudioEntityData
+from tests.factories import make_context, make_library_view
 
 
 def _build_ctx(
@@ -20,7 +23,8 @@ def _build_ctx(
     include_types: tuple[str, ...] = ("VO", "SFX"),
 ) -> SimpleNamespace:
     """创建 AudioRef 枚举所需的最小上下文。"""
-    return SimpleNamespace(
+    return make_context(
+        tmp_path,
         config=SimpleNamespace(group_by_type=group_by_type, include_types=include_types),
         paths=SimpleNamespace(audio_path=tmp_path / "audios"),
     )
@@ -48,15 +52,12 @@ def test_enumerate_audio_refs_preserves_duplicate_ids_across_sub_entity_and_type
     entity = _build_entity()
     version = "16.16"
     entity_folder = format_entity_folder_name("1", "annie", "Annie", "黑暗之女")
-    base = ctx.paths.audio_path / version / "champions" / entity_folder
-    skin0 = format_sub_entity_folder_name("1000", "基础皮肤")
-    skin1 = format_sub_entity_folder_name("1001", "哥特萝莉")
-    (base / skin0 / "VO").mkdir(parents=True)
-    (base / skin1 / "SFX").mkdir(parents=True)
+    base = ctx.version_path("audio", version) / "champions" / entity_folder
+    make_library_view(ctx, entity, version, sub_id="1000", audio_type="VO", data=b"vo")
+    make_library_view(ctx, entity, version, sub_id="1001", audio_type="SFX", data=b"sfx")
     (base / "lobby").mkdir(parents=True)
-    (base / skin0 / "VO" / "101.wem").write_bytes(b"vo")
-    (base / skin1 / "SFX" / "101.wem").write_bytes(b"sfx")
-    (base / "lobby" / "101.wem").write_bytes(b"lobby")
+    (base / "lobby" / "101.ogg").write_bytes(b"lobby")
+    save_outputs(ctx.config.output_path, version, ctx.game_region, "champion", "1", [base / "lobby" / "101.ogg"])
 
     updates: list[AudioIndexProgress] = []
     refs = enumerate_audio_refs(ctx, entity, version, progress=updates.append)
@@ -70,8 +71,6 @@ def test_enumerate_audio_refs_preserves_duplicate_ids_across_sub_entity_and_type
     }
     assert all("/" in ref.key for ref in refs)
     assert all(entity_folder not in ref.key for ref in refs)
-    assert updates[0] == AudioIndexProgress(current=0, total=0)
-    assert updates[1] == AudioIndexProgress(current=0, total=3)
     assert updates[-1] == AudioIndexProgress(current=3, total=3)
     assert [update.current for update in updates[1:]] == sorted(update.current for update in updates[1:])
 
@@ -81,12 +80,8 @@ def test_resolve_audio_refs_only_checks_explicit_mapping_paths(tmp_path: Path, m
     ctx = _build_ctx(tmp_path, group_by_type=False)
     entity = _build_entity()
     version = "16.16"
-    entity_folder = format_entity_folder_name("1", "annie", "Annie", "黑暗之女")
     skin = format_sub_entity_folder_name("1000", "基础皮肤")
-    base = ctx.paths.audio_path / version / "champions" / entity_folder
-    target = base / skin / "VO" / "101.wem"
-    target.parent.mkdir(parents=True)
-    target.write_bytes(b"vo")
+    media, target = make_library_view(ctx, entity, version, data=b"vo")
     (target.parent / "102.wem").write_bytes(b"unused")
     monkeypatch.setattr(Path, "rglob", lambda *_args, **_kwargs: pytest.fail("不应递归枚举全部 WEM"))
 
@@ -102,7 +97,8 @@ def test_resolve_audio_refs_only_checks_explicit_mapping_paths(tmp_path: Path, m
     )
 
     assert [(ref.relative_path, ref.wem_id, ref.audio_type, ref.sub_entity) for ref in refs] == [
-        (f"{skin}/VO/101.wem", "101", "VO", "1000")
+        (f"{skin}/VO/101.wem", "101", "VO", "1000"),
+        (f"{skin}/VO/missing.wem", "missing", "VO", "1000"),
     ]
 
 
@@ -111,14 +107,10 @@ def test_enumerate_audio_refs_uses_grouped_layout_and_rejects_escaping_symlink(t
     ctx = _build_ctx(tmp_path, group_by_type=True, include_types=("VO",))
     entity = _build_entity()
     version = "16.16"
-    entity_folder = format_entity_folder_name("1", "annie", "Annie", "黑暗之女")
     skin0 = format_sub_entity_folder_name("1000", "基础皮肤")
-    target_dir = ctx.paths.audio_path / version / "VO" / "champions" / entity_folder / skin0
-    target_dir.mkdir(parents=True)
-    (target_dir / "201.wem").write_bytes(b"vo")
-    excluded_type_dir = ctx.paths.audio_path / version / "SFX" / "champions" / entity_folder / skin0
-    excluded_type_dir.mkdir(parents=True)
-    (excluded_type_dir / "202.wem").write_bytes(b"sfx")
+    vo, target = make_library_view(ctx, entity, version, media_id=201)
+    sfx, _ = make_library_view(ctx, entity, version, audio_type="SFX", media_id=202)
+    target_dir = target.parent
     outside = tmp_path / "outside.wem"
     outside.write_bytes(b"outside")
     link = target_dir / "escape.wem"
@@ -143,7 +135,12 @@ def test_enumerate_audio_refs_uses_grouped_layout_and_rejects_escaping_symlink(t
         (f"SFX/{skin0}/202.wem", "SFX", "1000"),
         (f"VO/{skin0}/201.wem", "VO", "1000"),
     ]
-    assert [(ref.relative_path, ref.audio_type, ref.sub_entity) for ref in direct_refs] == [
+    assert (
+        OverviewPreviewController()
+        .resolve_audio_preview_toggle(requested_audio=direct_refs[-1], current_audio_path=None)
+        .warning_message
+    )
+    assert [(ref.relative_path, ref.audio_type, ref.sub_entity) for ref in direct_refs[:-1]] == [
         (f"SFX/{skin0}/202.wem", "SFX", "1000"),
         (f"VO/{skin0}/201.wem", "VO", "1000"),
     ]
@@ -155,9 +152,9 @@ def test_enumerate_audio_refs_rejects_symlink_that_escapes_only_the_entity_root(
     entity = _build_entity()
     version = "16.16"
     entity_folder = format_entity_folder_name("1", "annie", "Annie", "黑暗之女")
-    entity_root = ctx.paths.audio_path / version / "champions" / entity_folder
+    entity_root = ctx.version_path("audio", version) / "champions" / entity_folder
     entity_root.mkdir(parents=True)
-    other = ctx.paths.audio_path / version / "champions" / "2-other" / "301.wem"
+    other = ctx.version_path("audio", version) / "champions" / "2-other" / "301.wem"
     other.parent.mkdir(parents=True)
     other.write_bytes(b"other")
     try:

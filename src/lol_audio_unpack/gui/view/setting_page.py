@@ -126,7 +126,6 @@ class SettingPage(SmoothScrollArea):
     wwiser_path_changed = Signal(str)
     vgmstream_path_changed = Signal(str)
     shared_context_input_changed = Signal()
-    source_refresh_requested = Signal()
     smooth_scroll_changed = Signal(bool, bool)
     log_drawer_auto_collapse_changed = Signal(bool)
     log_levels_changed = Signal(object)
@@ -159,7 +158,6 @@ class SettingPage(SmoothScrollArea):
             self._cfg, self.gameRegionCard, self._confirm_language, self
         )
         self.language_controller.changed.connect(self.shared_context_input_changed)
-        self.baseSettingsPanel.refreshButton.clicked.connect(self.source_refresh_requested)
         previous_mark = _log_setting_stage("_load_config 完成", startup_begin, previous_mark)
         apply_smooth_scroll_enabled(self, self._cfg.page_smooth_scroll_enabled)
         self._connect_signals()

@@ -27,6 +27,7 @@ from lol_audio_unpack.gui.task_models import (
 )
 from lol_audio_unpack.model.progress import OperationProgress
 from lol_audio_unpack.runtime.wav.batch import WavBatchResult, read_batch_result, retry_batch, run_batch
+from lol_audio_unpack.runtime.wav.cache import WavCache
 from lol_audio_unpack.unpack.batch import execute_tasks as execute_extract_tasks
 
 if TYPE_CHECKING:
@@ -346,6 +347,7 @@ def _run_audio_export(task: QueuedExecutionTask, signals: WorkerSignals) -> Exec
         raise ValueError("本次转码不支持失败重试，请检查诊断后创建新任务")
     if request is not None:
         request.validate()
+        cache = WavCache(request.options, request.library_root, request.version, request.region)
         for target in request.targets:
             batches.append(
                 run_batch(
@@ -357,6 +359,7 @@ def _run_audio_export(task: QueuedExecutionTask, signals: WorkerSignals) -> Exec
                     progress=emit,
                     output_file=request.output_file,
                     prechecked=task.draft.tools_checked,
+                    cache=cache,
                 )
             )
         report_root = request.report_root
@@ -380,6 +383,7 @@ def _run_audio_export(task: QueuedExecutionTask, signals: WorkerSignals) -> Exec
         for batch in batches
     )
     summary = f"成功 {success}、失败 {failed}、跳过 {skipped} 个文件"
+    summary += f"；实际转换 {sum(batch.converted_count for batch in batches)}、复用 {sum(batch.reused_count for batch in batches)}"
     if unknown:
         summary += f"；{unknown} 个文件完成状态未知"
     stage = StageResult(
@@ -721,8 +725,8 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
         # 后续步骤的异常不能抹掉先前已经确认的成功与落盘事实。
         stage_results.append(StageResult.from_error(stage_key, exc))
 
-    duration_seconds = perf_counter() - started_at
     run_result = RunResult(tuple(stage_results))
+    duration_seconds = perf_counter() - started_at
     completed_step_names = tuple(completed_steps)
     summary = _build_run_summary(run_result, completed_step_names, duration_seconds)
     _log_run_result(task.task_id, run_result, summary)
@@ -732,7 +736,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     if version and runtime_context is not None:
         try:
             report_path = write_operation_report(
-                Path(runtime_context.paths.report_path) / version,
+                runtime_context.version_path("report", version),
                 operation_id=task.draft.operation_id,
                 version=version,
                 snapshot=asdict(task.draft),

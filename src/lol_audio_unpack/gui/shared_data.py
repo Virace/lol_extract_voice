@@ -320,6 +320,7 @@ class SharedDataState:
     prepare_trigger: SharedDataPrepareTrigger = SharedDataPrepareTrigger.INITIAL
     scan: SharedDataScanResult | None = None
     preparation: SharedDataPreparationResult | None = None
+    elapsed_seconds: float = 0.0
 
     @property
     def active(self) -> bool:

@@ -15,6 +15,7 @@ from lol_audio_unpack.runtime.wav import batch as wav_batch
 from lol_audio_unpack.runtime.wav import build_output_path, resolve_decode_config
 from lol_audio_unpack.runtime.wav import job as wav_job
 from lol_audio_unpack.runtime.wav._runtime import Job, run_worker
+from tests.factories import make_context, make_wav
 
 pytestmark = pytest.mark.unit
 
@@ -25,8 +26,8 @@ def _format_log(message: str, *args: Any) -> str:
 
 
 def test_build_output_path_mirrors_audio_tree(tmp_path: Path) -> None:
-    audio_root = tmp_path / "audios" / "15.8"
-    wav_root = tmp_path / "wavs" / "15.8"
+    audio_root = tmp_path / "audios" / "15.8" / "zh_CN"
+    wav_root = tmp_path / "wavs" / "15.8" / "zh_CN"
     wem_path = audio_root / "champions" / "1·annie" / "1000·base" / "VO" / "123456.wem"
 
     wav_path = build_output_path(wem_path, audio_root=audio_root, wav_root=wav_root)
@@ -70,7 +71,7 @@ def test_run_worker_passes_resolved_decode_config(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr("lol_audio_unpack.runtime.wav._runtime.decode_to_wav_file", fake_decode_to_wav_file)
 
     job = Job(
-        wem_path=tmp_path / "sample.wem",
+        wem_path=tmp_path / "sample.ogg",
         wav_path=tmp_path / "sample.wav",
         wav_format="pcm24",
     )
@@ -93,7 +94,8 @@ class SimpleQueueAdapter:
 
 def test_run_tree_uses_version_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """独立 WAV stage 应直接消费当前版本的 audios 根目录。"""
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(vgmstream_path=None),
         runtime_cache={"tools_prechecked": True},
         paths=SimpleNamespace(
@@ -102,16 +104,17 @@ def test_run_tree_uses_version_roots(tmp_path: Path, monkeypatch: pytest.MonkeyP
             report_path=tmp_path / "reports",
         ),
     )
-    input_root = tmp_path / "audios" / "15.8"
+    input_root = tmp_path / "audios" / "15.8" / "zh_CN"
     input_root.mkdir(parents=True, exist_ok=True)
-    (input_root / "sample.wem").write_bytes(b"wem")
+    (input_root / "sample.ogg").write_bytes(b"wem")
+    monkeypatch.setattr(wav_job.AudioScope, "resolve_files", lambda self: (input_root / "sample.ogg",))
     calls: list[tuple[Path, Path]] = []
 
     def fake_transcode_many(sources, output_root_arg: Path, **kwargs):
-        assert tuple(sources) == (input_root / "sample.wem",)
+        assert tuple(sources) == (input_root / "sample.ogg",)
         calls.append((Path(kwargs["input_root"]), Path(output_root_arg)))
         output = output_root_arg / "sample.wav"
-        output.write_bytes(b"wav")
+        output.write_bytes(make_wav())
         item = BatchTranscodeItemResult(sources[0], output, 1, 3, None)
         return BatchTranscodeSummary(kwargs["input_root"], output_root_arg, 1, 0, (item,))
 
@@ -125,14 +128,15 @@ def test_run_tree_uses_version_roots(tmp_path: Path, monkeypatch: pytest.MonkeyP
     )
 
     assert len(calls) == 1 and calls[0][0] == input_root
-    assert (tmp_path / "wavs" / "15.8" / "sample.wav").read_bytes() == b"wav"
+    assert (tmp_path / "wavs" / "15.8" / "zh_CN" / "sample.wav").read_bytes() == make_wav()
     assert payload["processed_file_count"] == 1
     assert payload["failed_file_count"] == 0
 
 
 def test_run_tree_uses_selected_audio_roots_when_provided(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """定向 WAV stage 应只消费显式选中的实体音频目录。"""
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(vgmstream_path=None),
         runtime_cache={"tools_prechecked": True},
         paths=SimpleNamespace(
@@ -141,20 +145,21 @@ def test_run_tree_uses_selected_audio_roots_when_provided(tmp_path: Path, monkey
             report_path=tmp_path / "reports",
         ),
     )
-    version_root = tmp_path / "audios" / "15.8"
+    version_root = tmp_path / "audios" / "15.8" / "zh_CN"
     selected_root = version_root / "champions" / "1-annie"
     selected_root.mkdir(parents=True, exist_ok=True)
-    (selected_root / "sample.wem").write_bytes(b"wem")
+    (selected_root / "sample.ogg").write_bytes(b"wem")
     ignored_root = version_root / "champions" / "2-olaf"
     ignored_root.mkdir(parents=True, exist_ok=True)
-    (ignored_root / "sample.wem").write_bytes(b"wem")
+    (ignored_root / "sample.ogg").write_bytes(b"wem")
+    monkeypatch.setattr(wav_job.AudioScope, "resolve_files", lambda self: (selected_root / "sample.ogg",))
     calls: list[tuple[Path, Path]] = []
 
     def fake_transcode_many(sources, output_root_arg: Path, **kwargs):
-        assert tuple(sources) == (selected_root / "sample.wem",)
+        assert tuple(sources) == (selected_root / "sample.ogg",)
         calls.append((Path(kwargs["input_root"]), Path(output_root_arg)))
         output = output_root_arg / "sample.wav"
-        output.write_bytes(b"wav")
+        output.write_bytes(make_wav())
         item = BatchTranscodeItemResult(sources[0], output, 1, 3, None)
         return BatchTranscodeSummary(kwargs["input_root"], output_root_arg, 1, 0, (item,))
 
@@ -168,15 +173,16 @@ def test_run_tree_uses_selected_audio_roots_when_provided(tmp_path: Path, monkey
     )
 
     assert len(calls) == 1 and calls[0][0] == selected_root
-    assert (tmp_path / "wavs" / "15.8" / "champions" / "1-annie" / "sample.wav").read_bytes() == b"wav"
-    assert not (tmp_path / "wavs" / "15.8" / "champions" / "2-olaf").exists()
+    assert (tmp_path / "wavs" / "15.8" / "zh_CN" / "champions" / "1-annie" / "sample.wav").read_bytes() == make_wav()
+    assert not (tmp_path / "wavs" / "15.8" / "zh_CN" / "champions" / "2-olaf").exists()
     assert payload["processed_file_count"] == 1
     assert payload["failed_file_count"] == 0
 
 
 def test_run_tree_bridges_root_level_progress_to_callback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """独立 WAV stage 应只向统一回调暴露目标目录级进度。"""
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(vgmstream_path=None),
         runtime_cache={"tools_prechecked": True},
         paths=SimpleNamespace(
@@ -185,13 +191,18 @@ def test_run_tree_bridges_root_level_progress_to_callback(tmp_path: Path, monkey
             report_path=tmp_path / "reports",
         ),
     )
-    version_root = tmp_path / "audios" / "15.8"
+    version_root = tmp_path / "audios" / "15.8" / "zh_CN"
     first_root = version_root / "champions" / "1-annie"
     second_root = version_root / "maps" / "0-common"
     first_root.mkdir(parents=True, exist_ok=True)
     second_root.mkdir(parents=True, exist_ok=True)
-    (first_root / "sample-1.wem").write_bytes(b"wem")
-    (second_root / "sample-2.wem").write_bytes(b"wem")
+    (first_root / "sample-1.ogg").write_bytes(b"wem")
+    (second_root / "sample-2.ogg").write_bytes(b"wem")
+    monkeypatch.setattr(
+        wav_job.AudioScope,
+        "resolve_files",
+        lambda self: (first_root / "sample-1.ogg",) if self.root == first_root else (second_root / "sample-2.ogg",),
+    )
     progress_events: list[tuple[str, int, int, str]] = []
 
     def fake_transcode_many(sources, output_root: Path, **kwargs):
@@ -241,7 +252,8 @@ def test_run_tree_bridges_root_level_progress_to_callback(tmp_path: Path, monkey
 
 def test_run_tree_logs_internal_file_progress_at_debug_level(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """文件级 WAV 内部快照只应进入 DEBUG 日志。"""
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(vgmstream_path=None),
         runtime_cache={"tools_prechecked": True},
         paths=SimpleNamespace(
@@ -250,9 +262,10 @@ def test_run_tree_logs_internal_file_progress_at_debug_level(tmp_path: Path, mon
             report_path=tmp_path / "reports",
         ),
     )
-    input_root = tmp_path / "audios" / "15.8"
+    input_root = tmp_path / "audios" / "15.8" / "zh_CN"
     input_root.mkdir(parents=True, exist_ok=True)
-    (input_root / "sample.wem").write_bytes(b"wem")
+    (input_root / "sample.ogg").write_bytes(b"wem")
+    monkeypatch.setattr(wav_job.AudioScope, "resolve_files", lambda self: (input_root / "sample.ogg",))
     info_messages: list[str] = []
     debug_messages: list[str] = []
     success_messages: list[str] = []

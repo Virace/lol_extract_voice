@@ -301,7 +301,10 @@ class ExecutionQueueController(QObject):
                 self._fail_preflight(task, "\n".join(issue.detail for issue in failures))
             return
         self._probe_cancel = None
-        task = self.update_task(task.task_id, draft=replace(task.draft, tools_checked=True))
+        request = task.draft.export_request
+        if request is not None:
+            request = replace(request)
+        task = self.update_task(task.task_id, draft=replace(task.draft, tools_checked=True, export_request=request))
         self._start_execution(task)
 
     def _fail_preflight(self, task: QueuedExecutionTask, error: str) -> None:

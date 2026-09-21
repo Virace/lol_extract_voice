@@ -300,7 +300,7 @@ class ResultDrawer(QDialog):
                         (
                             batch.output_root.name,
                             _STATUSES[ResultStatus(batch.status)],
-                            f"{batch.success_count:,} 个 WAV · 跳过 {batch.skipped_count:,}",
+                            f"{batch.success_count:,} 个 WAV · 转换 {batch.converted_count:,} · 复用 {batch.reused_count:,} · 跳过 {batch.skipped_count:,}",
                         ),
                     )
                     child.setToolTip(0, str(batch.output_root))

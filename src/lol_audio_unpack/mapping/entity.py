@@ -39,8 +39,8 @@ def _ensure_version_dirs(reader: DataReader, *, ctx: AppContext) -> tuple[Path, 
         tuple[Path, Path]: ``(version_cache_dir, version_hash_dir)``。
     """
 
-    version_cache_dir = ctx.cache_path / reader.version
-    version_hash_dir = ctx.hash_path / reader.version
+    version_cache_dir = ctx.version_path("cache", reader.version)
+    version_hash_dir = ctx.version_path("hash", reader.version)
     version_cache_dir.mkdir(parents=True, exist_ok=True)
     version_hash_dir.mkdir(parents=True, exist_ok=True)
     return version_cache_dir, version_hash_dir
@@ -323,14 +323,13 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
         audio_type = category_event_banks[0].audio_type
         owner_ids = {skin_audio.owner(bank).sub_id for bank in category_banks} if skin_audio else {sub_id}
         for event_name, wem_ids in category_mapping.forward_mapping.items():
-            paths = sorted(
-                {
-                    ref.relative_path
-                    for wem_id in wem_ids
-                    for owner_id in owner_ids
-                    for ref in refs_by_key.get((owner_id, audio_type, str(wem_id)), ())
-                }
-            )
+            event_refs = [
+                ref
+                for wem_id in wem_ids
+                for owner_id in owner_ids
+                for ref in refs_by_key.get((owner_id, audio_type, str(wem_id)), ())
+            ]
+            paths = sorted({ref.relative_path for ref in event_refs})
             if paths:
                 audio_paths[event_name] = paths
                 mapped_paths.update(paths)

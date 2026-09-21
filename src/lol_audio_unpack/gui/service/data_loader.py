@@ -234,7 +234,7 @@ def check_entity_status(
         音频状态与映射状态组成的二元组。
     """
     audio_paths = resolve_entity_audio_paths(ctx, entity_data, version)
-    audio_exists = any(path.exists() and any(path.iterdir()) for path in audio_paths)
+    audio_exists = bool(audio_paths)
 
     mapping_path = resolve_mapping_file_path(
         ctx,
@@ -260,7 +260,7 @@ class EntityDataLoader:
             app_context: 当前应用上下文。
         """
         self.ctx = app_context
-        self.data_reader = DataReader(app_context)
+        self.data_reader = DataReader(app_context, read_only=True)
         inventory = app_context.runtime_cache.get("source_inventory")
         language = inventory.get_language(app_context.game_region) if inventory else None
         self._source_entities = {(item.kind, item.key): item for item in language.entities} if language else {}
@@ -761,6 +761,9 @@ class EntityDataLoader:
         """未准备资源是正常目录状态；部分解包的有效绑定仍可用于浏览已有结果。"""
         if entity_type == "resource_packs":
             return self._build_entity_data(entity_type, entity_id)
+        if allow_unprepared:
+            factory = AudioEntityData.from_champion if entity_type == "champions" else AudioEntityData.from_map
+            return factory(int(entity_id), self.data_reader, ctx=self.ctx, include_resources=False)
         try:
             self._preload_bank_artifact(entity_type, entity_id, require_complete=False)
             return self._build_entity_data(entity_type, entity_id)
@@ -770,17 +773,7 @@ class EntityDataLoader:
             ResourceSchemaMismatchError,
             DataVersionMismatchError,
             _ArtifactCorruptError,
-        ) as exc:
-            if allow_unprepared:
-                # 浏览既有产物只需要可靠身份和输出布局，不应被解包专用 binding 门禁阻止。
-                if isinstance(exc, SharedDataMissingError):
-                    logger.debug("[总览预览] {} {} 尚未准备资源数据，按实体元数据浏览", entity_type, entity_id)
-                else:
-                    logger.warning(
-                        "[总览预览] {} {} 资源数据损坏或不兼容，按实体元数据浏览：{}", entity_type, entity_id, exc
-                    )
-                factory = AudioEntityData.from_champion if entity_type == "champions" else AudioEntityData.from_map
-                return factory(int(entity_id), self.data_reader, ctx=self.ctx, include_resources=False)
+        ):
             # 目录扫描仍保留未准备状态，不逐实体输出预期日志。
             return None
 
@@ -1160,14 +1153,14 @@ class EntityDataLoader:
         return result
 
     def load_mapping_preview(self, entity_type: GuiEntityType, entity_id: str) -> tuple[Path | None, dict | None, str]:
-        """读取实体映射文件并序列化为可预览文本。
+        """读取实体映射结构，原始文本留到用户切换视图时生成。
 
         Args:
             entity_type: 实体类型目录名。
             entity_id: 实体 ID。
 
         Returns:
-            映射文件路径、原始映射数据与序列化后的文本内容；未找到文件时返回 ``(None, None, "")``。
+            映射文件路径、规范化结构与空文本；未找到时返回 ``(None, None, "")``。
         """
         mapping_path = resolve_mapping_file_path(
             self.ctx,
@@ -1184,7 +1177,11 @@ class EntityDataLoader:
             entity_type=entity_type,
             entity_id=str(entity_id),
         )
-        if entity_type == "champions" and isinstance(mapping_data, dict):
+        if (
+            entity_type == "champions"
+            and isinstance(mapping_data, dict)
+            and mapping_data.get("skinAudioVersion") != SKIN_AUDIO_VERSION
+        ):
             entity = self._load_preview_entity(entity_type, str(entity_id))
             if entity is not None:
                 layout = SkinAudio(entity.resource_banks, entity.skin_parents)
@@ -1195,7 +1192,7 @@ class EntityDataLoader:
                     **mapping_data,
                     "previewNotice": "事件映射来自旧版共享规则，请重新生成映射；已有音频仍可浏览。",
                 }
-        return mapping_path, mapping_data, json.dumps(raw_mapping_data, ensure_ascii=False, indent=2)
+        return mapping_path, mapping_data, ""
 
     def load_audio_refs(
         self,
@@ -1276,6 +1273,8 @@ class EntityDataLoader:
 
     def _resolve_audio_ref_root(self, ref: AudioRef) -> Path | None:
         """从路径级引用恢复其所属的实体音频根目录。"""
+        if ref.root is not None:
+            return ref.root
         parts = PurePosixPath(ref.relative_path).parts
         physical_part_count = len(parts) - (1 if self.ctx.config.group_by_type else 0)
         if physical_part_count <= 0:

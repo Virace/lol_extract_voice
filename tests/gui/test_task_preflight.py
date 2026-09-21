@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from threading import Event
 
+import pytest
+
 from lol_audio_unpack.app.audio_export import AudioExportRequest, ExportTarget
 from lol_audio_unpack.app.audio_scope import AudioScope
 from lol_audio_unpack.app.types import WavOutputOptions
@@ -78,7 +80,8 @@ def test_existing_export_ignores_game_source_and_unused_wwiser(tmp_path, monkeyp
     monkeypatch.setattr(
         task_preflight, "probe_tool", lambda tool, **kwargs: calls.append(tool) or ToolProbe(tool, None)
     )
-    assert all(item.success for item in task_preflight.check_task(task, Event()))
+    results = task_preflight.check_task(task, Event())
+    assert all(item.success for item in results)
     assert calls == ["wav"]
 
 
