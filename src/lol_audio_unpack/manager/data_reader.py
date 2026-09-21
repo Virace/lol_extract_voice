@@ -60,7 +60,7 @@ class DataReader:
         self.version: str = resolve_game_version(self.ctx)
         self.version_manifest_path: Path = self.manifest_path / self.version
 
-        # 使用不带后缀的基础路径，让 read_data 自动寻找最佳格式；
+        # 使用固定 MessagePack 路径，旧格式由独立工具转换；
         # 当前边界负责把缺失与损坏分类，避免底层和 GUI 重复记录 traceback。
         data_file_base = self.version_manifest_path / "data"
         actual_data_file = find_data_file(data_file_base, dev_mode=self.ctx.config.dev_mode)
@@ -72,7 +72,10 @@ class DataReader:
         if not self.data:
             if actual_data_file is not None:
                 raise SharedDataCorruptError(f"核心数据文件无法读取或内容为空: {actual_data_file}")
-            raise SharedDataMissingError("核心数据文件 (data.yml/json/msgpack) 不存在，请先运行更新程序。")
+            raise SharedDataMissingError(
+                "核心数据文件 data.msgpack 不存在，请先运行更新程序；"
+                "仅有历史 YAML/JSON 时可使用 scripts/convert_data.py 离线转换。"
+            )
         if (
             not isinstance(self.data, dict)
             or not isinstance(self.data.get("champions"), dict)
@@ -339,12 +342,12 @@ class DataReader:
         bases = {
             path.with_suffix("")
             for path in self.resource_pack_banks_dir.iterdir()
-            if path.suffix.casefold() in {".json", ".msgpack", ".yml"}
+            if path.suffix.casefold() == ".msgpack"
         }
         artifacts_by_key: dict[str, dict] = {}
         for base in sorted(bases, key=lambda item: item.name.casefold()):
             try:
-                # 交给 read_data 选择与其它 manifest artifact 相同的格式优先级。
+                # 与其他 manifest artifact 共用固定 MessagePack 读取合同。
                 payload = read_data(base, dev_mode=self.ctx.config.dev_mode)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("忽略无法读取的 resource-pack artifact {}: {}", base.name, exc)

@@ -30,13 +30,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import msgpack
 from loguru import logger
-from ruamel.yaml import YAML
 
 from lol_audio_unpack.app.context import create_app_context
 from lol_audio_unpack.app.facade import LolAudioUnpackApp
 from lol_audio_unpack.app.types import OperationOptions
+from lol_audio_unpack.manager.files import find_data_file, read_data
 
 CHAMPION_ID_POOL: tuple[str, ...] = (
     "1",
@@ -699,33 +698,9 @@ def find_manifest_data_file(output_path: Path, version: str) -> Path | None:
     return find_data_file(base)
 
 
-def find_data_file(base: Path) -> Path | None:
-    """定位 msgpack、YAML 或 JSON 格式的数据文件。
-
-    Args:
-        base: 不带格式后缀的数据文件基路径。
-
-    Returns:
-        找到的数据文件；所有格式均不存在时返回 ``None``。
-    """
-    for suffix in (".msgpack", ".yml", ".json"):
-        candidate = base.with_suffix(suffix)
-        if candidate.is_file():
-            return candidate
-    return None
-
-
 def load_manifest_data(path: Path) -> dict[str, Any]:
-    """按后缀读取 manifest data。"""
-    if path.suffix == ".msgpack":
-        return msgpack.unpackb(path.read_bytes(), raw=False)
-    if path.suffix in {".yml", ".yaml"}:
-        yaml = YAML(typ="safe")
-        data = yaml.load(path.read_text(encoding="utf-8"))
-        return data or {}
-    if path.suffix == ".json":
-        return json.loads(path.read_text(encoding="utf-8"))
-    raise ValueError(f"不支持的 data 文件格式: {path}")
+    """通过正式读取合同读取 manifest data。"""
+    return read_data(path)
 
 
 def add_result(  # noqa: PLR0913

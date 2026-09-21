@@ -486,7 +486,7 @@ def resolve_mapping_path(
         candidates = [path for base in base_paths if (path := find_data_file(base, dev_mode=dev_mode)) is not None]
         return max(candidates, key=lambda path: path.stat().st_mtime_ns, default=None)
 
-    suffix = ".yml" if dev_mode else ".msgpack"
+    suffix = ".msgpack"
     for base_path in base_paths:
         candidate = base_path.with_suffix(suffix)
         if candidate.exists():

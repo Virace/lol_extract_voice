@@ -567,7 +567,7 @@ class ResourcePackDiscovery:
 
     def _snapshot_artifact(self, base: Path) -> tuple[Path, bytes | None]:
         """保存当前 serializer 会覆盖的精确文件字节；不存在时记录空快照。"""
-        suffix = ".yml" if self._is_dev_mode() else ".msgpack"
+        suffix = ".msgpack"
         path = base.with_suffix(suffix)
         return path, path.read_bytes() if path.is_file() else None
 

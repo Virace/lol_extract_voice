@@ -5,14 +5,14 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
-import time
 from collections.abc import Callable
 from pathlib import Path
 
+import msgpack
 from loguru import logger
 
-from lol_audio_unpack.manager.errors import ArtifactWriteError
-from lol_audio_unpack.utils.common import dump_msgpack, dump_yaml, format_duration, load_json, load_msgpack, load_yaml
+from lol_audio_unpack.manager.errors import ArtifactWriteError, SharedDataCorruptError
+from lol_audio_unpack.utils.common import dump_msgpack
 
 
 def _replace_file(target: Path, writer: Callable[[Path], object], *, write_stage: str) -> Path:
@@ -61,107 +61,69 @@ def _replace_file(target: Path, writer: Callable[[Path], object], *, write_stage
         raise ArtifactWriteError(target, stage) from exc
 
 
-def find_data_file(path: Path, *, dev_mode: bool) -> Path | None:
-    """查找数据文件的实际路径。
+def find_data_file(path: Path, *, dev_mode: bool = False) -> Path | None:
+    """定位唯一的 MessagePack 产物，不读取旧格式。
 
     Args:
         path: 文件路径，可带或不带后缀。
-        dev_mode: 是否启用开发模式。
+        dev_mode: 兼容参数，不再改变存储格式。
 
     Returns:
-        实际存在的文件路径；若所有候选文件都不存在则返回 ``None``。
+        实际存在的 MessagePack 路径，缺失时返回 ``None``。
     """
-    files_to_check = []
-
-    if path.suffix:
-        files_to_check.append(path)
-    else:
-        formats_priority = [".yml", ".json", ".msgpack"] if dev_mode else [".msgpack", ".yml", ".json"]
-        files_to_check = [path.with_suffix(suffix) for suffix in formats_priority]
-
-    for file_to_try in files_to_check:
-        if file_to_try.exists():
-            return file_to_try
-
+    target = path.with_suffix(".msgpack")
+    if target.is_file():
+        return target
+    for suffix in (".yml", ".yaml", ".json"):
+        legacy = path.with_suffix(suffix)
+        if legacy.is_file():
+            logger.warning(
+                f"旧格式数据不再自动读取: {legacy}。请离线转换："
+                f'uv run scripts/convert_data.py --input "{legacy}" --output "{target}" '
+                f"--from {suffix[1:]} --to msgpack；容器转换不会升级 schema。"
+            )
+            break
     return None
 
 
 def read_data(path: Path, *, dev_mode: bool = False, log_errors: bool = True) -> dict:
-    """按环境优先级读取数据文件。
+    """读取 MessagePack 字典，区分缺失与损坏。
 
     Args:
         path: 文件路径，可带或不带后缀。
-        dev_mode: 是否启用开发模式。
+        dev_mode: 兼容参数，不再改变存储格式。
         log_errors: 反序列化失败时是否在当前边界记录 traceback。
 
     Returns:
-        读取到的数据字典；读取失败时返回空字典。
+        读取到的字典；文件缺失时返回空字典。
+
+    Raises:
+        SharedDataCorruptError: 文件损坏或顶层不是字典；不回退旧格式。
     """
-    start_time = time.time()
     actual_file = find_data_file(path, dev_mode=dev_mode)
-
-    file_search_time = time.time()
-    search_duration_ms = (file_search_time - start_time) * 1000
-    logger.trace(f"文件查找耗时: {format_duration(search_duration_ms)}")
-
     if not actual_file:
-        if not path.suffix:
-            logger.warning(f"在 {path.parent} 未找到任何格式的数据文件 (base: {path.name})")
-        else:
-            logger.warning(f"指定的数据文件不存在: {path}，将返回空字典")
-
-        total_time_ms = (time.time() - start_time) * 1000
-        logger.debug(f"read_data 总耗时: {format_duration(total_time_ms)}")
+        logger.warning(f"MessagePack 数据文件不存在: {path.with_suffix('.msgpack')}")
         return {}
-
-    suffix = actual_file.suffix
-    loader = None
-    if suffix == ".json":
-        loader = load_json
-    elif suffix == ".msgpack":
-        loader = load_msgpack
-    elif suffix in [".yaml", ".yml"]:
-        loader = load_yaml
-
-    if not loader:
-        logger.error(f"不支持的文件格式: {suffix} (来自: {actual_file})")
-        total_time_ms = (time.time() - start_time) * 1000
-        logger.debug(f"read_data 总耗时: {format_duration(total_time_ms)}")
-        return {}
-
-    file_size_mb = actual_file.stat().st_size / (1024 * 1024)
-    logger.trace(f"找到数据文件: {actual_file} (大小: {file_size_mb:.2f}MB, 格式: {suffix})")
-
     try:
-        read_start_time = time.time()
-        result = loader(actual_file)
-        read_end_time = time.time()
-
-        read_duration_ms = (read_end_time - read_start_time) * 1000
-        logger.trace(
-            f"文件读取完成: {actual_file.name} | 耗时: {format_duration(read_duration_ms)} | "
-            f"读取速度: {file_size_mb / (read_duration_ms / 1000):.2f}MB/s"
-        )
-
-        total_time_ms = (time.time() - start_time) * 1000
-        logger.debug(f"read_data 总耗时: {format_duration(total_time_ms)}")
+        # 实体目录存在整数键；不能用会吞掉解析异常的通用兼容 loader 读取权威产物。
+        with actual_file.open("rb") as stream:
+            result = msgpack.load(stream, raw=False, strict_map_key=False)
+        if not isinstance(result, dict):
+            raise ValueError("结构化产物顶层必须是字典")
         return result
-
     except Exception as exc:
         if log_errors:
             logger.opt(exception=True).error(f"读取文件时出错: {actual_file}, 错误: {exc}")
-        total_time_ms = (time.time() - start_time) * 1000
-        logger.debug(f"read_data 总耗时: {format_duration(total_time_ms)}")
-        return {}
+        raise SharedDataCorruptError(f"结构化数据损坏，未回退旧格式: {actual_file}") from exc
 
 
-def write_data(data: dict, base_path: Path, *, dev_mode: bool) -> Path:
-    """根据环境选择格式并原子替换数据文件。
+def write_data(data: dict, base_path: Path, *, dev_mode: bool = False) -> Path:
+    """以 MessagePack 原子替换可再生数据文件。
 
     Args:
         data: 要写入的数据。
         base_path: 不带后缀的基础文件路径。
-        dev_mode: 是否启用开发模式。
+        dev_mode: 兼容参数，不再改变存储格式。
 
     Returns:
         成功替换的实际目标路径。
@@ -169,10 +131,8 @@ def write_data(data: dict, base_path: Path, *, dev_mode: bool) -> Path:
     Raises:
         ArtifactWriteError: 无法完成序列化、同步或原子替换。
     """
-    fmt = "yml" if dev_mode else "msgpack"
-    path = base_path.with_suffix(f".{fmt}")
-    serializer = dump_yaml if dev_mode else dump_msgpack
-    target = _replace_file(path, lambda temp: serializer(data, temp), write_stage="serialize")
+    path = base_path.with_suffix(".msgpack")
+    target = _replace_file(path, lambda temp: dump_msgpack(data, temp), write_stage="serialize")
     logger.trace(f"成功写入数据到: {target}")
     return target
 
@@ -229,14 +189,15 @@ def needs_update(
     Returns:
         若需要更新则返回 ``True``。
     """
-    if force_update:
-        return True
-
     actual_file = find_data_file(base_path, dev_mode=dev_mode)
-    if not actual_file:
+    if force_update or not actual_file:
         return True
 
-    data = read_data(base_path, dev_mode=dev_mode)
+    try:
+        data = read_data(base_path, dev_mode=dev_mode)
+    except SharedDataCorruptError:
+        logger.warning(f"可再生数据损坏，需要重新生成: {base_path}")
+        return True
     data_version = data.get("metadata", {}).get("gameVersion") if data else None
     if not data_version:
         return True

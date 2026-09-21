@@ -213,6 +213,12 @@ CLI 参数总表：
 - [docs/api/config_api.md](./docs/api/config_api.md)
 - [docs/api/prepared_source.md](./docs/api/prepared_source.md)
 
+## 内部数据格式
+
+正常与开发模式均使用 MessagePack。旧 YAML/JSON 可在没有游戏源时通过
+`uv run scripts/convert_data.py --input old.yml --output data.msgpack --from yml --to msgpack`
+显式离线转换；不自动覆盖、迁移或回退。完整类型与失败边界见 [API 数据格式约定](docs/api/README.md#4-数据格式约定)。
+
 ## 后续处理
 
 当前工具专注于更新、解包、WAV 转码与映射生成；更复杂的后处理仍建议独立完成。

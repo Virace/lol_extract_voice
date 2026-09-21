@@ -9,7 +9,7 @@ import pytest
 import lol_audio_unpack.manager.files as mfiles
 from lol_audio_unpack.app import game_version
 from lol_audio_unpack.manager import utils as mutils
-from lol_audio_unpack.manager.errors import ArtifactWriteError
+from lol_audio_unpack.manager.errors import ArtifactWriteError, SharedDataCorruptError
 
 pytestmark = pytest.mark.unit
 
@@ -20,7 +20,7 @@ def test_find_data_file_priority_in_dev_mode(tmp_path):
     (base.with_suffix(".yml")).write_text("k: v\n", encoding="utf-8")
     (base.with_suffix(".msgpack")).write_bytes(b"dummy")
 
-    assert mfiles.find_data_file(base, dev_mode=True).suffix == ".yml"
+    assert mfiles.find_data_file(base, dev_mode=True).suffix == ".msgpack"
 
 
 def test_find_data_file_priority_in_prod_mode(tmp_path):
@@ -43,15 +43,16 @@ def test_write_and_read_data_roundtrip_msgpack(tmp_path):
     assert mfiles.read_data(base, dev_mode=False) == data
 
 
-def test_write_and_read_data_roundtrip_yaml(tmp_path):
+def test_dev_mode_reads_same_msgpack_with_integer_keys(tmp_path):
     base = tmp_path / "result" / "data"
-    data = {"metadata": {"gameVersion": "16.3"}, "items": [1, 2, 3]}
+    data = {"metadata": {"gameVersion": "16.3"}, "items": {1: b"audio", "1": [1, 2, 3]}}
 
     path = mfiles.write_data(data, base, dev_mode=True)
 
-    assert path == base.with_suffix(".yml")
+    assert path == base.with_suffix(".msgpack")
     assert path.exists()
     assert mfiles.read_data(base, dev_mode=True) == data
+    assert mfiles.read_data(base, dev_mode=False) == data
 
 
 def test_get_game_version_success(tmp_path):
@@ -166,14 +167,14 @@ def test_needs_update_behavior(tmp_path):
 
 def test_read_data_logs_error_with_exception_when_loader_fails(tmp_path, monkeypatch):
     base = tmp_path / "broken"
-    actual_file = base.with_suffix(".json")
+    actual_file = base.with_suffix(".msgpack")
     actual_file.write_text("{}", encoding="utf-8")
 
     opt_calls: list[dict[str, object]] = []
     errors: list[str] = []
 
     monkeypatch.setattr(mfiles, "find_data_file", lambda _path, dev_mode=False: actual_file)
-    monkeypatch.setattr(mfiles, "load_json", lambda _path: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(mfiles.msgpack, "load", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
     monkeypatch.setattr(
         mfiles,
         "logger",
@@ -184,9 +185,8 @@ def test_read_data_logs_error_with_exception_when_loader_fails(tmp_path, monkeyp
         ),
     )
 
-    result = mfiles.read_data(base, dev_mode=False)
-
-    assert result == {}
+    with pytest.raises(SharedDataCorruptError):
+        mfiles.read_data(base, dev_mode=False)
     assert opt_calls == [{"exception": True}]
     assert errors == [f"读取文件时出错: {actual_file}, 错误: boom"]
 
@@ -194,12 +194,12 @@ def test_read_data_logs_error_with_exception_when_loader_fails(tmp_path, monkeyp
 def test_read_data_can_defer_deserialization_logging_to_aggregate_boundary(tmp_path, monkeypatch) -> None:
     """完整扫描可关闭逐 artifact traceback，由上层统一记录摘要。"""
     base = tmp_path / "broken"
-    actual_file = base.with_suffix(".json")
+    actual_file = base.with_suffix(".msgpack")
     actual_file.write_text("{}", encoding="utf-8")
     opt_calls: list[dict[str, object]] = []
 
     monkeypatch.setattr(mfiles, "find_data_file", lambda _path, dev_mode=False: actual_file)
-    monkeypatch.setattr(mfiles, "load_json", lambda _path: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(mfiles.msgpack, "load", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")))
     monkeypatch.setattr(
         mfiles,
         "logger",
@@ -210,9 +210,8 @@ def test_read_data_can_defer_deserialization_logging_to_aggregate_boundary(tmp_p
         ),
     )
 
-    result = mfiles.read_data(base, dev_mode=False, log_errors=False)
-
-    assert result == {}
+    with pytest.raises(SharedDataCorruptError):
+        mfiles.read_data(base, dev_mode=False, log_errors=False)
     assert opt_calls == []
 
 

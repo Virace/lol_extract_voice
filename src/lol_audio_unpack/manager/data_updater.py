@@ -237,9 +237,8 @@ class DataUpdater:
 
         try:
             self._process_data(run_temp_path)
-            # 成功后，日志记录的是yml或msgpack的实际路径
-            fmt = "yml" if self._is_dev_mode() else "msgpack"
-            logger.success(f"数据更新完成: {self.data_file_base.with_suffix(f'.{fmt}')}")
+            # 日志展示已经完成发布的固定格式路径。
+            logger.success(f"数据更新完成: {self.data_file_base.with_suffix('.msgpack')}")
             return self.data_file_base
         finally:
             if not self._is_dev_mode():
@@ -299,11 +298,10 @@ class DataUpdater:
 
         # 从临时目录复制最终生成的数据文件到目标目录
         temp_data_file_base = temp_path / self.version / "data"
-        fmt = "yml" if self._is_dev_mode() else "msgpack"
-        source_file = temp_data_file_base.with_suffix(f".{fmt}")
+        source_file = temp_data_file_base.with_suffix(".msgpack")
 
         if source_file.exists():
-            target = copy_file_atomic(source_file, self.data_file_base.with_suffix(f".{fmt}"))
+            target = copy_file_atomic(source_file, self.data_file_base.with_suffix(".msgpack"))
             logger.debug(f"已复制合并数据到: {target}")
         else:
             raise FileNotFoundError(f"未能创建合并数据文件: {source_file}")
@@ -510,7 +508,7 @@ class DataUpdater:
         else:
             logger.warning("未找到default语言的地图数据，跳过处理。")
 
-        # 根据环境写入最佳格式
+        # 共享元数据始终使用 MessagePack；开发模式只影响诊断与临时文件保留。
         write_data(final_result, base_path / "data", dev_mode=self._is_dev_mode())
 
         # 记录最终处理完成统计

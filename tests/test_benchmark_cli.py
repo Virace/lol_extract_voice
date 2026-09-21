@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 
+import msgpack
+
 from lol_audio_unpack.cli.parser import create_parser
 from scripts import benchmark_cli
 
@@ -189,12 +191,9 @@ def test_build_targeted_summary_uses_latest_v2_index_snapshot_and_marks_v1_unava
         ),
     )
     for entity_dir, entity_id, index in artifact_data:
-        artifact = tmp_path / "manifest" / version / "banks" / entity_dir / f"{entity_id}.json"
+        artifact = tmp_path / "manifest" / version / "banks" / entity_dir / f"{entity_id}.msgpack"
         artifact.parent.mkdir(parents=True, exist_ok=True)
-        artifact.write_text(
-            json.dumps({"resourceSchemaVersion": 2, "diagnostics": {"index": index}}),
-            encoding="utf-8",
-        )
+        artifact.write_bytes(msgpack.packb({"resourceSchemaVersion": 2, "diagnostics": {"index": index}}))
 
     rows = [
         {"scenario": "targeted_map", "step": "update", "status": "ok", "elapsed_sec": 1.0},
@@ -259,9 +258,9 @@ def test_build_targeted_summary_uses_latest_v2_index_snapshot_and_marks_v1_unava
         "tocSeconds": 0.4,
     }
 
-    v1_artifact = tmp_path / "manifest" / version / "banks" / "champions" / "1.json"
+    v1_artifact = tmp_path / "manifest" / version / "banks" / "champions" / "1.msgpack"
     v1_artifact.parent.mkdir(parents=True, exist_ok=True)
-    v1_artifact.write_text(json.dumps({"banks": {"VO": []}}), encoding="utf-8")
+    v1_artifact.write_bytes(msgpack.packb({"banks": {"VO": []}}))
     v1_summary = benchmark_cli.summarize_resource_index(
         tmp_path,
         version,

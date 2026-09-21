@@ -108,10 +108,10 @@ def test_resolve_audio_paths_returns_flat_entity_dir_when_not_grouped(tmp_path: 
     assert resolve_audio_paths(ctx, entity, version) == (entity_dir,)
 
 
-def test_resolve_mapping_path_prefers_integrated_then_raw_with_fallback_suffixes(tmp_path: Path) -> None:
+def test_resolve_mapping_path_prefers_newer_msgpack(tmp_path: Path) -> None:
     ctx = _build_ctx(tmp_path, group_by_type=False, dev_mode=False)
     version = "15.7"
-    raw_path = ctx.paths.hash_path / version / "champions" / "1.yml"
+    raw_path = ctx.paths.hash_path / version / "champions" / "1.msgpack"
     integrated_path = ctx.paths.hash_path / version / "integrated" / "champions" / "1.msgpack"
 
     raw_path.parent.mkdir(parents=True, exist_ok=True)

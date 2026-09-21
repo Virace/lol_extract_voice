@@ -393,7 +393,7 @@ def test_artifact_write_failure_is_reported_and_does_not_publish_banks(
     def fail_events_write(data: dict, base: Path, *, dev_mode: bool) -> Path:
         """在 events 写入边界注入明确的 artifact 异常。"""
         if "events" in base.parts:
-            raise ArtifactWriteError(base.with_suffix(".yml"), "replace")
+            raise ArtifactWriteError(base.with_suffix(".msgpack"), "replace")
         return write_data(data, base, dev_mode=dev_mode)
 
     monkeypatch.setattr(discovery_module, "write_data", fail_events_write)
@@ -433,15 +433,15 @@ def test_banks_write_failure_restores_existing_banks_and_events(
     assert first.status == "complete"
     old_banks = read_data(banks_base, dev_mode=True)
     old_events = read_data(events_base, dev_mode=True)
-    banks_path = banks_base.with_suffix(".yml")
-    events_path = events_base.with_suffix(".yml")
+    banks_path = banks_base.with_suffix(".msgpack")
+    events_path = events_base.with_suffix(".msgpack")
     old_banks_bytes = banks_path.read_bytes()
     old_events_bytes = events_path.read_bytes()
 
     def fail_banks_write(data: dict, base: Path, *, dev_mode: bool) -> Path:
         """允许新 events 落盘，再在 banks 提交点注入明确失败。"""
         if "banks" in base.parts:
-            raise ArtifactWriteError(base.with_suffix(".yml"), "replace")
+            raise ArtifactWriteError(base.with_suffix(".msgpack"), "replace")
         return write_data(data, base, dev_mode=dev_mode)
 
     monkeypatch.setattr(discovery_module, "write_data", fail_banks_write)
