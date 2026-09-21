@@ -136,25 +136,30 @@ def test_check_languages_rejects_invalid_metadata(tmp_path, payload):
     assert updater._check_languages() is False
 
 
-def test_check_and_update_skips_when_canonical_languages_are_fresh(tmp_path, monkeypatch):
+@pytest.mark.parametrize("with_bp_vo", [False, True])
+def test_check_and_update_skips_when_canonical_languages_are_fresh(tmp_path, monkeypatch, with_bp_vo):
     updater = _build_updater(tmp_path)
+    updater.ctx.config.with_bp_vo = with_bp_vo
     updater.force_update = False
     updater.temp_path = tmp_path / "temp"
     updater.version_manifest_path = tmp_path / "manifest" / updater.version
     updater.data_file_base = updater.version_manifest_path / "data"
     updater.process_languages = ["default", "zh_CN"]
     m_data_updater.write_data(
-        {"metadata": {"gameVersion": updater.version, "languages": ["zh_CN"]}},
+        {"metadata": {"gameVersion": updater.version, "languages": ["zh_CN"]}, "champions": {"1": {}}},
         updater.data_file_base,
         dev_mode=False,
     )
     process_calls: list[Path] = []
+    lobby_calls = []
+    monkeypatch.setattr(updater, "ensure_bp_vo", lambda ids: lobby_calls.append(tuple(ids)))
     monkeypatch.setattr(updater, "_process_data", process_calls.append)
 
     result = updater.check_and_update()
 
     assert result == updater.data_file_base
     assert process_calls == []
+    assert lobby_calls == ([("1",)] if with_bp_vo else [])
 
 
 def test_extract_wad_data_collects_all_default_asset_volumes(tmp_path, monkeypatch):

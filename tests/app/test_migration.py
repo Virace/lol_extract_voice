@@ -9,9 +9,12 @@ from ruamel.yaml import YAML
 
 from lol_audio_unpack.app import context
 from lol_audio_unpack.app.artifacts import enumerate_audio_refs
+from lol_audio_unpack.app.lobby import repair_lobby
 from lol_audio_unpack.app.migration import migrate_library
 from lol_audio_unpack.app.resource_pack import build_resource_pack_key, resource_pack_path_component
+from lol_audio_unpack.manager.data_updater import DataUpdater
 from lol_audio_unpack.manager.files import read_data, write_data
+from lol_audio_unpack.manager.lobby import LOBBY_FILES
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.runtime.library import Library, LibraryError
 from tests.factories import make_context, make_wav
@@ -148,6 +151,49 @@ def test_context_migrates_before_new_source_operations(tmp_path, monkeypatch):
     monkeypatch.setattr(context, "validate_local_source", validate)
     ctx = context.create_app_context(settings={"OUTPUT_PATH": str(tmp_path), "GAME_PATH": str(tmp_path / "game")})
     assert ctx.version_path("manifest", VERSION).joinpath("data.msgpack").is_file()
+
+
+@pytest.mark.parametrize("current", [False, True])
+def test_missing_lobby_is_repaired_after_migration(tmp_path, monkeypatch, current):
+    """迁移缺项从同版本源补齐；历史版本不读当前客户端，已有文件不被替换。"""
+    make_old(tmp_path)
+    old_ban = tmp_path / "audios" / VERSION / "champions" / FOLDER / "lobby/ban.ogg"
+    old_ban.parent.mkdir(parents=True)
+    old_ban.write_bytes(b"original ban")
+    migrate_library(tmp_path)
+    ctx = make_context(tmp_path, runtime_cache={"resolved_runtime_version": VERSION if current else "16.19"})
+    prepared = []
+
+    def prepare(updater, ids):
+        prepared.extend(ids)
+        for category, name in LOBBY_FILES.items():
+            language = "default" if name == "sfx.ogg" else "zh_CN"
+            path = tmp_path / "manifest" / VERSION / "zh_CN/lobby" / language / category / "1.ogg"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(name.encode())
+
+    monkeypatch.setattr(DataUpdater, "ensure_bp_vo", prepare)
+    if not current:
+        prepare(None, ())
+    repair_lobby(ctx)
+    target = tmp_path / "audios" / VERSION / "zh_CN/champions" / FOLDER / "lobby"
+    assert (target / "ban.ogg").read_bytes() == b"original ban"
+    assert (target / "choose.ogg").read_bytes() == b"choose.ogg"
+    assert (target / "sfx.ogg").read_bytes() == b"sfx.ogg"
+    assert prepared == (["1"] if current else [])
+    entity = AudioEntityData("1", "安妮", "Annie", None, "champion", {}, "")
+    assert {ref.path.name for ref in enumerate_audio_refs(ctx, entity, VERSION)} == {
+        "101.wem",
+        "102.wem",
+        "ban.ogg",
+        "choose.ogg",
+        "sfx.ogg",
+    }
+    assert not list((tmp_path / "audios/_data").rglob("*.ogg"))
+    before = (target / "choose.ogg").stat().st_mtime_ns
+    repair_lobby(ctx)
+    assert (target / "choose.ogg").stat().st_mtime_ns == before
+    assert prepared == (["1"] if current else [])
 
 
 @pytest.mark.parametrize("grouped", [False, True])

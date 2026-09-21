@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import shutil
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -13,7 +14,9 @@ from loguru import logger
 
 from lol_audio_unpack.app.game_version import resolve_game_version
 from lol_audio_unpack.manager.files import copy_file_atomic, needs_update, read_data, write_data
+from lol_audio_unpack.manager.lobby import LOBBY_FILES, find_lobby_source
 from lol_audio_unpack.manager.utils import build_metadata_payload
+from lol_audio_unpack.utils.atomic import replace_file
 from lol_audio_unpack.utils.common import format_region, load_json
 from lol_audio_unpack.utils.logging import performance_monitor
 from lol_audio_unpack.utils.type_hints import StrPath
@@ -231,6 +234,8 @@ class DataUpdater:
             not needs_update(self.data_file_base, self.version, self.force_update, dev_mode=self._is_dev_mode())
             and self._check_languages()
         ):
+            if self._is_bp_vo_enabled():
+                self.ensure_bp_vo(read_data(self.data_file_base).get("champions", {}))
             logger.info(f"数据文件已是最新版本 {self.version} 且包含所有请求的语言，无需更新。")
             # 返回基础路径，让调用者决定使用哪个具体文件
             return self.data_file_base
@@ -254,6 +259,44 @@ class DataUpdater:
                     logger.opt(exception=True).error(f"清理临时目录失败: {run_temp_path}")
             else:
                 logger.warning(f"开发模式，临时目录未删除: {run_temp_path}")
+
+    def ensure_bp_vo(self, champion_ids: Iterable[str | int]) -> None:
+        """只补齐指定英雄缺少的大厅文件，独立于共享元数据是否已更新。"""
+        pending = {}
+        for champion_id in champion_ids:
+            for category in LOBBY_FILES:
+                if find_lobby_source(self.version_manifest_path, self.ctx.game_region, str(champion_id), category):
+                    continue
+                region = self.ctx.game_region
+                if category == "champion-sfx-audios" or region.lower() in {"default", "en_us"}:
+                    region = "default"
+                pending.setdefault(region, []).append((category, str(champion_id)))
+        if not pending:
+            return
+        logger.info("开始补齐大厅音频：{}，{} 个目标文件", self.version, sum(map(len, pending.values())))
+        try:
+            for region, entries in pending.items():
+                paths = [self._build_rcp_v1_path(region, f"{category}/{key}.ogg") for category, key in entries]
+
+                for wad in self._resolve_wad_files(region, format_region(region)):
+                    for path, data in zip(paths, WAD(wad).extract(paths, raw=True), strict=True):
+                        if data is None:
+                            continue
+                        category, filename = path.rsplit("/", 2)[-2:]
+                        target = self.version_manifest_path / "lobby" / region / category / filename
+                        replace_file(target, lambda temp, payload=data: temp.write_bytes(payload), write_stage="lobby")
+            missing = sum(
+                find_lobby_source(self.version_manifest_path, self.ctx.game_region, key, category) is None
+                for entries in pending.values()
+                for category, key in entries
+            )
+            if missing:
+                logger.warning("大厅音频补齐结束：源资源中仍缺少 {} 个目标文件", missing)
+            else:
+                logger.success("大厅音频补齐完成：{} 个文件", sum(map(len, pending.values())))
+        except Exception:
+            logger.exception("大厅音频补齐失败：{}", self.version)
+            raise
 
     def _check_languages(self) -> bool:
         """检查 canonical metadata 是否包含所有请求语言。

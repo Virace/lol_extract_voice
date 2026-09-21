@@ -11,18 +11,13 @@ from loguru import logger
 
 from lol_audio_unpack.app.outputs import save_outputs
 from lol_audio_unpack.app.path_layout import format_entity_folder_name, get_output_dir_name
-from lol_audio_unpack.manager import DataReader
+from lol_audio_unpack.manager import DataReader, DataUpdater
+from lol_audio_unpack.manager.lobby import LOBBY_FILES, find_lobby_source
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.utils.atomic import replace_file
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
-
-LOBBY_AUDIO_FILE_MAPPING = {
-    "champion-ban-vo": "ban.ogg",
-    "champion-choose-vo": "choose.ogg",
-    "champion-sfx-audios": "sfx.ogg",
-}
 
 
 def find_bp_vo_source(
@@ -43,25 +38,7 @@ def find_bp_vo_source(
     Returns:
         命中的语音文件路径；未找到时返回 ``None``。
     """
-    manifest_root = ctx.version_path("manifest", reader.version) / "lobby"
-    # 本地化语音只能来自所选语言；共享 SFX 的物理命名空间固定为 default。
-    region = ctx.game_region
-    region_candidates: list[str] = []
-
-    if region:
-        region_candidates.append(region)
-        region_lower = region.lower()
-        if region_lower not in region_candidates:
-            region_candidates.append(region_lower)
-    if category == "champion-sfx-audios":
-        region_candidates = ["default"]
-
-    for region_name in region_candidates:
-        candidate = manifest_root / region_name / category / f"{champion_id}.ogg"
-        if candidate.exists():
-            return candidate
-
-    return None
+    return find_lobby_source(ctx.version_path("manifest", reader.version), ctx.game_region, champion_id, category)
 
 
 def link_audio(source: Path, target: Path) -> str:
@@ -111,6 +88,9 @@ def attach_bp_vo(
     if not bool(ctx.config.with_bp_vo):
         return ()
 
+    if any(find_bp_vo_source(reader, entity.entity_id, category, ctx=ctx) is None for category in LOBBY_FILES):
+        DataUpdater(ctx).ensure_bp_vo((entity.entity_id,))
+
     audio_root = ctx.version_path("audio", reader.version)
     entity_folder = format_entity_folder_name(
         entity.entity_id,
@@ -128,12 +108,12 @@ def attach_bp_vo(
     target_dir.mkdir(parents=True, exist_ok=True)
     persisted_paths: list[Path] = []
 
-    for category, target_name in LOBBY_AUDIO_FILE_MAPPING.items():
+    for category, target_name in LOBBY_FILES.items():
         source = find_bp_vo_source(reader, entity.entity_id, category, ctx=ctx)
         if source is None:
             logger.warning(
                 f"未找到英雄 {entity.entity_id} 的大厅音频文件: {category}/{entity.entity_id}.ogg；"
-                "如当前任务未执行更新，manifest lobby 目录不会自动刷新。"
+                "已尝试从本地 LCU 补齐，请检查所选语言资源是否完整。"
             )
             continue
 

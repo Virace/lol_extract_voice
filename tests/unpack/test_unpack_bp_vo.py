@@ -18,6 +18,24 @@ from tests.factories import make_context
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def prepared_lobby(monkeypatch):
+    """链接用例隔离 LCU 补齐边界；真实资源读取另用客户端验证。"""
+    monkeypatch.setattr(unpack_bp_vo, "DataUpdater", lambda _ctx: SimpleNamespace(ensure_bp_vo=lambda _ids: None))
+
+
+@pytest.mark.parametrize("region", ["en_US", "default"])
+def test_english_voice_uses_default_namespace(tmp_path, region):
+    """英语语音对应 LCU 的 default 路径，不被当作本地化缺失。"""
+    ctx = make_context(tmp_path, game_region=region)
+    source = ctx.version_path("manifest", "16.18") / "lobby/default/champion-choose-vo/1.ogg"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"english")
+    assert (
+        unpack_bp_vo.find_bp_vo_source(SimpleNamespace(version="16.18"), "1", "champion-choose-vo", ctx=ctx) == source
+    )
+
+
 def test_localized_voice_never_falls_back_to_default(tmp_path):
     """有英语语音也不能冒充缺失的当前语言；SFX 继续读取共享目录。"""
     lobby = tmp_path / "16.18" / "ja_JP" / "lobby"
