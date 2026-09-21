@@ -94,11 +94,13 @@ class SimpleQueueAdapter:
 def test_run_tree_uses_version_roots(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """独立 WAV stage 应直接消费当前版本的 audios 根目录。"""
     ctx = SimpleNamespace(
+        config=SimpleNamespace(vgmstream_path=None),
+        runtime_cache={"tools_prechecked": True},
         paths=SimpleNamespace(
             audio_path=tmp_path / "audios",
             wav_path=tmp_path / "wavs",
             report_path=tmp_path / "reports",
-        )
+        ),
     )
     input_root = tmp_path / "audios" / "15.8"
     input_root.mkdir(parents=True, exist_ok=True)
@@ -131,11 +133,13 @@ def test_run_tree_uses_version_roots(tmp_path: Path, monkeypatch: pytest.MonkeyP
 def test_run_tree_uses_selected_audio_roots_when_provided(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """定向 WAV stage 应只消费显式选中的实体音频目录。"""
     ctx = SimpleNamespace(
+        config=SimpleNamespace(vgmstream_path=None),
+        runtime_cache={"tools_prechecked": True},
         paths=SimpleNamespace(
             audio_path=tmp_path / "audios",
             wav_path=tmp_path / "wavs",
             report_path=tmp_path / "reports",
-        )
+        ),
     )
     version_root = tmp_path / "audios" / "15.8"
     selected_root = version_root / "champions" / "1-annie"
@@ -173,11 +177,13 @@ def test_run_tree_uses_selected_audio_roots_when_provided(tmp_path: Path, monkey
 def test_run_tree_bridges_root_level_progress_to_callback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """独立 WAV stage 应只向统一回调暴露目标目录级进度。"""
     ctx = SimpleNamespace(
+        config=SimpleNamespace(vgmstream_path=None),
+        runtime_cache={"tools_prechecked": True},
         paths=SimpleNamespace(
             audio_path=tmp_path / "audios",
             wav_path=tmp_path / "wavs",
             report_path=tmp_path / "reports",
-        )
+        ),
     )
     version_root = tmp_path / "audios" / "15.8"
     first_root = version_root / "champions" / "1-annie"
@@ -236,11 +242,13 @@ def test_run_tree_bridges_root_level_progress_to_callback(tmp_path: Path, monkey
 def test_run_tree_logs_internal_file_progress_at_debug_level(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """文件级 WAV 内部快照只应进入 DEBUG 日志。"""
     ctx = SimpleNamespace(
+        config=SimpleNamespace(vgmstream_path=None),
+        runtime_cache={"tools_prechecked": True},
         paths=SimpleNamespace(
             audio_path=tmp_path / "audios",
             wav_path=tmp_path / "wavs",
             report_path=tmp_path / "reports",
-        )
+        ),
     )
     input_root = tmp_path / "audios" / "15.8"
     input_root.mkdir(parents=True, exist_ok=True)
@@ -272,7 +280,7 @@ def test_run_tree_logs_internal_file_progress_at_debug_level(tmp_path: Path, mon
         wav_output=WavOutputOptions(enabled=True, worker_count=2, timeout_seconds=5, max_retries=3, format="pcm16"),
     )
 
-    assert debug_messages == ["WAV 转码内部进度：文件 1/1 · 失败 1"]
+    assert debug_messages[-1] == "WAV 转码内部进度：文件 1/1 · 失败 1"
     assert all("内部进度" not in message for message in info_messages)
     assert any("WAV 转码目录完成：当前版本音频" in message for message in info_messages)
     assert any("WAV 转码完成：成功 0 个，失败 1 个" in message for message in info_messages)

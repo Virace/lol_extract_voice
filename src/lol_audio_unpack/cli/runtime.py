@@ -26,6 +26,7 @@ from ..config import (
 from ..config import (
     build_settings as build_config_settings,
 )
+from ..runtime.probe import require_tool
 from .invocation import (
     DEFAULT_WAV_FORMAT,
     DEFAULT_WAV_RETRIES,
@@ -308,12 +309,18 @@ def initialize_app(args: argparse.Namespace) -> AppContext:
                 champion_ids=parse_ids(args.champions),
                 map_ids=parse_ids(args.maps),
             )
+        options = build_options(args).wav_output
+        if "wav" in args.actions:
+            require_tool("wav", path=str(ctx.config.vgmstream_path or "") or None, options=options)
+        if "mapping" in args.actions:
+            require_tool("hirc", path=str(ctx.config.wwiser_path or "") or None)
+        ctx.runtime_cache["tools_prechecked"] = True
 
     try:
         app_context = setup_app(
             dev_mode=args.dev, log_level=args.log_level.upper(), settings=context_settings, source_check=check_context
         )
-    except (AppContextValidationError, SourcePreflightError) as exc:
+    except (AppContextValidationError, SourcePreflightError, ValueError) as exc:
         logger.error(f"配置初始化失败: {exc}")
         if config_file is not None:
             logger.error(f"请检查当前命令使用的配置文件: {config_file}")

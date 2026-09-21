@@ -193,14 +193,14 @@ class HomePage(SmoothScrollArea):
         self.wwiser_card = QuickOpenRow(
             FIF.DEVELOPER_TOOLS,
             "wwiser",
-            self._default_relative_display_path(get_default_wwiser_relative_path()),
+            "内置 NativeHIRC",
             "打开位置",
             self.entry_panel,
         )
         self.vgmstream_card = QuickOpenRow(
             FIF.COMMAND_PROMPT,
             "vgmstream-cli",
-            self._default_relative_display_path(get_default_vgmstream_relative_path()),
+            "内置 pyvgmstream",
             "打开位置",
             self.entry_panel,
         )
@@ -236,20 +236,8 @@ class HomePage(SmoothScrollArea):
             self.output_dir_card.setDisplayText(self._default_relative_display_path(get_default_output_relative_path()))
         self.output_dir_card.setJumpEnabled(True)
 
-        if cfg.wwiser_path:
-            self.wwiser_card.setPath(cfg.wwiser_path)
-        else:
-            self.wwiser_card.setPath(str(get_default_wwiser_path(runtime_paths)))
-            self.wwiser_card.setDisplayText(self._default_relative_display_path(get_default_wwiser_relative_path()))
-        self.wwiser_card.setJumpEnabled(True)
-        if cfg.vgmstream_path:
-            self.vgmstream_card.setPath(cfg.vgmstream_path)
-        else:
-            self.vgmstream_card.setPath(str(get_default_vgmstream_path(runtime_paths)))
-            self.vgmstream_card.setDisplayText(
-                self._default_relative_display_path(get_default_vgmstream_relative_path())
-            )
-        self.vgmstream_card.setJumpEnabled(True)
+        self.update_wwiser(cfg.wwiser_path)
+        self.update_vgmstream(cfg.vgmstream_path)
 
     # ------------------------------------------------------------------
     # Background initialisation worker
@@ -365,22 +353,16 @@ class HomePage(SmoothScrollArea):
             self._start_home_status_check()
 
     def update_wwiser(self, path: str) -> None:
-        if path:
-            self.wwiser_card.setPath(path)
-            return
-
-        runtime_paths = self._runtime_paths()
-        self.wwiser_card.setPath(str(get_default_wwiser_path(runtime_paths)))
-        self.wwiser_card.setDisplayText(self._default_relative_display_path(get_default_wwiser_relative_path()))
+        """同步配置路径；内置后端没有外部文件位置。"""
+        self.wwiser_card.setPath(path)
+        self.wwiser_card.setDisplayText(path or "内置 NativeHIRC")
+        self.wwiser_card.setJumpEnabled(bool(path))
 
     def update_vgmstream(self, path: str) -> None:
-        if path:
-            self.vgmstream_card.setPath(path)
-            return
-
-        runtime_paths = self._runtime_paths()
-        self.vgmstream_card.setPath(str(get_default_vgmstream_path(runtime_paths)))
-        self.vgmstream_card.setDisplayText(self._default_relative_display_path(get_default_vgmstream_relative_path()))
+        """同步配置路径；内置后端没有外部文件位置。"""
+        self.vgmstream_card.setPath(path)
+        self.vgmstream_card.setDisplayText(path or "内置 pyvgmstream")
+        self.vgmstream_card.setJumpEnabled(bool(path))
 
     # Legacy compat
     def update_dir_status(self, has_dir: bool, version: str | None = None) -> None:

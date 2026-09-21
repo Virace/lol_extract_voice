@@ -188,7 +188,6 @@ enable = true
 
 - `--wav-workers N`
 - `--wav-timeout SECONDS`
-- `--wav-retries N`
 - `--wav-format {auto,pcm16,pcm24,pcm32,float}`
 
 在 `-c` 模式下：
@@ -269,3 +268,9 @@ CLI 顶层根据同一个 `RunResult` 统一决定主结论与进程退出码；
 update 的共享数据、持久化或全局准备失败会阻断依赖阶段。extract partial 时，WAV 只接收
 success/partial 且 `artifacts` 非空的实体目标；mapping 不依赖 extract 产物时仍会继续。日志样本摘要用于诊断，
 不再作为退出状态的事实来源。
+
+外部转码可通过 `--vgmstream-path <vgmstream-cli路径>` 选择，支持 `auto`、`pcm16`、`pcm24`、
+`pcm32`、`float`，并发和单文件超时沿用 `--wav-workers`、`--wav-timeout`。
+空路径使用内置后端；两者启动前均进行真实样本预检，CLI 失败直接退出，不询问或自动切换。
+`--wav-retries N` 设置文件任务最大尝试次数（包含首次，默认 3，至少 1）。
+内外后端共用任务级重试，重试保持后端和参数，不重复预检；耗尽次数后保留失败诊断。

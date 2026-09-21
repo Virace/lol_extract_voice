@@ -103,7 +103,7 @@ def test_gui_config_save_updates_wav_group_enable_and_tuning(tmp_path: Path) -> 
     cfg.load()
     cfg.wav_workers = 8
     cfg.wav_timeout = 11
-    cfg.wav_retries = 5
+    cfg.wav_retries = EXPECTED_WAV_RETRIES
 
     cfg.save()
 
@@ -111,7 +111,7 @@ def test_gui_config_save_updates_wav_group_enable_and_tuning(tmp_path: Path) -> 
         "wav": True,
         "wav_workers": 8,
         "wav_timeout": 11,
-        "wav_retries": 5,
+        "wav_retries": EXPECTED_WAV_RETRIES,
         "wav_format": "auto",
     }
     assert load_command_config(config_file, command="extract") == {}

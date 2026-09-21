@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QWidget
 from qfluentwidgets import FluentIcon as FIF
-from qfluentwidgets import PushSettingCard, SettingCardGroup, ToolButton
+from qfluentwidgets import PushButton, PushSettingCard, SettingCardGroup, ToolButton
 
 from lol_audio_unpack.gui.view.settings.cards import (
     ComboRowSettingCard,
@@ -54,7 +54,7 @@ class ToolPathPanel:
     """承载外部工具路径设置。"""
 
     def __init__(self, *, parent: QWidget) -> None:
-        self.group = SettingCardGroup("工具配置", parent)
+        self.group = SettingCardGroup("高级设置", parent)
         self.wwiserCard = PushSettingCard(
             "选择文件",
             FIF.DEVELOPER_TOOLS,
@@ -68,6 +68,10 @@ class ToolPathPanel:
             "可选外部工具。默认使用内置 pyvgmstream；高级兼容场景再设置。",
         )
 
+        self.wwiserClear = PushButton("清除", self.wwiserCard)
+        self.vgmstreamClear = PushButton("清除", self.vgmstreamCard)
+        self.wwiserCard.hBoxLayout.addWidget(self.wwiserClear)
+        self.vgmstreamCard.hBoxLayout.addWidget(self.vgmstreamClear)
         self.group.addSettingCard(self.wwiserCard)
         self.group.addSettingCard(self.vgmstreamCard)
 
@@ -89,13 +93,12 @@ class WavSettingsPanel:
             "单个音频转码任务的默认超时时间（秒）",
             ["3", "5", "8", "10", "15", "20", "30", "60"],
         )
-        self.wavRetriesCard = ComboRowSettingCard(
-            FIF.SETTING,
-            "最大重试次数",
-            "单个音频转码任务失败后的默认最大重试次数",
-            ["0", "1", "2", "3", "4", "5"],
-        )
-
         self.group.addSettingCard(self.wavWorkersCard)
         self.group.addSettingCard(self.wavTimeoutCard)
+        self.wavRetriesCard = ComboRowSettingCard(
+            FIF.SETTING,
+            "最大尝试次数",
+            "单个音频转码任务的尝试上限，包含首次；1 表示失败后不重试",
+            ["1", "2", "3", "4", "5"],
+        )
         self.group.addSettingCard(self.wavRetriesCard)

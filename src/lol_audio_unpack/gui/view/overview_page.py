@@ -250,9 +250,7 @@ class OverviewPage(QWidget):
         """
         previous_phase = self._shared_data_state.phase
         self._shared_data_state = state
-        self.export_controller.set_busy(
-            state.blocks_new_tasks or self._task_busy or self._resource_pack_scan_worker is not None
-        )
+        self.export_controller.set_busy(self._task_busy or self._resource_pack_scan_worker is not None)
         display = describe_shared_data_state(state)
         status_text = display.detail_text if state.active else display.status_text
         self.shared_data_status.set_status(status_text, role=display.status_role)
@@ -778,7 +776,7 @@ class OverviewPage(QWidget):
         """合并最新已持久化 resource-pack 行，并展示聚合成本与状态。"""
         self._resource_pack_scan_worker = None
         self.background_work_changed.emit(False)
-        self.export_controller.set_busy(self._task_busy or self._shared_data_state.blocks_new_tasks)
+        self.export_controller.set_busy(self._task_busy)
         self.entityListPanel.set_resource_pack_scan_enabled(self._app_context is not None)
         loader = self._ensure_loader()
         if loader is not None:
@@ -793,7 +791,7 @@ class OverviewPage(QWidget):
         """恢复扫描入口，并保留后台 discovery 的失败说明。"""
         self._resource_pack_scan_worker = None
         self.background_work_changed.emit(False)
-        self.export_controller.set_busy(self._task_busy or self._shared_data_state.blocks_new_tasks)
+        self.export_controller.set_busy(self._task_busy)
         self.entityListPanel.set_resource_pack_scan_enabled(self._app_context is not None)
         self.entityListPanel.set_special_catalog_notice(f"本地资源包扫描失败: {error}")
 
@@ -1041,6 +1039,9 @@ class OverviewPage(QWidget):
                 options=WavOutputOptions(
                     enabled=True,
                     worker_count=int(getattr(self.gui_config, "wav_workers", 2)),
+                    timeout_seconds=int(getattr(self.gui_config, "wav_timeout", 5)),
+                    max_retries=int(getattr(self.gui_config, "wav_retries", 3)),
+                    backend_path=str(self.gui_config.resolve_vgmstream_path() or "") if self.gui_config else None,
                     format=self._wav_format(),
                 ),
             ),
@@ -1055,9 +1056,7 @@ class OverviewPage(QWidget):
     def set_task_busy(self, busy: bool) -> None:
         """用全局任务忙碌状态阻止重叠导出和资源包扫描。"""
         self._task_busy = busy
-        self.export_controller.set_busy(
-            busy or self._shared_data_state.blocks_new_tasks or self._resource_pack_scan_worker is not None
-        )
+        self.export_controller.set_busy(busy or self._resource_pack_scan_worker is not None)
         self.entityListPanel.set_resource_pack_scan_enabled(
             not busy and self._app_context is not None and self._resource_pack_scan_worker is None
         )

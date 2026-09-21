@@ -143,7 +143,7 @@ def test_execution_page_uses_latest_wav_defaults_from_setting_page(qtbot) -> Non
     assert draft.task_params.wav_enabled is True
     assert draft.task_params.wav_workers == EXPECTED_WAV_WORKERS
     assert draft.task_params.wav_timeout == EXPECTED_WAV_TIMEOUT
-    assert draft.task_params.wav_retries == EXPECTED_WAV_RETRIES
+    assert draft.task_params.to_operation_options().wav_output.max_retries == EXPECTED_WAV_RETRIES
     assert draft.task_params.wav_format == "float"
 
 

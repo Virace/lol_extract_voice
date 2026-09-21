@@ -27,6 +27,7 @@ class SettingKey:
     GROUP_BY_TYPE = "GROUP_BY_TYPE"
     WITH_BP_VO = "WITH_BP_VO"
     WWISER_PATH = "WWISER_PATH"
+    VGMSTREAM_PATH = "VGMSTREAM_PATH"
 
 
 class ConfigSection:
@@ -70,6 +71,7 @@ SHARED_SETTING_FIELDS: tuple[SharedSettingField, ...] = (
     SharedSettingField(SettingKey.GROUP_BY_TYPE, "group_by_type", "group_by_type", False),
     SharedSettingField(SettingKey.WITH_BP_VO, "with_bp_vo", "with_bp_vo", False),
     SharedSettingField(SettingKey.WWISER_PATH, "wwiser_path", "wwiser_path"),
+    SharedSettingField(SettingKey.VGMSTREAM_PATH, "vgmstream_path", "vgmstream_path"),
 )
 
 SHARED_FIELDS_BY_KEY: dict[str, SharedSettingField] = {field.key: field for field in SHARED_SETTING_FIELDS}

@@ -31,6 +31,7 @@ from lol_audio_unpack.mapping import (
 )
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.model.progress import OperationProgress
+from lol_audio_unpack.runtime.probe import require_tool
 from lol_audio_unpack.runtime.wav import TranscodeTarget, run_tree
 from lol_audio_unpack.unpack import unpack_all, unpack_champions, unpack_maps, unpack_resource_packs
 
@@ -130,6 +131,16 @@ class LolAudioUnpackApp:
             resource_wads=wads,
             resource_only=self._has_resource_pack_targets(opts) and opts.champion_ids is None and opts.map_ids is None,
         )
+
+    def check_tools(self, opts: OperationOptions, *, mapping: bool = False) -> None:
+        """为直接 API 调用检查所需后端，已预检的任务快照无需重复探测。"""
+        if self.ctx.runtime_cache.get("tools_prechecked"):
+            return
+        if opts.wav_output.enabled:
+            path = str(self.ctx.config.vgmstream_path or "") or opts.wav_output.backend_path
+            require_tool("wav", path=path, options=opts.wav_output)
+        if mapping:
+            require_tool("hirc", path=str(self.ctx.config.wwiser_path or "") or None)
 
     @staticmethod
     def _log_stage_result(result: StageResult, *, label: str, success_detail: str | None = None) -> None:
@@ -432,6 +443,8 @@ class LolAudioUnpackApp:
                 self._check_source(
                     opts, include_champions=target in {"all", "skin"}, include_maps=target in {"all", "map"}
                 )
+                if opts.wav_output.enabled:
+                    self.check_tools(opts)
                 if progress_callback is not None:
                     progress_callback(OperationProgress("update", "data", "started"))
                 self.prepare_update_data(force_update=opts.force_update)
@@ -578,6 +591,8 @@ class LolAudioUnpackApp:
         opts = self._resolve_operation_options(opts)
         try:
             self._check_source(opts, include_champions=include_champions, include_maps=include_maps)
+            if opts.wav_output.enabled:
+                self.check_tools(opts)
             reader = self._get_reader()
             logger.info(
                 f"音频类型配置 - 包含: {list(self.ctx.config.include_types)}, "
@@ -661,6 +676,7 @@ class LolAudioUnpackApp:
         """
         opts = self._resolve_operation_options(opts)
         try:
+            self.check_tools(opts, mapping=True)
             backend_label = self._describe_mapping_backend()
             self._check_source(opts, include_champions=include_champions, include_maps=include_maps)
             reader = self._get_reader()

@@ -8,17 +8,25 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
-from time import monotonic
+from time import monotonic, sleep
 from uuid import uuid4
 
 from loguru import logger
+from pyvgmstream import DecodeConfig
 from pyvgmstream.transcode import BatchTranscodeProgress, transcode_many
 
 from ...app.audio_scope import AudioScope, MappingNode
 from ...app.types import WavOutputOptions
+from ..probe import require_tool
 from ._runtime import build_output_path, resolve_decode_config
+from .external import transcode_external
 
 _PROGRESS_INTERVAL = 0.1
+
+
+def decode_config(format_name: str) -> DecodeConfig:
+    """现役批处理与预检只解码一遍，与外部 CLI 的 ``-i`` 语义一致。"""
+    return replace(resolve_decode_config(format_name) or DecodeConfig(), ignore_loop=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,8 +96,9 @@ def run_batch(  # noqa: PLR0913
     progress: Callable[[BatchTranscodeProgress], None] | None = None,
     output_file: Path | None = None,
     parent_id: str | None = None,
+    prechecked: bool = False,
 ) -> WavBatchResult:
-    """在调用方后台执行范围扫描和一次上游批处理。
+    """在调用方后台执行转码任务，并按统一次数限制重试失败文件。
 
     Args:
         scope: 当前实体的紧凑范围。
@@ -100,10 +109,96 @@ def run_batch(  # noqa: PLR0913
         progress: 节流后的文件计数回调，应为异步 UI 信号或队列。
         output_file: 单文件另存为目标；使用临时目录避免覆盖同 ID 的其他文件。
         parent_id: 失败重试所关联的原操作身份。
+        prechecked: 当前冻结任务已通过相同后端和参数的启动预检。
 
     Returns:
         带有独立报告地址的批处理事实。
     """
+    if options.max_retries < 1:
+        raise ValueError("max_retries must be positive")
+    started = monotonic()
+    checked = prechecked
+    result: WavBatchResult | None = None
+    total = 0
+    completed = 0
+
+    def check_tool() -> None:
+        nonlocal checked
+        if not checked:
+            require_tool("wav", path=options.backend_path, options=options)
+            checked = True
+
+    def emit(snapshot: BatchTranscodeProgress) -> None:
+        nonlocal total, completed
+        if result is None:
+            total = snapshot.total_count
+        base = result.success_count + result.skipped_count if result is not None else 0
+        # 后端完成仍需落盘；自动重试期间保持总量和进度，不提前显示完成。
+        completed = max(completed, min(max(0, total - 1), base + snapshot.completed_count - snapshot.failed_count))
+        if progress is not None:
+            progress(BatchTranscodeProgress(completed, total, 0))
+
+    for attempt in range(1, options.max_retries + 1):
+        current = _run_attempt(
+            scope if result is None else result.retry_scope(),
+            output_root,
+            options=options,
+            report_root=report_root,
+            overwrite=overwrite if result is None else True,
+            progress=emit,
+            output_file=output_file,
+            parent_id=parent_id,
+            check_tool=check_tool,
+        )
+        if result is None:
+            result = current
+            total = current.success_count + current.skipped_count + current.failed_count + current.unconfirmed_count
+        else:
+            result = replace(
+                result,
+                success_count=result.success_count + current.success_count,
+                skipped_count=result.skipped_count + current.skipped_count,
+                failures=current.failures,
+                failed_count=current.failed_count,
+                error_message=current.error_message,
+                unconfirmed_count=current.unconfirmed_count,
+            )
+        # 只重置有可靠身份的失败文件；预检或批处理整体中断不伪造文件终态。
+        if result.error_message or not result.failures or attempt == options.max_retries:
+            break
+        logger.warning(
+            "WAV 文件任务重试：{} 个文件，第 {}/{} 次尝试", result.failed_count, attempt + 1, options.max_retries
+        )
+        sleep(0.1 * attempt)
+
+    result = _persist_result(replace(result, duration_seconds=monotonic() - started))
+    if progress is not None:
+        progress(BatchTranscodeProgress(total - result.unconfirmed_count, total, result.failed_count))
+    if result.failures or result.error_message:
+        logger.warning(
+            "WAV 批处理结束：成功 {}、失败 {}、跳过 {} 个文件",
+            result.success_count,
+            result.failed_count,
+            result.skipped_count,
+        )
+    else:
+        logger.success("WAV 批处理结束：成功 {}、跳过 {} 个文件", result.success_count, result.skipped_count)
+    return result
+
+
+def _run_attempt(  # noqa: PLR0913
+    scope: AudioScope,
+    output_root: Path,
+    *,
+    options: WavOutputOptions,
+    report_root: Path,
+    overwrite: bool,
+    progress: Callable[[BatchTranscodeProgress], None],
+    output_file: Path | None,
+    parent_id: str | None,
+    check_tool: Callable[[], None],
+) -> WavBatchResult:
+    """重新读取输入并完成一次转码与原子落盘，不在工具适配层重试。"""
     started = monotonic()
     operation_id = uuid4().hex
     output_root = Path(output_root).expanduser().resolve()
@@ -130,7 +225,7 @@ def run_batch(  # noqa: PLR0913
             parent_id,
             f"范围复核失败: {exc}",
         )
-        return _persist_result(result)
+        return result
     if output_file is not None and len(sources) != 1:
         raise ValueError("另存为文件只支持一个精确音频")
     skipped = 0
@@ -158,9 +253,19 @@ def run_batch(  # noqa: PLR0913
         ):
             last_emit = now
             if progress is not None:
-                progress(snapshot)
+                progress(
+                    BatchTranscodeProgress(snapshot.completed_count + skipped, len(sources), snapshot.failed_count)
+                )
 
     def transcode(destination: Path):
+        if options.backend_path:
+            return transcode_external(
+                pending,
+                destination,
+                input_root=root if output_file is None else None,
+                options=options,
+                progress=emit,
+            )
         return transcode_many(
             pending,
             destination,
@@ -168,7 +273,7 @@ def run_batch(  # noqa: PLR0913
             workers=options.worker_count,
             chunk_frames=65536,
             dispatch_chunksize=64,
-            config=resolve_decode_config(options.format),
+            config=decode_config(options.format),
             progress_callback=emit,
         )
 
@@ -177,6 +282,7 @@ def run_batch(  # noqa: PLR0913
     unconfirmed_count = 0
     try:
         if pending:
+            check_tool()
             destination = output_file.parent if output_file is not None else output_root
             destination.mkdir(parents=True, exist_ok=True)
             # 暂存与最终输出位于同一卷；只有上游确认成功后才原子替换，失败残留不能被下次跳过。
@@ -185,6 +291,7 @@ def run_batch(  # noqa: PLR0913
                 for item in summary.results:
                     output = output_file or build_output_path(item.source_path, audio_root=root, wav_root=output_root)
                     if item.error is not None:
+                        logger.error("WAV 转码失败 {}：{}", item.source_path, item.error)
                         failures.append(WavFailure(str(item.source_path), str(output), item.error))
                         continue
                     try:
@@ -218,11 +325,6 @@ def run_batch(  # noqa: PLR0913
         error_message,
         unconfirmed_count,
     )
-    result = _persist_result(result)
-    if failures or error_message:
-        logger.warning("WAV 批处理结束：成功 {}、失败 {}、跳过 {} 个文件", success_count, len(failures), skipped)
-    else:
-        logger.success("WAV 批处理结束：成功 {}、跳过 {} 个文件", success_count, skipped)
     return result
 
 

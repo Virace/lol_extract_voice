@@ -117,7 +117,8 @@ def _build_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConfig:
     exclude_types = _parse_exclude_types(settings.get(SettingKey.EXCLUDE_TYPE))
     include_types = tuple(audio_type for audio_type in KNOWN_AUDIO_TYPES if audio_type not in set(exclude_types))
 
-    wwiser_path_raw = settings.get(SettingKey.WWISER_PATH)
+    wwiser_path_raw = str(settings.get(SettingKey.WWISER_PATH) or "").strip()
+    vgmstream_path_raw = str(settings.get(SettingKey.VGMSTREAM_PATH) or "").strip()
 
     return AppConfig(
         game_path=game_path,
@@ -129,6 +130,9 @@ def _build_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConfig:
         with_bp_vo=_parse_bool(settings.get(SettingKey.WITH_BP_VO, False)),
         wwiser_path=(
             resolve_runtime_path(str(wwiser_path_raw).strip(), relative_to=runtime_root) if wwiser_path_raw else None
+        ),
+        vgmstream_path=(
+            resolve_runtime_path(vgmstream_path_raw, relative_to=runtime_root) if vgmstream_path_raw else None
         ),
         dev_mode=dev_mode,
     )

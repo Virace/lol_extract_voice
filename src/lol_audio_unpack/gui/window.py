@@ -506,6 +506,7 @@ class MainWindow(FluentWindow):
         si.output_path_changed.connect(hi.update_output_dir)
         si.wwiser_path_changed.connect(hi.update_wwiser)
         si.vgmstream_path_changed.connect(hi.update_vgmstream)
+        self.executionInterface.tool_probes_ready.connect(si.show_tool_probes)
         hi.navigate_to_execution_requested.connect(lambda: self.switchTo(self.executionInterface))
         hi.navigate_to_overview_requested.connect(lambda: self.switchTo(self.overviewInterface))
         hi.shared_data_action_requested.connect(self._dispatch_shared_data_action)

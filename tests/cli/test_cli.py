@@ -258,7 +258,7 @@ def test_apply_config_profile_loads_runtime_and_wav_sections(monkeypatch, tmp_pa
     assert args.wav is True
     assert args.wav_workers == EXPECTED_WAV_WORKERS
     assert args.wav_timeout == EXPECTED_WAV_TIMEOUT
-    assert args.wav_retries == EXPECTED_WAV_RETRIES
+    assert runtime_cli.build_options(args).wav_output.max_retries == EXPECTED_WAV_RETRIES
     assert args.wav_format == "auto"
 
 
@@ -283,7 +283,6 @@ def test_config_mode_allows_disabled_wav_section_with_tuning_values(monkeypatch,
                 "wav": False,
                 "wav_workers": EXPECTED_WAV_WORKERS,
                 "wav_timeout": EXPECTED_WAV_TIMEOUT,
-                "wav_retries": EXPECTED_WAV_RETRIES,
                 "wav_format": "auto",
             },
         }.get(command, {}),
@@ -297,9 +296,8 @@ def test_config_mode_allows_disabled_wav_section_with_tuning_values(monkeypatch,
     assert args.wav is False
     assert args.wav_workers is None
     assert args.wav_timeout is None
-    assert args.wav_retries is None
     assert args.wav_format is None
-    assert warnings == ["[wav] enable=false，已忽略同组细节参数: wav_workers, wav_timeout, wav_retries, wav_format"]
+    assert warnings == ["[wav] enable=false，已忽略同组细节参数: wav_workers, wav_timeout, wav_format"]
 
 
 def test_validate_args_config_mode_requires_enabled_action(monkeypatch, tmp_path: Path) -> None:

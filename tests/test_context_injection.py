@@ -12,6 +12,7 @@ from lol_audio_unpack.manager.files import write_data
 from lol_audio_unpack.mapping import batch as mapping_batch
 from lol_audio_unpack.mapping import session as mapping_session
 from lol_audio_unpack.model import AudioEntityData
+from lol_audio_unpack.runtime import hirc as hirc_backend
 from lol_audio_unpack.unpack import batch as unpack_batch
 from lol_audio_unpack.unpack import bp_vo as unpack_bp_vo
 from lol_audio_unpack.unpack.stats import StageResult as UnpackStageResult
@@ -200,7 +201,7 @@ def test_execute_tasks_defaults_to_native_hirc(monkeypatch: pytest.MonkeyPatch, 
         captured["ctx"] = kwargs.get("ctx")
         return {}
 
-    monkeypatch.setattr(mapping_session, "WwiserManager", fail_wwiser_manager)
+    monkeypatch.setattr(mapping_session, "WwiserTool", fail_wwiser_manager)
     monkeypatch.setattr(mapping_batch, "build_champion", fake_build_champion_mapping)
 
     reader = SimpleNamespace()
@@ -229,7 +230,7 @@ def test_execute_tasks_passes_wwiser_manager_and_ctx_to_runtime(
         captured["ctx"] = kwargs.get("ctx")
         return {}
 
-    monkeypatch.setattr(mapping_session, "WwiserManager", fake_wwiser_manager)
+    monkeypatch.setattr(mapping_session, "WwiserTool", fake_wwiser_manager)
     monkeypatch.setattr(mapping_batch, "build_champion", fake_build_champion_mapping)
 
     reader = SimpleNamespace()
@@ -348,15 +349,15 @@ def test_get_cached_hirc_uses_native_hirc_by_default(monkeypatch: pytest.MonkeyP
     native_hirc = object()
     captured: dict[str, object] = {}
 
-    def fake_native_from_bnk(path: Path, *, cache_dir: Path) -> object:
+    def fake_native_from_bnk(path: Path, *, cache_dir: Path, use_cache: bool = True) -> object:
         captured["native_args"] = (path, cache_dir)
         return native_hirc
 
     def fail_wwiser_from_bnk(*_args, **_kwargs) -> object:
         pytest.fail("默认路径不应调用 WwiserHIRC")
 
-    monkeypatch.setattr(mapping_session, "NativeHIRC", SimpleNamespace(from_bnk=fake_native_from_bnk))
-    monkeypatch.setattr(mapping_session, "WwiserHIRC", SimpleNamespace(from_bnk=fail_wwiser_from_bnk))
+    monkeypatch.setattr(hirc_backend, "NativeHIRC", SimpleNamespace(from_bnk=fake_native_from_bnk))
+    monkeypatch.setattr(hirc_backend, "WwiserHIRC", SimpleNamespace(from_bnk=fail_wwiser_from_bnk))
 
     result = mapping_session._get_cached_hirc(
         bnk_path=bnk_path,
@@ -379,12 +380,12 @@ def test_get_cached_hirc_uses_wwiser_when_manager_is_provided(monkeypatch: pytes
     def fail_native_from_bnk(*_args, **_kwargs) -> object:
         pytest.fail("显式提供 wwiser_manager 时不应调用 NativeHIRC")
 
-    def fake_wwiser_from_bnk(path: Path, *, cache_dir: Path, wwiser_manager: object) -> object:
+    def fake_wwiser_from_bnk(path: Path, *, cache_dir: Path, wwiser_manager: object, use_cache: bool = True) -> object:
         captured["wwiser_args"] = (path, cache_dir, wwiser_manager)
         return wwiser_hirc
 
-    monkeypatch.setattr(mapping_session, "NativeHIRC", SimpleNamespace(from_bnk=fail_native_from_bnk))
-    monkeypatch.setattr(mapping_session, "WwiserHIRC", SimpleNamespace(from_bnk=fake_wwiser_from_bnk))
+    monkeypatch.setattr(hirc_backend, "NativeHIRC", SimpleNamespace(from_bnk=fail_native_from_bnk))
+    monkeypatch.setattr(hirc_backend, "WwiserHIRC", SimpleNamespace(from_bnk=fake_wwiser_from_bnk))
 
     result = mapping_session._get_cached_hirc(
         bnk_path=bnk_path,

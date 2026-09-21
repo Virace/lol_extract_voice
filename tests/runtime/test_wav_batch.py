@@ -35,7 +35,7 @@ def test_batch_keeps_paths_counts_and_retry_evidence(tmp_path: Path, monkeypatch
         for source in sources:
             target = (output_root / source.relative_to(input_root)).with_suffix(".wav")
             target.parent.mkdir(parents=True, exist_ok=True)
-            failed = len(calls) == 1 and source == root / "skin/VO/1.wem"
+            failed = len(calls) <= options.max_retries and source == root / "skin/VO/1.wem"
             target.write_bytes(b"failed-remnant" if failed else b"wav")
             results.append(BatchTranscodeItemResult(source, target, 0, 0, "unknown format" if failed else None))
         return BatchTranscodeSummary(
@@ -43,16 +43,18 @@ def test_batch_keeps_paths_counts_and_retry_evidence(tmp_path: Path, monkeypatch
         )
 
     monkeypatch.setattr(batch, "transcode_many", transcode)
+    options = WavOutputOptions()
     scope = AudioScope(root, directories=(".", "base"), files=(keys[0],), excluded=frozenset({keys[-1]}))
-    result = batch.run_batch(scope, output, options=WavOutputOptions(), report_root=tmp_path / "reports")
+    result = batch.run_batch(scope, output, options=options, report_root=tmp_path / "reports")
     assert (result.success_count, result.failed_count, result.skipped_count) == (1, 1, 1)
     assert set(calls[0]) == {root / keys[0], root / keys[1]}
+    assert calls[1:] == [(root / keys[1],)] * (options.max_retries - 1)
     assert result.status == "partial"
     assert not (output / "skin/VO/1.wav").exists()
     assert result.failures[0].output_path == str(output / "skin/VO/1.wav")
     original = result.report_path.read_bytes()
     retried = batch.retry_batch(result)
-    assert calls[1] == (root / keys[1],)
+    assert calls[options.max_retries] == (root / keys[1],)
     assert retried.status == "success"
     assert retried.parent_id == result.operation_id
     assert retried.report_path != result.report_path

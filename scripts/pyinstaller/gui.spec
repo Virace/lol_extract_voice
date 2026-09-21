@@ -38,6 +38,7 @@ if options.runtime_version:
 runtime_hooks.append(str(RUNTIME_HOOK))
 
 datas = collect_data_files("qfluentwidgets")
+datas += collect_data_files("lol_audio_unpack", includes=["resources/preflight/*"])
 datas += [
     (
         str(path),

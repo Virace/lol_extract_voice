@@ -21,6 +21,7 @@ from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
 from lol_audio_unpack.mapping import build_entity
 from lol_audio_unpack.model import AudioBank, AudioEntityData
 from lol_audio_unpack.model.binding import BankBinding, BindingDiagnostics, BindingRole, BindingStatus, Completeness
+from lol_audio_unpack.runtime import hirc as hirc_backend
 from lol_audio_unpack.unpack import entity as unpack_entity
 
 FAKE_GAME_PATH = Path("FakeGame")
@@ -985,11 +986,11 @@ def test_hirc_memory_cache_key_includes_wad_identity_and_backend(tmp_path: Path,
 
     class _FakeNativeHirc:
         @staticmethod
-        def from_bnk(path: Path, cache_dir: Path) -> object:  # noqa: ARG004
+        def from_bnk(path: Path, cache_dir: Path, use_cache: bool = True) -> object:  # noqa: ARG004
             parsed.append(path)
             return object()
 
-    monkeypatch.setattr(mapping_session, "NativeHIRC", _FakeNativeHirc)
+    monkeypatch.setattr(hirc_backend, "NativeHIRC", _FakeNativeHirc)
     cache = mapping_session.RuntimeCache()
     hirc_dir = tmp_path / "hirc"
 

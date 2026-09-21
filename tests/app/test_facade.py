@@ -23,6 +23,7 @@ from lol_audio_unpack.model.progress import OperationProgress
 def isolate_source_files(monkeypatch):
     """本模块验证阶段分派；真实存在性与写入前阻断由 test_preflight 覆盖。"""
     monkeypatch.setattr(LolAudioUnpackApp, "_check_source", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(LolAudioUnpackApp, "check_tools", lambda *_args, **_kwargs: None)
 
 
 def _success_result(stage: str, entity_type: str = "champion", entity_id: int | str = 1) -> StageResult:

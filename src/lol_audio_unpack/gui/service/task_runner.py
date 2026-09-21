@@ -343,11 +343,8 @@ def _run_audio_export(task: QueuedExecutionTask, signals: WorkerSignals) -> Exec
         )
 
     if task.draft.retry_wav:
-        for previous in task.draft.retry_wav:
-            batches.append(retry_batch(previous, progress=emit))
-        report_root = task.draft.retry_wav[0].report_path.parent.parent
-        version = task.draft.version
-    elif request is not None:
+        raise ValueError("本次转码不支持失败重试，请检查诊断后创建新任务")
+    if request is not None:
         request.validate()
         for target in request.targets:
             batches.append(
@@ -359,6 +356,7 @@ def _run_audio_export(task: QueuedExecutionTask, signals: WorkerSignals) -> Exec
                     overwrite=request.overwrite,
                     progress=emit,
                     output_file=request.output_file,
+                    prechecked=task.draft.tools_checked,
                 )
             )
         report_root = request.report_root
@@ -393,15 +391,21 @@ def _run_audio_export(task: QueuedExecutionTask, signals: WorkerSignals) -> Exec
     )
     result = RunResult((stage,))
     duration = perf_counter() - started
-    report_path = write_operation_report(
-        report_root,
-        operation_id=task.draft.operation_id,
-        version=version,
-        snapshot=asdict(task.draft),
-        result=result,
-        duration_seconds=duration,
-        retry_of=task.draft.retry_of,
-    )
+    report_path = None
+    try:
+        report_path = write_operation_report(
+            report_root,
+            operation_id=task.draft.operation_id,
+            version=version,
+            snapshot=asdict(task.draft),
+            result=result,
+            duration_seconds=duration,
+            retry_of=task.draft.retry_of,
+        )
+    except OSError as exc:
+        logger.error("任务报告保存失败，保留已完成音频与内存结果：{}", exc)
+        result = RunResult((*result.stages, StageResult.from_error("report", exc)))
+        summary += f"；报告保存失败：{exc}"
     _log_run_result(task.task_id, result, summary)
     return ExecutionTaskResult(
         ("音频转码",) if success else (),
@@ -505,6 +509,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     def create_runtime_app(settings) -> LolAudioUnpackApp:
         nonlocal runtime_context
         runtime_context = create_app_context(settings=settings)
+        runtime_context.runtime_cache["tools_prechecked"] = task.draft.tools_checked
         if task.draft.version and resolve_game_version(runtime_context) != task.draft.version:
             raise ValueError("客户端版本已变化，请刷新共享数据后重新确认任务范围")
         return LolAudioUnpackApp(runtime_context)
@@ -725,15 +730,20 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     version = task.draft.version or getattr(runtime_context, "runtime_cache", {}).get("resolved_runtime_version", "")
     report_path = None
     if version and runtime_context is not None:
-        report_path = write_operation_report(
-            Path(runtime_context.paths.report_path) / version,
-            operation_id=task.draft.operation_id,
-            version=version,
-            snapshot=asdict(task.draft),
-            result=run_result,
-            duration_seconds=duration_seconds,
-            retry_of=task.draft.retry_of,
-        )
+        try:
+            report_path = write_operation_report(
+                Path(runtime_context.paths.report_path) / version,
+                operation_id=task.draft.operation_id,
+                version=version,
+                snapshot=asdict(task.draft),
+                result=run_result,
+                duration_seconds=duration_seconds,
+                retry_of=task.draft.retry_of,
+            )
+        except OSError as exc:
+            logger.error("任务报告保存失败，保留已完成结果：{}", exc)
+            run_result = RunResult((*run_result.stages, StageResult.from_error("report", exc)))
+            summary += f"；报告保存失败：{exc}"
     return ExecutionTaskResult(
         completed_steps=completed_step_names,
         summary=summary,

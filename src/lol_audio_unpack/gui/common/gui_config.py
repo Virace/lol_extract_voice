@@ -106,12 +106,12 @@ class GuiConfig:
         self._wav_enabled = bool(wav_settings.get("wav", False))
         self._wav_workers = int(wav_settings.get("wav_workers", 2))
         self._wav_timeout = int(wav_settings.get("wav_timeout", 5))
-        self._wav_retries = int(wav_settings.get("wav_retries", 3))
+        self.wav_retries = int(wav_settings.get("wav_retries", 3))
         self._wav_format = str(wav_settings.get("wav_format", "pcm16") or "pcm16")
 
         # 2. GUI 专有配置统一走项目 INI，不再读取用户全局 QSettings。
         self._prepare_data_on_startup = self._to_bool(_gui_value("prepare_data_on_startup", "false"))
-        self._vgmstream_path = _gui_value("vgmstream_path", "")
+        self._vgmstream_path = _shared_value(SettingKey.VGMSTREAM_PATH, _gui_value("vgmstream_path", ""))
 
         self._theme_mode = _gui_value("theme_mode", "Auto") or "Auto"
         self._accent_preset_id = resolve_accent_preset_id(_gui_value("accent_preset_id", self._accent_preset_id))
@@ -135,6 +135,7 @@ class GuiConfig:
                 SettingKey.GAME_REGION: self._game_region,
                 SettingKey.GROUP_BY_TYPE: self._group_by_type,
                 SettingKey.WWISER_PATH: self._wwiser_path,
+                SettingKey.VGMSTREAM_PATH: self._vgmstream_path,
             },
         )
         write_command_config(
@@ -175,6 +176,7 @@ class GuiConfig:
             SettingKey.GAME_REGION: self._game_region,
             SettingKey.GROUP_BY_TYPE: self._group_by_type,
             SettingKey.WWISER_PATH: self._wwiser_path,
+            SettingKey.VGMSTREAM_PATH: self._vgmstream_path,
         }
 
     def to_app_context_input_snapshot(self) -> AppContextInputSnapshot:
@@ -388,11 +390,13 @@ class GuiConfig:
 
     @property
     def wav_retries(self) -> int:
-        """返回默认音频转码最大重试次数。"""
+        """返回单文件转码任务的最大尝试次数，包含首次。"""
         return self._wav_retries
 
     @wav_retries.setter
     def wav_retries(self, value: int) -> None:
+        if int(value) < 1:
+            raise ValueError("WAV 最大尝试次数必须至少为 1")
         self._wav_retries = int(value)
 
     @property

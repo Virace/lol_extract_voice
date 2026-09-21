@@ -8,8 +8,11 @@ from types import SimpleNamespace
 import pytest
 
 import lol_audio_unpack.gui.window as window_module
+from lol_audio_unpack.app.audio_export import AudioExportRequest, ExportTarget
+from lol_audio_unpack.app.audio_scope import AudioScope
 from lol_audio_unpack.app.resource_pack import ResourcePackWadRef, build_resource_pack_key
 from lol_audio_unpack.app.results import EntityResult, ResultStatus, StageResult
+from lol_audio_unpack.app.types import WavOutputOptions
 from lol_audio_unpack.gui.service import task_runner
 from lol_audio_unpack.gui.shared_data import SharedDataRepairScope
 from lol_audio_unpack.gui.task_models import (
@@ -20,9 +23,42 @@ from lol_audio_unpack.gui.task_models import (
 )
 from lol_audio_unpack.gui.window import _prepare_shared_entity_data
 from lol_audio_unpack.model.progress import OperationProgress
+from lol_audio_unpack.runtime.wav.batch import WavBatchResult
 
 EXPECTED_CONTEXT_COUNT_WITH_UPDATE = 2
 PREPARE_GENERATION = 3
+
+
+def test_export_report_failure_preserves_successful_audio(tmp_path, monkeypatch) -> None:
+    """报告磁盘错误不能把已经完成的导出变成未知 worker 失败。"""
+    root = tmp_path / "16.18"
+    root.mkdir()
+    scope = AudioScope(root, files=("1.wem",))
+    options = WavOutputOptions(enabled=True)
+    request = AudioExportRequest(
+        "champion",
+        "1",
+        "Annie",
+        "16.18",
+        root,
+        (ExportTarget(scope, tmp_path / "wavs"),),
+        tmp_path / "reports",
+        options,
+    )
+    batch = WavBatchResult("batch", scope, tmp_path / "wavs", options, False, 1, 0, 0, (), 0.1, tmp_path / "batch.json")
+    monkeypatch.setattr(task_runner, "run_batch", lambda *_args, **_kwargs: batch)
+    monkeypatch.setattr(
+        task_runner,
+        "write_operation_report",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError("report denied")),
+    )
+    task = QueuedExecutionTask(1, ExecutionTaskDraft("export", "Annie", export_request=request), "Annie")
+    result = task_runner.run_execution_task(task, SimpleNamespace())
+    assert result.run_result.status is ResultStatus.PARTIAL
+    assert result.completed_steps == ("音频转码",)
+    assert result.wav_batches == (batch,)
+    assert result.report_path is None
+    assert "report denied" in result.summary
 
 
 def _stage(stage: str) -> StageResult:

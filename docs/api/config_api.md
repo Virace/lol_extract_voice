@@ -129,6 +129,7 @@ GUI 只读取 `[app]`。其余 section 仅供 CLI 配置文件模式使用；启
 - `EXCLUDE_TYPE`
 - `GROUP_BY_TYPE`
 - `WWISER_PATH`
+- `VGMSTREAM_PATH`
 - `WITH_BP_VO`
 
 当前默认值：
@@ -252,3 +253,17 @@ write_settings(
 )
 settings = load_settings(config_file)
 ```
+
+### 外部工具选择与启动预检
+
+`[app] wwiser_path` 和 `vgmstream_path` 留空分别使用内置 NativeHIRC、pyvgmstream；
+填写路径明确选择该外部工具。GUI 旧 `[gui] vgmstream_path` 在首次保存时写入共享字段，
+新共享字段（包括空值）优先。清除仅移除配置，不删除文件；任务使用创建时的快照。
+
+启动前只探测本次会调用的后端，使用随包提供的小 WEM/BNK 实际调用，失败不会静默回退。
+GUI 可确认仅本次改用内置并复检，也可取消；CLI/API 直接返回失败。正式转换对失败文件自动重试
+完整任务流程，默认最多尝试 3 次（含首次），保持原后端和参数，不重复工具预检；
+耗尽次数后记录失败并继续其他文件。任务结束后 GUI 不提供失败项手动重试入口。
+CLI `--wav-retries`、INI `[wav] wav_retries` 和 Python API `WavOutputOptions.max_retries`
+使用相同语义：最大尝试次数包含首次，默认 3，至少 1。GUI 的“最大尝试次数”同步读写该 INI 字段，
+创建任务与导出时冻结为任务参数；GUI 保存不会再移除该键。

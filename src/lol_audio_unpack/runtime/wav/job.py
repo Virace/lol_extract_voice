@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -14,6 +14,7 @@ from pyvgmstream.transcode import BatchTranscodeProgress
 
 from ...app.audio_scope import AudioScope
 from ...app.types import AppContext, WavOutputOptions
+from ..probe import require_tool
 from .batch import WavBatchResult, run_batch
 
 
@@ -120,6 +121,10 @@ def run_tree(  # noqa: PLR0913
         dict[str, Any]: 供上层汇总与日志消费的转码结果摘要。
     """
     paths = build_transcode_paths(ctx=ctx, version=version, job_label=job_label)
+    wav_output = replace(
+        wav_output,
+        backend_path=str(ctx.config.vgmstream_path) if ctx.config.vgmstream_path else wav_output.backend_path,
+    )
     operation_id = uuid4().hex
     report_root = paths.report_root / operation_id
 
@@ -169,6 +174,8 @@ def run_tree(  # noqa: PLR0913
     skipped_count = 0
     unconfirmed_count = 0
     batch_reports: list[str] = []
+    if not ctx.runtime_cache.get("tools_prechecked"):
+        require_tool("wav", path=wav_output.backend_path, options=wav_output)
     batches: list[WavBatchResult] = []
     batch_errors: list[str] = []
     failures: list[dict[str, Any]] = []
@@ -190,6 +197,7 @@ def run_tree(  # noqa: PLR0913
             options=wav_output,
             report_root=report_root,
             progress=emit_progress,
+            prechecked=True,
         )
         processed_count += summary.success_count
         batches.append(summary)
