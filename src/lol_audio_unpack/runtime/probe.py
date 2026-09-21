@@ -34,6 +34,7 @@ class ToolProbe:
     path: str | None
     kind: str = "ok"
     detail: str = ""
+    cache_only: bool = False
 
     @property
     def success(self) -> bool:
@@ -114,6 +115,7 @@ def _probe_entry(tool: str, path: str | None, options: WavOutputOptions, sample:
         from .wav.external import transcode_file  # noqa: PLC0415
 
         phase = "decode"
+        pipe.send(phase)
         if tool == "wav":
             output = sample.with_suffix(".wav")
             if path:
@@ -121,10 +123,12 @@ def _probe_entry(tool: str, path: str | None, options: WavOutputOptions, sample:
             else:
                 decode_to_wav_file(sample, output, config=decode_config(options.format))
             phase = "validate"
+            pipe.send(phase)
             validate_wav(output)
         else:
             hirc = load_hirc(sample, manager=WwiserTool(Path(path)) if path else None, use_cache=False)
             phase = "validate"
+            pipe.send(phase)
             banks = hirc.banks.values()
             valid = any(
                 _EVENT_ID in bank.events
@@ -139,8 +143,13 @@ def _probe_entry(tool: str, path: str | None, options: WavOutputOptions, sample:
         result = ToolProbe(tool, path)
     except ToolError as exc:
         result = ToolProbe(tool, path, exc.kind, str(exc))
-    except (ValueError, OSError, RuntimeError) as exc:
+    except ValueError as exc:
         result = ToolProbe(tool, path, "output" if phase == "validate" else phase, str(exc))
+    except FileNotFoundError as exc:
+        result = ToolProbe(tool, path, "output" if phase == "validate" else "environment", str(exc))
+    except (OSError, RuntimeError) as exc:
+        # 验证器本身无法工作与输出不合法分开，前者换工具也无法解决。
+        result = ToolProbe(tool, path, "environment" if phase == "validate" else phase, str(exc))
     except Exception as exc:  # noqa: BLE001
         result = ToolProbe(tool, path, "environment", f"{phase}：{type(exc).__name__}: {exc}")
     pipe.send(result)
@@ -190,17 +199,27 @@ def probe_tool(  # noqa: PLR0913, PLR0911
         process.start()
         writer.close()
         deadline = monotonic() + timeout
-        while not reader.poll(0.05):
+        phase = "environment"
+        while True:
             if cancel is not None and cancel.is_set():
                 return ToolProbe(tool, path, "cancelled", "已取消预检")
             if monotonic() >= deadline:
-                return ToolProbe(tool, path, "timeout", f"预检超过 {timeout:g} 秒")
-            if not process.is_alive():
-                return ToolProbe(tool, path, "exit", f"预检进程退出码 {process.exitcode}，未返回诊断")
-        try:
-            result = reader.recv()
-        except EOFError:
-            result = ToolProbe(tool, path, "exit", "预检进程未返回诊断")
+                kind = "timeout" if phase == "decode" else "environment"
+                return ToolProbe(tool, path, kind, f"预检 {phase} 阶段超过 {timeout:g} 秒")
+            if reader.poll(0.05):
+                try:
+                    message = reader.recv()
+                except EOFError:
+                    kind = "exit" if phase == "decode" else "environment"
+                    result = ToolProbe(tool, path, kind, f"预检 {phase} 阶段退出，未返回诊断")
+                    break
+                if isinstance(message, ToolProbe):
+                    result = message
+                    break
+                phase = message
+            elif not process.is_alive():
+                kind = "exit" if phase == "decode" else "environment"
+                return ToolProbe(tool, path, kind, f"预检 {phase} 阶段退出码 {process.exitcode}，未返回诊断")
         if not result.success:
             logger.warning("{} 后端预检失败 [{}]：{}", tool, result.kind, result.detail)
         return result

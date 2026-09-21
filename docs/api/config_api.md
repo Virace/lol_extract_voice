@@ -267,3 +267,17 @@ GUI 可确认仅本次改用内置并复检，也可取消；CLI/API 直接返�
 CLI `--wav-retries`、INI `[wav] wav_retries` 和 Python API `WavOutputOptions.max_retries`
 使用相同语义：最大尝试次数包含首次，默认 3，至少 1。GUI 的“最大尝试次数”同步读写该 INI 字段，
 创建任务与导出时冻结为任务参数；GUI 保存不会再移除该键。
+
+Windows 打包程序运行外部 `wwiser.pyz` 时，需要 PATH 中有可启动的 `python`；
+内置 NativeHIRC 不需要另装 Python。外部工具由用户自行准备，应用不自动下载。
+
+发布包可在不启动界面、不加载用户配置的情况下执行真实样本自检：
+
+```powershell
+.\LolAudioUnpack.exe --check-tools .\check-results\report.json --check-cancel `
+  --wwiser-path C:\Tools\wwiser.pyz --vgmstream-path C:\Tools\vgmstream-cli.exe
+```
+
+省略外部路径则只检查两项内置后端。报告包含实际样本调用结果、耗时和取消后的子进程情况；
+所选检查全部成功（以及启用时取消成功）才返回退出码 0。该命令保留报告和探测材料，
+不能替代正式界面的人工验收。

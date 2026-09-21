@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import struct
 import sys
+import time
 import wave
 from pathlib import Path
 from threading import Event
 
 import pytest
+import pyvgmstream
 
+from lol_audio_unpack.app.types import WavOutputOptions
+from lol_audio_unpack.runtime import probe
 from lol_audio_unpack.runtime.probe import probe_tool, validate_wav
 from lol_audio_unpack.runtime.tool_process import ToolError, run_tool
 
@@ -71,3 +75,43 @@ def test_external_process_returns_actual_failure(script: str, timeout: float, ki
         run_tool([sys.executable, "-c", script], timeout=timeout)
     assert raised.value.kind == kind
     assert detail in str(raised.value)
+
+
+def hang_probe_phase(tool, path, options, sample, pipe):
+    """替代外部边界，在指定阶段真实阻塞以检查父进程超时归属。"""
+    pipe.send(options.format)
+    time.sleep(30)
+
+
+@pytest.mark.parametrize(("phase", "kind"), [("decode", "timeout"), ("validate", "environment")])
+def test_probe_timeout_identifies_failing_phase(tmp_path, monkeypatch, phase, kind):
+    """工具调用超时可选择内置，验证器卡住则属于应用环境失败。"""
+    monkeypatch.setattr(probe, "_probe_entry", hang_probe_phase)
+    result = probe_tool(
+        "wav", path=sys.executable, options=WavOutputOptions(format=phase), scratch_root=tmp_path, timeout=2
+    )
+    assert result.kind == kind
+    assert result.can_fallback == (phase == "decode")
+
+
+def test_validator_runtime_failure_is_environment(tmp_path, monkeypatch):
+    """验证器异常不能标成输出不合法并建议更换后端。"""
+    monkeypatch.setattr(pyvgmstream, "decode_to_wav_file", lambda *args, **kwargs: None)
+    monkeypatch.setattr(probe, "validate_wav", lambda path: (_ for _ in ()).throw(RuntimeError("validator failed")))
+
+    class Pipe:
+        """收集子进程入口发出的阶段和最终事实。"""
+
+        def __init__(self):
+            self.results = []
+
+        def send(self, result):
+            """保留入口发出的消息。"""
+            self.results.append(result)
+
+        def close(self):
+            """当前内存收集器无需释放句柄。"""
+
+    pipe = Pipe()
+    probe._probe_entry("wav", None, WavOutputOptions(), tmp_path / "sample.wem", pipe)
+    assert pipe.results[-1].kind == "environment"
