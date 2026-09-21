@@ -501,8 +501,9 @@ def test_overview_page_load_preview_restores_event_view_when_event_tab_is_select
     assert page.preview_stack.currentWidget() is page.audioPreviewPanel
 
 
-def test_overview_page_unextracted_preview_stays_empty_across_tabs(qtbot) -> None:
-    """未解包实体在三个标签中保持空态，产物刷新后恢复正常预览。"""
+@pytest.mark.parametrize("available", ["audio", "mapping"])
+def test_overview_page_unextracted_preview_stays_empty_across_tabs(qtbot, available) -> None:
+    """明确无产物时不启动加载，忽略过期结果；任一产物出现后恢复预览。"""
     page = OverviewPage()
     qtbot.addWidget(page)
     loader = SimpleNamespace(
@@ -511,11 +512,20 @@ def test_overview_page_unextracted_preview_stays_empty_across_tabs(qtbot) -> Non
         load_audio_roots=lambda *_args: (),
         _load_preview_entity=lambda *_args, **_kwargs: None,
     )
-    page._ensure_loader = lambda: loader
-    page.entityListPanel.resolve_row_payload = lambda _item: {"id": 1, "name": "安妮"}
+    loads = []
+    scheduled = []
+    pool = page._preview_pool
+    page._ensure_loader = lambda: loads.append(True) or loader
+    page._preview_pool = SimpleNamespace(start=scheduled.append)
+    row = {"id": 1, "name": "安妮", "audio": "未存在", "mapping": "未存在"}
+    page.entityListPanel.resolve_row_payload = lambda _item: row
+    previous_token = page._audio_refs_token
 
     page._load_preview_for_item("champions", object())
-    qtbot.waitUntil(lambda: not page._preview_workers)
+    page._finish_preview(previous_token, (), {}, None, 0)
+
+    assert loads == []
+    assert scheduled == []
 
     for mode in (EVENT_PREVIEW_MODE, ALL_AUDIO_PREVIEW_MODE, RAW_PREVIEW_MODE):
         page.preview_mode_pivot.setCurrentItem(mode)
@@ -524,10 +534,17 @@ def test_overview_page_unextracted_preview_stays_empty_across_tabs(qtbot) -> Non
         assert page.audio_preview_tree.model().rowCount() == 0
         assert not page.previewPanel.resource_info_btn.isEnabled()
 
-    loader.load_mapping_preview = lambda *_args: (Path("preview.msgpack"), {}, "{}")
+    row[available] = "已存在"
+    if available == "mapping":
+        loader.load_mapping_preview = lambda *_args: (Path("preview.msgpack"), {}, "{}")
+    else:
+        loader.load_audio_roots = lambda *_args: (Path("audios/champion"),)
+        loader.load_audio_refs = lambda *_args, **_kwargs: ()
+    page._preview_pool = pool
     page._load_preview_for_item("champions", object())
     qtbot.waitUntil(lambda: not page._preview_workers)
 
+    assert loads
     assert page.preview_stack.currentWidget() is page.audioPreviewPanel
     assert page.previewPanel.resource_info_btn.isEnabled()
 

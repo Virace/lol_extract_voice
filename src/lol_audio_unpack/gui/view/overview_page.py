@@ -892,6 +892,10 @@ class OverviewPage(QWidget):
             if not self.export_controller.confirm_change():
                 return False
         self._current_preview_ids[entity_type] = preview_state_id
+        if row.get("audio") == "未存在" and row.get("mapping") == "未存在":
+            # 复用目录已确认的状态；空态清理同时使前一实体的异步结果失效。
+            self._show_placeholder("尚未解包")
+            return
         self.previewPanel.clear_resource_info()
 
         self._current_preview_entity_type = preview_entity_type
