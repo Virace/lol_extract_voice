@@ -1,4 +1,4 @@
-name: release-build-gui
+name: release-build
 
 on:
   push:
@@ -25,8 +25,8 @@ jobs:
         shell: bash
         run: |
           tag_name="${GITHUB_REF_NAME}"
-          git fetch origin main --tags --force
-          if git branch -r --contains "$GITHUB_SHA" | grep -q 'origin/main'; then
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
             echo "on_main=true" >> "$GITHUB_OUTPUT"
             echo "Tag commit is contained in origin/main. Release build will continue." >> "$GITHUB_STEP_SUMMARY"
           else
@@ -42,10 +42,12 @@ jobs:
             echo "Tag $tag_name is treated as a stable release." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  build-gui-release:
+  build-release:
     needs: verify-tag-target
     if: needs.verify-tag-target.outputs.on_main == 'true'
     runs-on: windows-2025
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6.0.3
@@ -71,41 +73,83 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: uv run --no-sync pytest tests/gui -q
 
+      - name: Set release version
+        shell: pwsh
+        run: |
+          $version = $env:RELEASE_TAG -replace '^[vV]', ''
+          "LOL_AUDIO_UNPACK_BUILD_VERSION=$version" >> $env:GITHUB_ENV
+
       - name: Build GUI package
         shell: pwsh
         run: |
           python scripts/pyinstaller/build_gui.py --clean
 
+      - name: Build CLI package
+        shell: pwsh
+        run: python scripts/pyinstaller/build_cli.py --output-root .temp/cli-release
+
+      - name: Verify CLI package
+        shell: pwsh
+        run: |
+          $cli = Join-Path $PWD ".temp/cli-release/dist/LolAudioUnpack-CLI.exe"
+          & $cli --version
+          if ($LASTEXITCODE -ne 0) { throw "CLI 版本检查失败" }
+          & $cli --help
+          if ($LASTEXITCODE -ne 0) { throw "CLI 帮助检查失败" }
+          & $cli --check-tools .temp/cli-release/checks/tools.json --check-cancel
+          if ($LASTEXITCODE -ne 0) { throw "CLI 内置工具检查失败" }
+
       - name: Prepare release assets
         id: assets
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
+          $tag = $env:RELEASE_TAG
+          $expectedVersion = $tag -replace '^[vV]', ''
           $releaseDir = Join-Path $PWD "release"
-          $distExe = Join-Path $PWD ".temp/pyinstaller/dist/LolAudioUnpack.exe"
+          $packages = @(
+              @{ id = "gui"; name = "LolAudioUnpack"; source = ".temp/pyinstaller/dist/LolAudioUnpack.exe" },
+              @{ id = "cli"; name = "LolAudioUnpack-CLI"; source = ".temp/cli-release/dist/LolAudioUnpack-CLI.exe" }
+          )
+          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+          $version = $null
+          foreach ($package in $packages) {
+              $distExe = Join-Path $PWD $package.source
+              if (-not (Test-Path -LiteralPath $distExe -PathType Leaf)) {
+                  throw "未找到构建产物: $distExe"
+              }
+              $current = (Get-Item -LiteralPath $distExe).VersionInfo.ProductVersion
+              if ([string]::IsNullOrWhiteSpace($current)) {
+                  throw "构建产物缺少产品版本: $distExe"
+              }
+              if ($null -ne $version -and $current -ne $version) {
+                  throw "GUI 与 CLI 版本不一致: $version / $current"
+              }
+              if ($current -cne $expectedVersion) {
+                  throw "构建产物版本与 tag 不一致: $current / $tag"
+              }
+              $version = $current
 
-          if (-not (Test-Path $distExe)) {
-              throw "未找到 GUI 构建产物: $distExe"
+              $assetName = "$($package.name)-$tag-windows-x64.exe"
+              $assetPath = Join-Path $releaseDir $assetName
+              Copy-Item -LiteralPath $distExe -Destination $assetPath -Force
+
+              $hashLine = "{0} *{1}" -f (Get-FileHash -Algorithm SHA256 -LiteralPath $assetPath).Hash.ToLowerInvariant(), $assetName
+              $hashPath = "$assetPath.sha256"
+              Set-Content -LiteralPath $hashPath -Value $hashLine -Encoding utf8
+
+              "$($package.id)_asset_path=$assetPath" >> $env:GITHUB_OUTPUT
+              "$($package.id)_hash_path=$hashPath" >> $env:GITHUB_OUTPUT
           }
 
-          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
-
-          $assetName = "LolAudioUnpack-$tag-windows-x64.exe"
-          $assetPath = Join-Path $releaseDir $assetName
-          Copy-Item -LiteralPath $distExe -Destination $assetPath -Force
-
-          $hashLine = "{0} *{1}" -f (Get-FileHash -Algorithm SHA256 -Path $assetPath).Hash.ToLowerInvariant(), $assetName
-          $hashPath = "$assetPath.sha256"
-          Set-Content -LiteralPath $hashPath -Value $hashLine -Encoding utf8
-
-          "asset_path=$assetPath" >> $env:GITHUB_OUTPUT
-          "hash_path=$hashPath" >> $env:GITHUB_OUTPUT
+          $readmePath = Join-Path $releaseDir "LolAudioUnpack-CLI-README.md"
+          Copy-Item -LiteralPath ".temp/cli-release/dist/CLI-README.md" -Destination $readmePath -Force
+          "readme_path=$readmePath" >> $env:GITHUB_OUTPUT
 
       - name: Resolve release notes source
         id: notes
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
+          $tag = $env:RELEASE_TAG
           $bodyPath = Join-Path $PWD ".github/release-notes/$tag.md"
 
           if (Test-Path $bodyPath) {
@@ -124,8 +168,11 @@ jobs:
         with:
           name: ${{ github.ref_name }}
           files: |
-            ${{ steps.assets.outputs.asset_path }}
-            ${{ steps.assets.outputs.hash_path }}
+            ${{ steps.assets.outputs.gui_asset_path }}
+            ${{ steps.assets.outputs.gui_hash_path }}
+            ${{ steps.assets.outputs.cli_asset_path }}
+            ${{ steps.assets.outputs.cli_hash_path }}
+            ${{ steps.assets.outputs.readme_path }}
           prerelease: ${{ needs.verify-tag-target.outputs.is_prerelease == 'true' }}
           body_path: ${{ steps.notes.outputs.body_path }}
           fail_on_unmatched_files: true
@@ -136,8 +183,11 @@ jobs:
         with:
           name: ${{ github.ref_name }}
           files: |
-            ${{ steps.assets.outputs.asset_path }}
-            ${{ steps.assets.outputs.hash_path }}
+            ${{ steps.assets.outputs.gui_asset_path }}
+            ${{ steps.assets.outputs.gui_hash_path }}
+            ${{ steps.assets.outputs.cli_asset_path }}
+            ${{ steps.assets.outputs.cli_hash_path }}
+            ${{ steps.assets.outputs.readme_path }}
           prerelease: ${{ needs.verify-tag-target.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
           fail_on_unmatched_files: true

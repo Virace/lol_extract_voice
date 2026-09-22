@@ -29,3 +29,19 @@ CLI 使用 `scripts/pyinstaller/assets/cli_icon.ico`，在 GUI 图标的基础�
 在未安装 Python/Qt 的独立 Windows 环境运行后，才能确认免开发环境交付；清空 PATH 不替代此项。真实音频需独立解码核对或人工试听，历史样本与外部后端缺少条件时分别记录为未验证。
 
 本地试用通过后再安排发布；本构建命令不修改 workflow、不上传文件，也不创建 Release。
+
+## Release 附件
+
+`.github/workflows/release-build.yml` 在 main 所包含的提交上收到 tag 推送后构建发布包。
+GUI 与 CLI 分别构建，共用版本规则；现有离线与 GUI 行为检查、CLI 工具自检和两份 EXE
+的版本一致性检查通过后，才会发布同一个 Release。构建版本取自触发发布的 tag（去掉开头的
+`v`），附件准备时同时核对 EXE 版本与 tag。CLI 的构建环境只安装核心和 build 依赖。
+
+附件包括：
+
+- `LolAudioUnpack-<tag>-windows-x64.exe` 及对应 `.sha256`
+- `LolAudioUnpack-CLI-<tag>-windows-x64.exe` 及对应 `.sha256`
+- `LolAudioUnpack-CLI-README.md`
+
+发布说明优先读取 `.github/release-notes/<tag>.md`，没有对应文件时自动生成。
+本地执行构建命令不会触发发布。
