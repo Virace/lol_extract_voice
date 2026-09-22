@@ -10,6 +10,7 @@ from scripts import convert_data as converter
 
 pytestmark = pytest.mark.unit
 
+
 @pytest.mark.parametrize("dev_mode", [False, True])
 def test_legacy_file_is_not_read_or_used_after_corruption(tmp_path, dev_mode):
     """同名旧文件不改变权威输入，损坏不能伪装为空数据。"""
