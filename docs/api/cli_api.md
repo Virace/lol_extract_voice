@@ -5,6 +5,10 @@
 - `unpack`：对应 `lol_audio_unpack.cli.cli:main`
 - `mapping`：同样对应 `lol_audio_unpack.cli.cli:main`，但默认以 `mapping` 模式启动
 - `python -m lol_audio_unpack`：薄壳转发到同一套 CLI 主入口
+- Windows 独立包 `LolAudioUnpack-CLI.exe`：提供相同动作，映射使用 `LolAudioUnpack-CLI.exe mapping ...`；使用说明见 [控制台独立包](../cli-package.md)。
+
+CLI 的相对输入、输出和工具路径均以调用终端的当前目录为起点，打包后也不切换到 EXE 所在目录。
+默认输出为当前目录的 `output/`；不带路径的 `-c` 读取当前目录的 `config/lol-audio-unpack.ini`。
 
 ## 1. 基础命令
 
@@ -46,7 +50,7 @@ uv run unpack update extract \
 ### 2.2 配置文件模式
 
 - 带 `-c` 或 `--config-file`
-- `-c` 不带路径：读取默认配置文件 `lol-audio-unpack.ini`
+- `-c` 不带路径：读取当前目录下的 `config/lol-audio-unpack.ini`
 - `-c <PATH>`：读取指定 INI 配置文件
 - 启用 `-c` 后，只允许提供配置文件路径；动作与参数都从配置文件读取
 - 这条规则对全部 CLI 参数都生效，包括 `--dev`、`--force`、`--max-workers`

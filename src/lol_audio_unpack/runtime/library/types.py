@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 
 MAX_MEDIA_ID = 0xFFFFFFFF
 
@@ -35,12 +35,28 @@ def relative_path(value: str) -> str:
     return text
 
 
+def _comparison_path(path: PurePath) -> PurePath:
+    """统一已解析 Windows 路径的盘符和 UNC 前缀，仅用于边界比较。"""
+    if not isinstance(path, PureWindowsPath):
+        return path
+    drive = path.drive
+    if drive.lower().startswith("\\\\?\\unc\\"):
+        drive = "\\\\" + drive[8:]
+    elif drive.startswith("\\\\?\\") and re.fullmatch("[a-zA-Z]:", drive[4:]):
+        drive = drive[4:]
+    else:
+        return path
+    return PureWindowsPath(drive + path.root, *path.parts[1:])
+
+
 def resolve_path(root: Path, value: str) -> Path:
     """定位库内相对路径，拒绝经符号链接或 junction 逃出库根。"""
     path = root / PurePosixPath(relative_path(value))
     resolved = path.resolve()
     boundary = root.resolve()
-    if not resolved.is_relative_to(boundary):
+    # resolve() 仍负责解析重解析点；Windows 可能只为一侧保留扩展前缀。
+    # 仅统一比较格式，实际读写路径及越界检查均保留。
+    if not _comparison_path(resolved).is_relative_to(_comparison_path(boundary)):
         raise LibraryError(f"路径超出资源库: {value}（实际路径: {resolved}，库根: {boundary}）")
     return path
 
