@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from PySide6.QtCore import Qt
 
 import lol_audio_unpack.gui.view.overview_page as overview_page_module
 from lol_audio_unpack.app.artifacts import AudioIndexProgress, AudioRef
@@ -20,6 +22,92 @@ from lol_audio_unpack.gui.controllers.overview_preview import (
 from lol_audio_unpack.gui.shared_data import SharedDataPhase, SharedDataState
 from lol_audio_unpack.gui.view.overview_page import OverviewPage
 from tests.factories import make_context
+
+
+def test_entity_switch_keeps_only_current_request_interactive(qtbot):
+    """快速切换时旧结果不能恢复交互，已加载音频索引在往返后仍可使用。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    scheduled = []
+    page._preview_pool = SimpleNamespace(start=scheduled.append)
+    page._ensure_loader = lambda: None
+    page.entityListPanel.resolve_row_payload = lambda key: {"id": key, "name": key}
+    page._load_preview_for_item("maps", "11")
+    page._load_preview_for_item("maps", "22")
+
+    def make_result(key):
+        return OverviewPreviewLoadResult(
+            entity_id=key,
+            mapping_path=None,
+            mapping_data={"map": {key: {"events": {}}}},
+            preview_content="",
+            available_audio_ids=set(),
+            group_label_map={},
+            audio_refs=(AudioRef(f"{key}.wem", Path(f"{key}.wem"), key, "VO", key),),
+            default_preview_mode=EVENT_PREVIEW_MODE,
+        )
+
+    assert page.preview_stack.currentWidget() is page.previewPanel.placeholder_panel
+    scheduled[0].signals.finished.emit(make_result("11"))
+    assert page.preview_stack.currentWidget() is page.previewPanel.placeholder_panel
+    scheduled[1].signals.finished.emit(make_result("22"))
+    assert page.previewPanel.isEnabled()
+    assert page._current_audio_refs == make_result("22").audio_refs
+
+    page._load_preview_for_item("maps", "11")
+    assert not page.previewPanel.isEnabled()
+    scheduled[-1].signals.finished.emit(make_result("11"))
+    assert set(page._audio_refs_cache) == {("maps", "11"), ("maps", "22")}
+    page._load_preview_for_item("maps", "22")
+    deferred = make_result("22")
+
+    scheduled[-1].signals.finished.emit(replace(deferred, audio_refs=(), audio_refs_loaded=False))
+    assert page._audio_refs_loaded
+    assert not page._audio_list_ready
+    page.preview_mode_pivot.setCurrentItem(ALL_AUDIO_PREVIEW_MODE)
+    assert page.audio_list.model().rowCount() == 1
+    assert page._current_audio_refs == make_result("22").audio_refs
+
+    # 后台错误必须结束当前加载；后续切换仍能使用页面。
+    page._load_preview_for_item("maps", "11")
+    scheduled[-1].signals.failed.emit("读取失败")
+    assert page.previewPanel.isEnabled()
+    assert page._current_audio_refs == ()
+    page.set_app_context(None)
+    assert not page._audio_refs_cache
+
+
+def test_output_refresh_invalidates_changed_entity_without_dropping_other_indexes(qtbot):
+    """产物刷新使对应缓存失效，当前实体刷新后重载，其他实体仍可复用。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    page.nav_pivot.setCurrentItem("maps")
+    rows = [{"id": key, "name": key, "audio": "已存在"} for key in ("11", "22")]
+    page.set_entity_data("maps", rows)
+    scheduled = []
+    page._preview_pool = SimpleNamespace(start=scheduled.append)
+    page._ensure_loader = lambda: None
+    page._current_entity_list().setCurrentIndex(page.entityListPanel.find_index_by_entity_id("maps", "22"))
+    loaded = OverviewPreviewLoadResult(
+        entity_id="22",
+        mapping_path=None,
+        mapping_data={"map": {"22": {"events": {}}}},
+        preview_content="",
+        available_audio_ids=set(),
+        group_label_map={},
+        default_preview_mode=EVENT_PREVIEW_MODE,
+    )
+    scheduled[-1].signals.finished.emit(loaded)
+    page._cache_audio_refs(("maps", "11"), ())
+    page.update_entity_rows("maps", [rows[0]])
+    assert ("maps", "11") not in page._audio_refs_cache
+    assert ("maps", "22") in page._audio_refs_cache
+    assert len(scheduled) == 1
+    page.update_entity_rows("maps", [rows[1]])
+    assert ("maps", "22") not in page._audio_refs_cache
+    assert not page.previewPanel.isEnabled()
+    scheduled[-1].signals.finished.emit(loaded)
+    assert page.previewPanel.isEnabled()
 
 
 @pytest.mark.parametrize("result", [None, ("invalid",)])
@@ -503,7 +591,7 @@ def test_overview_page_load_preview_restores_event_view_when_event_tab_is_select
 
 @pytest.mark.parametrize("available", ["audio", "mapping"])
 def test_overview_page_unextracted_preview_stays_empty_across_tabs(qtbot, available) -> None:
-    """明确无产物时不启动加载，忽略过期结果；任一产物出现后恢复预览。"""
+    """空实体切换不重置右侧，切入产物才加载，返回空态清理并忽略过期结果。"""
     page = OverviewPage()
     qtbot.addWidget(page)
     loader = SimpleNamespace(
@@ -527,6 +615,16 @@ def test_overview_page_unextracted_preview_stays_empty_across_tabs(qtbot, availa
     assert loads == []
     assert scheduled == []
 
+    changes = []
+    page.text_preview.textChanged.connect(lambda: changes.append("text"))
+    page.audio_preview_tree.model().modelReset.connect(lambda: changes.append("tree"))
+    for entity_id in (2, 3, 1):
+        row["id"] = entity_id
+        page._load_preview_for_item("champions", object())
+    assert changes == []
+    assert loads == []
+    assert scheduled == []
+
     for mode in (EVENT_PREVIEW_MODE, ALL_AUDIO_PREVIEW_MODE, RAW_PREVIEW_MODE):
         page.preview_mode_pivot.setCurrentItem(mode)
         assert page.preview_stack.currentWidget() is page.previewPanel.placeholder_panel
@@ -547,6 +645,105 @@ def test_overview_page_unextracted_preview_stays_empty_across_tabs(qtbot, availa
     assert loads
     assert page.preview_stack.currentWidget() is page.audioPreviewPanel
     assert page.previewPanel.resource_info_btn.isEnabled()
+
+    row["id"] = 2
+    row[available] = "未存在"
+    page._load_preview_for_item("champions", object())
+    assert page.preview_stack.currentWidget() is page.previewPanel.placeholder_panel
+    assert not page.previewPanel.resource_info_btn.isEnabled()
+    changes.clear()
+    row["id"] = 3
+    page._load_preview_for_item("champions", object())
+    assert changes == []
+
+    # 加载尚未结束就切回空态，旧结果和延迟提示都不能重新打开预览。
+    page._preview_pool = SimpleNamespace(start=scheduled.append)
+    row["id"] = 1
+    row[available] = "已存在"
+    page._load_preview_for_item("champions", object())
+    row["id"] = 2
+    row[available] = "未存在"
+    page._load_preview_for_item("champions", object())
+    scheduled[-1].signals.finished.emit(_build_preview_load_result())
+    qtbot.wait(180)
+    assert page.previewPanel.isEnabled()
+    assert page.preview_stack.currentWidget() is page.previewPanel.placeholder_panel
+    assert page.previewPanel.placeholder_label.text() == "尚未解包"
+
+
+@pytest.mark.parametrize(
+    ("entity_type", "status"),
+    [("champions", "未存在"), ("champions", "未准备"), ("special", "未准备")],
+)
+def test_entity_click_keeps_empty_preview_until_content_arrives(qtbot, tmp_path, entity_type, status):
+    """实际列表点击不能把后台加载过程变成默认占位和导出按钮的闪现。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    page.set_app_context(make_context(tmp_path))
+    page.set_shared_data_state(SharedDataState(SharedDataPhase.READY, 1))
+    rows = [
+        {
+            "id": str(key),
+            "key": f"champion:{key}" if entity_type == "special" else str(key),
+            "name": f"实体 {key}",
+            "entity_type": "champions",
+            "audio": audio_status,
+            "mapping": status,
+        }
+        for key, audio_status in ((1, status), (2, status), (3, "已存在"))
+    ]
+    page.set_entity_data(entity_type, rows)
+    page.nav_pivot.setCurrentItem(entity_type)
+    scheduled = []
+    page._preview_pool = SimpleNamespace(start=scheduled.append)
+    page._ensure_loader = lambda: None
+    page.resize(1200, 800)
+    page.show()
+    view = page.entityListPanel.entity_lists[entity_type]
+
+    def click_row(number):
+        index = view.find_index_by_entity_id(rows[number - 1]["key"])
+        qtbot.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=view.visualRect(index).center())
+
+    click_row(1)
+    assert page.previewPanel.placeholder_label.text() == "尚未解包"
+    changes = []
+    page.preview_stack.currentChanged.connect(lambda _index: changes.append("panel"))
+    page.text_preview.textChanged.connect(lambda: changes.append("text"))
+    for number in (2, 1, 2):
+        click_row(number)
+    assert scheduled == []
+    assert changes == []
+
+    click_row(3)
+    assert len(scheduled) == 1
+    qtbot.wait(180)
+    assert changes == []
+    assert page.preview_stack.currentWidget() is page.previewPanel.placeholder_panel
+    assert page.previewPanel.placeholder_label.text() == "尚未解包"
+    assert not page.audioPreviewPanel.export_bar.footer_bar.isVisible()
+    assert not page.audioPreviewPanel.export_bar.mode_button.isVisible()
+
+    loaded = OverviewPreviewLoadResult(
+        entity_id="3",
+        mapping_path=tmp_path / "preview.msgpack",
+        mapping_data={"skins": {"3000": {"events": {}}}},
+        preview_content="已有映射",
+        available_audio_ids=set(),
+        group_label_map={},
+    )
+    scheduled[0].signals.finished.emit(loaded)
+    assert page.preview_stack.currentWidget() is page.audioPreviewPanel
+    assert page.audioPreviewPanel.export_bar.footer_bar.isVisible()
+    assert page.audioPreviewPanel.export_bar.mode_button.isVisible()
+    click_row(1)
+    assert page.preview_stack.currentWidget() is page.previewPanel.placeholder_panel
+    assert not page.audioPreviewPanel.export_bar.footer_bar.isVisible()
+    changes.clear()
+    click_row(2)
+    scheduled[0].signals.finished.emit(loaded)
+    assert changes == []
+    assert page.previewPanel.placeholder_label.text() == "尚未解包"
 
 
 def test_overview_page_preview_search_filters_event_tree(qtbot) -> None:

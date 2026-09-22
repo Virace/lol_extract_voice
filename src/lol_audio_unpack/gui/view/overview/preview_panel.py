@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QKeySequence, QPalette, QTextOption
 from PySide6.QtWidgets import (
     QApplication,
@@ -331,6 +331,11 @@ class OverviewPreviewPanel(QWidget):
         self._resource_audio_roots: tuple[Path, ...] = ()
         self._resource_info_dialog: ResourceInfoDialog | None = None
         self._is_placeholder_visible = True
+        self._loading_timer = QTimer(self)
+        self._loading_timer.setSingleShot(True)
+        self._loading_timer.setInterval(150)
+        self._loading_timer.timeout.connect(self._show_loading_notice)
+        self._loading_message = ""
         self.resource_info_btn.setEnabled(False)
         self.resource_info_btn.clicked.connect(self.show_resource_info)
 
@@ -428,11 +433,22 @@ class OverviewPreviewPanel(QWidget):
         return dialog
 
     def show_loading(self, message: str) -> None:
-        """切换实体时显示加载提示，延后释放隐藏的大音频模型。"""
-        self.preview_path_edit.clear()
-        self.placeholder_label.setText(message)
-        self._is_placeholder_visible = True
-        self.preview_stack.setCurrentWidget(self.placeholder_panel)
+        """冻结旧预览并延迟提示，快速完成时不切换占位页。"""
+        self._loading_message = message
+        self._loading_timer.stop()
+        if self._is_placeholder_visible:
+            # 后台读取不代表已有内容；结果就绪前保持空态，不能露出隐藏的模型和导出栏。
+            return
+        self.setEnabled(False)
+        self._loading_timer.start()
+
+    def _show_loading_notice(self) -> None:
+        """较慢的读取仅在内容区域提示，不移除音频操作栏。"""
+        if self.preview_stack.currentWidget() is self.audio_preview_panel:
+            self.audio_preview_panel.show_loading(self._loading_message)
+        else:
+            self.placeholder_label.setText(self._loading_message)
+            self.preview_stack.setCurrentWidget(self.placeholder_panel)
 
     def show_placeholder(self, message: str) -> None:
         """显示空态提示并清理路径、资源统计和预览数据。
@@ -440,6 +456,8 @@ class OverviewPreviewPanel(QWidget):
         Args:
             message: 要展示的占位提示。
         """
+        self._loading_timer.stop()
+        self.setEnabled(True)
         self.preview_path_edit.clear()
         self.preview_path_edit.setToolTip("")
         self.placeholder_label.setText(message)
@@ -453,6 +471,8 @@ class OverviewPreviewPanel(QWidget):
 
     def show_current_preview(self) -> None:
         """按当前选中的 tab 展示预览内容。"""
+        self._loading_timer.stop()
+        self.setEnabled(True)
         self._is_placeholder_visible = False
         self.set_preview_mode(self.preview_mode_pivot.currentRouteKey() or EVENT_PREVIEW_MODE)
 

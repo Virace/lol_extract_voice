@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal
@@ -261,6 +262,7 @@ class EntityDataLoader:
         """
         self.ctx = app_context
         self.data_reader = DataReader(app_context, read_only=True)
+        self._mapping_cache: OrderedDict[tuple[str, str], tuple[Path, tuple[int, int], dict | None]] = OrderedDict()
         inventory = app_context.runtime_cache.get("source_inventory")
         language = inventory.get_language(app_context.game_region) if inventory else None
         self._source_entities = {(item.kind, item.key): item for item in language.entities} if language else {}
@@ -1169,8 +1171,16 @@ class EntityDataLoader:
             self.data_reader.version,
         )
         if mapping_path is None:
+            self._mapping_cache.pop((entity_type, str(entity_id)), None)
             return None, None, ""
 
+        key = (entity_type, str(entity_id))
+        stat = mapping_path.stat()
+        signature = (stat.st_mtime_ns, stat.st_size)
+        cached = self._mapping_cache.get(key)
+        if cached is not None and cached[:2] == (mapping_path, signature):
+            self._mapping_cache.move_to_end(key)
+            return mapping_path, cached[2], ""
         raw_mapping_data = read_data(mapping_path, dev_mode=getattr(self.ctx.config, "dev_mode", False))
         mapping_data = _normalize_integrated_mapping_data(
             raw_mapping_data,
@@ -1192,6 +1202,13 @@ class EntityDataLoader:
                     **mapping_data,
                     "previewNotice": "事件映射来自旧版共享规则，请重新生成映射；已有音频仍可浏览。",
                 }
+        # 只缓存解析后的数据，事件树节点仍按展开构建；读期间文件变化则不登记。
+        latest = mapping_path.stat()
+        if signature == (latest.st_mtime_ns, latest.st_size):
+            self._mapping_cache[key] = (mapping_path, signature, mapping_data)
+            self._mapping_cache.move_to_end(key)
+            while len(self._mapping_cache) > 64:  # noqa: PLR2004 -- 限制最近访问实体的解析结果。
+                self._mapping_cache.popitem(last=False)
         return mapping_path, mapping_data, ""
 
     def load_audio_refs(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
@@ -174,7 +175,9 @@ class OverviewPage(QWidget):
         self._audio_refs_error: str | None = None
         self._audio_refs_progress: AudioIndexProgress | None = None
         self._audio_refs_token = 0
-        self._audio_refs_cache: dict[tuple[str, str], tuple[AudioRef, ...]] = {}
+        self._audio_refs_cache: OrderedDict[tuple[str, str], tuple[AudioRef, ...]] = OrderedDict()
+        self._preview_loading = False
+        self._preview_placeholder: str | None = None
         self._preview_pool = QThreadPool(self)
         self._preview_pool.setMaxThreadCount(1)
         self._preview_workers = {}
@@ -316,6 +319,10 @@ class OverviewPage(QWidget):
         if not self._entity_data_store.set_rows(entity_type, data):
             return
 
+        self._loader = None
+        for row in data:
+            self._audio_refs_cache.pop((str(row.get("entity_type", entity_type)), str(row["id"])), None)
+
         if self._current_entity_type() == entity_type:
             self._current_preview_key = None
         self._rebuild_entity_list(entity_type)
@@ -330,7 +337,20 @@ class OverviewPage(QWidget):
         if merged_rows is None:
             return
 
-        self.set_entity_data(entity_type, merged_rows)
+        # 产物可在目录状态文字不变时更新；不能用行数据是否相等判断缓存新鲜度。
+        self._loader = None
+        keys = {(str(row.get("entity_type", entity_type)), str(row["id"])) for row in rows}
+        for key in keys:
+            self._audio_refs_cache.pop(key, None)
+        refresh_current = (self._current_preview_entity_type, self._current_preview_entity_id) in keys
+        if refresh_current:
+            self._current_preview_key = None
+            self._audio_refs_token += 1
+        self._rebuild_entity_list(entity_type)
+        if self._current_entity_type() == entity_type:
+            self._sync_current_list_view()
+        else:
+            self._update_selection_summary()
 
     def clear_data(self) -> None:
         """清空页面缓存并恢复占位内容。"""
@@ -342,6 +362,8 @@ class OverviewPage(QWidget):
                 position=InfoBarPosition.TOP,
             )
         self._entity_data_store.clear()
+        self._loader = None
+        self._audio_refs_cache.clear()
         self.entityListPanel.set_special_catalog_notice(None)
         self._selected_entity_ids = {"champions": set(), "maps": set(), "special": set()}
         self._current_preview_ids = {"champions": None, "maps": None, "special": None}
@@ -879,21 +901,29 @@ class OverviewPage(QWidget):
         preview_entity_type = str(row.get("entity_type", entity_type))
         preview_entity_id = str(row["id"])
         preview_key = (entity_type, preview_state_id, preview_entity_type, preview_entity_id)
-        if preview_key == self._current_preview_key:
+        no_artifacts = all(row.get(key) in {"未存在", "未准备"} for key in ("audio", "mapping"))
+        if preview_key == self._current_preview_key and not no_artifacts:
+            if self._preview_loading:
+                return
             self.previewPanel.show_current_preview()
             self._apply_preview_mode(self.preview_mode_pivot.currentRouteKey() or self._active_preview_mode)
             return
 
         previous = self.export_controller.request
-        if previous is not None and (previous.entity_type, previous.entity_id) != (
-            preview_entity_type,
-            preview_entity_id,
+        if (
+            not self._preview_loading
+            and previous is not None
+            and (previous.entity_type, previous.entity_id)
+            != (
+                preview_entity_type,
+                preview_entity_id,
+            )
         ):
             if not self.export_controller.confirm_change():
                 return False
         self._current_preview_ids[entity_type] = preview_state_id
-        if row.get("audio") == "未存在" and row.get("mapping") == "未存在":
-            # 复用目录已确认的状态；空态清理同时使前一实体的异步结果失效。
+        if no_artifacts:
+            # 普通与特殊目录都复用已确认的无产物状态；清理同时使旧实体的异步结果失效。
             self._show_placeholder("尚未解包")
             return
         self.previewPanel.clear_resource_info()
@@ -906,10 +936,11 @@ class OverviewPage(QWidget):
         token = self._audio_refs_token
         self._current_preview_key = preview_key
         self._clear_audio_preview_request()
-        self.export_controller.reset()
+        self._preview_loading = True
+        self._preview_placeholder = None
         self.previewPanel.show_loading("正在读取实体映射…")
         started = monotonic()
-        logger.info("实体预览加载启动：{} {}", preview_entity_type, preview_entity_id)
+        logger.debug("实体预览加载启动：{} {}", preview_entity_type, preview_entity_id)
         worker = TaskWorker(
             lambda: (
                 None
@@ -939,8 +970,10 @@ class OverviewPage(QWidget):
         self._preview_workers.pop(token, None)
         if token != self._audio_refs_token:
             return
+        self._preview_loading = False
+        self.export_controller.reset()
         entity_type, _, preview_entity_type, preview_entity_id = preview_key
-        logger.info("实体预览加载完成：{} {}，{:.3f}s", preview_entity_type, preview_entity_id, monotonic() - started)
+        logger.debug("实体预览加载完成：{} {}，{:.3f}s", preview_entity_type, preview_entity_id, monotonic() - started)
         self._resolve_event_ref = preview_result.resolve_ref
         self._raw_loaded = False
         self._resource_stats = None
@@ -958,11 +991,15 @@ class OverviewPage(QWidget):
         self._current_event_audio_refs = preview_result.event_audio_refs or preview_result.audio_refs
         self._current_audio_roots = preview_result.audio_roots
         self._audio_refs_loaded = preview_result.audio_refs_loaded
+        cache_key = (preview_entity_type, str(row["id"]))
+        if not self._audio_refs_loaded and cache_key in self._audio_refs_cache:
+            self._current_audio_refs = self._audio_refs_cache[cache_key]
+            self._audio_refs_loaded = True
         self._audio_list_ready = False
         self._audio_refs_error = None
         self._audio_refs_progress = None
         if self._audio_refs_loaded:
-            self._audio_refs_cache[(preview_entity_type, str(row["id"]))] = self._current_audio_refs
+            self._cache_audio_refs(cache_key, self._current_audio_refs)
         self._selected_audio_refs = {
             EVENT_PREVIEW_MODE: None,
             ALL_AUDIO_PREVIEW_MODE: None,
@@ -975,7 +1012,7 @@ class OverviewPage(QWidget):
             ALL_AUDIO_PREVIEW_MODE: "",
         }
         self._refresh_audio_preview_tree()
-        if self._audio_refs_loaded:
+        if self._audio_refs_loaded and preview_result.default_preview_mode == ALL_AUDIO_PREVIEW_MODE:
             self._populate_audio_list()
         self._refresh_all_audio_preview()
         self.previewPanel.show_current_preview()
@@ -1196,6 +1233,11 @@ class OverviewPage(QWidget):
         )
 
     def _show_placeholder(self, message: str) -> None:
+        # 空实体共享同一空态；只在进入空态时清理，避免反复重置右侧模型与布局。
+        if self._preview_placeholder == message:
+            return
+        self._preview_placeholder = message
+        self._preview_loading = False
         self._current_mapping_path = None
         self._current_preview_key = None
         self._current_preview_entity_type = None
@@ -1391,6 +1433,8 @@ class OverviewPage(QWidget):
 
     def _ensure_audio_refs(self) -> None:
         """在首次进入全部音频时请求后台枚举，后续切换复用缓存。"""
+        if self._preview_loading:
+            return
         if self._audio_refs_loaded:
             self._populate_audio_list()
             return
@@ -1403,6 +1447,7 @@ class OverviewPage(QWidget):
             entity_id=self._current_preview_entity_id,
         )
         if request.key in self._audio_refs_cache:
+            self._audio_refs_cache.move_to_end(request.key)
             self._current_audio_refs = self._audio_refs_cache[request.key]
             self._audio_refs_loaded = True
             self._audio_refs_error = None
@@ -1473,8 +1518,7 @@ class OverviewPage(QWidget):
         self._audio_refs_request = None
         logger.debug("全部音频索引完成：{}，{} 个文件", request, len(refs))
         if request is not None and self._audio_refs_request_is_current(request):
-            self._audio_refs_cache.clear()
-            self._audio_refs_cache[request.key] = refs
+            self._cache_audio_refs(request.key, refs)
             self._current_audio_refs = refs
             self._audio_refs_loaded = True
             self.export_controller.set_available(refs, complete=True)
@@ -1489,6 +1533,13 @@ class OverviewPage(QWidget):
                 self._refresh_all_audio_preview()
                 self._sync_preview_path()
         self._start_pending_audio_refs_load()
+
+    def _cache_audio_refs(self, key: tuple[str, str], refs: tuple[AudioRef, ...]) -> None:
+        """保留最近实体的索引，并限制条目总量，避免大型地图无限占用内存。"""
+        self._audio_refs_cache[key] = refs
+        self._audio_refs_cache.move_to_end(key)
+        while len(self._audio_refs_cache) > 8 or sum(map(len, self._audio_refs_cache.values())) > 100_000:  # noqa: PLR2004
+            self._audio_refs_cache.popitem(last=False)
 
     def _on_audio_refs_failed(self, error: str) -> None:
         """记录当前实体的后台枚举失败，并继续处理最新待加载实体。"""
