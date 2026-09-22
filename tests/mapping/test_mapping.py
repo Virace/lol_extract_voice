@@ -13,7 +13,7 @@ from loguru import logger
 import lol_audio_unpack.mapping.batch as mapping_batch
 import lol_audio_unpack.mapping.entity as mapping_entity
 import lol_audio_unpack.mapping.session as mapping_session
-from lol_audio_unpack.app.artifacts import enumerate_audio_refs, inspect_shared_copies, resolve_audio_refs
+from lol_audio_unpack.app.artifacts import AudioRef, enumerate_audio_refs, inspect_shared_copies, resolve_audio_refs
 from lol_audio_unpack.app.audio_scope import AudioScope, MappingNode
 from lol_audio_unpack.app.path_layout import format_entity_folder_name, format_sub_entity_folder_name
 from lol_audio_unpack.app.results import ResultStatus, StageResult
@@ -21,10 +21,18 @@ from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
 from lol_audio_unpack.mapping import build_entity
 from lol_audio_unpack.model import AudioBank, AudioEntityData
 from lol_audio_unpack.model.binding import BankBinding, BindingDiagnostics, BindingRole, BindingStatus, Completeness
+from lol_audio_unpack.runtime import hirc as hirc_backend
 from lol_audio_unpack.unpack import entity as unpack_entity
+from tests.factories import publish_media
 
 FAKE_GAME_PATH = Path("FakeGame")
 FAKE_OUTPUT_PATH = Path("FakeOut")
+
+
+@pytest.fixture(autouse=True)
+def isolate_output(tmp_path, monkeypatch):
+    """默认测试上下文也把库写锁和所有产物限制在本测试临时目录。"""
+    monkeypatch.setattr(__name__ + ".FAKE_OUTPUT_PATH", tmp_path / "output")
 
 
 def test_shared_skin_extract_and_mapping_keep_full_changed_event(tmp_path: Path, monkeypatch) -> None:
@@ -46,7 +54,7 @@ def test_shared_skin_extract_and_mapping_keep_full_changed_event(tmp_path: Path,
                     normalized_path="",
                     kind="BNK",
                     wad="Game/voice.wad.client",
-                    entry_hash=f"{entry}-{kind}",
+                    entry_hash=sha256(f"{entry}-{kind}".encode()).hexdigest()[:16],
                     source_bin=f"data/{skin_id}.bin",
                     role=BindingRole.LOCALIZED,
                     status=BindingStatus.RESOLVED,
@@ -76,7 +84,9 @@ def test_shared_skin_extract_and_mapping_keep_full_changed_event(tmp_path: Path,
             return []
         ids = (1, 2, 3, 4) if b"base_" in raw else (5, 6)
         return [
-            SimpleNamespace(id=value, data=b"wem", save_file=lambda path, value=value: path.write_bytes(bytes([value])))
+            SimpleNamespace(
+                id=value, data=bytes([value]), save_file=lambda path, value=value: path.write_bytes(bytes([value]))
+            )
             for value in ids
         ]
 
@@ -111,9 +121,9 @@ def test_shared_skin_extract_and_mapping_keep_full_changed_event(tmp_path: Path,
     assert set(resolve_audio_refs(ctx, entity, reader.version, event["audioPaths"][category]["play"])) == set(refs)
     assert "1014" not in mapping["skins"]
     assert mapping["mappingDiagnostics"]["mappedWemCount"] == expected_count
-    mapping_path = ctx.paths.hash_path / reader.version / "champions/1.msgpack"
+    mapping_path = ctx.version_path("hash", reader.version) / "champions/1.msgpack"
     stat = mapping_path.stat()
-    root = refs[0].path.parents[2]
+    root = refs[0].root
     nodes = tuple(
         MappingNode(mapping_path, "champions", "1", (stat.st_size, stat.st_mtime_ns), (skin, category, "play"))
         for skin in ("1000", "1013")
@@ -126,7 +136,12 @@ def test_shared_skin_extract_and_mapping_keep_full_changed_event(tmp_path: Path,
     (legacy_dir / "1.wem").write_bytes(bytes([1]))
     (legacy_dir / "2.wem").write_bytes(b"different")
     (legacy_dir / "99.wem").write_bytes(b"unknown")
-    diagnostic = inspect_shared_copies(entity, enumerate_audio_refs(ctx, entity, reader.version))
+    # 新索引不收录手工塞入的旧文件；旧库只读诊断仍可逐字节识别副本。
+    assert enumerate_audio_refs(ctx, entity, reader.version) == refs
+    old_refs = tuple(
+        AudioRef(path.relative_to(root).as_posix(), path, path.stem, "VO", "1014") for path in legacy_dir.glob("*.wem")
+    )
+    diagnostic = inspect_shared_copies(entity, (*refs, *old_refs))
     assert diagnostic["sharedCopyPaths"] == [(legacy_dir / "1.wem").relative_to(root).as_posix()]
     assert set(diagnostic["unverifiedSharedPaths"]) == {
         (legacy_dir / name).relative_to(root).as_posix() for name in ("2.wem", "99.wem")
@@ -620,18 +635,13 @@ def test_local_mapping_uses_binding_wad_namespace_and_path_level_audio_refs(
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(name.encode())
     ctx = _build_fake_ctx(game_path=game_dir, cache_path=cache_dir, hash_path=hash_dir)
-    entity_folder = format_entity_folder_name("1", "test-entity", "Test Entity", "测试实体")
     skin_folder = format_sub_entity_folder_name("1001", "Test Skin")
-    audio_dir = ctx.paths.audio_path / version / "champions" / entity_folder / skin_folder / "VO"
-    audio_dir.mkdir(parents=True)
-    (audio_dir / "101.wem").write_bytes(b"one")
-    (audio_dir / "102.wem").write_bytes(b"two")
 
     bindings = tuple(
         BankBinding(
             category="CHARACTER_VO",
             path="assets/shared_events.bnk",
-            normalized_path="",
+            normalized_path="assets/shared_events.bnk",
             kind="BNK",
             wad=f"Game/{name}",
             entry_hash=entry_hash,
@@ -654,6 +664,8 @@ def test_local_mapping_uses_binding_wad_namespace_and_path_level_audio_refs(
         resource_banks=tuple(AudioBank(sub_id="1001", audio_type="VO", binding=binding) for binding in bindings),
         binding_diagnostics=BindingDiagnostics(completeness=Completeness.COMPLETE),
     )
+    for number, bank in enumerate(entity_data.resource_banks, 101):
+        publish_media(ctx, entity_data, bank, version, number, bytes([number]))
     extracted: list[tuple[str, Path]] = []
     hirc_paths: list[Path] = []
 
@@ -686,10 +698,12 @@ def test_local_mapping_uses_binding_wad_namespace_and_path_level_audio_refs(
     result = build_entity(entity_data, _FakeReader(), runtime_cache=mapping_session.RuntimeCache(), ctx=ctx)
 
     assert result["skins"]["1001"]["events"]["CHARACTER_VO"] == {"evt": [101, 102]}
-    assert result["skins"]["1001"]["audioPaths"]["CHARACTER_VO"]["evt"] == [
-        f"{skin_folder}/VO/101.wem",
-        f"{skin_folder}/VO/102.wem",
-    ]
+    assert result["skins"]["1001"]["audioPaths"]["CHARACTER_VO"]["evt"] == sorted(
+        [
+            f"{skin_folder}/VO/101.wem",
+            f"{skin_folder}/VO/102.wem",
+        ]
+    )
     assert result["mappingDiagnostics"]["completeness"] == "complete"
     assert result["mappingDiagnostics"]["mappedWemCount"] == len(bindings)
     namespaces = {path.parents[1].name for path in hirc_paths}
@@ -985,11 +999,11 @@ def test_hirc_memory_cache_key_includes_wad_identity_and_backend(tmp_path: Path,
 
     class _FakeNativeHirc:
         @staticmethod
-        def from_bnk(path: Path, cache_dir: Path) -> object:  # noqa: ARG004
+        def from_bnk(path: Path, cache_dir: Path, use_cache: bool = True) -> object:  # noqa: ARG004
             parsed.append(path)
             return object()
 
-    monkeypatch.setattr(mapping_session, "NativeHIRC", _FakeNativeHirc)
+    monkeypatch.setattr(hirc_backend, "NativeHIRC", _FakeNativeHirc)
     cache = mapping_session.RuntimeCache()
     hirc_dir = tmp_path / "hirc"
 

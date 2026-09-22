@@ -42,7 +42,7 @@ _TEXTS: dict[str, dict[str, str]] = {
         "help.mapping.integrate_data_global": "mapping 阶段是否生成整合数据文件；未显式指定时默认开启。",
         "help.wav_workers": "设置 wav 动作使用的转码并发进程数。",
         "help.wav_timeout": "设置单个 WAV 转码任务的超时时间（秒）。",
-        "help.wav_retries": "设置单个 WAV 转码任务的最大重试次数。",
+        "help.wav_retries": "设置单个 WAV 转码任务的最大尝试次数（含首次，默认 3，至少 1）。",
         "help.wav_format": "设置 WAV 输出格式。",
         "stage.update": "数据更新",
         "stage.extract": "音频解包",

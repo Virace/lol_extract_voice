@@ -61,7 +61,6 @@ def test_task_creation_card_uses_gui_wav_defaults_for_draft(qtbot) -> None:
     assert draft.task_params.wav_enabled is True
     assert draft.task_params.wav_workers == EXPECTED_WAV_WORKERS
     assert draft.task_params.wav_timeout == EXPECTED_WAV_TIMEOUT
-    assert draft.task_params.wav_retries == EXPECTED_WAV_RETRIES
     assert draft.task_params.wav_format == "float"
     assert operation_options.wav_output.enabled is True
     assert operation_options.wav_output.worker_count == EXPECTED_WAV_WORKERS

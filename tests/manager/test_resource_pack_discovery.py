@@ -26,6 +26,7 @@ from lol_audio_unpack.manager.resource_pack_discovery import (
     ResourcePackDiscovery,
 )
 from lol_audio_unpack.model.binding import BindingRole, BindingStatus, normalize_logical_path
+from tests.factories import make_context
 from tests.runtime.test_wad_index import _FakeWad, _Section
 
 pytestmark = pytest.mark.unit
@@ -62,7 +63,8 @@ def _build_ctx(tmp_path: Path):
     """创建只包含 game FINAL 与 manifest artifact 根的本地上下文。"""
     game_root = tmp_path / "game"
     (game_root / "Game" / "DATA" / "FINAL").mkdir(parents=True)
-    return SimpleNamespace(
+    return make_context(
+        tmp_path,
         config=SimpleNamespace(
             game_path=game_root,
             game_region="zh_CN",
@@ -295,11 +297,9 @@ def test_duplicate_declarations_merge_source_hashes_and_partial_parse_keeps_pack
     ).discover((ref,), version="16.16")
 
     key = build_resource_pack_key_for_wad(ref, category)
-    banks_base = (
-        Path(ctx.paths.manifest_path) / "16.16" / "banks" / "resource_packs" / resource_pack_path_component(key)
-    )
+    banks_base = ctx.version_path("manifest", "16.16") / "banks" / "resource_packs" / resource_pack_path_component(key)
     events_base = (
-        Path(ctx.paths.manifest_path) / "16.16" / "events" / "resource_packs" / resource_pack_path_component(key)
+        ctx.version_path("manifest", "16.16") / "events" / "resource_packs" / resource_pack_path_component(key)
     )
     banks = read_data(banks_base, dev_mode=True)
     events = read_data(events_base, dev_mode=True)
@@ -341,7 +341,7 @@ def test_conflicting_existing_artifact_is_never_overwritten_and_reader_reads_v2(
     ref, _path = _selected_wad(ctx)
     category = "MODE_TFT_NPC_RiftHerald_SFX"
     key = build_resource_pack_key_for_wad(ref, category)
-    base = Path(ctx.paths.manifest_path) / "16.16" / "banks" / "resource_packs" / resource_pack_path_component(key)
+    base = ctx.version_path("manifest", "16.16") / "banks" / "resource_packs" / resource_pack_path_component(key)
     base.parent.mkdir(parents=True)
     existing = {
         "resourcePack": {
@@ -367,7 +367,7 @@ def test_conflicting_existing_artifact_is_never_overwritten_and_reader_reads_v2(
     reader = DataReader.__new__(DataReader)
     reader.ctx = ctx
     reader.resource_pack_banks_dir = base.parent
-    reader.resource_pack_events_dir = Path(ctx.paths.manifest_path) / "16.16" / "events" / "resource_packs"
+    reader.resource_pack_events_dir = ctx.version_path("manifest", "16.16") / "events" / "resource_packs"
     reader._resource_pack_banks_cache = {}
     reader._resource_pack_events_cache = {}
 
@@ -386,14 +386,14 @@ def test_artifact_write_failure_is_reported_and_does_not_publish_banks(
     category = "MODE_TFT_WRITE_FAILURE_SFX"
     key = build_resource_pack_key_for_wad(ref, category)
     component = resource_pack_path_component(key)
-    banks_base = Path(ctx.paths.manifest_path) / "16.16" / "banks" / "resource_packs" / component
-    events_base = Path(ctx.paths.manifest_path) / "16.16" / "events" / "resource_packs" / component
+    banks_base = ctx.version_path("manifest", "16.16") / "banks" / "resource_packs" / component
+    events_base = ctx.version_path("manifest", "16.16") / "events" / "resource_packs" / component
     wad = _FakeWad([_section(1, offset=1)], {1: b"PROPgood"})
 
     def fail_events_write(data: dict, base: Path, *, dev_mode: bool) -> Path:
         """在 events 写入边界注入明确的 artifact 异常。"""
         if "events" in base.parts:
-            raise ArtifactWriteError(base.with_suffix(".yml"), "replace")
+            raise ArtifactWriteError(base.with_suffix(".msgpack"), "replace")
         return write_data(data, base, dev_mode=dev_mode)
 
     monkeypatch.setattr(discovery_module, "write_data", fail_events_write)
@@ -420,8 +420,8 @@ def test_banks_write_failure_restores_existing_banks_and_events(
     category = "MODE_TFT_TRANSACTION_SFX"
     key = build_resource_pack_key_for_wad(ref, category)
     component = resource_pack_path_component(key)
-    banks_base = Path(ctx.paths.manifest_path) / "16.16" / "banks" / "resource_packs" / component
-    events_base = Path(ctx.paths.manifest_path) / "16.16" / "events" / "resource_packs" / component
+    banks_base = ctx.version_path("manifest", "16.16") / "banks" / "resource_packs" / component
+    events_base = ctx.version_path("manifest", "16.16") / "events" / "resource_packs" / component
     wad = _FakeWad([_section(1, offset=1)], {1: b"PROPgood"})
 
     first = ResourcePackDiscovery(
@@ -433,15 +433,15 @@ def test_banks_write_failure_restores_existing_banks_and_events(
     assert first.status == "complete"
     old_banks = read_data(banks_base, dev_mode=True)
     old_events = read_data(events_base, dev_mode=True)
-    banks_path = banks_base.with_suffix(".yml")
-    events_path = events_base.with_suffix(".yml")
+    banks_path = banks_base.with_suffix(".msgpack")
+    events_path = events_base.with_suffix(".msgpack")
     old_banks_bytes = banks_path.read_bytes()
     old_events_bytes = events_path.read_bytes()
 
     def fail_banks_write(data: dict, base: Path, *, dev_mode: bool) -> Path:
         """允许新 events 落盘，再在 banks 提交点注入明确失败。"""
         if "banks" in base.parts:
-            raise ArtifactWriteError(base.with_suffix(".yml"), "replace")
+            raise ArtifactWriteError(base.with_suffix(".msgpack"), "replace")
         return write_data(data, base, dev_mode=dev_mode)
 
     monkeypatch.setattr(discovery_module, "write_data", fail_banks_write)
@@ -482,7 +482,7 @@ def test_normalized_namespace_collision_is_reported_without_writing_artifact(tmp
     ).discover((ref,), version="16.16")
 
     key = build_resource_pack_key_for_wad(ref, "MODE_TFT_NPC_ElderDragon_SFX")
-    base = Path(ctx.paths.manifest_path) / "16.16" / "banks" / "resource_packs" / resource_pack_path_component(key)
+    base = ctx.version_path("manifest", "16.16") / "banks" / "resource_packs" / resource_pack_path_component(key)
     assert result.status == "failed"
     assert result.packs[0].status == "conflict"
     assert not read_data(base, dev_mode=True)
@@ -492,7 +492,7 @@ def test_reader_lists_each_artifact_base_once_and_skips_corrupt_rows(tmp_path: P
     """枚举 catalog 时沿用 artifact 格式优先级，坏行不得阻断其它资源包。"""
     ctx = _build_ctx(tmp_path)
     key = build_resource_pack_key("Ruby_Urgot.wad.client", "MODE_DOOM_BOTS")
-    banks_dir = Path(ctx.paths.manifest_path) / "16.16" / "banks" / "resource_packs"
+    banks_dir = ctx.version_path("manifest", "16.16") / "banks" / "resource_packs"
     base = banks_dir / resource_pack_path_component(key)
     banks_dir.mkdir(parents=True)
     payload = {"resourcePack": {"key": key}}

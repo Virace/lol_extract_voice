@@ -18,10 +18,12 @@ def _build_updater(game_path: Path, version: str = "16.3"):
     updater.ctx = SimpleNamespace(
         config=SimpleNamespace(
             game_path=game_path,
+            output_path=game_path,
             game_region="zh_CN",
             dev_mode=False,
             with_bp_vo=False,
         ),
+        runtime_cache={},
         paths=SimpleNamespace(
             game_maps_path=game_path / "Game" / "DATA" / "FINAL" / "Maps" / "Shipping",
             game_champion_path=game_path / "Game" / "DATA" / "FINAL" / "Champions",
@@ -134,25 +136,30 @@ def test_check_languages_rejects_invalid_metadata(tmp_path, payload):
     assert updater._check_languages() is False
 
 
-def test_check_and_update_skips_when_canonical_languages_are_fresh(tmp_path, monkeypatch):
+@pytest.mark.parametrize("with_bp_vo", [False, True])
+def test_check_and_update_skips_when_canonical_languages_are_fresh(tmp_path, monkeypatch, with_bp_vo):
     updater = _build_updater(tmp_path)
+    updater.ctx.config.with_bp_vo = with_bp_vo
     updater.force_update = False
     updater.temp_path = tmp_path / "temp"
     updater.version_manifest_path = tmp_path / "manifest" / updater.version
     updater.data_file_base = updater.version_manifest_path / "data"
     updater.process_languages = ["default", "zh_CN"]
     m_data_updater.write_data(
-        {"metadata": {"gameVersion": updater.version, "languages": ["zh_CN"]}},
+        {"metadata": {"gameVersion": updater.version, "languages": ["zh_CN"]}, "champions": {"1": {}}},
         updater.data_file_base,
         dev_mode=False,
     )
     process_calls: list[Path] = []
+    lobby_calls = []
+    monkeypatch.setattr(updater, "ensure_bp_vo", lambda ids: lobby_calls.append(tuple(ids)))
     monkeypatch.setattr(updater, "_process_data", process_calls.append)
 
     result = updater.check_and_update()
 
     assert result == updater.data_file_base
     assert process_calls == []
+    assert lobby_calls == ([("1",)] if with_bp_vo else [])
 
 
 def test_extract_wad_data_collects_all_default_asset_volumes(tmp_path, monkeypatch):
@@ -510,7 +517,7 @@ def test_extract_wad_data_writes_default_sfx_audio_into_region_output(tmp_path, 
     assert extracted_outputs[0].read_bytes() == b"sfx"
 
 
-def test_persist_bp_vo_files_copies_new_sfx_category(tmp_path):
+def test_persist_bp_vo_files_keeps_sfx_in_lobby(tmp_path):
     updater = _build_updater(tmp_path)
     updater.version_manifest_path = tmp_path / "manifest" / updater.version
     updater.process_languages = ["zh_CN"]
@@ -524,6 +531,7 @@ def test_persist_bp_vo_files_copies_new_sfx_category(tmp_path):
 
     target_file = updater.version_manifest_path / "lobby" / "zh_CN" / "champion-sfx-audios" / "1.ogg"
     assert target_file.read_bytes() == b"sfx"
+    assert not (tmp_path / "audios/_data").exists()
 
 
 def test_merge_and_build_data_logs_bin_metadata_summary(tmp_path):

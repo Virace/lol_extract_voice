@@ -109,7 +109,7 @@ class AudioEntityData:
         return full_path if full_path.exists() else None
 
     @classmethod
-    def from_entity(
+    def from_entity(  # noqa: PLR0913
         cls,
         entity_type: str,
         entity_id: int | str,
@@ -117,6 +117,7 @@ class AudioEntityData:
         include_events: bool = False,
         *,
         ctx: AppContext,
+        include_resources: bool = True,
     ) -> AudioEntityData:
         """按实体类型构建统一的音频实体。
 
@@ -126,6 +127,7 @@ class AudioEntityData:
             reader: 数据读取器实例。
             include_events: 是否附带事件数据。
             ctx: 运行时上下文。
+            include_resources: 是否加载精确绑定；浏览已入库产物仅需元数据身份。
 
         Returns:
             AudioEntityData: 对应实体的音频实体。
@@ -139,6 +141,7 @@ class AudioEntityData:
                 reader,
                 include_events=include_events,
                 ctx=ctx,
+                include_resources=include_resources,
             )
         if entity_type == "map":
             return cls.from_map(
@@ -146,6 +149,7 @@ class AudioEntityData:
                 reader,
                 include_events=include_events,
                 ctx=ctx,
+                include_resources=include_resources,
             )
         if entity_type == RESOURCE_PACK_ENTITY_TYPE:
             return cls.from_resource_pack(

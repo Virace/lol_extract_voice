@@ -13,6 +13,7 @@ from lol_audio_unpack.runtime.wav import job as wav_job
 from lol_audio_unpack.unpack import batch as unpack_batch
 from lol_audio_unpack.unpack import entity as unpack_entity
 from lol_audio_unpack.unpack.stats import StageResult as UnpackStageResult
+from tests.factories import make_context
 
 pytestmark = pytest.mark.unit
 
@@ -28,21 +29,22 @@ def _fake_stats(status: UnpackStageResult = UnpackStageResult.SUCCESS) -> Simple
 
 def test_build_transcode_paths_uses_version_and_optional_job_label(tmp_path: Path) -> None:
     """WAV 路径装配应由 runtime.wav.job 统一负责。"""
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         paths=SimpleNamespace(
             audio_path=tmp_path / "audios",
             wav_path=tmp_path / "wavs",
             report_path=tmp_path / "reports",
-        )
+        ),
     )
 
     paths = wav_job.build_transcode_paths(ctx=ctx, version="15.8")
     labeled_paths = wav_job.build_transcode_paths(ctx=ctx, version="15.8", job_label="cli-test")
 
-    assert paths.audio_root == tmp_path / "audios" / "15.8"
-    assert paths.wav_root == tmp_path / "wavs" / "15.8"
-    assert paths.report_root == tmp_path / "reports" / "15.8" / "transcode_wav"
-    assert labeled_paths.report_root == tmp_path / "reports" / "15.8" / "transcode_wav" / "cli-test"
+    assert paths.audio_root == tmp_path / "audios" / "15.8" / "zh_CN"
+    assert paths.wav_root == tmp_path / "wavs" / "15.8" / "zh_CN"
+    assert paths.report_root == tmp_path / "reports" / "15.8" / "zh_CN" / "transcode_wav"
+    assert labeled_paths.report_root == tmp_path / "reports" / "15.8" / "zh_CN" / "transcode_wav" / "cli-test"
 
 
 def test_persisted_wem_callback_runs_after_successful_write(tmp_path: Path) -> None:
@@ -118,7 +120,8 @@ def test_execute_tasks_keeps_extract_flow_without_wav_stage(
         version="15.8",
         write_unknown_categories=lambda: events.append("write_unknown_categories"),
     )
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(dev_mode=False),
         runtime_cache={},
     )
@@ -143,6 +146,7 @@ def test_execute_tasks_keeps_extract_flow_without_wav_stage(
 
 
 def test_execute_tasks_emits_running_entity_progress_before_completion(
+    tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """extract 批处理应先发出当前实体的运行中进度。"""
@@ -158,7 +162,8 @@ def test_execute_tasks_emits_running_entity_progress_before_completion(
         version="15.8",
         write_unknown_categories=lambda: None,
     )
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(dev_mode=False),
         runtime_cache={},
     )
@@ -179,7 +184,7 @@ def test_execute_tasks_emits_running_entity_progress_before_completion(
     ]
 
 
-def test_execute_tasks_reports_partial_stats_as_partial_progress(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_execute_tasks_reports_partial_stats_as_partial_progress(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """内部 warning 统计不得通过进度回调伪装成完整成功。"""
     progress_events: list[str] = []
     monkeypatch.setattr(
@@ -188,7 +193,7 @@ def test_execute_tasks_reports_partial_stats_as_partial_progress(monkeypatch: py
         lambda *_args, **_kwargs: _fake_stats(UnpackStageResult.WARNING),
     )
     reader = SimpleNamespace(write_unknown_categories=lambda: None)
-    ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False), runtime_cache={})
+    ctx = make_context(tmp_path, config=SimpleNamespace(dev_mode=False), runtime_cache={})
 
     result = unpack_batch.execute_tasks(
         [("champion", 1, "测试英雄")],
@@ -202,10 +207,10 @@ def test_execute_tasks_reports_partial_stats_as_partial_progress(monkeypatch: py
     assert progress_events[-1] == "测试英雄 解包部分完成"
 
 
-def test_execute_tasks_returns_success_noop_for_empty_tasks() -> None:
+def test_execute_tasks_returns_success_noop_for_empty_tasks(tmp_path) -> None:
     """空任务列表是合法 no-op，不应被误报为 warning 或失败。"""
     reader = SimpleNamespace(write_unknown_categories=lambda: pytest.fail("空任务不应写入未知分类"))
-    ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False), runtime_cache={})
+    ctx = make_context(tmp_path, config=SimpleNamespace(dev_mode=False), runtime_cache={})
 
     result = unpack_batch.execute_tasks([], reader, ctx=ctx)
 
@@ -214,19 +219,20 @@ def test_execute_tasks_returns_success_noop_for_empty_tasks() -> None:
     assert result.note == "没有任何任务需要执行"
 
 
-def test_execute_tasks_propagates_unknown_category_write_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_execute_tasks_propagates_unknown_category_write_failure(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """批处理基础设施写入失败必须交给 facade，不能降级为实体 partial。"""
     monkeypatch.setattr(unpack_batch, "unpack_champion", lambda *_args, **_kwargs: _fake_stats())
     reader = SimpleNamespace(
         write_unknown_categories=lambda: (_ for _ in ()).throw(OSError("unknown categories write failed"))
     )
-    ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False), runtime_cache={})
+    ctx = make_context(tmp_path, config=SimpleNamespace(dev_mode=False), runtime_cache={})
 
     with pytest.raises(OSError, match="unknown categories write failed"):
         unpack_batch.execute_tasks([("champion", 1, "测试英雄")], reader, max_workers=1, ctx=ctx)
 
 
 def test_execute_tasks_propagates_keyboard_interrupt_without_starting_later_tasks(
+    tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """取消必须跳出批处理，不能被转写为实体失败。"""
@@ -238,7 +244,7 @@ def test_execute_tasks_propagates_keyboard_interrupt_without_starting_later_task
 
     monkeypatch.setattr(unpack_batch, "unpack_champion", interrupt)
     reader = SimpleNamespace(write_unknown_categories=lambda: pytest.fail("取消后不应写入未知分类"))
-    ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False), runtime_cache={})
+    ctx = make_context(tmp_path, config=SimpleNamespace(dev_mode=False), runtime_cache={})
 
     with pytest.raises(KeyboardInterrupt):
         unpack_batch.execute_tasks(
@@ -276,7 +282,7 @@ def test_execute_tasks_returns_input_ordered_results_for_mixed_entity_outcomes(
 
     monkeypatch.setattr(unpack_batch, "unpack_champion", fake_unpack_champion)
     reader = SimpleNamespace(version="15.8", write_unknown_categories=lambda: None)
-    ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False), runtime_cache={})
+    ctx = make_context(tmp_path, config=SimpleNamespace(dev_mode=False), runtime_cache={})
 
     result = unpack_batch.execute_tasks(
         [
@@ -305,6 +311,7 @@ def test_execute_tasks_returns_input_ordered_results_for_mixed_entity_outcomes(
 
 
 def test_execute_tasks_reports_unknown_entity_type_as_stage_failure(
+    tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """未知实体类型必须在排队前成为 stage 失败，而非实体级部分失败。"""
@@ -315,7 +322,7 @@ def test_execute_tasks_reports_unknown_entity_type_as_stage_failure(
         lambda entity_id, *_args, **_kwargs: dispatched.append(entity_id),
     )
     reader = SimpleNamespace(version="15.8", write_unknown_categories=lambda: None)
-    ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False), runtime_cache={})
+    ctx = make_context(tmp_path, config=SimpleNamespace(dev_mode=False), runtime_cache={})
 
     result = unpack_batch.execute_tasks(
         [("champion", 1, "英雄 1"), ("unknown", 2, "未知实体")],

@@ -11,6 +11,12 @@ from time import perf_counter
 # PyInstaller 冻结态的 multiprocessing 子进程必须在导入 Qt 前完成分流。
 multiprocessing.freeze_support()
 
+# 发布包自检在 Qt 和单实例守卫之前分流，既不打开界面也不读取用户配置。
+if "--check-tools" in sys.argv:
+    from lol_audio_unpack.runtime.probe_command import check_tools
+
+    raise SystemExit(check_tools(sys.argv[1:]))
+
 from loguru import logger
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont

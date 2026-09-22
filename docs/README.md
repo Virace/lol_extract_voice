@@ -68,8 +68,8 @@ GUI 以主页、执行中心、实体总览组织主流程，装备查询提供�
 
 本地资源包不是自动全盘扫描：在搜索栏旁更多菜单中使用“扫描本地 WAD…”，只选择当前游戏
 `Game/DATA/FINAL` 下需要处理的 `.wad.client`。扫描在后台执行，目录会显示每个已持久化资源包的来源、
-命名空间、发现状态和 `A` / `M` 输出状态；解包产物位于 `audios/<version>/resource_packs/`，映射位于
-`hashes/<version>/resource_packs/`。资源包当前不支持执行中心的整实体 WAV stage；已经解包的 WEM
+命名空间、发现状态和 `A` / `M` 输出状态；解包产物位于 `audios/<version>/<region>/resource_packs/`，映射位于
+`hashes/<version>/<region>/resource_packs/`。资源包当前不支持执行中心的整实体 WAV stage；已经解包的 WEM
 可以在总览中试听和选择导出，即使映射尚未生成也可从“全部音频”进入。
 
 ## 4. 已准备本地数据源

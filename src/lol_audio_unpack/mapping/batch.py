@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
+from lol_audio_unpack.app.library import with_library
 from lol_audio_unpack.app.results import EntityResult, ResultStatus, StageResult
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.model import generate_champion_tasks, generate_map_tasks
@@ -165,6 +166,7 @@ def _emit_running_progress(  # noqa: PLR0913, PLR0917
     )
 
 
+@with_library
 def execute_tasks(  # noqa: PLR0913
     tasks: list[EntityTask],
     reader: DataReader,

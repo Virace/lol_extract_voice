@@ -32,9 +32,14 @@ Lol Audio Unpack 只从 `game_path` 指向的本地文件系统读取游戏资�
   `riotMeta`。
 - `LeagueClient.exe` 不是合同的一部分，外部准备目录无需复制它。
 
-基础预检只确认所有工作流共享的结构。`update` 仍会按英雄、地图、语言和事件范围验证
-`description.json` 引用的 LCU 资源，以及目标所需的 GAME WAD、BIN、BNK/WPK。只复制目录骨架
-不能替代这些实际资源。
+基础预检只确认共享结构。GUI 随后从 LCU 完整名单与语言声明检查明确必需的 LCU bundle、
+基础 GAME WAD 和所选语言 WAD。`update`、`extract`、`mapping` 在处理前重新检查所选范围，
+缺失则整体阻止本次任务，不静默跳过选择。文件存在不等于内容可解析；BIN、BNK/WPK 的
+实际内容与精确绑定仍在处理阶段验证。只复制目录骨架不能替代这些实际资源。
+
+英语在 LCU 中使用 `default` 命名空间，在 GAME 中使用独立 `en_US.wad.client`。
+地图需要 Common/地图 0 的基础及当前语言文件；Jade 使用普通英雄共享 WAD。
+历史资源包只检查用户显式选择的物理 WAD，不按普通英雄语言文件模板扩张选择。
 
 ## 2. 使用方式
 
@@ -77,15 +82,19 @@ extract_result = app.extract(OperationOptions(champion_ids=(1, 103)), include_ma
 
 ## 3. 验证阶段与失败边界
 
-验证分为两层：
+验证分为三层：
 
 1. `create_app_context(...)` 执行共享基础预检。失败时抛出 `AppContextValidationError`，且发生在
    文件日志、manifest、音频、映射和报告等输出初始化之前。
-2. `update` 为目标建立 resource schema v2 bindings。每条 binding 保存游戏根相对 WAD identity
+2. GUI 目录发现保留完整名单，缺资源实体仍可浏览已有结果但不能加入源任务。语言可留空保存；
+   CLI/API 未提供语言时仍默认 `zh_CN`，显式空语言不可启动源处理。刷新会重建文件快照，
+   任务启动再次验证文件存在性；缺文件不是自动 update 可修复的问题。
+3. `update` 为目标建立 resource schema v2 bindings。每条 binding 保存游戏根相对 WAD identity
    和 entry hash；解包与映射只消费成功 binding，不从 alias、分类名或历史标记猜测物理资源。
 
 因此，基础预检通过只代表目录可以进入应用主链，不代表任意英雄或地图的全部资源都已准备。
-目标资源缺失会在 update 或后续阶段以明确的 partial/failed 结果和诊断体现。
+必需文件缺失会在处理前失败；存在文件内的条目缺失或解析错误才由处理阶段反馈 partial/failed。
+大厅选人/禁用语音只读取所选语言，缺失不回退英语；语言无关 SFX 使用共享 default 资源。
 
 英雄 banks artifact 在首次生成或强制重新生成时附带 `skinAudio`，以皮肤 ID 为键，分别记录
 `VO`、`SFX` 的 `independent`（独立资源）、`shared`（复用其他皮肤的物理资源）、

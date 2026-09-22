@@ -137,6 +137,9 @@ class EntityUnpackStats:
     total_success_files: int = 0
     total_failed_files: int = 0
     total_skipped_files: int = 0
+    new_objects: int = 0
+    reused_objects: int = 0
+    copied_files: int = 0
 
     overall_result: StageResult = StageResult.SUCCESS
     start_time: float | None = None
@@ -430,6 +433,9 @@ class EntityUnpackStats:
                 "total_success": self.total_success_files,
                 "total_failed": self.total_failed_files,
                 "total_skipped": self.total_skipped_files,
+                "new_objects": self.new_objects,
+                "reused_objects": self.reused_objects,
+                "copied_files": self.copied_files,
             },
             "sub_entities": {},
         }

@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
+from threading import Event
 
 from loguru import logger
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QThreadPool, Signal
 
 from lol_audio_unpack.app.resource_pack import partition_special_targets
 from lol_audio_unpack.app.results import EntityResult, ResultStatus, RunResult, StageResult
@@ -21,6 +22,7 @@ from lol_audio_unpack.gui.controllers.task_queue_store import (
     build_row_text,
 )
 from lol_audio_unpack.gui.service.execution_process_worker import ExecutionProcessWorker
+from lol_audio_unpack.gui.service.task_preflight import check_task, use_builtin
 from lol_audio_unpack.gui.task_models import (
     TASK_STATUS_CANCELLED,
     TASK_STATUS_COMPLETED,
@@ -35,6 +37,7 @@ from lol_audio_unpack.gui.task_models import (
     OutputStateRefreshRequest,
     QueuedExecutionTask,
 )
+from lol_audio_unpack.gui.workers import TaskWorker
 
 
 def _build_output_state_refresh_request(
@@ -117,6 +120,8 @@ class ExecutionQueueController(QObject):
     log_requested = Signal(object)
     output_state_refresh_requested = Signal(object)
     result_ready = Signal(object, object)
+    preflight_decision_requested = Signal(object, object)
+    tool_probes_ready = Signal(object)
 
     def __init__(
         self,
@@ -135,6 +140,9 @@ class ExecutionQueueController(QObject):
         self._active_worker: ExecutionProcessWorker | object | None = None
         self._ignored_task_ids: set[int] = set()
         self._stage_completion_notifications: set[tuple[int, str]] = set()
+        self._probe_worker: TaskWorker | None = None
+        self._probe_cancel: Event | None = None
+        self._probe_failures: tuple = ()
 
     @property
     def active_task_id(self) -> int | None:
@@ -252,7 +260,20 @@ class ExecutionQueueController(QObject):
         return None
 
     def start_task_worker(self, task: QueuedExecutionTask) -> None:
-        """为指定任务创建后台 worker 并提交到线程池。"""
+        """先在后台检查输入与工具，全部通过后才创建正式任务进程。"""
+        if not task.draft.tools_checked:
+            self._probe_cancel = Event()
+            cancel = self._probe_cancel
+            worker = TaskWorker(lambda: check_task(task, cancel))
+            worker.signals.finished.connect(lambda results: self._finish_preflight(task, results))
+            worker.signals.failed.connect(lambda error: self._fail_preflight(task, error))
+            self._probe_worker = worker
+            self.update_task(task.task_id, progress_message="正在检查输入与处理工具…")
+            QThreadPool.globalInstance().start(worker)
+            return
+        self._start_execution(task)
+
+    def _start_execution(self, task: QueuedExecutionTask) -> None:
         worker = ExecutionProcessWorker(task, parent=self)
         worker.signals.started.connect(lambda task_id=task.task_id: self.on_task_started(task_id))
         worker.signals.progress.connect(lambda progress, task_id=task.task_id: self.on_task_progress(task_id, progress))
@@ -260,6 +281,55 @@ class ExecutionQueueController(QObject):
         worker.signals.failed.connect(lambda error, task_id=task.task_id: self.on_task_failed(task_id, error))
         self._active_worker = worker
         worker.start()
+
+    def _finish_preflight(self, task: QueuedExecutionTask, results: tuple) -> None:
+        if task.task_id != self._active_task_id:
+            return
+        self._probe_worker = None
+        if self._probe_cancel is not None and self._probe_cancel.is_set():
+            self._probe_cancel = None
+            self.cancel_active_task()
+            return
+        failures = tuple(result for result in results if not result.success)
+        self.tool_probes_ready.emit(results)
+        if failures:
+            if all(issue.can_fallback for issue in failures):
+                self._probe_failures = failures
+                self.update_task(task.task_id, progress_message="任务正在等待您的选择")
+                self.preflight_decision_requested.emit(task, failures)
+            else:
+                self._fail_preflight(task, "\n".join(issue.detail for issue in failures))
+            return
+        self._probe_cancel = None
+        request = task.draft.export_request
+        if request is not None:
+            request = replace(request)
+        task = self.update_task(task.task_id, draft=replace(task.draft, tools_checked=True, export_request=request))
+        self._start_execution(task)
+
+    def _fail_preflight(self, task: QueuedExecutionTask, error: str) -> None:
+        if task.task_id != self._active_task_id:
+            return
+        self._probe_worker = None
+        cancelled = self._probe_cancel is not None and self._probe_cancel.is_set()
+        self._probe_cancel = None
+        if cancelled:
+            self.cancel_active_task()
+        else:
+            self.on_task_failed(task.task_id, error)
+
+    def resolve_preflight(self, task_id: int, *, builtin: bool) -> None:
+        """响应启动前的两项选择；关闭或过期结果不能启动任务。"""
+        if task_id != self._active_task_id or not self._probe_failures:
+            return
+        failures, self._probe_failures = self._probe_failures, ()
+        self._probe_cancel = None
+        if not builtin:
+            self.cancel_active_task()
+            return
+        task = use_builtin(self.find_task_by_id(task_id), failures)
+        self.update_task(task_id, draft=task.draft)
+        self.start_task_worker(task)
 
     def on_task_started(self, task_id: int) -> None:
         """处理后台任务真正启动后的摘要更新。"""
@@ -419,6 +489,14 @@ class ExecutionQueueController(QObject):
         task = self.find_running_task()
         if task is None:
             return False
+
+        if self._probe_cancel is not None:
+            self._probe_cancel.set()
+            if self._probe_worker is not None:
+                self.update_task(task.task_id, progress_message="正在取消预检…")
+                return True
+            self._probe_cancel = None
+            self._probe_failures = ()
 
         self._ignored_task_ids.add(task.task_id)
         try:
@@ -749,6 +827,8 @@ class ExecutionQueueController(QObject):
 
     def shutdown(self) -> None:
         """清理执行中心后台任务引用。"""
+        if self._probe_cancel is not None:
+            self._probe_cancel.set()
         self._stop_active_worker()
         self._active_task_id = None
         self._active_worker = None

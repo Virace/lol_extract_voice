@@ -1,8 +1,8 @@
 """验证事件树与全部音频共享选择，筛选不会改写节点范围。"""
 
-import json
 from pathlib import Path
 
+import msgpack
 import pytest
 from PySide6.QtCore import QPoint, Qt
 
@@ -263,8 +263,8 @@ def test_parent_selection_uses_full_mapping_and_disables_missing(qtbot, tmp_path
     selection.set_available(ref.path for ref in refs)
     model = PreviewTreeModel()
     model.audio_selection = selection
-    mapping_path = tmp_path / "mapping.json"
-    mapping_path.write_text(json.dumps(full), encoding="utf-8")
+    mapping_path = tmp_path / "mapping.msgpack"
+    mapping_path.write_bytes(msgpack.packb(full, use_bin_type=True))
     stat = mapping_path.stat()
     model.mapping_source = MappingNode(mapping_path, "champions", "1", (stat.st_size, stat.st_mtime_ns))
     model.selection_mode = True

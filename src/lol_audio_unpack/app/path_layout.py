@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Literal
 
+from lol_audio_unpack.utils.common import sanitize_filename
+
 from .resource_pack import RESOURCE_PACK_ENTITY_TYPE, resource_pack_path_component
 
 ENTITY_TYPE_CHAMPION: Literal["champion"] = "champion"
@@ -84,7 +86,7 @@ def format_entity_folder_name(
     parts = [entity_id, entity_alias, entity_name]
     if entity_title:
         parts.append(entity_title)
-    return ENTITY_NAME_SEPARATOR.join(parts)
+    return sanitize_filename(ENTITY_NAME_SEPARATOR.join(parts))
 
 
 def get_entity_path_component(entity_type: str, entity_id: int | str) -> str:
@@ -112,7 +114,7 @@ def format_sub_entity_folder_name(sub_id: str, sub_name: str) -> str:
     Returns:
         以 `·` 连接的子实体文件夹名称。
     """
-    return ENTITY_NAME_SEPARATOR.join([sub_id, sub_name])
+    return sanitize_filename(ENTITY_NAME_SEPARATOR.join([sub_id, sub_name]))
 
 
 __all__ = [

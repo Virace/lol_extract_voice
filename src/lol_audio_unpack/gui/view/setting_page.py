@@ -19,6 +19,7 @@ from qfluentwidgets import (
     SmoothScrollArea,
     TitleLabel,
     qconfig,
+    setCustomStyleSheet,
 )
 from qfluentwidgets import (
     FluentIcon as FIF,
@@ -35,6 +36,7 @@ from lol_audio_unpack.gui.common.page_style import (
     apply_page_content_margins,
     configure_transparent_scroll_page,
 )
+from lol_audio_unpack.gui.components.source_missing_dialog import SourceMissingDialog
 from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
 from lol_audio_unpack.gui.controllers.game_path_resolver import resolve_game_path as resolve_selected_game_path
 from lol_audio_unpack.gui.controllers.onboarding_state import GUIDE_VERSION
@@ -45,9 +47,11 @@ from lol_audio_unpack.gui.controllers.path_picker import (
     pick_directory,
     pick_file,
 )
+from lol_audio_unpack.gui.controllers.resource_language import ResourceLanguageController
 from lol_audio_unpack.gui.theme import (
     apply_accent_preset,
     apply_shell_mode,
+    get_semantic_text_color_pair,
     shell_mode_from_theme,
 )
 from lol_audio_unpack.gui.view.settings.appearance_panel import AppearancePanel
@@ -61,6 +65,7 @@ from lol_audio_unpack.gui.view.settings.tool_path_panel import (
     ToolPathPanel,
     WavSettingsPanel,
 )
+from lol_audio_unpack.manager.source_inventory import SourceInventory, SourceLanguage
 from lol_audio_unpack.utils.runtime_paths import (
     get_default_output_relative_path,
     get_default_vgmstream_relative_path,
@@ -149,6 +154,10 @@ class SettingPage(SmoothScrollArea):
         self._build_ui()
         previous_mark = _log_setting_stage("_build_ui 完成", startup_begin, previous_mark)
         self._load_config()
+        self.language_controller = ResourceLanguageController(
+            self._cfg, self.gameRegionCard, self._confirm_language, self
+        )
+        self.language_controller.changed.connect(self.shared_context_input_changed)
         previous_mark = _log_setting_stage("_load_config 完成", startup_begin, previous_mark)
         apply_smooth_scroll_enabled(self, self._cfg.page_smooth_scroll_enabled)
         self._connect_signals()
@@ -290,10 +299,11 @@ class SettingPage(SmoothScrollArea):
         self.prepareDataCard.setChecked(cfg.prepare_data_on_startup)
 
         # 工具配置
-        apply_path_card_label(self.wwiserCard, cfg.wwiser_path, f"./{get_default_wwiser_relative_path()}")
-        apply_path_card_label(self.vgmstreamCard, cfg.vgmstream_path, f"./{get_default_vgmstream_relative_path()}")
+        self._refresh_tool_cards()
         self.wavWorkersCard.setValue(str(cfg.wav_workers))
         self.wavTimeoutCard.setValue(str(cfg.wav_timeout))
+        if self.wavRetriesCard.comboBox.findText(str(cfg.wav_retries)) < 0:
+            self.wavRetriesCard.comboBox.addItem(str(cfg.wav_retries))
         self.wavRetriesCard.setValue(str(cfg.wav_retries))
 
         # 个性化 — 应用已保存的主题
@@ -317,7 +327,6 @@ class SettingPage(SmoothScrollArea):
     ) -> None:
         """将各控件当前值写入 GuiConfig 并持久化。"""
         cfg = self._cfg
-        cfg.game_region = self.gameRegionCard.value()
         cfg.group_by_type = self.groupByTypeCard.isChecked()
         cfg.prepare_data_on_startup = self.prepareDataCard.isChecked()
         cfg.wav_workers = int(self.wavWorkersCard.value())
@@ -332,6 +341,17 @@ class SettingPage(SmoothScrollArea):
         cfg.save()
         if emit_shared_context_input_change:
             self.shared_context_input_changed.emit()
+
+    def set_source_inventory(self, inventory: SourceInventory) -> None:
+        """在共享目录 generation 完成时同步语言状态。"""
+        self.language_controller.apply_inventory(inventory)
+
+    def _confirm_language(self, language: SourceLanguage) -> bool:
+        """缺失语言只能在查看影响范围后使用可用部分。"""
+        inventory = self.language_controller.inventory
+        previous = inventory.get_language(self._cfg.game_region) if inventory else None
+        value = previous.locale if previous and previous.available_count else ""
+        return bool(SourceMissingDialog(language, self.window(), previous=value).exec())
 
     def _save_theme_config(self) -> None:
         """保存主题配置到 GuiConfig。"""
@@ -392,7 +412,7 @@ class SettingPage(SmoothScrollArea):
                 assign=lambda path: setattr(self._cfg, "wwiser_path", path),
                 save=self._cfg.save,
                 card=self.wwiserCard,
-                default=f"./{get_default_wwiser_relative_path()}",
+                default="内置 NativeHIRC",
                 changed_signal=self.wwiser_path_changed,
             )
         )
@@ -405,14 +425,17 @@ class SettingPage(SmoothScrollArea):
                 assign=lambda path: setattr(self._cfg, "vgmstream_path", path),
                 save=self._cfg.save,
                 card=self.vgmstreamCard,
-                default=f"./{get_default_vgmstream_relative_path()}",
+                default="内置 pyvgmstream",
                 changed_signal=self.vgmstream_path_changed,
             )
         )
+        self.toolPathPanel.wwiserClear.clicked.connect(lambda: self._clear_tool("wwiser"))
+        self.toolPathPanel.vgmstreamClear.clicked.connect(lambda: self._clear_tool("vgmstream"))
+        self.wwiser_path_changed.connect(lambda _path: self._refresh_tool_cards("wwiser"))
+        self.vgmstream_path_changed.connect(lambda _path: self._refresh_tool_cards("vgmstream"))
         self.onboardingResetCard.clicked.connect(self._reset_onboarding_state)
 
         # 基础设置
-        self.gameRegionCard.comboBox.currentTextChanged.connect(self._save_config)
         self.groupByTypeCard.checkedChanged.connect(self._save_config)
         self.prepareDataCard.checkedChanged.connect(self._save_config)
         self.wavWorkersCard.comboBox.currentTextChanged.connect(lambda _value: self._save_wav_defaults())
@@ -494,6 +517,41 @@ class SettingPage(SmoothScrollArea):
             )
         self._show_feedback(title="已识别游戏目录", content=content, level="success")
 
+    def _refresh_tool_cards(self, changed: str | None = None) -> None:
+        for name, builtin in (("wwiser", "NativeHIRC"), ("vgmstream", "pyvgmstream")):
+            if changed is not None and changed != name:
+                continue
+            path = getattr(self._cfg, f"{name}_path")
+            card = getattr(self, f"{name}Card")
+            card.setContent(path or f"内置 {builtin}")
+            card.setToolTip("")
+            setCustomStyleSheet(card.contentLabel, "", "")
+            getattr(self.toolPathPanel, f"{name}Clear").setEnabled(bool(path))
+
+    def show_tool_probes(self, results: tuple) -> None:
+        """仅将当前配置路径对应的可证实工具故障标记到设置卡。"""
+        labels = {"path": "文件不存在", "start": "无法启动", "timeout": "预检超时"}
+        for result in results:
+            name = "vgmstream" if result.tool == "wav" else "wwiser"
+            current = getattr(self._cfg, f"resolve_{name}_path")()
+            if not result.path or current != Path(result.path):
+                continue
+            if result.success:
+                self._refresh_tool_cards(name)
+            elif result.can_fallback:
+                card = getattr(self, f"{name}Card")
+                card.setContent(f"{current} · {labels.get(result.kind, '预检失败')}")
+                card.setToolTip(result.detail)
+                light, dark = get_semantic_text_color_pair("critical")
+                setCustomStyleSheet(card.contentLabel, f"color: {light.name()};", f"color: {dark.name()};")
+
+    def _clear_tool(self, name: str) -> None:
+        """仅清空配置；运行任务已持有自己的路径快照。"""
+        setattr(self._cfg, f"{name}_path", "")
+        self._cfg.save()
+        self._refresh_tool_cards(name)
+        getattr(self, f"{name}_path_changed").emit("")
+
     def _reset_onboarding_state(self) -> None:
         """重置新手引导状态，并等下次启动自动显示。"""
 
@@ -535,7 +593,7 @@ class SettingPage(SmoothScrollArea):
         enabled = not locked
         self.localGroup.setEnabled(enabled)
         self.baseGroup.setEnabled(enabled)
-        self.wwiserCard.setEnabled(enabled)
+        self.wwiserCard.setEnabled(True)
         self.vgmstreamCard.setEnabled(True)
         self.wavGroup.setEnabled(True)
         self.toolsGroup.setEnabled(True)

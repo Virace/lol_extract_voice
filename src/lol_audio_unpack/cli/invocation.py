@@ -128,6 +128,8 @@ def validate_request(
     )
     if request.wav_enabled and not wav_requested:
         raise CliInvocationValidationError("wav_enabled=true 时，actions 中必须包含 wav。")
+    if request.wav_retries < 1:
+        raise CliInvocationValidationError("--wav-retries 必须至少为 1（最大尝试次数包含首次）。")
     if wav_tuning_explicit and not wav_requested:
         raise CliInvocationValidationError(
             "--wav-workers / --wav-timeout / --wav-retries / --wav-format 只能与 wav 动作一起使用。"
@@ -179,10 +181,11 @@ def build_argv(
     if group_by_type:
         argv.append("--group-by-type")
 
-    if "mapping" in actions and isinstance(wwiser_path, str):
-        resolved_wwiser_path = resolve_runtime_path(wwiser_path, runtime_paths=runtime)
-        if resolved_wwiser_path != get_default_wwiser_path(runtime):
-            argv.extend(["--wwiser-path", wwiser_path])
+    if "mapping" in actions and isinstance(wwiser_path, str) and wwiser_path.strip():
+        argv.extend(["--wwiser-path", wwiser_path])
+    vgmstream_path = settings.get(SettingKey.VGMSTREAM_PATH)
+    if "wav" in actions and isinstance(vgmstream_path, str) and vgmstream_path.strip():
+        argv.extend(["--vgmstream-path", vgmstream_path])
 
     _append_optional_arg(argv, "--champions", request.champions)
     _append_optional_arg(argv, "--maps", request.maps)

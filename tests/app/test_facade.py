@@ -17,6 +17,14 @@ from lol_audio_unpack.app.types import OperationOptions, WavOutputOptions
 from lol_audio_unpack.manager.errors import ArtifactWriteError
 from lol_audio_unpack.manager.update_result import UpdateEntityResult
 from lol_audio_unpack.model.progress import OperationProgress
+from tests.factories import make_context
+
+
+@pytest.fixture(autouse=True)
+def isolate_source_files(monkeypatch):
+    """本模块验证阶段分派；真实存在性与写入前阻断由 test_preflight 覆盖。"""
+    monkeypatch.setattr(LolAudioUnpackApp, "_check_source", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(LolAudioUnpackApp, "check_tools", lambda *_args, **_kwargs: None)
 
 
 def _success_result(stage: str, entity_type: str = "champion", entity_id: int | str = 1) -> StageResult:
@@ -26,10 +34,12 @@ def _success_result(stage: str, entity_type: str = "champion", entity_id: int | 
     )
 
 
-def test_facade_lazily_reuses_and_explicitly_resets_its_reader(monkeypatch) -> None:
+def test_facade_lazily_reuses_and_explicitly_resets_its_reader(tmp_path, monkeypatch) -> None:
     """同一 app 复用 reader，显式失效后才创建新实例。"""
     expected_reader_count = 3
-    ctx = SimpleNamespace()
+    ctx = make_context(
+        tmp_path,
+    )
     created: list[SimpleNamespace] = []
 
     def reader_factory(*, ctx) -> SimpleNamespace:  # noqa: ANN001
@@ -51,9 +61,11 @@ def test_facade_lazily_reuses_and_explicitly_resets_its_reader(monkeypatch) -> N
     assert len(created) == expected_reader_count
 
 
-def test_facade_reader_lazy_initialization_is_thread_safe(monkeypatch) -> None:
+def test_facade_reader_lazy_initialization_is_thread_safe(tmp_path, monkeypatch) -> None:
     """并发首次读取也只能构造并返回一个 app-owned reader。"""
-    ctx = SimpleNamespace()
+    ctx = make_context(
+        tmp_path,
+    )
     start_barrier = Barrier(3)
     constructor_barrier = Barrier(2)
     created: list[SimpleNamespace] = []
@@ -86,11 +98,13 @@ def test_facade_reader_lazy_initialization_is_thread_safe(monkeypatch) -> None:
 
 @pytest.mark.parametrize("error_type", [None, OSError, RuntimeError])
 def test_prepare_update_data_invalidates_reader_on_every_write_capable_exit(
+    tmp_path,
     monkeypatch,
     error_type: type[Exception] | None,
 ) -> None:
     """直接 prepare 成功或异常退出后都不能继续复用旧 reader。"""
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(),
         runtime_cache={},
     )
@@ -132,12 +146,14 @@ def test_prepare_update_data_invalidates_reader_on_every_write_capable_exit(
     ],
 )
 def test_update_invalidates_reader_after_success_or_expected_failure(
+    tmp_path,
     monkeypatch,
     error_type: type[Exception] | None,
     expected_status: ResultStatus | None,
 ) -> None:
     """BIN 写入路径无论成功或转为 failed result 都要失效 reader。"""
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(),
         runtime_cache={},
     )
@@ -172,9 +188,10 @@ def test_update_invalidates_reader_after_success_or_expected_failure(
     assert app._get_reader() is not stale_reader
 
 
-def test_update_adapts_entity_outcomes_and_forwards_structured_progress(monkeypatch) -> None:
+def test_update_adapts_entity_outcomes_and_forwards_structured_progress(tmp_path, monkeypatch) -> None:
     """更新门面保留逐实体真相，并透传稳定的结构化进度。"""
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(),
         runtime_cache={},
     )
@@ -234,7 +251,7 @@ def test_resource_pack_discovery_invalidates_reader_on_every_exit(
     wad_path.parent.mkdir(parents=True)
     wad_path.write_bytes(b"selected")
     ref = ResourcePackWadRef.from_path(game_root, wad_path)
-    ctx = SimpleNamespace(config=SimpleNamespace(game_path=game_root))
+    ctx = make_context(tmp_path, config=SimpleNamespace(game_path=game_root))
     created: list[SimpleNamespace] = []
     discovery_readers: list[SimpleNamespace] = []
 
@@ -367,15 +384,16 @@ def test_transcode_wav_maps_runtime_warning_to_stage_result(
         assert result.entities == ()
 
 
-def test_extract_runs_explicit_champions_and_maps_without_dropping_either_target(monkeypatch) -> None:
+def test_extract_runs_explicit_champions_and_maps_without_dropping_either_target(tmp_path, monkeypatch) -> None:
     """显式英雄与地图同时传入时，两个解包分支都应执行。"""
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(
             include_types=("VO",),
             exclude_types=(),
             output_path=Path("output"),
             game_region="zh_CN",
-        )
+        ),
     )
     app = LolAudioUnpackApp(ctx)
     calls: list[tuple[str, list[int]]] = []
@@ -411,9 +429,10 @@ def test_extract_runs_explicit_champions_and_maps_without_dropping_either_target
     assert tuple(entity.entity_id for entity in result.entities) == (1, 11)
 
 
-def test_mapping_runs_explicit_champions_and_maps_without_dropping_either_target(monkeypatch) -> None:
+def test_mapping_runs_explicit_champions_and_maps_without_dropping_either_target(tmp_path, monkeypatch) -> None:
     """显式英雄与地图同时传入时，两个映射分支都应执行。"""
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(
             game_region="zh_CN",
         ),
@@ -453,7 +472,8 @@ def test_update_with_resource_pack_wad_skips_default_entity_update_and_runs_disc
     wad_path.parent.mkdir(parents=True)
     wad_path.write_bytes(b"selected")
     ref = ResourcePackWadRef.from_path(game_root, wad_path)
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(game_path=game_root),
         paths=SimpleNamespace(manifest_path=tmp_path / "manifest"),
     )
@@ -482,7 +502,7 @@ def test_update_with_resource_pack_wad_skips_default_entity_update_and_runs_disc
 
 
 def test_update_maps_artifact_write_failure_to_failed_stage(monkeypatch, tmp_path: Path) -> None:
-    app = LolAudioUnpackApp(SimpleNamespace(config=SimpleNamespace()))
+    app = LolAudioUnpackApp(make_context(tmp_path))
     error = ArtifactWriteError(tmp_path / "data.msgpack", "replace")
     monkeypatch.setattr(app, "prepare_update_data", lambda **_kwargs: (_ for _ in ()).throw(error))
 
@@ -502,7 +522,8 @@ def test_update_runs_explicit_entity_update_and_resource_pack_discovery_together
     wad_path.parent.mkdir(parents=True)
     wad_path.write_bytes(b"selected")
     ref = ResourcePackWadRef.from_path(game_root, wad_path)
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(game_path=game_root),
         paths=SimpleNamespace(manifest_path=tmp_path / "manifest"),
     )
@@ -535,9 +556,9 @@ def test_update_runs_explicit_entity_update_and_resource_pack_discovery_together
     assert calls == ["updater-created", "updater:['1']", "discovery:16.16"]
 
 
-def test_update_does_not_route_resource_pack_special_target_to_default_entity_update(monkeypatch) -> None:
+def test_update_does_not_route_resource_pack_special_target_to_default_entity_update(tmp_path, monkeypatch) -> None:
     """已发现的 resource-pack key 也不能触发英雄/地图默认全量 update。"""
-    ctx = SimpleNamespace(config=SimpleNamespace())
+    ctx = make_context(tmp_path, config=SimpleNamespace())
     app = LolAudioUnpackApp(ctx)
     key = build_resource_pack_key("TFTCommon.wad.client", "MODE_TFT_NPC_ElderDragon_SFX")
 
@@ -555,7 +576,8 @@ def test_facade_revalidates_resource_pack_wad_before_extract(monkeypatch, tmp_pa
     wad_path.write_bytes(b"selected")
     ref = ResourcePackWadRef.from_path(game_root, wad_path)
     wad_path.write_bytes(b"changed-size")
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(game_path=game_root),
     )
     app = LolAudioUnpackApp(ctx)
@@ -565,16 +587,17 @@ def test_facade_revalidates_resource_pack_wad_before_extract(monkeypatch, tmp_pa
         app.extract(OperationOptions(resource_pack_wads=(ref,)))
 
 
-def test_extract_resource_pack_only_uses_special_consumer_without_all_fallback(monkeypatch) -> None:
+def test_extract_resource_pack_only_uses_special_consumer_without_all_fallback(tmp_path, monkeypatch) -> None:
     """pack-only extract 必须走专用 consumer，不能回退 unpack_all。"""
     key = build_resource_pack_key("TFTCommon.wad.client", "MODE_TFT_NPC_ElderDragon_SFX")
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(
             include_types=("SFX",),
             exclude_types=(),
             output_path=Path("output"),
             game_region="zh_CN",
-        )
+        ),
     )
     app = LolAudioUnpackApp(ctx)
     calls: list[list[str]] = []
@@ -591,16 +614,17 @@ def test_extract_resource_pack_only_uses_special_consumer_without_all_fallback(m
     assert calls == [[key]]
 
 
-def test_extract_dispatches_champion_map_and_resource_pack_together(monkeypatch) -> None:
+def test_extract_dispatches_champion_map_and_resource_pack_together(tmp_path, monkeypatch) -> None:
     """mixed extract 应执行三类显式目标，而非只保留 champion/map。"""
     key = build_resource_pack_key("TFTCommon.wad.client", "MODE_TFT_NPC_ElderDragon_SFX")
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(
             include_types=("SFX",),
             exclude_types=(),
             output_path=Path("output"),
             game_region="zh_CN",
-        )
+        ),
     )
     app = LolAudioUnpackApp(ctx)
     calls: list[tuple[str, list[object]]] = []
@@ -629,10 +653,11 @@ def test_extract_dispatches_champion_map_and_resource_pack_together(monkeypatch)
     assert calls == [("champions", [1]), ("maps", [11]), ("resource_packs", [key])]
 
 
-def test_mapping_resource_pack_only_uses_special_consumer_without_all_fallback(monkeypatch) -> None:
+def test_mapping_resource_pack_only_uses_special_consumer_without_all_fallback(tmp_path, monkeypatch) -> None:
     """pack-only mapping 必须走专用 consumer，不能回退 build_all。"""
     key = build_resource_pack_key("TFTCommon.wad.client", "MODE_TFT_NPC_ElderDragon_SFX")
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(game_region="zh_CN"),
         paths=SimpleNamespace(cache_path=Path("cache"), hash_path=Path("hashes")),
     )
@@ -652,10 +677,11 @@ def test_mapping_resource_pack_only_uses_special_consumer_without_all_fallback(m
     assert calls == [[key]]
 
 
-def test_mapping_dispatches_champion_map_and_resource_pack_together(monkeypatch) -> None:
+def test_mapping_dispatches_champion_map_and_resource_pack_together(tmp_path, monkeypatch) -> None:
     """mixed mapping 应执行三类显式目标。"""
     key = build_resource_pack_key("TFTCommon.wad.client", "MODE_TFT_NPC_ElderDragon_SFX")
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(game_region="zh_CN"),
         paths=SimpleNamespace(cache_path=Path("cache"), hash_path=Path("hashes")),
     )

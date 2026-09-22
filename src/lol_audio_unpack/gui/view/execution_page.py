@@ -9,7 +9,15 @@ from typing import Any
 from loguru import logger
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QHBoxLayout, QMessageBox, QSizePolicy, QVBoxLayout, QWidget
-from qfluentwidgets import CaptionLabel, InfoBarPosition, PushButton, SmoothScrollArea, SubtitleLabel, qconfig
+from qfluentwidgets import (
+    CaptionLabel,
+    InfoBarPosition,
+    MessageBox,
+    PushButton,
+    SmoothScrollArea,
+    SubtitleLabel,
+    qconfig,
+)
 
 from lol_audio_unpack.app.audio_export import AudioExportRequest
 from lol_audio_unpack.gui.common import (
@@ -59,6 +67,7 @@ class ExecutionPage(SmoothScrollArea):
     log_lines_appended = Signal(object)
     global_progress_state_changed = Signal(object)
     result_ready = Signal(object, object)
+    tool_probes_ready = Signal(object)
 
     def __init__(self, parent=None):
         super().__init__(parent=parent)
@@ -108,8 +117,22 @@ class ExecutionPage(SmoothScrollArea):
         self.results_controller.retry_requested.connect(self.submit_task)
         self._queue_controller.result_ready.connect(self.results_controller.receive_result)
         self._queue_controller.result_ready.connect(self.result_ready.emit)
+        self._queue_controller.preflight_decision_requested.connect(self._decide_preflight)
+        self._queue_controller.tool_probes_ready.connect(self.tool_probes_ready)
         self.taskBuilderPanel.sync_state_from_widgets()
         self._setup_connections()
+
+    def _decide_preflight(self, task: QueuedExecutionTask, failures: tuple) -> None:
+        """只在正式处理开始前询问；关闭弹窗等同取消。"""
+        detail = "\n".join(f"{issue.tool}: {issue.detail}" for issue in failures)
+        dialog = MessageBox(
+            "任务正在等待您的选择",
+            "您提供的第三方工具未通过预检。\n" + detail,
+            self.window() or self,
+        )
+        dialog.yesButton.setText("仅本次使用内置")
+        dialog.cancelButton.setText("取消任务")
+        self._queue_controller.resolve_preflight(task.task_id, builtin=bool(dialog.exec()))
 
     def _build_ui(self) -> None:
         self.expandLayout = QVBoxLayout(self.view)
@@ -540,6 +563,16 @@ class ExecutionPage(SmoothScrollArea):
 
     def submit_audio_export(self, request: AudioExportRequest) -> None:
         """把总览导出交给现有单任务 worker，保留总览浏览位置。"""
+        if self.gui_config:
+            request = replace(
+                request,
+                options=replace(
+                    request.options,
+                    backend_path=str(self.gui_config.resolve_vgmstream_path() or "") or None,
+                    timeout_seconds=self.gui_config.wav_timeout,
+                    max_retries=self.gui_config.wav_retries,
+                ),
+            )
         draft = ExecutionTaskDraft(
             source="audio_export",
             source_summary=request.entity_name,
@@ -552,6 +585,8 @@ class ExecutionPage(SmoothScrollArea):
                 wav_enabled=True,
                 wav_format=request.options.format,
                 wav_workers=request.options.worker_count,
+                wav_timeout=request.options.timeout_seconds,
+                wav_retries=request.options.max_retries,
             ),
             export_request=request,
             version=request.version,
@@ -560,7 +595,11 @@ class ExecutionPage(SmoothScrollArea):
 
     def submit_task(self, draft: ExecutionTaskDraft) -> None:
         """统一检查全局忙碌状态，拒绝排队和并行重负载任务。"""
-        if self._is_task_running or self._external_busy or self._shared_data_state.blocks_new_tasks:
+        if (
+            self._is_task_running
+            or self._external_busy
+            or (draft.export_request is None and self._shared_data_state.blocks_new_tasks)
+        ):
             show_feedback_infobar(
                 parent=self._feedback_parent(),
                 title="暂时无法开始",

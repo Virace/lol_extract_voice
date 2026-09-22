@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from lol_audio_unpack.runtime.library.types import normalize_region, resolve_path
+
 from .resource_pack import ResourcePackWadRef
 
 
@@ -25,18 +27,25 @@ class AppConfig:
     group_by_type: bool = False
     with_bp_vo: bool = False
     wwiser_path: Path | None = None
+    vgmstream_path: Path | None = None
     dev_mode: bool = False
 
 
 @dataclass(frozen=True)
 class WavOutputOptions:
-    """独立 WAV 转码 stage 的输出配置。"""
+    """独立 WAV 转码 stage 的输出配置。
+
+    ``backend_path`` 为空时使用内置批处理；超时参数约束外部单文件进程。
+    ``max_retries`` 沿用历史语义，表示单文件任务的最大尝试次数（含首次）。
+    内外后端共用任务级重试；重试不切换后端、不重复工具预检。
+    """
 
     enabled: bool = False
     worker_count: int = 2
     timeout_seconds: int = 5
     max_retries: int = 3
     format: str = "pcm16"
+    backend_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +88,15 @@ class AppContext:
     config: AppConfig
     paths: AppPaths
     runtime_cache: dict[str, Any] = field(default_factory=dict)
+
+    def version_path(self, kind: str, version: str) -> Path:
+        """返回固定版本/区域产物根，源任务必须先选定语言。
+
+        空语言仅供 GUI 只读发现使用，不得将其回填成某种语言。
+        """
+        root = Path(getattr(self.paths, f"{kind}_path"))
+        region = normalize_region(self.game_region) if self.game_region else "_unselected"
+        return resolve_path(root, f"{version}/{region}")
 
     @property
     def game_path(self) -> Path:

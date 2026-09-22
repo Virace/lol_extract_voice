@@ -93,6 +93,9 @@ def _create_shared_parser() -> argparse.ArgumentParser:
     config_group.add_argument("--exclude-type", type=str, metavar="TYPES", help=text("help.exclude_type"))
     config_group.add_argument("--wwiser-path", type=str, metavar="PATH", help=text("help.wwiser_path"))
     config_group.add_argument(
+        "--vgmstream-path", type=str, metavar="PATH", help="外部 vgmstream-cli 路径；留空使用内置转码。"
+    )
+    config_group.add_argument(
         "--group-by-type",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -150,19 +153,13 @@ def _add_extract(
         help=text("help.extract.maps"),
     )
     parser.add_argument("--wav-workers", type=int, default=None, metavar="N", help=text("help.wav_workers"))
+    parser.add_argument("--wav-retries", type=int, default=None, metavar="N", help=text("help.wav_retries"))
     parser.add_argument(
         "--wav-timeout",
         type=int,
         default=None,
         metavar="SECONDS",
         help=text("help.wav_timeout"),
-    )
-    parser.add_argument(
-        "--wav-retries",
-        type=int,
-        default=None,
-        metavar="N",
-        help=text("help.wav_retries"),
     )
     parser.add_argument(
         "--wav-format",
@@ -250,19 +247,13 @@ def create_parser(mode: EntryMode = "unpack") -> argparse.ArgumentParser:
         help=text("help.mapping.integrate_data_global"),
     )
     parser.add_argument("--wav-workers", type=int, default=None, metavar="N", help=text("help.wav_workers"))
+    parser.add_argument("--wav-retries", type=int, default=None, metavar="N", help=text("help.wav_retries"))
     parser.add_argument(
         "--wav-timeout",
         type=int,
         default=None,
         metavar="SECONDS",
         help=text("help.wav_timeout"),
-    )
-    parser.add_argument(
-        "--wav-retries",
-        type=int,
-        default=None,
-        metavar="N",
-        help=text("help.wav_retries"),
     )
     parser.add_argument(
         "--wav-format",

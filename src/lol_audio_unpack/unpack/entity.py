@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any
 from league_tools.formats import BNK, WAD, WPK
 from loguru import logger
 
+from lol_audio_unpack.app.library import make_media, with_library
+from lol_audio_unpack.app.outputs import save_outputs
 from lol_audio_unpack.app.path_layout import (
     format_entity_folder_name,
     format_sub_entity_folder_name,
@@ -23,6 +25,7 @@ from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.model import AudioBank, AudioEntityData
 from lol_audio_unpack.model.binding import SUCCESS_STATUSES
 from lol_audio_unpack.model.skin_audio import SkinAudio
+from lol_audio_unpack.runtime.library import MediaRef
 from lol_audio_unpack.runtime.wad import extract_wad, get_wad, resolve_bound_wad
 from lol_audio_unpack.utils.logging import performance_monitor
 
@@ -105,14 +108,14 @@ def _persist_bound_container(  # noqa: PLR0911, PLR0913, PLR0917
     entity_data: AudioEntityData,
     audio_path: Path,
     stats: EntityUnpackStats,
-    persisted_paths: set[Path],
+    persisted_paths: dict[Path, MediaRef],
     *,
     ctx: AppContext,
     persisted_wem_callback: Callable[[Path], None] | None,
     file_limits: frozenset[Path] | None = None,
     write_pool: ThreadPoolExecutor | None = None,
     containers: dict[tuple[str, str, str], list[Any]] | None = None,
-    prepared_dirs: set[Path] | None = None,
+    published_refs: list | None = None,
 ) -> bool:
     """解析一个精确 binding 容器，并将 WEM 回挂到其逻辑子实体。"""
     sub_info = entity_data.get_sub_entity_info(bank.sub_id)
@@ -123,10 +126,6 @@ def _persist_bound_container(  # noqa: PLR0911, PLR0913, PLR0917
     sub_id = sub_info["id"]
     sub_name = sub_info["name"]
     output_path = generate_output_path(entity_data, bank.sub_id, bank.audio_type, audio_path, ctx=ctx)
-    prepared_dirs = prepared_dirs if prepared_dirs is not None else set()
-    if output_path not in prepared_dirs:
-        output_path.mkdir(parents=True, exist_ok=True)
-        prepared_dirs.add(output_path)
     source_path = bank.binding.normalized_path
 
     if not raw_data:
@@ -191,35 +190,42 @@ def _persist_bound_container(  # noqa: PLR0911, PLR0913, PLR0917
                 continue
 
             has_content = True
-            destination_path = output_path / get_name(file)
+            name = get_name(file)
+            if Path(name).name != name or not Path(name).stem.isdigit() or Path(name).suffix.lower() != ".wem":
+                raise ValueError(f"容器媒体不是原 ID WEM 文件名: {name}")
+            destination_path = output_path / name
             if file_limits is not None and destination_path not in file_limits:
                 continue
             matched_paths.add(destination_path)
             if destination_path in persisted_paths:
+                # WPK 先处理；BNK 只补充尚未写出的 ID，不以字节差异覆盖完整资源。
                 continue
-            if destination_path.parent not in prepared_dirs:
-                destination_path.parent.mkdir(parents=True, exist_ok=True)
-                prepared_dirs.add(destination_path.parent)
             jobs.append((file, destination_path))
 
-        def persist(job: tuple[Any, Path]) -> OSError | None:
-            """只执行文件写入，统计由实体线程按原顺序收集。"""
+        library = ctx.runtime_cache["library_writer"]
+
+        def persist(job: tuple[Any, Path]):
+            """发布实际字节和可见链接；实体线程统一归并成功引用。"""
             file, path = job
             if path in persisted_paths:
                 return None
             try:
-                _persist_wem(file, path, persisted_wem_callback=persisted_wem_callback, create_parent=False)
-            except OSError as exc:
+                published = library.publish(bytes(file.data))
+                ref = make_media(entity_data, bank, int(path.stem), published.ref)
+                relative = path.relative_to(library.root).as_posix()
+                mode = library.materialize(ref.object, relative)
+                return ref, published.created, mode
+            except (OSError, ValueError) as exc:
                 return exc
-            return None
 
         # 同一容器中若有重名 WEM，保持“首次成功写入胜出”的串行语义；
         # 容器之间也等待本批写完，避免并发完成顺序改变原有覆盖/重试结果。
         parallel = write_pool is not None and len(matched_paths) == len(jobs)
         results = write_pool.map(persist, jobs) if parallel else map(persist, jobs)
-        for (_file, destination_path), error in zip(jobs, results, strict=True):
-            if error is not None:
-                exc = error
+        successful = []
+        for (_file, destination_path), outcome in zip(jobs, results, strict=True):
+            if isinstance(outcome, Exception):
+                exc = outcome
                 write_failures += 1
                 logger.warning("WEM 写入失败，继续处理同容器其他文件：{} | {}", destination_path, exc)
                 stats.file_failures.append(
@@ -245,9 +251,27 @@ def _persist_bound_container(  # noqa: PLR0911, PLR0913, PLR0917
                     error_info={"path": str(destination_path), "error": str(exc), "type": "WEM"},
                 )
                 continue
-            persisted_paths.add(destination_path)
-            stats.record_file_result(sub_id, sub_name, bank.audio_type, FileProcessResult.SUCCESS)
+            if outcome is None:
+                continue
+            ref, created, mode = outcome
+            successful.append((ref, destination_path))
+            stats.new_objects += int(created)
+            stats.reused_objects += int(not created)
+            stats.copied_files += int(mode == "copy")
+            persisted_paths[destination_path] = ref
             write_successes += 1
+
+        # 一实体只提交一次索引，避免每个容器反复解析、复制和验证不断增长的完整索引。
+        # 只累积已经完成的文件，实体取消时仍由 finally 保存这些成功引用。
+        if published_refs is not None:
+            published_refs.extend(ref for ref, _ in successful)
+        else:
+            library.merge(stats.game_version, ctx.game_region, [ref for ref, _ in successful])
+        for _ref, _path in successful:
+            stats.record_file_result(sub_id, sub_name, bank.audio_type, FileProcessResult.SUCCESS)
+        if persisted_wem_callback is not None:
+            for _, path in successful:
+                persisted_wem_callback(path)
 
         if not has_content:
             _record_bound_result(stats, bank, outcome="failed", error="容器内没有可写入的 WEM")
@@ -366,42 +390,55 @@ def _unpack_bound_entity(  # noqa: PLR0913, PLR0917
                 f"按 binding 解包 WAD '{wad_path.name}' 时出错: {exc}"
             )
 
-    persisted_paths: set[Path] = set()
-    prepared_dirs: set[Path] = set()
+    persisted_paths: dict[Path, MediaRef] = {}
     containers: dict[tuple[str, str, str], list[Any]] = {}
     remaining = Counter((bank.binding.wad, bank.binding.entry_hash, bank.binding.kind) for bank in active_banks)
     raw_remaining = Counter((bank.binding.wad, bank.binding.entry_hash) for bank in active_banks)
     extracted_count = len(raw_by_key)
-    for bank in active_banks:
-        binding = bank.binding
-        key = (binding.wad or "", binding.entry_hash)
-        raw_data = raw_by_key.get(key)
-        if raw_data is None:
-            _record_bound_result(stats, bank, outcome="failed", error=raw_errors.get(key, "未提取到 WAD entry"))
-            continue
-        _persist_bound_container(
-            raw_data,
-            bank,
-            entity_data,
-            audio_path,
-            stats,
-            persisted_paths,
-            ctx=ctx,
-            persisted_wem_callback=persisted_wem_callback,
-            file_limits=(file_limits or {}).get(
-                (bank.sub_id, bank.audio_type, binding.category, binding.wad or "", binding.entry_hash)
-            ),
-            write_pool=write_pool,
-            containers=containers,
-            prepared_dirs=prepared_dirs,
-        )
-        cache_key = (binding.wad or "", binding.entry_hash, binding.kind)
-        remaining[cache_key] -= 1
-        if remaining[cache_key] == 0:
-            containers.pop(cache_key, None)
-        raw_remaining[key] -= 1
-        if raw_remaining[key] == 0:
-            raw_by_key.pop(key, None)
+    published_refs = []
+    try:
+        # 同一皮肤的资源取并集，同 ID 优先使用 WPK；顺序不依赖 BIN 声明或文件名。
+        for bank in sorted(active_banks, key=lambda item: item.binding.kind != "WPK"):
+            binding = bank.binding
+            key = (binding.wad or "", binding.entry_hash)
+            raw_data = raw_by_key.get(key)
+            if raw_data is None:
+                _record_bound_result(stats, bank, outcome="failed", error=raw_errors.get(key, "未提取到 WAD entry"))
+                continue
+            _persist_bound_container(
+                raw_data,
+                bank,
+                entity_data,
+                audio_path,
+                stats,
+                persisted_paths,
+                ctx=ctx,
+                persisted_wem_callback=persisted_wem_callback,
+                file_limits=(file_limits or {}).get(
+                    (bank.sub_id, bank.audio_type, binding.category, binding.wad or "", binding.entry_hash)
+                ),
+                write_pool=write_pool,
+                containers=containers,
+                published_refs=published_refs,
+            )
+            cache_key = (binding.wad or "", binding.entry_hash, binding.kind)
+            remaining[cache_key] -= 1
+            if remaining[cache_key] == 0:
+                containers.pop(cache_key, None)
+            raw_remaining[key] -= 1
+            if raw_remaining[key] == 0:
+                raw_by_key.pop(key, None)
+    finally:
+        if published_refs:
+            ctx.runtime_cache["library_writer"].merge(stats.game_version, ctx.game_region, published_refs)
+            save_outputs(
+                ctx.config.output_path,
+                stats.game_version,
+                ctx.game_region,
+                entity_data.entity_type,
+                str(entity_data.entity_id),
+                persisted_paths,
+            )
 
     stats.record_assembly_stats(len({bank.sub_id for bank in active_banks}), extracted_count)
     no_audio = {
@@ -419,6 +456,13 @@ def _finish_unpack_stats(
 ) -> None:
     """输出 binding 分支的实体摘要，并写入与旧格式兼容的报告。"""
     summary = stats.get_simple_summary()
+    logger.info(
+        "{} 内容对象：新增 {}、复用 {}，可见文件复制降级 {}",
+        entity_data.entity_name,
+        stats.new_objects,
+        stats.reused_objects,
+        stats.copied_files,
+    )
     if stats.overall_result.value == "success":
         logger.success(summary)
     elif stats.overall_result.value == "warning":
@@ -429,7 +473,9 @@ def _finish_unpack_stats(
     try:
         component = get_entity_path_component(entity_data.entity_type, entity_data.entity_id)
         report_filename = f"_{component}_metadata.yaml"
-        report_path = ctx.report_path / reader.version / get_output_dir_name(entity_data.entity_type) / report_filename
+        report_path = (
+            ctx.version_path("report", reader.version) / get_output_dir_name(entity_data.entity_type) / report_filename
+        )
         report_path.parent.mkdir(parents=True, exist_ok=True)
         stats.save_concise_report_to_yaml(report_path)
     except Exception as exc:  # noqa: BLE001
@@ -438,6 +484,7 @@ def _finish_unpack_stats(
 
 @logger.catch(reraise=True)
 @performance_monitor(level="DEBUG")
+@with_library
 def unpack_entity(  # noqa: PLR0913
     entity_data: AudioEntityData,
     reader: DataReader,
@@ -469,7 +516,7 @@ def unpack_entity(  # noqa: PLR0913
     # 这里消费的是 AppContext 暴露的标准化派生值；
     # unpack 层不再自己补 region/path fallback，避免与其他子域再次分叉。
     language = ctx.game_region
-    audio_path = ctx.audio_path / reader.version
+    audio_path = ctx.version_path("audio", reader.version)
     if not audio_path.exists():
         audio_path.mkdir(parents=True, exist_ok=True)
 
@@ -755,7 +802,9 @@ def unpack_entity(  # noqa: PLR0913
     try:
         component = get_entity_path_component(entity_data.entity_type, entity_data.entity_id)
         report_filename = f"_{component}_metadata.yaml"
-        report_path = ctx.report_path / reader.version / get_output_dir_name(entity_data.entity_type) / report_filename
+        report_path = (
+            ctx.version_path("report", reader.version) / get_output_dir_name(entity_data.entity_type) / report_filename
+        )
         report_path.parent.mkdir(parents=True, exist_ok=True)
         stats.save_concise_report_to_yaml(report_path)
     except Exception as e:
@@ -806,7 +855,7 @@ def _build_entity_audio_roots(
     Returns:
         tuple[Path, ...]: 当前实体对应的一个或多个音频输入根目录。
     """
-    audio_root = ctx.audio_path / version
+    audio_root = ctx.version_path("audio", version)
     entity_dir = get_output_dir_name(entity_data.entity_type)
     entity_folder = format_entity_folder_name(
         get_entity_path_component(entity_data.entity_type, entity_data.entity_id),

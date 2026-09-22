@@ -48,7 +48,7 @@ def test_wav_retry_resolves_only_attempted_files(tmp_path: Path) -> None:
     merged = reconcile_failures(issues, result, (retried,), frozenset({issues[0].key}))
     assert [issue.resolved for issue in merged] == [True, False]
     assert issues[0].resolved is False
-    assert merged[1].retry_mode == "wav_files"
+    assert merged[1].retry_mode == "diagnostics"
 
 
 def test_container_retry_keeps_unknown_units_and_new_file_failure() -> None:

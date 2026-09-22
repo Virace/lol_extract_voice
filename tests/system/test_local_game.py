@@ -128,7 +128,9 @@ def _extract_new_wems(
     result = app.extract(options, include_champions=include_champions)
     assert result.status in PRODUCTIVE_STATUSES, f"解包返回不可消费状态: {result.status.value}"
     assert any(entity.artifacts for entity in result.entities), "解包成功但没有记录落盘产物"
-    return set(audio_root.rglob("*.wem")) - before_wems
+    new_wems = set(audio_root.rglob("*.wem")) - before_wems
+    assert all(path.parent.name in {"VO", "SFX", "MUSIC"} for path in new_wems), "WEM 必须直接位于音频类型目录"
+    return new_wems
 
 
 def _verify_mapping(ctx: AppContext, reader: DataReader, *, integrate_data: bool) -> None:
@@ -190,11 +192,11 @@ def test_local_pipeline_updates_extracts_and_maps(tmp_path: Path) -> None:
     assert update_result.status is ResultStatus.SUCCESS, f"更新返回非成功状态: {update_result}"
 
     reader = DataReader(ctx=ctx)
-    data_file = find_data_file(ctx.paths.manifest_path / reader.version / "data", dev_mode=False)
+    data_file = find_data_file(ctx.version_path("manifest", reader.version) / "data", dev_mode=False)
     assert data_file is not None, "未生成聚合 data 文件"
     _verify_manifest(reader, ctx=ctx)
 
-    audio_root = ctx.paths.audio_path / reader.version
+    audio_root = ctx.version_path("audio", reader.version)
     champion_wems = _extract_new_wems(
         app,
         OperationOptions(champion_ids=(CHAMPION_ID,), max_workers=2),
@@ -233,7 +235,7 @@ def test_local_pipeline_updates_extracts_and_maps(tmp_path: Path) -> None:
     )
     assert tft_wems, "Map 22 解包未生成 WEM"
 
-    report_root = ctx.paths.report_path / reader.version
+    report_root = ctx.version_path("report", reader.version)
     assert (report_root / "champions" / f"_{CHAMPION_ID}_metadata.yaml").is_file()
     assert (report_root / "champions" / f"_{JADE_CHAMPION_ID}_metadata.yaml").is_file()
     assert (report_root / "maps" / f"_{MAP_ID}_metadata.yaml").is_file()

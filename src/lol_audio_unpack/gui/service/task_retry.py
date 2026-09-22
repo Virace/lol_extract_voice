@@ -44,7 +44,7 @@ def build_retry_stages(
     """为每个阶段保留独立目标；精确文件不会退化为整个实体重跑。"""
     plan: list[ExecutionRetryStage] = []
     active = tuple(issue for issue in issues if issue.retry_mode not in {"none", "diagnostics"})
-    for stage in ("update", "extract", "wav", "mapping"):
+    for stage in ("update", "extract", "mapping"):
         selected = tuple(issue for issue in active if issue.stage == stage)
         if not selected:
             continue
@@ -52,31 +52,6 @@ def build_retry_stages(
             plan.append(
                 ExecutionRetryStage(
                     f"按原任务范围重新执行{_STAGE_LABELS[stage]}阶段", _params(original, stage, selected, full=True)
-                )
-            )
-            continue
-        if stage == "wav":
-            batches = {}
-            for issue in selected:
-                if issue.wav_batch is None:
-                    continue
-                batches[issue.wav_batch.operation_id] = issue.wav_batch
-            selected_keys = {(issue.source_path, issue.output_path) for issue in selected}
-            limited = tuple(
-                replace(
-                    batch,
-                    failures=tuple(
-                        item for item in batch.failures if (item.source_path, item.output_path) in selected_keys
-                    ),
-                    failed_count=sum((item.source_path, item.output_path) in selected_keys for item in batch.failures),
-                )
-                for batch in batches.values()
-            )
-            plan.append(
-                ExecutionRetryStage(
-                    f"仅重试 {sum(batch.failed_count for batch in limited)} 个 WAV 失败文件（替换失败输出）",
-                    _params(original, stage, selected),
-                    wav_batches=limited,
                 )
             )
             continue

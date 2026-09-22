@@ -49,6 +49,9 @@ class OverviewAudioPreviewPanel(QWidget):
         self.audio_list.setAccessibleName("全部音频列表")
         self.preview_stack.addWidget(self.audio_preview_tree)
         self.preview_stack.addWidget(self.audio_list)
+        self.loading_label = BodyLabel(self.preview_stack)
+        self.loading_label.setWordWrap(True)
+        self.preview_stack.addWidget(self.loading_label)
 
         preview_footer = QWidget(self)
         preview_footer_layout = QVBoxLayout(preview_footer)
@@ -117,7 +120,7 @@ class OverviewAudioPreviewPanel(QWidget):
         self.audio_list.set_audio_refs(())
         self.reset_summary()
 
-    def set_preview_data(
+    def set_preview_data(  # noqa: PLR0913
         self,
         *,
         mapping_data: dict | None,
@@ -125,6 +128,7 @@ class OverviewAudioPreviewPanel(QWidget):
         group_label_map: dict[str, str] | None,
         summary_text: str,
         selection_mapping: dict | None = None,
+        resolve_ref=None,
     ) -> None:
         """刷新事件树数据与摘要文案。"""
         self.clear_load_progress()
@@ -132,7 +136,7 @@ class OverviewAudioPreviewPanel(QWidget):
         model = self.audio_preview_tree.model()
         if isinstance(model, PreviewTreeModel):
             self.audio_preview_tree.collapseAll()
-            model.set_preview_data(mapping_data, audio_refs, group_label_map, selection_mapping)
+            model.set_preview_data(mapping_data, audio_refs, group_label_map, selection_mapping, resolve_ref)
             self._expand_single_root()
 
     def set_audio_refs(self, refs: tuple[AudioRef, ...], *, summary_text: str) -> None:
@@ -155,6 +159,11 @@ class OverviewAudioPreviewPanel(QWidget):
         self.preview_stack.setCurrentWidget(
             self.audio_list if mode_key == ALL_AUDIO_PREVIEW_MODE else self.audio_preview_tree
         )
+
+    def show_loading(self, message: str) -> None:
+        """只替换列表内容，保留上下文操作与底部导出区域。"""
+        self.loading_label.setText(message)
+        self.preview_stack.setCurrentWidget(self.loading_label)
 
     def _expand_single_root(self) -> None:
         """在仅有一个根节点时自动展开首层。

@@ -4,7 +4,7 @@
 
 `update` 会对 declared BIN 与其引用的 BNK/WPK 做目标 hash 查询，
 只扫描 `Game/DATA/FINAL` 下 root WAD 与当前 `game_region` 的 WAD TOC。命中位置写入
-`manifest/<version>/banks/**`，不会持久化本机绝对路径。
+`manifest/<version>/<region>/banks/**`，不会持久化本机绝对路径。
 
 本地 banks artifact 的资源合同版本位于顶层：
 
@@ -82,8 +82,8 @@ resource_pack:<wad-component>:<namespace-component>
 ```
 
 组件使用 NFKC、casefold 与 UTF-8 percent encoding；WAD 组件去除 `.wad.client`。banks 与 events
-分别写入 `manifest/<version>/banks/resource_packs/` 与
-`manifest/<version>/events/resource_packs/`，文件名对完整 key 再做 percent encoding，payload 仍保存原
+分别写入 `manifest/<version>/<region>/banks/resource_packs/` 与
+`manifest/<version>/<region>/events/resource_packs/`，文件名对完整 key 再做 percent encoding，payload 仍保存原
 stable key。banks 的 v2 `entity.type` 固定为 `resource_pack`，`entity.id` 为完整 key；`resourcePack`
 字段保存相对 WAD identity、stat fingerprint、category 与按 logical bank path 合并的 source entry hashes。
 同 key 指向不同规范化 WAD identity 或 source fingerprint 的既有 artifact 会标记 conflict，绝不覆盖。
@@ -182,12 +182,13 @@ def generate_output_path(
 
 1. local v2 按每条成功 binding 的物理 WAD identity 与 entry 提取原始 bank；同一逻辑实体内
    只复用相同 `(wad identity, entry hash)` 的 raw 数据，仍分别写回各自子实体和音频类型。
-2. 解析 `BNK` / `WPK` 并输出原始 ID 命名的 `.wem`；同一最终相对输出路径只写入一次。
+2. 解析 `BNK` / `WPK`，以实际字节发布内容对象，再建立原始 ID 命名的可见 `.wem`；
+   按实体、皮肤、音频类型与原 ID 汇总媒体，同目标路径采用本轮首次成功写入，成功引用并入版本/区域单索引。
 3. 记录兼容报告字段，并追加 `bindingDiagnostics`（逐 binding、逐 WAD 与
    `complete` / `partial` / `failed`）；报告不写入绝对 WAD 路径。
 
-若当前工作流启用了 WAV，则由独立 `WAV 转码` stage 直接消费当前版本的 `audios/<version>` 输出树，
-再统一调用 `transcode_tree(...)` 生成镜像 WAV。
+若当前工作流启用了 WAV，则由独立 `WAV 转码` stage 消费当前版本/语言的 `audios/<version>/<region>` 输出树，
+按内容、输出参数和后端构建复用完整 WAV，需要转换的内容再通过共用批处理生成镜像输出。
 
 英雄解包在 `ctx.config.with_bp_vo` 启用时会额外处理大厅 BP 语音。
 
@@ -314,15 +315,20 @@ CLI 与 GUI 可以按执行顺序把这些阶段聚合为 `RunResult`。公共�
 只要 banks 已就绪即可跳过 BIN 读取。启用事件处理时也只在 events 缺失、过期或显式 force 时提取
 事件；banks 单独因 resource schema 迁移需要重建时，不会重复解析已经新鲜的 events。
 
-WAV runtime 实际成功转换至少一个文件时，`transcode_wav(...)` 会返回一个稳定的 `wav:batch`
+WAV runtime 实际成功生成或复用至少一个输出时，`transcode_wav(...)` 会返回一个稳定的 `wav:batch`
 实体，其 `artifacts` 为 runtime 报告的真实 `wav_root`；零文件 success no-op 不创建实体。
 extract 的 artifacts 是本轮确认落盘的 WEM 或大厅音频路径，mapping 的 artifacts 是最终写入文件；
 即使实体随后失败，已落盘路径仍会保留，供调用方进行有界刷新或恢复判断。
 
-WAV 目录、所选范围与单文件导出共用 `runtime.wav.batch.run_batch`。已有输出默认跳过，跳过数
-与本次成功数分别统计。`StageResult.wav_batches` 保留文件级成功/失败/跳过计数、精确失败输入
+WAV 目录、所选范围与单文件导出共用 `runtime.wav.batch.run_batch`。普通导出默认跳过同名目标；
+库内 WAV 按输入摘要、当前格式记录和目标存在性复用；格式变化时替换固定输出，不保存历史方案。`StageResult.wav_batches`
+分别保留输出成功、实际转换、复用、失败与冲突跳过计数、精确失败输入
 和独立报告地址；`reports` 提供本轮报告路径。即使报告写入失败，内存中的 typed result 仍保留。
-GUI 导出时可显式覆盖，失败 WAV 重试只替换原失败输出。解包的 `EntityResult.failures` 在有可靠
+GUI 导出时可显式覆盖。内外后端共用文件任务级自动重试：`max_retries` 是含首次的最大尝试次数，
+默认 3 次；只对有可靠身份的失败文件重新执行读取、转码、校验与落盘，保持后端和参数，
+成功文件不重跑，工具预检只执行一次。预检失败或缺少可靠文件终态的批处理异常不会伪造逐项失败来重试。
+次数耗尽后仍保留精确失败项及最终诊断，报告计数不因自动重试重复累计文件。
+解包的 `EntityResult.failures` 在有可靠
 身份时区分文件与容器；容器失败不代表已知数量的音频失败。
 
 合法 no-op 是计数为 0 的 success。实体成功与失败并存时为 partial；全部失败为 failed；
@@ -335,13 +341,13 @@ cancelled 在整轮聚合中优先。完整 traceback 只写日志，不进入�
 真实客户端与外部准备目录共用以下主线：
 
 1. `create_app_context(...)` 验证 `game_path` 的共享 GAME/LCU 结构。
-2. `update` 读取本地数据，并为目标生成 v2 resource bindings 与 events。
+2. 源任务先按所选语言与目标检查必需文件，再由 `update` 生成 v2 resource bindings 与 events。
 3. `extract` 按 binding 指向的 WAD/entry 解包原始 WEM。
 4. 可选执行独立 WAV stage。
 5. `mapping` 按同一 binding 和 events 生成映射。
 
-基础预检不枚举或推断所有目标资源。缺失的 LCU 引用、WAD、BIN 或 bank 由 update 和对应消费者
-按目标报告；预先存在的旧输出目录不能替代本轮 `EntityResult.artifacts` 成为成功证据。完整目录
+基础结构验证与所选目标文件预检分开：后者阻止缺必需 WAD 的任务，但不解析或校验其内容。
+BIN 或 bank 的解析错误由对应消费者按目标报告；旧输出目录不能替代本轮 `EntityResult.artifacts` 成为成功证据。完整目录
 合同见 [已准备本地数据源合同](./prepared_source.md)。
 
 ## 5. 上下文约束
