@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 
 import lol_audio_unpack.gui.view.overview_page as overview_page_module
 from lol_audio_unpack.app.artifacts import AudioIndexProgress, AudioRef
@@ -108,6 +108,63 @@ def test_output_refresh_invalidates_changed_entity_without_dropping_other_indexe
     assert not page.previewPanel.isEnabled()
     scheduled[-1].signals.finished.emit(loaded)
     assert page.previewPanel.isEnabled()
+
+
+@pytest.mark.parametrize("refresh", ["set_entity_data", "update_entity_rows"])
+def test_output_refresh_keeps_export_available(qtbot, tmp_path, monkeypatch, refresh):
+    """其他目录更新与预览返回交错时，当前音频仍能多选和按节点导出。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    page.set_app_context(make_context(tmp_path))
+    monkeypatch.setattr(
+        overview_page_module,
+        "EntityDataLoader",
+        lambda _ctx: SimpleNamespace(data_reader=SimpleNamespace(version="16.5")),
+    )
+    scheduled = []
+    page._preview_pool = SimpleNamespace(start=scheduled.append)
+    hero = {"id": "1", "name": "Annie", "audio": "已存在", "mapping": "已存在"}
+    map_row = {"id": "11", "name": "Map11", "audio": "未存在"}
+    page.set_entity_data("maps", [map_row])
+    page.set_entity_data("champions", [hero])
+    page._current_entity_list().setCurrentIndex(page.entityListPanel.find_index_by_entity_id("champions", "1"))
+    root = page._app_context.version_path("audio", "16.5") / "champions" / "1"
+    refs = tuple(AudioRef(f"1000/VO/{key}.wem", root / f"1000/VO/{key}.wem", key, "VO", "1000") for key in ("1", "2"))
+    loaded = OverviewPreviewLoadResult(
+        entity_id="1",
+        mapping_path=None,
+        mapping_data={"skins": {"1000": {"events": {"VO": {"play": ["1", "2"]}}}}},
+        preview_content="",
+        available_audio_ids={"1", "2"},
+        group_label_map={},
+        audio_refs=refs,
+        audio_roots=(root,),
+        default_preview_mode=EVENT_PREVIEW_MODE,
+        version="16.5",
+    )
+    scheduled[-1].signals.finished.emit(loaded)
+    update = getattr(page, refresh)
+    update("champions", [hero])
+    update("maps", [{**map_row, "audio": "已存在"}])
+    scheduled[-1].signals.finished.emit(loaded)
+
+    bar = page.audioPreviewPanel.export_bar
+    assert bar.mode_button.isEnabled()
+    bar.mode_button.click()
+    model = page.audio_preview_tree.model()
+    group = model.index(0, 0)
+    assert model.setData(group, Qt.CheckState.Checked, Qt.ItemDataRole.CheckStateRole)
+    assert page.export_controller.selection.count == len(refs)
+    assert bar.export_button.isEnabled()
+    assert page.export_controller.request.version == "16.5"
+    assert page.export_controller.request.targets[0].scope.root == root
+    enabled = []
+    monkeypatch.setattr(
+        "lol_audio_unpack.gui.controllers.audio_export.RoundMenu.exec",
+        lambda menu, _position: enabled.extend(action.isEnabled() for action in menu.actions()),
+    )
+    page.audio_preview_tree.node_export_requested.emit(group, QPoint())
+    assert enabled == [True]
 
 
 @pytest.mark.parametrize("result", [None, ("invalid",)])
@@ -599,6 +656,7 @@ def test_overview_page_unextracted_preview_stays_empty_across_tabs(qtbot, availa
         load_event_audio_refs=lambda *_args: (),
         load_audio_roots=lambda *_args: (),
         _load_preview_entity=lambda *_args, **_kwargs: None,
+        data_reader=SimpleNamespace(version="16.5"),
     )
     loads = []
     scheduled = []

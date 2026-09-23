@@ -1,3 +1,5 @@
+"""验证实体预览加载结果与路径级试听控制。"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -42,6 +44,7 @@ def test_overview_preview_controller_defers_all_audio_when_mapping_missing() -> 
         load_mapping_preview=lambda entity_type, entity_id: (None, None, ""),
         load_event_audio_refs=lambda entity_type, entity_id, mapping_data: (),
         load_audio_roots=lambda entity_type, entity_id, **_kwargs: (Path("audios/entity"),),
+        data_reader=SimpleNamespace(version="16.5"),
     )
 
     result = controller.load_preview(
@@ -57,6 +60,7 @@ def test_overview_preview_controller_defers_all_audio_when_mapping_missing() -> 
     assert result.event_audio_refs == ()
     assert result.audio_refs_loaded is False
     assert result.default_preview_mode == ALL_AUDIO_PREVIEW_MODE
+    assert result.version == "16.5"
     assert result.mapping_notice == "Annie 尚未生成事件映射。"
 
 
@@ -67,6 +71,7 @@ def test_resource_pack_preview_keeps_flat_audio_and_hides_stable_key_from_group_
         load_mapping_preview=lambda *_args: (None, None, ""),
         load_event_audio_refs=lambda *_args: (),
         load_audio_roots=lambda *_args, **_kwargs: (Path("resource_packs/legacy"),),
+        data_reader=SimpleNamespace(version="16.5"),
     )
     controller = OverviewPreviewController()
 
@@ -127,6 +132,7 @@ def test_overview_preview_controller_builds_champion_group_labels() -> None:
         load_event_audio_refs=lambda entity_type, entity_id, mapping_data: audio_refs,
         load_audio_roots=lambda entity_type, entity_id, **_kwargs: (),
         data_reader=SimpleNamespace(
+            version="16.5",
             get_champion=lambda champion_id: {
                 "skins": [
                     {
@@ -139,7 +145,7 @@ def test_overview_preview_controller_builds_champion_group_labels() -> None:
                     },
                     {"id": 2000, "name": "勇者"},
                 ]
-            }
+            },
         ),
     )
 
