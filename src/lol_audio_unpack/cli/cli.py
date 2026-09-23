@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from io import TextIOWrapper
 from pathlib import Path
 
 from loguru import logger
@@ -65,8 +66,17 @@ def _log_run_result(result: RunResult) -> None:
     logger.error(f"执行失败：已尝试 {result.stage_count} 个阶段。")
 
 
+def _configure_streams() -> None:
+    """重定向标准流统一使用 UTF-8，避免系统代码页无法表示中文。"""
+    for stream in (sys.stdout, sys.stderr):
+        # Windows 控制台已有 Unicode 支持，管道和文件则不能依赖本机 ANSI 代码页。
+        if isinstance(stream, TextIOWrapper) and not stream.isatty():
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def main() -> int:
     """统一 CLI 主入口，并返回稳定进程退出码。"""
+    _configure_streams()
     app_context: AppContext | None = None
     app: LolAudioUnpackApp | None = None
     run_summary = None
