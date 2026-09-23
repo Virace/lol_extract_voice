@@ -1,6 +1,12 @@
 name: release-build
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '重新构建并发布已有标签，例如 v3.10.0'
+        required: true
+        type: string
   push:
     tags:
       - '*'
@@ -8,25 +14,32 @@ on:
 permissions:
   contents: write
 
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
 jobs:
   verify-tag-target:
     runs-on: ubuntu-latest
     outputs:
       on_main: ${{ steps.main_gate.outputs.on_main }}
       is_prerelease: ${{ steps.main_gate.outputs.is_prerelease }}
+      commit_sha: ${{ steps.main_gate.outputs.commit_sha }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6.0.3
         with:
           fetch-depth: 0
+          ref: refs/tags/${{ env.RELEASE_TAG }}
 
       - name: Check tag commit belongs to origin/main
         id: main_gate
         shell: bash
         run: |
-          tag_name="${GITHUB_REF_NAME}"
+          tag_name="$RELEASE_TAG"
+          tag_commit=$(git rev-parse --verify "refs/tags/${tag_name}^{commit}")
+          echo "commit_sha=$tag_commit" >> "$GITHUB_OUTPUT"
           git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          if git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+          if git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main; then
             echo "on_main=true" >> "$GITHUB_OUTPUT"
             echo "Tag commit is contained in origin/main. Release build will continue." >> "$GITHUB_STEP_SUMMARY"
           else
@@ -46,13 +59,12 @@ jobs:
     needs: verify-tag-target
     if: needs.verify-tag-target.outputs.on_main == 'true'
     runs-on: windows-2025
-    env:
-      RELEASE_TAG: ${{ github.ref_name }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6.0.3
         with:
           fetch-depth: 0
+          ref: ${{ needs.verify-tag-target.outputs.commit_sha }}
 
       - name: Set up Python
         uses: actions/setup-python@v6.2.0
@@ -64,6 +76,10 @@ jobs:
 
       - name: Install verification dependencies
         run: uv sync --frozen --extra gui --group gui-test
+
+      - name: Prepare verification temporary root
+        shell: pwsh
+        run: New-Item -ItemType Directory -Path .temp -Force | Out-Null
 
       - name: Verify offline behavior
         run: uv run --no-sync pytest -q
@@ -166,7 +182,8 @@ jobs:
         if: steps.notes.outputs.use_custom == 'true'
         uses: softprops/action-gh-release@v3.0.0
         with:
-          name: ${{ github.ref_name }}
+          name: ${{ env.RELEASE_TAG }}
+          tag_name: ${{ env.RELEASE_TAG }}
           files: |
             ${{ steps.assets.outputs.gui_asset_path }}
             ${{ steps.assets.outputs.gui_hash_path }}
@@ -181,7 +198,8 @@ jobs:
         if: steps.notes.outputs.use_custom != 'true'
         uses: softprops/action-gh-release@v3.0.0
         with:
-          name: ${{ github.ref_name }}
+          name: ${{ env.RELEASE_TAG }}
+          tag_name: ${{ env.RELEASE_TAG }}
           files: |
             ${{ steps.assets.outputs.gui_asset_path }}
             ${{ steps.assets.outputs.gui_hash_path }}
