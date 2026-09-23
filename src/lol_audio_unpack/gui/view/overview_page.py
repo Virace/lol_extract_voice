@@ -1005,7 +1005,7 @@ class OverviewPage(QWidget):
             ALL_AUDIO_PREVIEW_MODE: None,
         }
         self._current_mapping_notice = preview_result.mapping_notice
-        self._configure_audio_export(self._current_preview_entity_name)
+        self._configure_audio_export(self._current_preview_entity_name, preview_result.version)
         self._refresh_resource_info()
         self._preview_search_keywords = {
             EVENT_PREVIEW_MODE: "",
@@ -1094,12 +1094,12 @@ class OverviewPage(QWidget):
         """返回右键单文件转码使用的 WAV 格式。"""
         return str(getattr(self.gui_config, "wav_format", "pcm16") or "pcm16")
 
-    def _configure_audio_export(self, name: str) -> None:
+    def _configure_audio_export(self, name: str, version: str | None) -> None:
         """从现有领域目录与配置建立当前实体的导出基础快照。"""
-        if self._app_context is None or self._loader is None or not self._current_audio_roots:
+        if self._app_context is None or version is None or not self._current_audio_roots:
             self.export_controller.reset()
             return
-        version = self._loader.data_reader.version
+        # 其他目录刷新可清空 loader；版本必须与本次已通过 token 校验的预览结果一致。
         region_root = self._app_context.version_path("audio", version).resolve()
         self.export_controller.configure(
             AudioExportRequest(
