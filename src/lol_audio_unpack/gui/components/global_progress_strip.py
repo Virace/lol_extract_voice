@@ -276,13 +276,6 @@ def _fill_text_color() -> QColor:
     return QColor(236, 244, 252)
 
 
-def _with_alpha(color: QColor, alpha: int) -> QColor:
-    """返回调整 alpha 后的新颜色。"""
-    clone = QColor(color)
-    clone.setAlpha(alpha)
-    return clone
-
-
 def _build_uniform_round_rect_path(rect: QRectF, radius: float) -> QPainterPath:
     """构造统一圆角矩形路径。"""
     path = QPainterPath()
@@ -636,7 +629,6 @@ class GlobalProgressStrip(QWidget):
 
     def _apply_state(self) -> None:
         """同步当前状态到标签显隐与颜色。"""
-        fill_text_color = _fill_text_color()
         palette = self._resolved_progress_palette()
 
         self._track_background_color = QColor(palette.track_base)
@@ -646,8 +638,9 @@ class GlobalProgressStrip(QWidget):
         self._status_text_color = QColor(palette.text_secondary)
         self._action_widget.setVisible(self._state.cancellable)
 
-        self._title_text_color = fill_text_color
-        self._detail_text_color = _with_alpha(fill_text_color, 214)
+        # 左侧文字也会位于未填充轨道上，必须随主题取色，不能固定使用填充区的浅色文字。
+        self._title_text_color = QColor(palette.text_primary)
+        self._detail_text_color = QColor(palette.text_secondary)
         self._content_layout.activate()
         self._refresh_dynamic_meta_text_colors()
 
