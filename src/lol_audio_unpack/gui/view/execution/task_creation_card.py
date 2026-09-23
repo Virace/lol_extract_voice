@@ -103,7 +103,7 @@ class _ExecutionTaskFormDefaults:
 
     vo_filter_key: str = "VO"
     max_workers_text: str = "4"
-    with_bp_vo: bool = True
+    lobby_audio: bool = True
     force_update: bool = False
     integrate_data: bool = True
     wav_enabled: bool = False
@@ -122,7 +122,7 @@ class _ExecutionTaskFormState:
     include_mapping: bool = True
     vo_filter_key: str = "VO"
     max_workers_text: str = "4"
-    with_bp_vo: bool = True
+    lobby_audio: bool = True
     force_update: bool = False
     integrate_data: bool = True
     wav_enabled: bool = False
@@ -247,7 +247,7 @@ class TaskCreationCard(HeaderCardWidget):
         self.max_workers_combo.setFixedWidth(120)
         self.max_workers_combo.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
-        self.bp_voice_cb = CheckBox("启用", self)
+        self.lobby_audioice_cb = CheckBox("启用", self)
         self.force_update_cb = CheckBox("启用", self)
         self.integrate_data_cb = CheckBox("启用", self)
         self.wav_format_combo = ComboBox(self)
@@ -295,7 +295,7 @@ class TaskCreationCard(HeaderCardWidget):
                 "一般不建议超过 CPU 线程数",
                 self.max_workers_combo,
             ),
-            self._create_option_group(FIF.MUSIC, "附加 BP 语音", "默认同时处理 BP 语音", self.bp_voice_cb),
+            self._create_option_group(FIF.MUSIC, "附加大厅音频", "默认同时处理大厅音频", self.lobby_audioice_cb),
             self._create_option_group(FIF.ALBUM, "转码格式", "仅在启用音频转码时生效", self.wav_format_row),
             self._create_option_group(
                 FIF.SYNC,
@@ -498,7 +498,7 @@ class TaskCreationCard(HeaderCardWidget):
         self.map_ids_input.textChanged.connect(callback)
         self.vo_filter.currentItemChanged.connect(callback)
         self.max_workers_combo.currentTextChanged.connect(callback)
-        self.bp_voice_cb.stateChanged.connect(callback)
+        self.lobby_audioice_cb.stateChanged.connect(callback)
         self.wav_format_combo.currentTextChanged.connect(callback)
         self.force_update_cb.stateChanged.connect(callback)
         self.integrate_data_cb.stateChanged.connect(callback)
@@ -511,7 +511,7 @@ class TaskCreationCard(HeaderCardWidget):
         self.mapping_task_cb.setChecked(True)
         self.vo_filter.setCurrentItem(defaults.vo_filter_key)
         self.max_workers_combo.setCurrentText(defaults.max_workers_text)
-        self.bp_voice_cb.setChecked(defaults.with_bp_vo)
+        self.lobby_audioice_cb.setChecked(defaults.lobby_audio)
         self.wav_format_combo.setCurrentText(defaults.wav_format)
         self.force_update_cb.setChecked(defaults.force_update)
         self.integrate_data_cb.setChecked(defaults.integrate_data)
@@ -522,7 +522,7 @@ class TaskCreationCard(HeaderCardWidget):
         self._defaults = _ExecutionTaskFormDefaults(
             vo_filter_key=self._defaults.vo_filter_key,
             max_workers_text=self._defaults.max_workers_text,
-            with_bp_vo=self._defaults.with_bp_vo,
+            lobby_audio=self._defaults.lobby_audio,
             force_update=self._defaults.force_update,
             integrate_data=self._defaults.integrate_data,
             wav_enabled=False,
@@ -559,7 +559,7 @@ class TaskCreationCard(HeaderCardWidget):
             include_mapping=self.mapping_task_cb.isChecked(),
             vo_filter_key=self.vo_filter.currentRouteKey() or self._defaults.vo_filter_key,
             max_workers_text=self.max_workers_combo.currentText(),
-            with_bp_vo=self.bp_voice_cb.isChecked(),
+            lobby_audio=self.lobby_audioice_cb.isChecked(),
             force_update=self.force_update_cb.isChecked(),
             integrate_data=self.integrate_data_cb.isChecked(),
             wav_enabled=wav_enabled,
@@ -611,7 +611,7 @@ class TaskCreationCard(HeaderCardWidget):
         return (
             f"{state.task_scope_summary()} · 范围={state.target_summary()} · "
             f"VO={state.vo_filter_key} · "
-            f"BP={state.with_bp_vo} · "
+            f"大厅音频={state.lobby_audio} · "
             f"转码={state.wav_format if state.wav_enabled else '关闭'} · "
             f"前置强制更新={state.force_update} · "
             f"整合={state.integrate_data} · "
@@ -652,7 +652,7 @@ class TaskCreationCard(HeaderCardWidget):
                 run_extract=state.include_extract,
                 run_mapping=state.include_mapping,
                 max_workers=int(state.max_workers_text),
-                with_bp_vo=state.with_bp_vo,
+                lobby_audio=state.lobby_audio,
                 exclude_types=exclude_types,
                 integrate_data=state.integrate_data,
                 wav_enabled=state.wav_enabled,
@@ -678,7 +678,7 @@ class TaskCreationCard(HeaderCardWidget):
             include_mapping=current_state.include_mapping,
             vo_filter_key=defaults.vo_filter_key,
             max_workers_text=defaults.max_workers_text,
-            with_bp_vo=defaults.with_bp_vo,
+            lobby_audio=defaults.lobby_audio,
             force_update=defaults.force_update,
             integrate_data=defaults.integrate_data,
             wav_enabled=defaults.wav_enabled,
@@ -691,7 +691,7 @@ class TaskCreationCard(HeaderCardWidget):
         self.mapping_task_cb.setChecked(self._state.include_mapping)
         self.vo_filter.setCurrentItem(self._state.vo_filter_key)
         self.max_workers_combo.setCurrentText(self._state.max_workers_text)
-        self.bp_voice_cb.setChecked(self._state.with_bp_vo)
+        self.lobby_audioice_cb.setChecked(self._state.lobby_audio)
         self.wav_format_combo.setCurrentText(self._state.wav_format)
         self.force_update_cb.setChecked(self._state.force_update)
         self.integrate_data_cb.setChecked(self._state.integrate_data)

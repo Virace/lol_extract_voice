@@ -9,8 +9,8 @@ from loguru import logger
 from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
 from lol_audio_unpack.model import AudioBank, AudioEntityData
 from lol_audio_unpack.model import binding as resource_binding
-from lol_audio_unpack.unpack import bp_vo as unpack_bp_vo
 from lol_audio_unpack.unpack import entity as unpack_entity
+from lol_audio_unpack.unpack import lobby_audio as unpack_lobby_audio
 from lol_audio_unpack.utils.common import load_yaml
 from lol_audio_unpack.utils.path_constants import format_entity_folder_name
 from tests.factories import make_context
@@ -21,7 +21,9 @@ pytestmark = pytest.mark.unit
 @pytest.fixture(autouse=True)
 def prepared_lobby(monkeypatch):
     """链接用例隔离 LCU 补齐边界；真实资源读取另用客户端验证。"""
-    monkeypatch.setattr(unpack_bp_vo, "DataUpdater", lambda _ctx: SimpleNamespace(ensure_bp_vo=lambda _ids: None))
+    monkeypatch.setattr(
+        unpack_lobby_audio, "DataUpdater", lambda _ctx: SimpleNamespace(ensure_lobby_audio=lambda _ids: None)
+    )
 
 
 @pytest.mark.parametrize("region", ["en_US", "default"])
@@ -32,7 +34,8 @@ def test_english_voice_uses_default_namespace(tmp_path, region):
     source.parent.mkdir(parents=True)
     source.write_bytes(b"english")
     assert (
-        unpack_bp_vo.find_bp_vo_source(SimpleNamespace(version="16.18"), "1", "champion-choose-vo", ctx=ctx) == source
+        unpack_lobby_audio.find_lobby_audio_source(SimpleNamespace(version="16.18"), "1", "champion-choose-vo", ctx=ctx)
+        == source
     )
 
 
@@ -45,13 +48,15 @@ def test_localized_voice_never_falls_back_to_default(tmp_path):
         path.write_bytes(b"default audio")
     ctx = make_context(tmp_path, paths=SimpleNamespace(manifest_path=tmp_path), game_region="ja_JP")
     reader = SimpleNamespace(version="16.18")
-    assert unpack_bp_vo.find_bp_vo_source(reader, "1", "champion-ban-vo", ctx=ctx) is None
-    assert unpack_bp_vo.find_bp_vo_source(reader, "1", "champion-sfx-audios", ctx=ctx) == (
+    assert unpack_lobby_audio.find_lobby_audio_source(reader, "1", "champion-ban-vo", ctx=ctx) is None
+    assert unpack_lobby_audio.find_lobby_audio_source(reader, "1", "champion-sfx-audios", ctx=ctx) == (
         lobby / "default" / "champion-sfx-audios" / "1.ogg"
     )
 
 
-def test_attach_bp_vo_links_and_reports_persisted_files(tmp_path, monkeypatch):
+@pytest.mark.parametrize("enabled", [True, False])
+def test_attach_lobby_audio_links_and_reports_persisted_files(tmp_path, monkeypatch, enabled):
+    """默认配置落盘大厅音频，显式关闭时不产生音频或回调。"""
     version = "16.3"
     manifest_root = tmp_path / "manifest"
     audio_root = tmp_path / "audios"
@@ -72,7 +77,7 @@ def test_attach_bp_vo_links_and_reports_persisted_files(tmp_path, monkeypatch):
             output_path=output_root,
             game_region="zh_CN",
             group_by_type=False,
-            with_bp_vo=True,
+            **({} if enabled else {"lobby_audio": False}),
         ),
         paths=AppPaths(
             audio_path=audio_root,
@@ -105,12 +110,18 @@ def test_attach_bp_vo_links_and_reports_persisted_files(tmp_path, monkeypatch):
     entity_folder = format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
     target_dir = audio_root / version / "zh_CN" / "champions" / entity_folder / "lobby"
     persisted: list[Path] = []
-    result = unpack_bp_vo.attach_bp_vo(
+    result = unpack_lobby_audio.attach_lobby_audio(
         entity_data,
         reader,
         ctx=ctx,
         persisted_artifact_callback=persisted.append,
     )
+
+    if not enabled:
+        assert result == ()
+        assert persisted == []
+        assert not target_dir.exists()
+        return
 
     assert (target_dir / "ban.ogg").read_bytes() == b"ban"
     assert (target_dir / "choose.ogg").read_bytes() == b"choose"
@@ -119,7 +130,7 @@ def test_attach_bp_vo_links_and_reports_persisted_files(tmp_path, monkeypatch):
     assert (target_dir / "ban.ogg").samefile(ban_source)
 
 
-def test_attach_bp_vo_writes_sfx_audio_from_default_fallback(tmp_path, monkeypatch):
+def test_attach_lobby_audio_writes_sfx_audio_from_default_fallback(tmp_path, monkeypatch):
     version = "16.3"
     manifest_root = tmp_path / "manifest"
     audio_root = tmp_path / "audios"
@@ -136,7 +147,7 @@ def test_attach_bp_vo_writes_sfx_audio_from_default_fallback(tmp_path, monkeypat
             output_path=output_root,
             game_region="zh_CN",
             group_by_type=False,
-            with_bp_vo=True,
+            lobby_audio=True,
         ),
         paths=AppPaths(
             audio_path=audio_root,
@@ -166,14 +177,14 @@ def test_attach_bp_vo_writes_sfx_audio_from_default_fallback(tmp_path, monkeypat
     )
     reader = SimpleNamespace(version=version)
 
-    unpack_bp_vo.attach_bp_vo(entity_data, reader, ctx=ctx)
+    unpack_lobby_audio.attach_lobby_audio(entity_data, reader, ctx=ctx)
 
     entity_folder = format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
     target_dir = audio_root / version / "zh_CN" / "champions" / entity_folder / "lobby"
     assert (target_dir / "sfx.ogg").read_bytes() == b"sfx"
 
 
-def test_attach_bp_vo_writes_all_lobby_audio_into_single_lobby_dir_when_grouped(tmp_path, monkeypatch):
+def test_attach_lobby_audio_writes_all_lobby_audio_into_single_lobby_dir_when_grouped(tmp_path, monkeypatch):
     version = "16.3"
     manifest_root = tmp_path / "manifest"
     audio_root = tmp_path / "audios"
@@ -191,7 +202,7 @@ def test_attach_bp_vo_writes_all_lobby_audio_into_single_lobby_dir_when_grouped(
             output_path=output_root,
             game_region="zh_CN",
             group_by_type=True,
-            with_bp_vo=True,
+            lobby_audio=True,
         ),
         paths=AppPaths(
             audio_path=audio_root,
@@ -221,7 +232,7 @@ def test_attach_bp_vo_writes_all_lobby_audio_into_single_lobby_dir_when_grouped(
     )
     reader = SimpleNamespace(version=version)
 
-    unpack_bp_vo.attach_bp_vo(entity_data, reader, ctx=ctx)
+    unpack_lobby_audio.attach_lobby_audio(entity_data, reader, ctx=ctx)
 
     entity_folder = format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
     lobby_dir = audio_root / version / "zh_CN" / "champions" / entity_folder / "lobby"
@@ -246,7 +257,7 @@ def test_unpack_entity_uses_warning_summary_for_partial_parse_failures(tmp_path,
             output_path=output_root,
             game_region="zh_CN",
             group_by_type=False,
-            with_bp_vo=False,
+            lobby_audio=False,
         ),
         paths=AppPaths(
             audio_path=audio_root,

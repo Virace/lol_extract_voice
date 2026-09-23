@@ -162,7 +162,7 @@ def build_argv(
     game_region = settings.get(SettingKey.GAME_REGION)
     exclude_type = settings.get(SettingKey.EXCLUDE_TYPE)
     wwiser_path = settings.get(SettingKey.WWISER_PATH)
-    with_bp_vo = bool(settings.get(SettingKey.WITH_BP_VO, False))
+    lobby_audio = bool(settings.get(SettingKey.LOBBY_AUDIO, True))
     group_by_type = bool(settings.get(SettingKey.GROUP_BY_TYPE, False))
     if isinstance(game_path, str):
         argv.extend(["--game-path", game_path])
@@ -176,8 +176,8 @@ def build_argv(
         argv.extend(["--game-region", game_region])
     if exclude_type is not None and str(exclude_type) != DEFAULT_EXCLUDE_TYPE:
         argv.extend(["--exclude-type", str(exclude_type)])
-    if with_bp_vo:
-        argv.append("--with-bp-vo")
+    if not lobby_audio:
+        argv.append("--no-lobby-audio")
     if group_by_type:
         argv.append("--group-by-type")
 

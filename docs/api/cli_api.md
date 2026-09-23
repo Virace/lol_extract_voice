@@ -98,7 +98,12 @@ uv run unpack -c ./config/custom.ini
 - `--exclude-type TYPES`
 - `--wwiser-path PATH`
 - `--group-by-type` / `--no-group-by-type`
-- `--with-bp-vo` / `--no-with-bp-vo`
+- `--no-lobby-audio`：关闭默认附带的大厅音频（选人语音、禁用语音和选人音效）。三种文件统一输出到英雄的 `lobby/`，不受 `--exclude-type` 的 VO/SFX 筛选影响。
+
+旧 `--with-bp-vo`、`--no-with-bp-vo` 会提示新用法并退出，不执行任务：默认包含时删除旧参数，关闭时改用 `--no-lobby-audio`。
+INI 使用 `[app] lobby_audio`，默认 `true`，显式 `false` 关闭。旧键 `with_bp_vo` 在加载时兼容读取并自动改名，保留原值、注释及其他配置；新旧键同时存在时以新键为准。文件无法写回时继续兼容读取并提示手动修改。
+LCU 基础数据更新默认同时预取大厅音频到 `manifest` 缓存；英雄解包时才从缓存硬链接到
+对应英雄的 `lobby/`，缓存缺失时按英雄补齐。大厅 OGG 不进入 WEM 内容库。
 
 通用参数：
 

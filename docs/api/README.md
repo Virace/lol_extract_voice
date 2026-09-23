@@ -30,7 +30,7 @@
 - 解包
   - `unpack/entity.py`
   - `unpack/batch.py`
-  - `unpack/bp_vo.py`
+  - `unpack/lobby_audio.py`
   - `unpack/stats.py`
 - 映射
   - `mapping/entity.py`

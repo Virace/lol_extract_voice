@@ -70,6 +70,9 @@
 .\LolAudioUnpack-CLI.exe update extract --champions Annie,Ahri --game-path "D:/Games/英雄联盟"
 ```
 
+英雄解包默认附带选人语音、禁用语音和选人音效，统一保存在 `lobby/`；不需要时添加
+`--no-lobby-audio`。这三种大厅音频不受游戏内 VO/SFX 筛选影响。
+
 需要 WAV 和事件映射时，可以把动作放在同一条命令里：
 
 ```powershell

@@ -172,7 +172,7 @@ def test_missing_lobby_is_repaired_after_migration(tmp_path, monkeypatch, curren
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(name.encode())
 
-    monkeypatch.setattr(DataUpdater, "ensure_bp_vo", prepare)
+    monkeypatch.setattr(DataUpdater, "ensure_lobby_audio", prepare)
     if not current:
         prepare(None, ())
     repair_lobby(ctx)

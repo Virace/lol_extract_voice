@@ -25,7 +25,7 @@ class AppConfig:
     exclude_types: tuple[str, ...] = ("SFX", "MUSIC")
     include_types: tuple[str, ...] = ("VO",)
     group_by_type: bool = False
-    with_bp_vo: bool = False
+    lobby_audio: bool = True
     wwiser_path: Path | None = None
     vgmstream_path: Path | None = None
     dev_mode: bool = False

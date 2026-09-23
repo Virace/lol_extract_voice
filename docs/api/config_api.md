@@ -130,17 +130,19 @@ GUI 只读取 `[app]`。其余 section 仅供 CLI 配置文件模式使用；启
 - `GROUP_BY_TYPE`
 - `WWISER_PATH`
 - `VGMSTREAM_PATH`
-- `WITH_BP_VO`
+- `LOBBY_AUDIO`
 
 当前默认值：
 
 - `GAME_REGION = "zh_CN"`
 - `EXCLUDE_TYPE = "SFX,MUSIC"`
 - `GROUP_BY_TYPE = False`
-- `WITH_BP_VO = False`
+- `LOBBY_AUDIO = True`：默认附带选人语音、禁用语音及选人音效；INI 使用 `[app] lobby_audio = false` 关闭，CLI 使用 `--no-lobby-audio`。
 
 上述语言默认值用于未显式提供参数的 CLI/API。GUI 首次配置保持“请选择”，只在发现唯一
 有效语言时自动选中；主动留空会持久化，刷新不重新填充。显式空语言不能执行源处理任务。
+
+旧 `[app] with_bp_vo` 在配置加载时自动迁移为 `lobby_audio` 并保留原值。新旧键同时存在时保留新键；迁移无法写回时告警并继续兼容读取。Python 配置字段和设置键统一为 `lobby_audio` / `LOBBY_AUDIO`，旧 Python 名称不保留别名。
 
 ## 6. 上下文构建
 

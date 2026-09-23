@@ -160,7 +160,7 @@ class ExecutionPage(SmoothScrollArea):
         self.map_ids_input = self.taskBuilderPanel.map_ids_input
         self.vo_filter = self.taskBuilderPanel.vo_filter
         self.max_workers_combo = self.taskBuilderPanel.max_workers_combo
-        self.bp_voice_cb = self.taskBuilderPanel.bp_voice_cb
+        self.lobby_audioice_cb = self.taskBuilderPanel.lobby_audioice_cb
         self.force_update_cb = self.taskBuilderPanel.force_update_cb
         self.integrate_data_cb = self.taskBuilderPanel.integrate_data_cb
         self.extract_task_cb = self.taskBuilderPanel.extract_task_cb

@@ -138,18 +138,27 @@ def test_build_context_settings_only_keeps_explicit_values() -> None:
     }
 
 
-def test_build_context_settings_includes_bp_voice() -> None:
+@pytest.mark.parametrize("flags, expected", [([], {}), (["--no-lobby-audio"], {"LOBBY_AUDIO": False})])
+def test_build_context_settings_controls_lobby_audio(flags, expected) -> None:
+    """仅显式关闭大厅音频时覆盖共享默认值。"""
     parser = create_parser()
-    args = parser.parse_args(
-        [
-            "update",
-            "--with-bp-vo",
-        ]
-    )
+    args = parser.parse_args(["extract", *flags])
 
     settings = runtime_cli.build_settings(args)
 
-    assert settings == {"WITH_BP_VO": True}
+    assert settings == expected
+
+
+@pytest.mark.parametrize(
+    "flag, guidance",
+    [("--with-bp-vo", "请删除此参数"), ("--no-with-bp-vo", "请改用 --no-lobby-audio")],
+)
+def test_legacy_lobby_flags_explain_replacement(flag, guidance, capsys) -> None:
+    """旧脚本得到明确迁移提示，不能按新默认值静默执行。"""
+    with pytest.raises(SystemExit) as exc:
+        create_parser().parse_args(["extract", flag])
+    assert exc.value.code == EXIT_INPUT
+    assert guidance in capsys.readouterr().err
 
 
 def test_initialize_app_passes_settings_to_setup_app(monkeypatch, tmp_path: Path) -> None:
