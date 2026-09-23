@@ -216,6 +216,7 @@ class _PreviewTreeNode:
     audio_ref: AudioRef | None = None
     is_available: bool = False
     is_ambiguous: bool = False
+    missing_path: str | None = None
     children: list[_PreviewTreeNode] | None = None
     children_loaded: bool = False
     key: tuple[str, ...] = ()
@@ -277,6 +278,22 @@ def _event_audio_paths(
     if not isinstance(raw_paths, list | tuple):
         return True, ()
     return True, tuple(str(path).replace("\\", "/").strip("/") for path in raw_paths if str(path).strip())
+
+
+class _LazyRefs(dict):
+    """只为已展开或明确选择的事件路径构造引用，不检查媒体文件。"""
+
+    def __init__(self, refs, resolver):
+        super().__init__(refs)
+        self.resolver = resolver
+
+    def get(self, key, default=None):
+        """按需解析一个路径；当前实体切换时整个字典释放。"""
+        if key not in self and self.resolver is not None:
+            ref = self.resolver(key)
+            if ref is not None:
+                self[key] = ref
+        return super().get(key, default)
 
 
 def _index_event_refs(
@@ -638,6 +655,7 @@ class PreviewTreeModel(QAbstractItemModel):
         audio_refs: tuple[AudioRef, ...],
         group_label_map: dict[str, str] | None = None,
         selection_mapping: dict[str, Any] | None = None,
+        resolve_ref=None,
     ) -> None:
         """替换当前预览树数据。
 
@@ -663,7 +681,8 @@ class PreviewTreeModel(QAbstractItemModel):
             )
 
         self.beginResetModel()
-        self._audio_refs_by_id, self._audio_refs_by_path = _build_audio_ref_indexes(audio_refs)
+        self._audio_refs_by_id, refs_by_path = _build_audio_ref_indexes(audio_refs)
+        self._audio_refs_by_path = _LazyRefs(refs_by_path, resolve_ref)
         self._root_nodes = root_nodes
         self._scope_groups = {
             str(key): value
@@ -791,6 +810,15 @@ class PreviewTreeModel(QAbstractItemModel):
                 if total and count == total
                 else (Qt.CheckState.PartiallyChecked if count else Qt.CheckState.Unchecked)
             )
+        elif role == Qt.ItemDataRole.ToolTipRole and node.kind == "audio_id":
+            if node.audio_ref is not None:
+                value = str(node.audio_ref.path)
+            elif node.missing_path is not None:
+                value = f"映射记录的文件未找到，无法播放。\n相对路径：{node.missing_path}"
+            elif node.is_ambiguous:
+                value = "同一 ID 对应多个文件，请到全部音频选择。"
+            else:
+                value = "仅有音频 ID，尚无对应的可播放文件。"
         elif role == Qt.ItemDataRole.ToolTipRole and self.selection_mode:
             choices = self.selection_choices(index)
             total = sum(len(choice.paths) for choice in choices)
@@ -1079,11 +1107,12 @@ class PreviewTreeModel(QAbstractItemModel):
             if resolution.missing_paths:
                 children.extend(
                     _PreviewTreeNode(
-                        label=f"{audio_id_text}（映射路径当前不可用：{path}）",
+                        label=f"{audio_id_text}（文件未找到）",
                         kind="audio_id",
                         payload=None,
                         parent=node,
                         audio_id=audio_id_text,
+                        missing_path=path,
                         children=[],
                         children_loaded=True,
                     )
@@ -1092,12 +1121,10 @@ class PreviewTreeModel(QAbstractItemModel):
             if resolution.audio_refs or resolution.missing_paths:
                 continue
 
-            has_audio_paths = bool(payload.get("has_audio_paths"))
             if resolution.is_ambiguous:
                 label = f"{audio_id_text}（多个路径，请到全部音频选择）"
-            elif has_audio_paths:
-                label = f"{audio_id_text}（映射路径当前不可用）"
             else:
+                # 事件有路径字段，不代表其中每个 ID 都已有落盘路径。
                 label = audio_id_text
             children.append(
                 _PreviewTreeNode(

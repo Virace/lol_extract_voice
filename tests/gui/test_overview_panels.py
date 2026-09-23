@@ -28,6 +28,53 @@ from lol_audio_unpack.gui.view.overview.audio_preview_panel import OverviewAudio
 from lol_audio_unpack.gui.view.overview.entity_list_panel import OverviewEntityListPanel
 from lol_audio_unpack.gui.view.overview.preview_panel import OverviewPreviewPanel
 from lol_audio_unpack.manager.errors import SharedDataMissingError
+from lol_audio_unpack.manager.files import write_data
+from tests.factories import make_context
+
+
+def test_mapping_cache_reuses_visited_entities_and_reloads_changed_file(tmp_path, monkeypatch):
+    """往返浏览不重复解析映射，文件变化后必须读取新的事件。"""
+    paths = {key: tmp_path / f"{key}.msgpack" for key in ("11", "22")}
+    for key, path in paths.items():
+        write_data({"map": {key: {"events": {"VO": {"first": ["1"]}}}}}, path)
+    monkeypatch.setattr(data_loader_module, "DataReader", lambda *_args, **_kwargs: SimpleNamespace(version="16.17"))
+    monkeypatch.setattr(data_loader_module, "resolve_mapping_file_path", lambda _ctx, _kind, key, _version: paths[key])
+    read = data_loader_module.read_data
+    reads = []
+
+    def read_mapping(path, **kwargs):
+        reads.append(path)
+        return read(path, **kwargs)
+
+    monkeypatch.setattr(data_loader_module, "read_data", read_mapping)
+    loader = data_loader_module.EntityDataLoader(make_context(tmp_path))
+    loader.load_mapping_preview("maps", "11")
+    loader.load_mapping_preview("maps", "22")
+    _, mapping, _ = loader.load_mapping_preview("maps", "11")
+    assert mapping["map"]["11"]["events"]["VO"] == {"first": ["1"]}
+    assert reads == [paths["11"], paths["22"]]
+
+    write_data({"map": {"11": {"events": {"VO": {"updated-event": ["2", "3"]}}}}}, paths["11"])
+    _, mapping, _ = loader.load_mapping_preview("maps", "11")
+    assert mapping["map"]["11"]["events"]["VO"] == {"updated-event": ["2", "3"]}
+    assert reads == [paths["11"], paths["22"], paths["11"]]
+
+
+def test_missing_source_is_not_selected_but_remains_current_for_preview(qtbot) -> None:
+    """全选与恢复不包含缺源行，当前浏览项仍可定位到其已有音频。"""
+    view = OverviewEntityListView()
+    qtbot.addWidget(view)
+    view.set_rows(
+        [
+            {"id": "1", "name": "Annie", "selectable": True},
+            {"id": "2", "name": "Olaf", "selectable": False, "audio": "已存在"},
+        ]
+    )
+    view.selectAll()
+    assert view.selected_entity_ids() == {"1"}
+    view.restore_state({"1", "2"}, "2")
+    assert view.selected_entity_ids() == {"1"}
+    assert view.currentIndex() == view.find_index_by_entity_id("2")
 
 
 def _make_special_row(

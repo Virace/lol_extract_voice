@@ -68,6 +68,7 @@ from lol_audio_unpack.gui.controllers.window_shell import (
 )
 from lol_audio_unpack.gui.resources import assets
 from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
+from lol_audio_unpack.gui.service.source_context import create_source_context
 from lol_audio_unpack.gui.service.worker import SharedDataScanWorker
 from lol_audio_unpack.gui.shared_data import (
     SharedDataPreparationResult,
@@ -125,8 +126,8 @@ def _prepare_shared_entity_data(  # noqa: PLR0913
         return SharedDataPreparationResult(generation, scope, StageResult("update"))
     options = OperationOptions(
         force_update=force_update,
-        champion_ids=None if scope.full or not scope.champion_ids else scope.champion_ids,
-        map_ids=None if scope.full or not scope.map_ids else scope.map_ids,
+        champion_ids=None if scope.full else scope.champion_ids,
+        map_ids=None if scope.full else scope.map_ids,
     )
     stage_result = app.update(options, target="all", progress_callback=progress_callback)
     return SharedDataPreparationResult(generation, scope, stage_result)
@@ -213,7 +214,7 @@ class MainWindow(FluentWindow):
         self._shared_data_controller = SharedDataController(
             get_config=lambda: self.settingInterface.config,
             has_incomplete_tasks=self.executionInterface.has_incomplete_tasks,
-            create_app_context_fn=create_app_context,
+            create_app_context_fn=create_source_context,
             data_load_worker_cls=SharedDataScanWorker,
             task_worker_cls=TaskWorker,
             entity_data_loader_cls=EntityDataLoader,
@@ -476,6 +477,7 @@ class MainWindow(FluentWindow):
         si = self.settingInterface
         hi = self.homeInterface
         cfg = si.config
+        self._shared_data_controller.source_inventory_changed.connect(si.set_source_inventory)
         bind_shared_data_controller_signals(
             self._shared_data_controller,
             home_page=self.homeInterface,
@@ -501,6 +503,7 @@ class MainWindow(FluentWindow):
         si.output_path_changed.connect(hi.update_output_dir)
         si.wwiser_path_changed.connect(hi.update_wwiser)
         si.vgmstream_path_changed.connect(hi.update_vgmstream)
+        self.executionInterface.tool_probes_ready.connect(si.show_tool_probes)
         hi.navigate_to_execution_requested.connect(lambda: self.switchTo(self.executionInterface))
         hi.navigate_to_overview_requested.connect(lambda: self.switchTo(self.overviewInterface))
         hi.shared_data_action_requested.connect(self._dispatch_shared_data_action)

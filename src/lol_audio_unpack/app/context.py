@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,7 @@ from lol_audio_unpack.utils.runtime_paths import (
 )
 
 from .local_source import validate_local_source
+from .migration import migrate_library
 from .types import (
     AppConfig,
     AppContext,
@@ -86,7 +87,7 @@ def _build_settings(
                 logger.debug(f"忽略空的配置项: {key}=None")
                 continue
             if isinstance(value, str) and not value.strip():
-                if key == SettingKey.EXCLUDE_TYPE:
+                if key in (SettingKey.EXCLUDE_TYPE, SettingKey.GAME_REGION):
                     merged[key] = ""
                     continue
                 logger.debug(f"忽略空白配置项: {key}")
@@ -110,14 +111,15 @@ def _build_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConfig:
         runtime_root=runtime_root,
     )
 
-    game_region = str(settings.get(SettingKey.GAME_REGION, "zh_CN") or "zh_CN")
+    game_region = str(settings.get(SettingKey.GAME_REGION, "zh_CN")).strip()
     if game_region.lower() == "en_us":
         game_region = "default"
 
     exclude_types = _parse_exclude_types(settings.get(SettingKey.EXCLUDE_TYPE))
     include_types = tuple(audio_type for audio_type in KNOWN_AUDIO_TYPES if audio_type not in set(exclude_types))
 
-    wwiser_path_raw = settings.get(SettingKey.WWISER_PATH)
+    wwiser_path_raw = str(settings.get(SettingKey.WWISER_PATH) or "").strip()
+    vgmstream_path_raw = str(settings.get(SettingKey.VGMSTREAM_PATH) or "").strip()
 
     return AppConfig(
         game_path=game_path,
@@ -126,9 +128,12 @@ def _build_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConfig:
         exclude_types=exclude_types,
         include_types=include_types,
         group_by_type=_parse_bool(settings.get(SettingKey.GROUP_BY_TYPE, False)),
-        with_bp_vo=_parse_bool(settings.get(SettingKey.WITH_BP_VO, False)),
+        lobby_audio=_parse_bool(settings.get(SettingKey.LOBBY_AUDIO, True)),
         wwiser_path=(
             resolve_runtime_path(str(wwiser_path_raw).strip(), relative_to=runtime_root) if wwiser_path_raw else None
+        ),
+        vgmstream_path=(
+            resolve_runtime_path(vgmstream_path_raw, relative_to=runtime_root) if vgmstream_path_raw else None
         ),
         dev_mode=dev_mode,
     )
@@ -165,12 +170,14 @@ def _build_paths(app_config: AppConfig) -> AppPaths:
     )
 
 
-def create_app_context(
+def create_app_context(  # noqa: PLR0913
     *,
     settings: Mapping[str, Any] | None = None,
     force_reload: bool = False,
     dev_mode: bool = False,
     runtime_cache: dict[str, Any] | None = None,
+    allow_empty_language: bool = False,
+    progress_callback: Callable | None = None,
 ) -> AppContext:
     """构建 ``AppContext``。
 
@@ -179,6 +186,8 @@ def create_app_context(
         force_reload: 兼容参数，当前仅保留签名，不影响行为。
         dev_mode: 是否启用开发模式。
         runtime_cache: 可选运行时缓存。
+        allow_empty_language: GUI 目录发现可保留空语言；源处理入口仍须在执行前验证。
+        progress_callback: 已有目录一次性迁移的进度回调，应在后台调用。
 
     Returns:
         构建完成的 ``AppContext``。
@@ -190,6 +199,12 @@ def create_app_context(
 
     raw_settings = _build_settings(settings=settings)
     app_config = _build_config(settings=raw_settings, dev_mode=dev_mode)
+    if not app_config.game_region and not allow_empty_language:
+        raise AppContextValidationError("请选择游戏资源语言")
+    # 旧文件迁移不消费游戏源；没有旧输出时不创建目录。新任务仍须通过下方输入预检。
+    migrate_library(
+        app_config.output_path, region=app_config.game_region or "en_US", progress_callback=progress_callback
+    )
     validate_local_source(app_config.game_path)
     app_paths = _build_paths(app_config)
     return AppContext(config=app_config, paths=app_paths, runtime_cache=runtime_cache or {})

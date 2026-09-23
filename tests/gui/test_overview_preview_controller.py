@@ -118,6 +118,7 @@ def test_overview_preview_controller_builds_champion_group_labels() -> None:
         AudioRef("1000/VO/1002.wem", Path("1000/VO/1002.wem"), "1002", "VO", "1000"),
     )
     loader = SimpleNamespace(
+        _load_preview_entity=lambda *_args, **_kwargs: None,
         load_mapping_preview=lambda entity_type, entity_id: (
             mapping_path,
             {"skins": {"1000": {"events": {}}}},
@@ -151,9 +152,9 @@ def test_overview_preview_controller_builds_champion_group_labels() -> None:
 
     assert result.placeholder_message is None
     assert result.mapping_path == mapping_path
-    assert result.available_audio_ids == {"1001", "1002"}
+    assert result.available_audio_ids == set()
     assert result.audio_refs == ()
-    assert result.event_audio_refs == audio_refs
+    assert result.event_audio_refs == ()
     assert result.audio_refs_loaded is False
     assert result.group_label_map == {
         "1000": "经典",
@@ -189,16 +190,17 @@ def test_overview_preview_controller_toggle_clears_same_exact_audio_request() ->
     )
 
 
-def test_overview_preview_controller_toggle_uses_requested_exact_audio_path() -> None:
+def test_overview_preview_controller_toggle_uses_requested_exact_audio_path(tmp_path) -> None:
     controller = OverviewPreviewController()
     audio_ref = AudioRef(
         relative_path="1001/VO/1001.wem",
-        path=Path("1001/VO/1001.wem"),
+        path=tmp_path / "1001.wem",
         wem_id="1001",
         audio_type="VO",
         sub_entity="1001",
     )
 
+    audio_ref.path.write_bytes(b"audio")
     result = controller.resolve_audio_preview_toggle(
         requested_audio=audio_ref,
         current_audio_path=None,

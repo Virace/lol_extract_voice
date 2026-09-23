@@ -33,7 +33,10 @@ def _build_runtime_paths(tmp_path: Path):
     )
 
 
-def test_build_explicit_cli_argv_omits_defaults_but_keeps_required_and_changed_values(tmp_path: Path) -> None:
+@pytest.mark.parametrize("lobby_audio", [True, False])
+def test_build_explicit_cli_argv_omits_defaults_but_keeps_required_and_changed_values(
+    tmp_path: Path, lobby_audio: bool
+) -> None:
     """完整显式命令应保留必需项，同时省略默认值。"""
     runtime_paths = _build_runtime_paths(tmp_path)
     request = CliInvocationRequest(
@@ -42,14 +45,13 @@ def test_build_explicit_cli_argv_omits_defaults_but_keeps_required_and_changed_v
             (SettingKey.GAME_PATH, "game-root"),
             (SettingKey.OUTPUT_PATH, str(get_default_output_root(runtime_paths))),
             (SettingKey.GAME_REGION, "zh_CN"),
-            (SettingKey.WITH_BP_VO, True),
+            (SettingKey.LOBBY_AUDIO, lobby_audio),
             (SettingKey.EXCLUDE_TYPE, ""),
         ),
         max_workers=DEFAULT_CLI_MAX_WORKERS,
         wav_enabled=True,
         wav_workers=DEFAULT_WAV_WORKERS,
         wav_timeout=DEFAULT_WAV_TIMEOUT,
-        wav_retries=DEFAULT_WAV_RETRIES,
         wav_format=DEFAULT_WAV_FORMAT,
     )
 
@@ -58,7 +60,7 @@ def test_build_explicit_cli_argv_omits_defaults_but_keeps_required_and_changed_v
     assert argv[:5] == ["uv", "run", "unpack", "extract", "wav"]
     assert "--game-path" in argv
     assert argv[argv.index("--game-path") + 1] == "game-root"
-    assert "--with-bp-vo" in argv
+    assert ("--no-lobby-audio" in argv) is (not lobby_audio)
     assert "--exclude-type" in argv
     assert argv[argv.index("--exclude-type") + 1] == ""
     assert "--output-path" not in argv
@@ -97,8 +99,8 @@ def test_build_explicit_cli_argv_does_not_require_wwiser_for_mapping_fallback(tm
     assert "--wwiser-path" not in argv
 
 
-def test_build_explicit_cli_argv_omits_gui_default_wwiser_path(tmp_path: Path) -> None:
-    """GUI 默认 wwiser 路径不应被当作显式 CLI 参数展开。"""
+def test_build_explicit_cli_argv_preserves_explicit_wwiser_path(tmp_path: Path) -> None:
+    """填写路径明确选择外部后端，即使路径恰好等于旧默认值。"""
     runtime_paths = _build_runtime_paths(tmp_path)
     request = CliInvocationRequest(
         actions=("mapping",),
@@ -110,7 +112,7 @@ def test_build_explicit_cli_argv_omits_gui_default_wwiser_path(tmp_path: Path) -
 
     argv = build_argv(request, runtime_paths=runtime_paths)
 
-    assert "--wwiser-path" not in argv
+    assert argv[argv.index("--wwiser-path") + 1] == str(get_default_wwiser_path(runtime_paths))
 
 
 def test_build_explicit_cli_argv_uses_negative_flag_for_non_default_mapping_option(tmp_path: Path) -> None:
@@ -148,3 +150,13 @@ def test_build_explicit_cli_argv_includes_non_default_wav_tuning(tmp_path: Path)
     assert argv[argv.index("--wav-timeout") + 1] == "12"
     assert argv[argv.index("--wav-retries") + 1] == "5"
     assert argv[argv.index("--wav-format") + 1] == EXPECTED_WAV_FORMAT
+
+
+@pytest.mark.parametrize("attempts", [0, -1])
+def test_wav_attempt_limit_rejects_nonpositive_values(attempts):
+    """含首次的任务尝试次数不能为零或负数。"""
+    request = CliInvocationRequest(
+        actions=("wav",), settings=((SettingKey.GAME_PATH, "game-root"),), wav_retries=attempts
+    )
+    with pytest.raises(CliInvocationValidationError, match="至少为 1"):
+        build_argv(request)

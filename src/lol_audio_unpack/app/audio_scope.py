@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 from lol_audio_unpack.manager.files import read_data
 
 from .mapping_preview import normalize_mapping
+from .outputs import managed_files
 
 _EVENT_KEY_SIZE = 3
 
@@ -116,17 +117,21 @@ class AudioScope:
         candidates: dict[Path, None] = {}
         mapping_cache: dict[tuple[Path, tuple[int, int]], dict] = {}
         for node in self.nodes:
-            # 节点只纳入现有文件，映射中的未解包项不自动变为解包任务。
+            # 保留用户选择的精确路径；缺失文件在实际转换时明确报错，不静默缩小范围。
             for key in node.resolve_paths(mapping_cache):
                 candidate = root / key
-                if candidate.is_file():
-                    candidates[candidate] = None
+                candidates[candidate] = None
         for directory in self.directories:
             folder = (root / directory).resolve()
             folder.relative_to(root)
             if not folder.is_dir():
                 raise FileNotFoundError(f"所选音频目录不可用: {folder}")
-            candidates.update(dict.fromkeys(folder.rglob("*.wem")))
+            recorded = managed_files(folder)
+            if recorded is None:
+                candidates.update(dict.fromkeys(folder.rglob("*.wem")))
+                candidates.update(dict.fromkeys(folder.rglob("*.ogg")))
+            else:
+                candidates.update(dict.fromkeys(recorded))
         candidates.update(dict.fromkeys(root / key for key in self.files))
         sources: dict[Path, None] = {}
         for candidate in candidates:
@@ -135,7 +140,7 @@ class AudioScope:
                 continue
             resolved = candidate.resolve()
             resolved.relative_to(root)
-            if resolved.suffix.lower() != ".wem":
-                raise ValueError(f"所选文件不是 WEM: {key}")
+            if resolved.suffix.lower() not in {".wem", ".ogg"}:
+                raise ValueError(f"所选文件不是 WEM 或大厅 OGG: {key}")
             sources[resolved] = None
         return tuple(sources)

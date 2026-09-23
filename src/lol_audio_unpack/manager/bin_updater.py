@@ -58,7 +58,7 @@ class BinUpdater:
         self.force_update = force_update
         self.process_events = process_events
         self.version: str = resolve_game_version(self.ctx)
-        self.version_manifest_path: Path = self.manifest_path / self.version
+        self.version_manifest_path: Path = self.ctx.version_path("manifest", self.version)
         self.data_file_base: Path = self.version_manifest_path / "data"
         self.champion_banks_dir: Path = self.version_manifest_path / "banks" / "champions"
         self.map_banks_dir: Path = self.version_manifest_path / "banks" / "maps"
@@ -167,7 +167,7 @@ class BinUpdater:
         map_ids = list(normalized_map_ids) if normalized_map_ids is not None else None
 
         # 根据传入的IDs构建筛选后的数据
-        if champion_ids or map_ids:
+        if champion_ids is not None or map_ids is not None:
             # 精确模式：根据具体ID筛选数据
             filtered_data = self._filter_data_by_ids(data, champion_ids, map_ids)
             champion_count = len(filtered_data.get("champions", {}))

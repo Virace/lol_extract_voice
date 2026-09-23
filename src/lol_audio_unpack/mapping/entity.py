@@ -7,7 +7,7 @@ from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-from league_tools import AudioEventMapper, WwiserManager
+from league_tools import AudioEventMapper
 from loguru import logger
 
 from lol_audio_unpack.app.artifacts import AudioRef, enumerate_audio_refs, inspect_shared_copies
@@ -18,6 +18,7 @@ from lol_audio_unpack.manager.utils import build_metadata_payload
 from lol_audio_unpack.model import AudioBank, AudioEntityData
 from lol_audio_unpack.model.binding import SUCCESS_STATUSES, normalize_logical_path
 from lol_audio_unpack.model.skin_audio import SKIN_AUDIO_VERSION, SkinAudio
+from lol_audio_unpack.runtime.hirc import WwiserTool
 from lol_audio_unpack.runtime.wad import extract_wad, resolve_bound_wad
 from lol_audio_unpack.utils.logging import performance_monitor
 
@@ -38,8 +39,8 @@ def _ensure_version_dirs(reader: DataReader, *, ctx: AppContext) -> tuple[Path, 
         tuple[Path, Path]: ``(version_cache_dir, version_hash_dir)``。
     """
 
-    version_cache_dir = ctx.cache_path / reader.version
-    version_hash_dir = ctx.hash_path / reader.version
+    version_cache_dir = ctx.version_path("cache", reader.version)
+    version_hash_dir = ctx.version_path("hash", reader.version)
     version_cache_dir.mkdir(parents=True, exist_ok=True)
     version_hash_dir.mkdir(parents=True, exist_ok=True)
     return version_cache_dir, version_hash_dir
@@ -135,7 +136,7 @@ def _build_bound_category_mapping(  # noqa: PLR0913
     bank: AudioBank,
     event_list: list[str],
     version_cache_dir: Path,
-    wwiser_manager: WwiserManager | None,
+    wwiser_manager: WwiserTool | None,
     runtime_cache: mapping_session.RuntimeCache | None,
     *,
     ctx: AppContext,
@@ -196,7 +197,7 @@ def _build_bound_category_mapping(  # noqa: PLR0913
 def _build_bound_entity(  # noqa: PLR0913, PLR0917
     entity_data: AudioEntityData,
     reader: DataReader,
-    wwiser_manager: WwiserManager | None,
+    wwiser_manager: WwiserTool | None,
     integrate_data: bool,
     runtime_cache: mapping_session.RuntimeCache | None,
     *,
@@ -322,14 +323,13 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
         audio_type = category_event_banks[0].audio_type
         owner_ids = {skin_audio.owner(bank).sub_id for bank in category_banks} if skin_audio else {sub_id}
         for event_name, wem_ids in category_mapping.forward_mapping.items():
-            paths = sorted(
-                {
-                    ref.relative_path
-                    for wem_id in wem_ids
-                    for owner_id in owner_ids
-                    for ref in refs_by_key.get((owner_id, audio_type, str(wem_id)), ())
-                }
-            )
+            event_refs = [
+                ref
+                for wem_id in wem_ids
+                for owner_id in owner_ids
+                for ref in refs_by_key.get((owner_id, audio_type, str(wem_id)), ())
+            ]
+            paths = sorted({ref.relative_path for ref in event_refs})
             if paths:
                 audio_paths[event_name] = paths
                 mapped_paths.update(paths)
@@ -456,7 +456,7 @@ def _build_category_mapping(  # noqa: PLR0913, PLR0917
     paths_list: list[list[str]],
     event_list: list[str],
     version_cache_dir: Path,
-    wwiser_manager: WwiserManager | None,
+    wwiser_manager: WwiserTool | None,
     runtime_cache: mapping_session.RuntimeCache | None,
     *,
     ctx: AppContext,
@@ -664,7 +664,7 @@ def _log_entity_summary(
 def build_entity(  # noqa: PLR0913
     entity_data: AudioEntityData,
     reader: DataReader,
-    wwiser_manager: WwiserManager | None = None,
+    wwiser_manager: WwiserTool | None = None,
     integrate_data: bool = False,
     runtime_cache: mapping_session.RuntimeCache | None = None,
     *,
@@ -975,7 +975,7 @@ def integrate_entity(
 def build_champion(  # noqa: PLR0913
     champion_id: int,
     reader: DataReader,
-    wwiser_manager: WwiserManager | None = None,
+    wwiser_manager: WwiserTool | None = None,
     integrate_data: bool = False,
     runtime_cache: mapping_session.RuntimeCache | None = None,
     *,
@@ -1026,7 +1026,7 @@ def build_champion(  # noqa: PLR0913
 def build_map(  # noqa: PLR0913
     map_id: int,
     reader: DataReader,
-    wwiser_manager: WwiserManager | None = None,
+    wwiser_manager: WwiserTool | None = None,
     integrate_data: bool = False,
     runtime_cache: mapping_session.RuntimeCache | None = None,
     *,
@@ -1077,7 +1077,7 @@ def build_map(  # noqa: PLR0913
 def build_resource_pack(  # noqa: PLR0913
     key: str,
     reader: DataReader,
-    wwiser_manager: WwiserManager | None = None,
+    wwiser_manager: WwiserTool | None = None,
     integrate_data: bool = False,
     runtime_cache: mapping_session.RuntimeCache | None = None,
     *,

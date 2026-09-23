@@ -35,13 +35,17 @@ class AudioExportRequest:
     overwrite: bool = False
     output_file: Path | None = None
     reveal_output: bool = False
+    region: str | None = None
+    library_root: Path | None = None
 
     def validate(self) -> None:
         """在后台开始前复核冻结的版本路径与所有源目录边界。"""
         if not self.targets:
             raise ValueError("尚未选择导出音频")
         root = self.version_root.resolve()
-        if root.name != self.version:
+        if root.name != self.version and not (
+            self.region and root.parent.name == self.version and root.name == self.region
+        ):
             raise ValueError("导出版本与音频目录不匹配，请重新选择当前实体")
         for target in self.targets:
             target.scope.root.resolve().relative_to(root)

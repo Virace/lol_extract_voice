@@ -13,6 +13,7 @@ from threading import Lock
 
 from loguru import logger
 
+from lol_audio_unpack.app.library import library_session
 from lol_audio_unpack.manager import (
     BinUpdater,
     DataReader,
@@ -31,10 +32,12 @@ from lol_audio_unpack.mapping import (
 )
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.model.progress import OperationProgress
+from lol_audio_unpack.runtime.probe import require_tool
 from lol_audio_unpack.runtime.wav import TranscodeTarget, run_tree
 from lol_audio_unpack.unpack import unpack_all, unpack_champions, unpack_maps, unpack_resource_packs
 
 from .artifacts import resolve_audio_paths
+from .preflight import SourcePreflightError, check_source_files
 from .resource_pack import partition_special_targets
 from .results import EntityResult, ResultStatus, StageResult
 from .special_content import merge_champion_ids
@@ -43,6 +46,7 @@ from .types import AppContext, OperationOptions
 
 UPDATE_PREPARED_KEY = "update_data_prepared_force"
 EXPECTED_STAGE_ERRORS = (
+    SourcePreflightError,
     SharedDataNotReadyError,
     OSError,
 )
@@ -107,6 +111,37 @@ class LolAudioUnpackApp:
     def _describe_mapping_backend(self) -> str:
         """返回 mapping 流程使用的 HIRC 后端。"""
         return describe_hirc_backend(self.ctx)
+
+    def _check_source(
+        self, opts: OperationOptions, *, include_champions: bool = True, include_maps: bool = True
+    ) -> None:
+        """重新检查本次标准实体与显式资源包，失败发生在任何源处理写入之前。"""
+        wads = [ref.identity for ref in opts.resource_pack_wads]
+        for key in self._resource_pack_targets(opts):
+            payload = self._get_reader().get_resource_pack_banks(key)
+            source = (payload or {}).get("resourcePack", {}).get("source", {})
+            if not source.get("wad"):
+                raise SourcePreflightError(f"资源包 {key} 缺少物理来源，请重新选择 WAD")
+            wads.append(source["wad"])
+        check_source_files(
+            self.ctx,
+            champion_ids=opts.champion_ids,
+            map_ids=opts.map_ids,
+            include_champions=include_champions,
+            include_maps=include_maps,
+            resource_wads=wads,
+            resource_only=self._has_resource_pack_targets(opts) and opts.champion_ids is None and opts.map_ids is None,
+        )
+
+    def check_tools(self, opts: OperationOptions, *, mapping: bool = False) -> None:
+        """为直接 API 调用检查所需后端，已预检的任务快照无需重复探测。"""
+        if self.ctx.runtime_cache.get("tools_prechecked"):
+            return
+        if opts.wav_output.enabled:
+            path = str(self.ctx.config.vgmstream_path or "") or opts.wav_output.backend_path
+            require_tool("wav", path=path, options=opts.wav_output)
+        if mapping:
+            require_tool("hirc", path=str(self.ctx.config.wwiser_path or "") or None)
 
     @staticmethod
     def _log_stage_result(result: StageResult, *, label: str, success_detail: str | None = None) -> None:
@@ -217,7 +252,7 @@ class LolAudioUnpackApp:
             entities = (EntityResult("wav", "batch", entity_status, artifacts=(wav_root,)),)
         if raw_status == "success" and failed_count == 0:
             note = (
-                f"已转换 {processed_count} 个文件，跳过已有输出 {skipped_count} 个。"
+                f"已生成 {processed_count} 个文件，实际转换 {payload.get('converted_file_count', processed_count)}、复用 {payload.get('reused_file_count', 0)}，跳过已有输出 {skipped_count} 个。"
                 if processed_count or skipped_count
                 else "没有待转换的音频文件。"
             )
@@ -259,7 +294,8 @@ class LolAudioUnpackApp:
         self._reset_reader()
         try:
             if not self._is_update_prepared(force_update=force_update):
-                DataUpdater(force_update=force_update, ctx=self.ctx).check_and_update()
+                with library_session(self.ctx):
+                    DataUpdater(force_update=force_update, ctx=self.ctx).check_and_update()
                 self.ctx.runtime_cache[UPDATE_PREPARED_KEY] = force_update
         finally:
             # DataUpdater 即使失败也可能已替换部分 artifact，不能复用调用前的缓存。
@@ -281,10 +317,11 @@ class LolAudioUnpackApp:
         self._reset_reader()
         try:
             reader = self._get_reader()
-            return ResourcePackDiscovery(self.ctx, reader=reader).discover(
-                opts.resource_pack_wads,
-                version=reader.version,
-            )
+            with library_session(self.ctx):
+                return ResourcePackDiscovery(self.ctx, reader=reader).discover(
+                    opts.resource_pack_wads,
+                    version=reader.version,
+                )
         finally:
             # discovery 以 pair transaction 写 banks/events，任何退出都需丢弃旧分区 cache。
             self._reset_reader()
@@ -406,48 +443,54 @@ class LolAudioUnpackApp:
         self._reset_reader()
         try:
             try:
-                if progress_callback is not None:
-                    progress_callback(OperationProgress("update", "data", "started"))
-                self.prepare_update_data(force_update=opts.force_update)
-                if progress_callback is not None:
-                    progress_callback(OperationProgress("update", "data", "finished"))
-                has_resource_pack_scope = self._has_resource_pack_targets(opts)
-                run_standard_update = (
-                    not has_resource_pack_scope or opts.champion_ids is not None or opts.map_ids is not None
+                self._check_source(
+                    opts, include_champions=target in {"all", "skin"}, include_maps=target in {"all", "map"}
                 )
-                child_results: list[StageResult] = []
-                if run_standard_update:
-                    updater_kwargs = {
-                        "force_update": opts.force_update,
-                        "process_events": opts.process_events,
-                        "ctx": self.ctx,
-                    }
+                if opts.wav_output.enabled:
+                    self.check_tools(opts)
+                with library_session(self.ctx):
                     if progress_callback is not None:
-                        updater_kwargs["progress_callback"] = progress_callback
-                    updater = BinUpdater(
-                        **updater_kwargs,
+                        progress_callback(OperationProgress("update", "data", "started"))
+                    self.prepare_update_data(force_update=opts.force_update)
+                    if progress_callback is not None:
+                        progress_callback(OperationProgress("update", "data", "finished"))
+                    has_resource_pack_scope = self._has_resource_pack_targets(opts)
+                    run_standard_update = (
+                        not has_resource_pack_scope or opts.champion_ids is not None or opts.map_ids is not None
                     )
-                    update_results = updater.update(
-                        target=target,
-                        champion_ids=self._to_str_ids(opts.champion_ids),
-                        map_ids=self._to_str_ids(opts.map_ids),
+                    child_results: list[StageResult] = []
+                    if run_standard_update:
+                        updater_kwargs = {
+                            "force_update": opts.force_update,
+                            "process_events": opts.process_events,
+                            "ctx": self.ctx,
+                        }
+                        if progress_callback is not None:
+                            updater_kwargs["progress_callback"] = progress_callback
+                        updater = BinUpdater(
+                            **updater_kwargs,
+                        )
+                        update_results = updater.update(
+                            target=target,
+                            champion_ids=self._to_str_ids(opts.champion_ids),
+                            map_ids=self._to_str_ids(opts.map_ids),
+                        )
+                        child_results.append(self._adapt_update_results(update_results))
+                    if opts.resource_pack_wads:
+                        discovery_result = self.discover_resource_packs(opts)
+                        logger.info(
+                            "资源包发现结束：status={}，packs={}，candidate={}，payload_reads={}",
+                            discovery_result.status,
+                            len(discovery_result.packs),
+                            discovery_result.cost["candidateEntries"],
+                            discovery_result.cost["payloadReads"],
+                        )
+                        child_results.append(self._adapt_discovery_result(discovery_result))
+                    result = StageResult.combine(
+                        "update",
+                        child_results,
+                        note="当前目标不需要更新。" if not child_results else None,
                     )
-                    child_results.append(self._adapt_update_results(update_results))
-                if opts.resource_pack_wads:
-                    discovery_result = self.discover_resource_packs(opts)
-                    logger.info(
-                        "资源包发现结束：status={}，packs={}，candidate={}，payload_reads={}",
-                        discovery_result.status,
-                        len(discovery_result.packs),
-                        discovery_result.cost["candidateEntries"],
-                        discovery_result.cost["payloadReads"],
-                    )
-                    child_results.append(self._adapt_discovery_result(discovery_result))
-                result = StageResult.combine(
-                    "update",
-                    child_results,
-                    note="当前目标不需要更新。" if not child_results else None,
-                )
             except EXPECTED_STAGE_ERRORS as exc:
                 result = StageResult.from_error("update", exc)
         finally:
@@ -551,6 +594,9 @@ class LolAudioUnpackApp:
         """
         opts = self._resolve_operation_options(opts)
         try:
+            self._check_source(opts, include_champions=include_champions, include_maps=include_maps)
+            if opts.wav_output.enabled:
+                self.check_tools(opts)
             reader = self._get_reader()
             logger.info(
                 f"音频类型配置 - 包含: {list(self.ctx.config.include_types)}, "
@@ -634,7 +680,9 @@ class LolAudioUnpackApp:
         """
         opts = self._resolve_operation_options(opts)
         try:
+            self.check_tools(opts, mapping=True)
             backend_label = self._describe_mapping_backend()
+            self._check_source(opts, include_champions=include_champions, include_maps=include_maps)
             reader = self._get_reader()
 
             logger.info(f"缓存路径: {self.ctx.paths.cache_path}")

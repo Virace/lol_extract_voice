@@ -6,6 +6,28 @@ from lol_audio_unpack.gui.shared_data import SharedDataPhase, SharedDataState, S
 from lol_audio_unpack.gui.view.overview_page import OverviewPage
 
 
+def test_refresh_preserves_map_selection_and_sync_payload(qtbot) -> None:
+    """任务刷新地图状态后，已选对象与发送到执行中心的目标必须保持一致。"""
+    page = OverviewPage()
+    qtbot.addWidget(page)
+    page.set_shared_data_state(SharedDataState(SharedDataPhase.READY, 1))
+    page.set_entity_data("maps", [{"id": "0", "name": "常规"}, {"id": "11", "name": "召唤师峡谷"}])
+    page.nav_pivot.setCurrentItem("maps")
+    view = page.entityListPanel.entity_lists["maps"]
+    view.setCurrentIndex(view.find_index_by_entity_id("0"))
+    requests = []
+    page.selection_sync_requested.connect(requests.append)
+
+    page.update_entity_rows("maps", [{"id": "0", "name": "常规", "audio": "已存在", "mapping": "已存在"}])
+    page.sync_selection_btn.click()
+
+    assert view.selected_entity_ids() == {"0"}
+    assert page._selected_entity_ids["maps"] == {"0"}
+    assert len(requests) == 1
+    assert requests[0].map_ids == (0,)
+    assert not requests[0].champion_ids
+
+
 def test_overview_partial_keeps_verified_rows_but_disables_sync(qtbot) -> None:
     """partial 可浏览已验证行，但不能把不完整目录发送到执行中心。"""
     page = OverviewPage()

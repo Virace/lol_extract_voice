@@ -122,6 +122,7 @@ def build_shared_data_progress_strip_state(state: SharedDataState) -> GlobalProg
             progress_current=display.progress_current or 0,
             progress_total=display.progress_total or 100,
             status_text=display.progress_text,
+            rate_text=f"已用 {state.elapsed_seconds:.1f}s",
             indeterminate=not determinate,
             cancellable=False,
         )

@@ -47,7 +47,7 @@ def test_dismiss_reopen_and_retry_preserve_results(qtbot) -> None:
     controller.set_busy(True)
     assert not controller.drawer.retry_all_button.isEnabled()
     qtbot.keyClick(controller.drawer, Qt.Key.Key_Escape)
-    assert not controller.drawer.isVisible()
+    qtbot.waitUntil(lambda: not controller.drawer.isVisible())
     assert controller.result is original
     retry = replace(
         task,
@@ -70,6 +70,8 @@ def test_dismiss_reopen_and_retry_preserve_results(qtbot) -> None:
     assert all(issue.resolved for issue in controller.issues)
     assert controller.history == (original, success)
     controller.open_details()
+    assert controller.notice is None
     assert controller.drawer.model.issues[0].resolved
     controller.drawer.reject()
+    qtbot.waitUntil(lambda: not controller.drawer.isVisible())
     controller._close_notice()

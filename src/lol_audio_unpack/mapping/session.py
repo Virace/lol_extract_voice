@@ -8,8 +8,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from league_tools import WAD, NativeHIRC, WwiserHIRC, WwiserManager
+from league_tools import WAD, NativeHIRC, WwiserHIRC
 
+from lol_audio_unpack.runtime.hirc import WwiserTool, load_hirc
 from lol_audio_unpack.runtime.wad import get_wad
 
 if TYPE_CHECKING:
@@ -58,20 +59,20 @@ def describe_hirc_backend(ctx: AppContext) -> str:
     return f"WwiserHIRC ({wwiser_path})"
 
 
-def _create_wwiser_manager(ctx: AppContext) -> WwiserManager | None:
+def _create_wwiser_manager(ctx: AppContext) -> WwiserTool | None:
     """按上下文创建可选的 wwiser 管理器。
 
     Args:
         ctx: 运行时上下文。
 
     Returns:
-        WwiserManager | None: 可复用的 wwiser 管理器。
+        WwiserTool | None: 当前任务的 wwiser 调用适配。
     """
 
     wwiser_path = _resolve_wwiser_path(ctx)
     if wwiser_path is None:
         return None
-    return WwiserManager(wwiser_path)
+    return WwiserTool(wwiser_path)
 
 
 @dataclass
@@ -206,7 +207,7 @@ def _extract_bnk_once(
 def _get_cached_hirc(  # noqa: PLR0913, PLR0917
     bnk_path: Path,
     hirc_cache_dir: Path,
-    wwiser_manager: WwiserManager | None,
+    wwiser_manager: WwiserTool | None,
     runtime_cache: RuntimeCache | None,
     *,
     wad_identity: str | None = None,
@@ -234,13 +235,7 @@ def _get_cached_hirc(  # noqa: PLR0913, PLR0917
     cache_key = (wad_key, bank_key, backend_key)
 
     def parse_hirc() -> ParsedHIRC:
-        if wwiser_manager is None:
-            return NativeHIRC.from_bnk(bnk_path, cache_dir=hirc_cache_dir)
-        return WwiserHIRC.from_bnk(
-            bnk_path,
-            cache_dir=hirc_cache_dir,
-            wwiser_manager=wwiser_manager,
-        )
+        return load_hirc(bnk_path, cache_dir=hirc_cache_dir, manager=wwiser_manager)
 
     if runtime_cache is None:
         return parse_hirc()

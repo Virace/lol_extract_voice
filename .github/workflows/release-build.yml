@@ -1,0 +1,193 @@
+name: release-build
+
+on:
+  push:
+    tags:
+      - '*'
+
+permissions:
+  contents: write
+
+jobs:
+  verify-tag-target:
+    runs-on: ubuntu-latest
+    outputs:
+      on_main: ${{ steps.main_gate.outputs.on_main }}
+      is_prerelease: ${{ steps.main_gate.outputs.is_prerelease }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Check tag commit belongs to origin/main
+        id: main_gate
+        shell: bash
+        run: |
+          tag_name="${GITHUB_REF_NAME}"
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo "on_main=true" >> "$GITHUB_OUTPUT"
+            echo "Tag commit is contained in origin/main. Release build will continue." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "on_main=false" >> "$GITHUB_OUTPUT"
+            echo "Tag commit is not contained in origin/main. Skip build and release." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [[ "$tag_name" =~ -pre\.[0-9]+$ ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $tag_name is marked as a pre-release." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "Tag $tag_name is treated as a stable release." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  build-release:
+    needs: verify-tag-target
+    if: needs.verify-tag-target.outputs.on_main == 'true'
+    runs-on: windows-2025
+    env:
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6.2.0
+        with:
+          python-version: '3.13'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.2.0
+
+      - name: Install verification dependencies
+        run: uv sync --frozen --extra gui --group gui-test
+
+      - name: Verify offline behavior
+        run: uv run --no-sync pytest -q
+
+      - name: Verify GUI behavior
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: uv run --no-sync pytest tests/gui -q
+
+      - name: Set release version
+        shell: pwsh
+        run: |
+          $version = $env:RELEASE_TAG -replace '^[vV]', ''
+          "LOL_AUDIO_UNPACK_BUILD_VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Build GUI package
+        shell: pwsh
+        run: |
+          python scripts/pyinstaller/build_gui.py --clean
+
+      - name: Build CLI package
+        shell: pwsh
+        run: python scripts/pyinstaller/build_cli.py --output-root .temp/cli-release
+
+      - name: Verify CLI package
+        shell: pwsh
+        run: |
+          $cli = Join-Path $PWD ".temp/cli-release/dist/LolAudioUnpack-CLI.exe"
+          & $cli --version
+          if ($LASTEXITCODE -ne 0) { throw "CLI 版本检查失败" }
+          & $cli --help
+          if ($LASTEXITCODE -ne 0) { throw "CLI 帮助检查失败" }
+          & $cli --check-tools .temp/cli-release/checks/tools.json --check-cancel
+          if ($LASTEXITCODE -ne 0) { throw "CLI 内置工具检查失败" }
+
+      - name: Prepare release assets
+        id: assets
+        shell: pwsh
+        run: |
+          $tag = $env:RELEASE_TAG
+          $expectedVersion = $tag -replace '^[vV]', ''
+          $releaseDir = Join-Path $PWD "release"
+          $packages = @(
+              @{ id = "gui"; name = "LolAudioUnpack"; source = ".temp/pyinstaller/dist/LolAudioUnpack.exe" },
+              @{ id = "cli"; name = "LolAudioUnpack-CLI"; source = ".temp/cli-release/dist/LolAudioUnpack-CLI.exe" }
+          )
+          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+          $version = $null
+          foreach ($package in $packages) {
+              $distExe = Join-Path $PWD $package.source
+              if (-not (Test-Path -LiteralPath $distExe -PathType Leaf)) {
+                  throw "未找到构建产物: $distExe"
+              }
+              $current = (Get-Item -LiteralPath $distExe).VersionInfo.ProductVersion
+              if ([string]::IsNullOrWhiteSpace($current)) {
+                  throw "构建产物缺少产品版本: $distExe"
+              }
+              if ($null -ne $version -and $current -ne $version) {
+                  throw "GUI 与 CLI 版本不一致: $version / $current"
+              }
+              if ($current -cne $expectedVersion) {
+                  throw "构建产物版本与 tag 不一致: $current / $tag"
+              }
+              $version = $current
+
+              $assetName = "$($package.name)-$tag-windows-x64.exe"
+              $assetPath = Join-Path $releaseDir $assetName
+              Copy-Item -LiteralPath $distExe -Destination $assetPath -Force
+
+              $hashLine = "{0} *{1}" -f (Get-FileHash -Algorithm SHA256 -LiteralPath $assetPath).Hash.ToLowerInvariant(), $assetName
+              $hashPath = "$assetPath.sha256"
+              Set-Content -LiteralPath $hashPath -Value $hashLine -Encoding utf8
+
+              "$($package.id)_asset_path=$assetPath" >> $env:GITHUB_OUTPUT
+              "$($package.id)_hash_path=$hashPath" >> $env:GITHUB_OUTPUT
+          }
+
+          $readmePath = Join-Path $releaseDir "LolAudioUnpack-CLI-README.md"
+          Copy-Item -LiteralPath ".temp/cli-release/dist/CLI-README.md" -Destination $readmePath -Force
+          "readme_path=$readmePath" >> $env:GITHUB_OUTPUT
+
+      - name: Resolve release notes source
+        id: notes
+        shell: pwsh
+        run: |
+          $tag = $env:RELEASE_TAG
+          $bodyPath = Join-Path $PWD ".github/release-notes/$tag.md"
+
+          if (Test-Path $bodyPath) {
+              "use_custom=true" >> $env:GITHUB_OUTPUT
+              "body_path=$bodyPath" >> $env:GITHUB_OUTPUT
+              "Using custom release notes: $bodyPath" >> $env:GITHUB_STEP_SUMMARY
+              exit 0
+          }
+
+          "use_custom=false" >> $env:GITHUB_OUTPUT
+          "No custom release notes found for $tag. Fallback to generated notes." >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Publish GitHub release with custom notes
+        if: steps.notes.outputs.use_custom == 'true'
+        uses: softprops/action-gh-release@v3.0.0
+        with:
+          name: ${{ github.ref_name }}
+          files: |
+            ${{ steps.assets.outputs.gui_asset_path }}
+            ${{ steps.assets.outputs.gui_hash_path }}
+            ${{ steps.assets.outputs.cli_asset_path }}
+            ${{ steps.assets.outputs.cli_hash_path }}
+            ${{ steps.assets.outputs.readme_path }}
+          prerelease: ${{ needs.verify-tag-target.outputs.is_prerelease == 'true' }}
+          body_path: ${{ steps.notes.outputs.body_path }}
+          fail_on_unmatched_files: true
+
+      - name: Publish GitHub release with generated notes
+        if: steps.notes.outputs.use_custom != 'true'
+        uses: softprops/action-gh-release@v3.0.0
+        with:
+          name: ${{ github.ref_name }}
+          files: |
+            ${{ steps.assets.outputs.gui_asset_path }}
+            ${{ steps.assets.outputs.gui_hash_path }}
+            ${{ steps.assets.outputs.cli_asset_path }}
+            ${{ steps.assets.outputs.cli_hash_path }}
+            ${{ steps.assets.outputs.readme_path }}
+          prerelease: ${{ needs.verify-tag-target.outputs.is_prerelease == 'true' }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true

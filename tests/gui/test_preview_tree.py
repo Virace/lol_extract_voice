@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QPoint
+import pytest
+from PySide6.QtCore import QModelIndex, QPoint, Qt
 
 from lol_audio_unpack.app.artifacts import AudioRef
 from lol_audio_unpack.gui.components.preview_tree import (
     AUDIO_AMBIGUOUS_ROLE,
+    AUDIO_AVAILABLE_ROLE,
     AUDIO_REF_ROLE,
     PreviewTreeModel,
     PreviewTreeView,
@@ -127,7 +129,27 @@ def test_preview_tree_does_not_fallback_when_exact_mapping_path_is_missing(qtbot
 
     assert model.data(leaf, AUDIO_REF_ROLE) is None
     assert model.data(leaf, AUDIO_AMBIGUOUS_ROLE) is False
-    assert "映射路径当前不可用" in model.data(leaf)
+    assert model.data(leaf, AUDIO_AVAILABLE_ROLE) is False
+    assert "missing/VO/1001.wem" in model.data(leaf, Qt.ItemDataRole.ToolTipRole)
+
+
+@pytest.mark.parametrize("paths", [None, [], ["1000/VO/1002.wem"]])
+def test_preview_tree_id_without_own_path_stays_unplayable(qtbot, paths) -> None:
+    """未解包 ID 不冒充缺失路径，也不能借用同 ID 的其他来源播放。"""
+    view = PreviewTreeView()
+    qtbot.addWidget(view)
+    group = {"events": {"VO": {"evt": ["1001"]}}}
+    if paths is not None:
+        group["audioPaths"] = {"VO": {"evt": paths}}
+    model = view.model()
+    refs = () if paths is None else (_make_ref("other/VO/1001.wem"),)
+    model.set_preview_data({"map": {"0": group}}, refs)
+
+    leaf = _event_leaf_indexes(model)[0]
+
+    assert model.data(leaf) == "1001"
+    assert model.data(leaf, AUDIO_AVAILABLE_ROLE) is False
+    assert model.data(leaf, AUDIO_REF_ROLE) is None
 
 
 def test_collect_tree_stats_does_not_count_missing_exact_mapping_path() -> None:

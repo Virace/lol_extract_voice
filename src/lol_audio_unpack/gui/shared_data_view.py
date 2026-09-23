@@ -58,6 +58,8 @@ _STAGE_LABELS = {
     "map_banks": "地图数据",
     "maps": "地图数据",
     "special": "特殊内容",
+    "source_inventory": "检查本地资源语言",
+    "library_migration": "迁移已有音频目录",
 }
 
 

@@ -104,7 +104,7 @@ def test_build_global_progress_strip_state_for_running_stage_progress() -> None:
     assert state.visible is True
     assert state.title_text == "音频解包 · 英雄"
     assert state.detail_text == "当前实体: 阿狸 (2/5)"
-    assert state.rate_text == "均时 4.0s/实体"
+    assert state.rate_text == "已运行 8.0s"
     assert state.status_text == "运行中 · 2/5"
     assert state.progress_current == RUNNING_PROGRESS_VALUE
     assert state.progress_total == RUNNING_PROGRESS_TOTAL
@@ -135,7 +135,7 @@ def test_build_global_progress_strip_state_shows_wav_entity_and_running_index() 
     assert state.visible is True
     assert state.title_text == "音频转码 · 英雄"
     assert state.detail_text == "当前实体: 阿狸 (3/6)"
-    assert state.rate_text == "均时 4.0s/实体"
+    assert state.rate_text == "已运行 8.0s"
     assert state.status_text == "运行中 · 3/6"
     assert state.progress_current == TARGET_DIRECTORY_PROGRESS_CURRENT
     assert state.progress_total == TARGET_DIRECTORY_PROGRESS_TOTAL

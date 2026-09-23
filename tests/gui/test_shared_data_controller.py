@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import lol_audio_unpack.gui.controllers.shared_data as shared_data_module
 import lol_audio_unpack.gui.window as window_module
 from lol_audio_unpack.app.resource_pack import ResourcePackWadRef, build_resource_pack_key
 from lol_audio_unpack.app.results import ResultStatus, StageResult
@@ -34,12 +35,35 @@ from lol_audio_unpack.gui.shared_data import (
 from lol_audio_unpack.gui.task_models import OutputStateRefreshRequest
 from lol_audio_unpack.manager.errors import SharedDataMissingError
 from lol_audio_unpack.manager.files import write_data
+from lol_audio_unpack.manager.source_inventory import SourceEntity, SourceInventory, SourceLanguage
 from lol_audio_unpack.model.binding import RESOURCE_SCHEMA_VERSION
 from lol_audio_unpack.model.progress import OperationProgress
 
 EXPECTED_SCAN_COUNT_AFTER_VERIFICATION = 2
 EXPECTED_FIXTURE_MAP_COUNT = 2
 CURRENT_GENERATION = 2
+STARTUP_ELAPSED = 4.5
+
+
+def test_auto_prepare_uses_available_ordinary_scope_only():
+    """自动准备跳过缺源与默认隐藏英雄，不把空地图范围升级为全量。"""
+    controller = _build_controller(task_worker_cls=_FakeTaskWorker)
+    controller._get_config().prepare_data_on_startup = True
+    language = SourceLanguage(
+        "zh_CN",
+        (
+            SourceEntity("champion", "1", "Annie", (), (), "Annie"),
+            SourceEntity("champion", "2", "Olaf", ("missing",), ("missing",), "Olaf"),
+            SourceEntity("champion", "60001", "Jade Annie", (), (), "Jade_Annie"),
+            SourceEntity("map", "0", "Common", ("missing",), ("missing",)),
+        ),
+    )
+    controller.app_context = SimpleNamespace(
+        runtime_cache={"source_inventory": SourceInventory(Path("game"), 0, (language,))}
+    )
+    controller.start_prepare(scope=SharedDataRepairScope(full=True))
+    assert controller._prepare_scope == SharedDataRepairScope(full=False, champion_ids=(1,), map_ids=())
+    controller.shutdown_background_work()
 
 
 class _FakeConfig:
@@ -381,7 +405,7 @@ def test_shared_data_controller_load_initial_data_starts_worker_and_emits_typed_
     assert states[-1].active is True
     assert create_calls == []
 
-    worker.func()
+    worker.func(worker.signals)
 
     assert len(create_calls) == 1
     assert create_calls[0]["settings"]["GAME_PATH"] == "game"
@@ -849,8 +873,10 @@ def test_legacy_schema_fixture_uses_normal_update_adapter_then_verifies_ready(
     def scan_fixture(generation: int) -> SharedDataScanResult:
         """使用真实 catalog 扫描逻辑读取当前 fixture artifact。"""
         loader = EntityDataLoader.__new__(EntityDataLoader)
+        loader._source_entities = {}
         loader.ctx = context
         loader.data_reader = SimpleNamespace(
+            legacy=False,
             version="16.16",
             champion_banks_dir=champion_banks_dir,
             map_banks_dir=map_banks_dir,
@@ -999,3 +1025,27 @@ def test_shared_data_controller_shutdown_background_work_stops_short_workers() -
     assert champions_worker.quit_called is True
     assert maps_worker.request_interruption_called is True
     assert maps_worker.quit_called is True
+
+
+def test_startup_elapsed_advances_without_worker_progress(qtbot, monkeypatch):
+    """后台停留在单个文件时，界面仍独立显示累计耗时。"""
+    clock = [10.0]
+    monkeypatch.setattr(shared_data_module, "monotonic", lambda: clock[0])
+    controller = _build_controller(task_worker_cls=_FakeTaskWorker, start_worker_fn=lambda _worker: None)
+    controller.load_initial_data()
+    assert controller.elapsed_timer.isActive()
+    clock[0] += STARTUP_ELAPSED
+    controller.elapsed_timer.timeout.emit()
+    assert controller.state.elapsed_seconds == STARTUP_ELAPSED
+    assert controller.state.progress is None
+    controller.build_worker.signals.progress.emit(
+        SharedDataProgress(controller.generation, "library_migration", "started")
+    )
+    assert not controller.build_timeout_timer.isActive()
+    controller.build_worker.signals.progress.emit(
+        SharedDataProgress(controller.generation, "source_inventory", "started")
+    )
+    assert controller.state.progress.stage_key == "source_inventory"
+    assert controller.build_timeout_timer.isActive()
+    controller.shutdown_background_work()
+    assert not controller.elapsed_timer.isActive()

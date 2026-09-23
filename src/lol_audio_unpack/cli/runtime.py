@@ -13,11 +13,13 @@ from loguru import logger
 
 from .. import setup_app
 from ..app.facade import LolAudioUnpackApp
+from ..app.preflight import SourcePreflightError, check_source_files
 from ..app.types import AppContext, AppContextValidationError, OperationOptions, WavOutputOptions
 from ..config import (
     COMMAND_CONFIG_FIELDS,
     CONTEXT_OPTION_ATTRS,
     ConfigSection,
+    SettingKey,
     load_command_config,
     load_settings,
     resolve_default_path,
@@ -25,6 +27,8 @@ from ..config import (
 from ..config import (
     build_settings as build_config_settings,
 )
+from ..runtime.probe import require_tool
+from ..utils.runtime_paths import detect_runtime_paths, get_default_output_relative_path
 from .invocation import (
     DEFAULT_WAV_FORMAT,
     DEFAULT_WAV_RETRIES,
@@ -260,7 +264,7 @@ def _config_path(args: argparse.Namespace) -> Path | None:
     if args.config_file is None:
         return None
     if args.config_file == "":
-        return resolve_default_path(dev_mode=args.dev)
+        return resolve_default_path(dev_mode=args.dev, runtime_paths=detect_runtime_paths(is_frozen=False))
     return Path(args.config_file)
 
 
@@ -299,9 +303,34 @@ def initialize_app(args: argparse.Namespace) -> AppContext:
             logger.error("当前命令未启用 -c，请通过命令行显式传入缺失的共享配置。")
         raise CliInputError(str(exc)) from exc
 
+    # 控制台以调用目录为锚点，传入绝对路径后不依赖共享层的冻结态默认根目录。
+    if not str(context_settings.get(SettingKey.OUTPUT_PATH) or "").strip():
+        context_settings[SettingKey.OUTPUT_PATH] = get_default_output_relative_path()
+    for key in (SettingKey.GAME_PATH, SettingKey.OUTPUT_PATH, SettingKey.WWISER_PATH, SettingKey.VGMSTREAM_PATH):
+        value = context_settings.get(key)
+        if value is not None and str(value).strip():
+            context_settings[key] = str(Path(str(value).strip()).expanduser().resolve())
+
+    def check_context(ctx: AppContext) -> None:
+        """在文件日志初始化前验证原始选择，alias 不需要先写元数据。"""
+        if any(action in {"update", "extract", "mapping"} for action in args.actions):
+            check_source_files(
+                ctx,
+                champion_ids=parse_ids(args.champions),
+                map_ids=parse_ids(args.maps),
+            )
+        options = build_options(args).wav_output
+        if "wav" in args.actions:
+            require_tool("wav", path=str(ctx.config.vgmstream_path or "") or None, options=options)
+        if "mapping" in args.actions:
+            require_tool("hirc", path=str(ctx.config.wwiser_path or "") or None)
+        ctx.runtime_cache["tools_prechecked"] = True
+
     try:
-        app_context = setup_app(dev_mode=args.dev, log_level=args.log_level.upper(), settings=context_settings)
-    except AppContextValidationError as exc:
+        app_context = setup_app(
+            dev_mode=args.dev, log_level=args.log_level.upper(), settings=context_settings, source_check=check_context
+        )
+    except (AppContextValidationError, SourcePreflightError, ValueError) as exc:
         logger.error(f"配置初始化失败: {exc}")
         if config_file is not None:
             logger.error(f"请检查当前命令使用的配置文件: {config_file}")
