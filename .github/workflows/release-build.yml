@@ -16,6 +16,8 @@ permissions:
 
 env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+  PYTHONUTF8: '1'
+  PYTHONIOENCODING: utf-8
 
 jobs:
   verify-tag-target:
@@ -82,11 +84,14 @@ jobs:
         run: New-Item -ItemType Directory -Path .temp -Force | Out-Null
 
       - name: Verify offline behavior
+        env:
+          UV_NO_SYNC: '1'
         run: uv run --no-sync pytest -q
 
       - name: Verify GUI behavior
         env:
           QT_QPA_PLATFORM: offscreen
+          UV_NO_SYNC: '1'
         run: uv run --no-sync pytest tests/gui -q
 
       - name: Set release version
