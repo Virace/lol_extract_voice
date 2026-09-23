@@ -108,6 +108,7 @@ class TaskResultsController(QObject):
             return
         host = self._feedback_parent()
         self._return_focus = host.focusWidget()
+        self._close_notice()
         if self.drawer is None:
             self.drawer = ResultDrawer(host)
             self.drawer.retry_requested.connect(self.review_retry)

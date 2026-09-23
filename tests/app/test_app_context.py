@@ -1,3 +1,5 @@
+"""验证应用上下文输入、配置优先级与输出初始化边界。"""
+
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -46,16 +48,44 @@ def _build_settings(tmp_path: Path) -> dict[str, object]:
     }
 
 
-def test_create_app_context_builds_typed_context_from_settings(tmp_path: Path) -> None:
+def test_explicit_empty_language_requires_discovery_context(tmp_path: Path) -> None:
+    """GUI 发现允许留空，公共源处理默认拒绝显式空值且不创建输出。"""
     settings = _build_settings(tmp_path)
-    settings["WITH_BP_VO"] = True
+    settings["GAME_REGION"] = ""
+    with pytest.raises(AppContextValidationError, match="请选择"):
+        create_app_context(settings=settings)
+    assert not (tmp_path / "output").exists()
+    ctx = create_app_context(settings=settings, allow_empty_language=True)
+    assert ctx.game_region == ""
+
+
+def test_source_check_precedes_output_logging(tmp_path: Path, monkeypatch) -> None:
+    """初始化的源检查失败时不得触发文件日志初始化。"""
+    calls = []
+    monkeypatch.setattr(app_pkg, "setup_logging", lambda **_: calls.append("file logging"))
+
+    def reject(_ctx):
+        raise ValueError("missing source")
+
+    with pytest.raises(ValueError, match="missing source"):
+        setup_app(settings=_build_settings(tmp_path), source_check=reject)
+    assert calls == []
+    assert not (tmp_path / "output").exists()
+
+
+@pytest.mark.parametrize("lobby_audio", [None, False])
+def test_create_app_context_builds_typed_context_from_settings(tmp_path: Path, lobby_audio: bool | None) -> None:
+    """默认包含大厅音频，并保留显式关闭的配置语义。"""
+    settings = _build_settings(tmp_path)
+    if lobby_audio is not None:
+        settings["LOBBY_AUDIO"] = lobby_audio
 
     app_context = create_app_context(settings=settings)
 
     assert isinstance(app_context, AppContext)
     assert app_context.config.game_path == tmp_path / "game"
     assert app_context.config.output_path == tmp_path / "output"
-    assert app_context.config.with_bp_vo is True
+    assert app_context.config.lobby_audio is (lobby_audio is not False)
     assert app_context.paths.audio_path == tmp_path / "output" / "audios"
     assert app_context.paths.manifest_path == tmp_path / "output" / "manifest"
     assert app_context.runtime_cache == {}
@@ -294,6 +324,56 @@ def test_load_settings_requires_existing_file(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError, match="配置文件不存在"):
         load_settings(config_file)
+
+
+@pytest.mark.parametrize("value", ["true", "false"])
+def test_load_settings_migrates_lobby_key_without_reformatting(tmp_path: Path, value: str) -> None:
+    """迁移旧键时保留原值、其他段落、注释及 Windows 换行。"""
+    path = tmp_path / "legacy.ini"
+    source = (
+        f"; 用户备注\r\n[app]\r\nWITH_BP_VO : {value}\r\ngame_path = ./game\r\n"
+        "\r\n[custom]\r\nwith_bp_vo = untouched\r\n"
+    )
+    path.write_bytes(source.encode("utf-8"))
+
+    settings = load_settings(path)
+
+    assert settings == {"LOBBY_AUDIO": value, "GAME_PATH": "./game"}
+    expected = source.replace("WITH_BP_VO", "lobby_audio").encode("utf-8")
+    assert path.read_bytes() == expected
+    assert load_settings(path) == settings
+    assert path.read_bytes() == expected
+
+
+@pytest.mark.parametrize("new_first", [True, False])
+def test_load_settings_prefers_new_lobby_key(tmp_path: Path, new_first: bool) -> None:
+    """新旧配置冲突时不因行顺序改变新键的关闭选择。"""
+    path = tmp_path / "mixed.ini"
+    entries = ["with_bp_vo = true\n", "lobby_audio = false\n"]
+    if new_first:
+        entries.reverse()
+    path.write_text("[app]\n" + "".join(entries), encoding="utf-8")
+
+    assert load_settings(path) == {"LOBBY_AUDIO": "false"}
+    assert path.read_text(encoding="utf-8") == "[app]\nlobby_audio = false\n"
+
+
+def test_load_settings_keeps_legacy_value_when_migration_write_fails(tmp_path: Path, monkeypatch) -> None:
+    """自动迁移不能写回时继续兼容读取，原文件保持完整并给出提醒。"""
+    path = tmp_path / "read_only.ini"
+    source = b"[app]\nwith_bp_vo = false\n"
+    path.write_bytes(source)
+    warnings = []
+
+    def deny_replace(*args, **kwargs):
+        raise PermissionError("read only")
+
+    monkeypatch.setattr("lol_audio_unpack.config.ini.replace_file", deny_replace)
+    monkeypatch.setattr("lol_audio_unpack.config.ini.logger.warning", lambda message, *args: warnings.append(message))
+
+    assert load_settings(path) == {"LOBBY_AUDIO": "false"}
+    assert path.read_bytes() == source
+    assert any("请手动改为 lobby_audio" in message for message in warnings)
 
 
 def test_load_settings_warns_and_ignores_removed_remote_keys(

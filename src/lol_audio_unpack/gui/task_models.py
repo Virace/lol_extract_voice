@@ -49,13 +49,13 @@ class ExecutionTaskParamsSnapshot:
         run_extract: 是否执行音频解包。
         run_mapping: 是否执行事件映射。
         max_workers: 后端执行时使用的最大并发数。
-        with_bp_vo: 是否包含 BP 语音。
+        lobby_audio: 是否包含大厅音频。
         exclude_types: 需要排除的音频类型。
         integrate_data: 是否在映射阶段生成整合数据文件。
         wav_enabled: 是否执行音频转码。
         wav_workers: 音频转码使用的默认并发数。
         wav_timeout: 单个音频转码任务超时时间。
-        wav_retries: 音频转码失败后的最大重试次数。
+        wav_retries: 单文件任务最大尝试次数，包含首次。
         wav_format: 音频转码输出格式。
         resource_pack_wads: 已选历史资源包 WAD 的相对路径与 stat 快照。
     """
@@ -67,7 +67,7 @@ class ExecutionTaskParamsSnapshot:
     run_extract: bool = True
     run_mapping: bool = True
     max_workers: int = 4
-    with_bp_vo: bool = True
+    lobby_audio: bool = True
     exclude_types: tuple[str, ...] = ("SFX", "MUSIC")
     integrate_data: bool = True
     wav_enabled: bool = False
@@ -123,7 +123,7 @@ class ExecutionTaskParamsSnapshot:
     def to_runtime_overrides(self) -> dict[str, str | bool]:
         """构造只属于单次任务的运行时覆盖配置。"""
         return {
-            SettingKey.WITH_BP_VO: self.with_bp_vo,
+            SettingKey.LOBBY_AUDIO: self.lobby_audio,
             SettingKey.EXCLUDE_TYPE: ",".join(self.exclude_types),
         }
 
@@ -151,6 +151,7 @@ class ExecutionTaskDraft:
 
     source: str
     source_summary: str
+    tools_checked: bool = False
     context_input: AppContextInputSnapshot = field(default_factory=AppContextInputSnapshot)
     task_params: ExecutionTaskParamsSnapshot = field(default_factory=ExecutionTaskParamsSnapshot)
     operation_id: str = field(default_factory=lambda: uuid4().hex)

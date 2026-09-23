@@ -68,6 +68,17 @@ class ComboRowSettingCard(SettingCard):
         """返回当前下拉框显示文案。"""
         return self.comboBox.currentText()
 
+    def set_options(self, labels: dict[str, str], value: str) -> None:
+        """替换动态选项并恢复值，刷新本身不发送用户选择信号。"""
+        blocked = self.comboBox.blockSignals(True)
+        try:
+            self._label_map = dict(labels)
+            self.comboBox.clear()
+            self.comboBox.addItems(list(labels))
+            self.setValue(value)
+        finally:
+            self.comboBox.blockSignals(blocked)
+
 
 class ComboRowBinding:
     """为独立 `ComboBox` 提供与设置卡一致的值接口。"""

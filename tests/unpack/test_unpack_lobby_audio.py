@@ -1,3 +1,5 @@
+"""验证大厅语音归属、共享音效与可见输出。"""
+
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -7,36 +9,75 @@ from loguru import logger
 from lol_audio_unpack.app.types import AppConfig, AppContext, AppPaths
 from lol_audio_unpack.model import AudioBank, AudioEntityData
 from lol_audio_unpack.model import binding as resource_binding
-from lol_audio_unpack.unpack import bp_vo as unpack_bp_vo
 from lol_audio_unpack.unpack import entity as unpack_entity
+from lol_audio_unpack.unpack import lobby_audio as unpack_lobby_audio
 from lol_audio_unpack.utils.common import load_yaml
 from lol_audio_unpack.utils.path_constants import format_entity_folder_name
+from tests.factories import make_context
 
 pytestmark = pytest.mark.unit
 
 
-def test_attach_bp_vo_to_champion_fallback_copy_when_link_fails(tmp_path, monkeypatch):
+@pytest.fixture(autouse=True)
+def prepared_lobby(monkeypatch):
+    """链接用例隔离 LCU 补齐边界；真实资源读取另用客户端验证。"""
+    monkeypatch.setattr(
+        unpack_lobby_audio, "DataUpdater", lambda _ctx: SimpleNamespace(ensure_lobby_audio=lambda _ids: None)
+    )
+
+
+@pytest.mark.parametrize("region", ["en_US", "default"])
+def test_english_voice_uses_default_namespace(tmp_path, region):
+    """英语语音对应 LCU 的 default 路径，不被当作本地化缺失。"""
+    ctx = make_context(tmp_path, game_region=region)
+    source = ctx.version_path("manifest", "16.18") / "lobby/default/champion-choose-vo/1.ogg"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"english")
+    assert (
+        unpack_lobby_audio.find_lobby_audio_source(SimpleNamespace(version="16.18"), "1", "champion-choose-vo", ctx=ctx)
+        == source
+    )
+
+
+def test_localized_voice_never_falls_back_to_default(tmp_path):
+    """有英语语音也不能冒充缺失的当前语言；SFX 继续读取共享目录。"""
+    lobby = tmp_path / "16.18" / "ja_JP" / "lobby"
+    for category in ("champion-ban-vo", "champion-sfx-audios"):
+        path = lobby / "default" / category / "1.ogg"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"default audio")
+    ctx = make_context(tmp_path, paths=SimpleNamespace(manifest_path=tmp_path), game_region="ja_JP")
+    reader = SimpleNamespace(version="16.18")
+    assert unpack_lobby_audio.find_lobby_audio_source(reader, "1", "champion-ban-vo", ctx=ctx) is None
+    assert unpack_lobby_audio.find_lobby_audio_source(reader, "1", "champion-sfx-audios", ctx=ctx) == (
+        lobby / "default" / "champion-sfx-audios" / "1.ogg"
+    )
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_attach_lobby_audio_links_and_reports_persisted_files(tmp_path, monkeypatch, enabled):
+    """默认配置落盘大厅音频，显式关闭时不产生音频或回调。"""
     version = "16.3"
     manifest_root = tmp_path / "manifest"
     audio_root = tmp_path / "audios"
 
-    (manifest_root / version / "lobby" / "zh_CN" / "champion-ban-vo").mkdir(parents=True, exist_ok=True)
-    (manifest_root / version / "lobby" / "zh_CN" / "champion-choose-vo").mkdir(parents=True, exist_ok=True)
+    (manifest_root / version / "zh_CN" / "lobby" / "zh_CN" / "champion-ban-vo").mkdir(parents=True, exist_ok=True)
+    (manifest_root / version / "zh_CN" / "lobby" / "zh_CN" / "champion-choose-vo").mkdir(parents=True, exist_ok=True)
 
-    ban_source = manifest_root / version / "lobby" / "zh_CN" / "champion-ban-vo" / "1.ogg"
-    choose_source = manifest_root / version / "lobby" / "zh_CN" / "champion-choose-vo" / "1.ogg"
+    ban_source = manifest_root / version / "zh_CN" / "lobby" / "zh_CN" / "champion-ban-vo" / "1.ogg"
+    choose_source = manifest_root / version / "zh_CN" / "lobby" / "zh_CN" / "champion-choose-vo" / "1.ogg"
     ban_source.write_bytes(b"ban")
     choose_source.write_bytes(b"choose")
 
     game_root = tmp_path / "game"
-    output_root = tmp_path / "output"
+    output_root = tmp_path
     ctx = AppContext(
         config=AppConfig(
             game_path=game_root,
             output_path=output_root,
             game_region="zh_CN",
             group_by_type=False,
-            with_bp_vo=True,
+            **({} if enabled else {"lobby_audio": False}),
         ),
         paths=AppPaths(
             audio_path=audio_root,
@@ -53,7 +94,6 @@ def test_attach_bp_vo_to_champion_fallback_copy_when_link_fails(tmp_path, monkey
             game_lcu_path=game_root / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data",
         ),
     )
-    monkeypatch.setattr(unpack_bp_vo.os, "link", lambda _src, _dst: (_ for _ in ()).throw(OSError("no link")))
 
     entity_data = AudioEntityData(
         entity_id="1",
@@ -68,39 +108,46 @@ def test_attach_bp_vo_to_champion_fallback_copy_when_link_fails(tmp_path, monkey
     reader = SimpleNamespace(version=version)
 
     entity_folder = format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
-    target_dir = audio_root / version / "champions" / entity_folder / "lobby"
+    target_dir = audio_root / version / "zh_CN" / "champions" / entity_folder / "lobby"
     persisted: list[Path] = []
-    result = unpack_bp_vo.attach_bp_vo(
+    result = unpack_lobby_audio.attach_lobby_audio(
         entity_data,
         reader,
         ctx=ctx,
         persisted_artifact_callback=persisted.append,
     )
 
+    if not enabled:
+        assert result == ()
+        assert persisted == []
+        assert not target_dir.exists()
+        return
+
     assert (target_dir / "ban.ogg").read_bytes() == b"ban"
     assert (target_dir / "choose.ogg").read_bytes() == b"choose"
     assert result == (target_dir / "ban.ogg", target_dir / "choose.ogg")
     assert persisted == list(result)
+    assert (target_dir / "ban.ogg").samefile(ban_source)
 
 
-def test_attach_bp_vo_writes_sfx_audio_from_default_fallback(tmp_path, monkeypatch):
+def test_attach_lobby_audio_writes_sfx_audio_from_default_fallback(tmp_path, monkeypatch):
     version = "16.3"
     manifest_root = tmp_path / "manifest"
     audio_root = tmp_path / "audios"
 
-    (manifest_root / version / "lobby" / "default" / "champion-sfx-audios").mkdir(parents=True, exist_ok=True)
-    sfx_source = manifest_root / version / "lobby" / "default" / "champion-sfx-audios" / "1.ogg"
+    (manifest_root / version / "zh_CN" / "lobby" / "default" / "champion-sfx-audios").mkdir(parents=True, exist_ok=True)
+    sfx_source = manifest_root / version / "zh_CN" / "lobby" / "default" / "champion-sfx-audios" / "1.ogg"
     sfx_source.write_bytes(b"sfx")
 
     game_root = tmp_path / "game"
-    output_root = tmp_path / "output"
+    output_root = tmp_path
     ctx = AppContext(
         config=AppConfig(
             game_path=game_root,
             output_path=output_root,
             game_region="zh_CN",
             group_by_type=False,
-            with_bp_vo=True,
+            lobby_audio=True,
         ),
         paths=AppPaths(
             audio_path=audio_root,
@@ -117,7 +164,6 @@ def test_attach_bp_vo_writes_sfx_audio_from_default_fallback(tmp_path, monkeypat
             game_lcu_path=game_root / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data",
         ),
     )
-    monkeypatch.setattr(unpack_bp_vo.os, "link", lambda _src, _dst: (_ for _ in ()).throw(OSError("no link")))
 
     entity_data = AudioEntityData(
         entity_id="1",
@@ -131,32 +177,32 @@ def test_attach_bp_vo_writes_sfx_audio_from_default_fallback(tmp_path, monkeypat
     )
     reader = SimpleNamespace(version=version)
 
-    unpack_bp_vo.attach_bp_vo(entity_data, reader, ctx=ctx)
+    unpack_lobby_audio.attach_lobby_audio(entity_data, reader, ctx=ctx)
 
     entity_folder = format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
-    target_dir = audio_root / version / "champions" / entity_folder / "lobby"
+    target_dir = audio_root / version / "zh_CN" / "champions" / entity_folder / "lobby"
     assert (target_dir / "sfx.ogg").read_bytes() == b"sfx"
 
 
-def test_attach_bp_vo_writes_all_lobby_audio_into_single_lobby_dir_when_grouped(tmp_path, monkeypatch):
+def test_attach_lobby_audio_writes_all_lobby_audio_into_single_lobby_dir_when_grouped(tmp_path, monkeypatch):
     version = "16.3"
     manifest_root = tmp_path / "manifest"
     audio_root = tmp_path / "audios"
 
-    (manifest_root / version / "lobby" / "zh_CN" / "champion-ban-vo").mkdir(parents=True, exist_ok=True)
-    (manifest_root / version / "lobby" / "default" / "champion-sfx-audios").mkdir(parents=True, exist_ok=True)
-    (manifest_root / version / "lobby" / "zh_CN" / "champion-ban-vo" / "1.ogg").write_bytes(b"ban")
-    (manifest_root / version / "lobby" / "default" / "champion-sfx-audios" / "1.ogg").write_bytes(b"sfx")
+    (manifest_root / version / "zh_CN" / "lobby" / "zh_CN" / "champion-ban-vo").mkdir(parents=True, exist_ok=True)
+    (manifest_root / version / "zh_CN" / "lobby" / "default" / "champion-sfx-audios").mkdir(parents=True, exist_ok=True)
+    (manifest_root / version / "zh_CN" / "lobby" / "zh_CN" / "champion-ban-vo" / "1.ogg").write_bytes(b"ban")
+    (manifest_root / version / "zh_CN" / "lobby" / "default" / "champion-sfx-audios" / "1.ogg").write_bytes(b"sfx")
 
     game_root = tmp_path / "game"
-    output_root = tmp_path / "output"
+    output_root = tmp_path
     ctx = AppContext(
         config=AppConfig(
             game_path=game_root,
             output_path=output_root,
             game_region="zh_CN",
             group_by_type=True,
-            with_bp_vo=True,
+            lobby_audio=True,
         ),
         paths=AppPaths(
             audio_path=audio_root,
@@ -173,7 +219,6 @@ def test_attach_bp_vo_writes_all_lobby_audio_into_single_lobby_dir_when_grouped(
             game_lcu_path=game_root / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data",
         ),
     )
-    monkeypatch.setattr(unpack_bp_vo.os, "link", lambda _src, _dst: (_ for _ in ()).throw(OSError("no link")))
 
     entity_data = AudioEntityData(
         entity_id="1",
@@ -187,10 +232,10 @@ def test_attach_bp_vo_writes_all_lobby_audio_into_single_lobby_dir_when_grouped(
     )
     reader = SimpleNamespace(version=version)
 
-    unpack_bp_vo.attach_bp_vo(entity_data, reader, ctx=ctx)
+    unpack_lobby_audio.attach_lobby_audio(entity_data, reader, ctx=ctx)
 
     entity_folder = format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
-    lobby_dir = audio_root / version / "champions" / entity_folder / "lobby"
+    lobby_dir = audio_root / version / "zh_CN" / "champions" / entity_folder / "lobby"
     assert (lobby_dir / "ban.ogg").read_bytes() == b"ban"
     assert (lobby_dir / "sfx.ogg").read_bytes() == b"sfx"
 
@@ -200,7 +245,7 @@ def test_unpack_entity_uses_warning_summary_for_partial_parse_failures(tmp_path,
     manifest_root = tmp_path / "manifest"
     audio_root = tmp_path / "audios"
     game_root = tmp_path / "game"
-    output_root = tmp_path / "output"
+    output_root = tmp_path
 
     wad_dir = game_root / "Game"
     wad_dir.mkdir(parents=True, exist_ok=True)
@@ -212,7 +257,7 @@ def test_unpack_entity_uses_warning_summary_for_partial_parse_failures(tmp_path,
             output_path=output_root,
             game_region="zh_CN",
             group_by_type=False,
-            with_bp_vo=False,
+            lobby_audio=False,
         ),
         paths=AppPaths(
             audio_path=audio_root,
@@ -302,7 +347,7 @@ def test_unpack_entity_uses_each_local_binding_wad_and_reports_partial_result(
     """相同逻辑路径位于不同 WAD 时应分别提取并保留逻辑输出。"""
     version = "16.16"
     game_root = tmp_path / "game"
-    output_root = tmp_path / "output"
+    output_root = tmp_path
     for name in ("alpha.wad.client", "beta.wad.client"):
         path = game_root / "Game" / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -422,7 +467,7 @@ def test_unpack_entity_uses_each_local_binding_wad_and_reports_partial_result(
         ("beta.wad.client", ("assets/shared_audio.bnk",)),
     ]
     assert {path.name for path in callbacks} == {"101.wem", "102.wem"}
-    report = load_yaml(ctx.report_path / version / "champions" / "_1_metadata.yaml")
+    report = load_yaml(ctx.version_path("report", version) / "champions" / "_1_metadata.yaml")
     diagnostics = report["report"]["bindingDiagnostics"]
     assert diagnostics["completeness"] == "partial"
     assert all(not Path(item["wad"]).is_absolute() for item in diagnostics["wads"])

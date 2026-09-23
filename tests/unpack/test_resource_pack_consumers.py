@@ -13,9 +13,11 @@ from lol_audio_unpack.app.resource_pack import build_resource_pack_key
 from lol_audio_unpack.app.results import ResultStatus
 from lol_audio_unpack.model import AudioBank, AudioEntityData
 from lol_audio_unpack.model.binding import BankBinding, BindingDiagnostics, BindingRole, BindingStatus, Completeness
+from lol_audio_unpack.runtime.library import Library
 from lol_audio_unpack.unpack import batch as unpack_batch
 from lol_audio_unpack.unpack import entity as unpack_entity
 from lol_audio_unpack.unpack.stats import StageResult as UnpackStageResult
+from tests.factories import make_context
 
 
 class _FakeWad:
@@ -92,7 +94,8 @@ def test_bound_resource_pack_extracts_to_isolated_safe_output_and_report(
     source_wad = game_path / "Game" / "DATA" / "FINAL" / "TFTCommon.wad.client"
     source_wad.parent.mkdir(parents=True)
     source_wad.write_bytes(b"wad")
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         game_path=game_path,
         audio_path=tmp_path / "audios",
         report_path=tmp_path / "reports",
@@ -125,30 +128,30 @@ def test_bound_resource_pack_extracts_to_isolated_safe_output_and_report(
 
     component = get_entity_path_component("resource_pack", key)
     entity_folder = format_entity_folder_name(component, entity.entity_alias, entity.entity_name)
-    wem_path = ctx.audio_path / reader.version / "SFX" / "resource_packs" / entity_folder / "101.wem"
-    report_path = ctx.report_path / reader.version / "resource_packs" / f"_{component}_metadata.yaml"
+    wem_path = ctx.version_path("audio", reader.version) / "SFX" / "resource_packs" / entity_folder / "101.wem"
+    report_path = ctx.version_path("report", reader.version) / "resource_packs" / f"_{component}_metadata.yaml"
     assert report_path.is_file()
     assert ":" not in report_path.name
     if container == "audio":
         assert wem_path.read_bytes() == b"wem"
         assert stats.overall_result.value == "success"
     elif container == "metadata":
-        assert not wem_path.exists()
+        assert not wem_path.parent.exists()
         assert stats.overall_result.value == "success"
         assert stats.binding_details[0]["outcome"] == "no_audio"
     else:
-        assert not wem_path.exists()
+        assert not wem_path.parent.exists()
         assert stats.overall_result.value == "error"
         assert "elder_dragon_audio.bnk" in stats.get_simple_summary()
         assert stats.binding_details[0]["error"] in stats.get_simple_summary()
 
 
-def test_resource_pack_batch_dispatches_string_task(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resource_pack_batch_dispatches_string_task(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """批处理必须把 resource-pack key 交给专用 string consumer。"""
     key = build_resource_pack_key("TFTCommon.wad.client", "MODE_TFT_NPC_ElderDragon_SFX")
     calls: list[str] = []
     reader = SimpleNamespace(version="16.16", write_unknown_categories=lambda: None)
-    ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False))
+    ctx = make_context(tmp_path, config=SimpleNamespace(dev_mode=False))
     monkeypatch.setattr(
         unpack_batch,
         "unpack_resource_pack",
@@ -175,12 +178,16 @@ def test_file_write_failure_retries_only_selected_binding_and_wem(monkeypatch, t
     key = build_resource_pack_key("TFTCommon.wad.client", "MODE_TFT_NPC_ElderDragon_SFX")
     entity = _build_entity(key)
     bank = entity.resource_banks[0]
-    other = replace(bank, binding=replace(bank.binding, path="other.bnk", normalized_path="other.bnk", entry_hash="02"))
+    other = replace(
+        bank,
+        binding=replace(bank.binding, path="other.bnk", normalized_path="other.bnk", entry_hash="0000000000000002"),
+    )
     entity.resource_banks += (other,)
     wad_path = tmp_path / "game" / bank.binding.wad
     wad_path.parent.mkdir(parents=True)
     wad_path.write_bytes(b"wad")
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         game_path=tmp_path / "game",
         audio_path=tmp_path / "audios",
         report_path=tmp_path / "reports",
@@ -196,12 +203,15 @@ def test_file_write_failure_retries_only_selected_binding_and_wem(monkeypatch, t
     denied = True
     failed_id = 102
 
-    def save(number: int, path: Path) -> None:
+    materialize = Library.materialize
+
+    def save(library, ref, relative: str) -> str:
         """仅让第一次写入指定文件失败。"""
+        number = int(Path(relative).stem)
         writes.append(number)
         if denied and number == failed_id:
             raise PermissionError("access denied")
-        path.write_bytes(b"wem")
+        return materialize(library, ref, relative)
 
     def extract(paths, *, raw):
         """保留实际提交给 WAD 的容器范围。"""
@@ -211,14 +221,10 @@ def test_file_write_failure_retries_only_selected_binding_and_wem(monkeypatch, t
     def parse(raw):
         """模拟外部容器边界，目录组织与重试逻辑仍由生产代码处理。"""
         numbers = (103,) if raw == b"other.bnk" else (101, 102)
-        return SimpleNamespace(
-            extract_files=lambda: [
-                SimpleNamespace(id=number, data=b"wem", save_file=lambda path, number=number: save(number, path))
-                for number in numbers
-            ]
-        )
+        return SimpleNamespace(extract_files=lambda: [SimpleNamespace(id=number, data=b"wem") for number in numbers])
 
     wad = _FakeWad()
+    monkeypatch.setattr(Library, "materialize", save)
     monkeypatch.setattr(wad, "extract", extract)
     monkeypatch.setattr(unpack_entity, "_get_wad_instance", lambda *_args, **_kwargs: wad)
     monkeypatch.setattr(unpack_entity, "BNK", parse)
@@ -244,17 +250,22 @@ def test_file_write_failure_retries_only_selected_binding_and_wem(monkeypatch, t
     assert retried.entities[0].artifacts == (failure.output_path,)
 
 
-def test_parallel_extract_reuses_containers_and_keeps_first_wem(monkeypatch, tmp_path: Path) -> None:
-    """共享容器只解析一次，同容器及跨容器重名 WEM 保留首次成功内容。"""
+def test_parallel_extract_merges_original_ids_across_input_banks(monkeypatch, tmp_path: Path) -> None:
+    """共享输入只解析一次；同类别原 ID 汇总并沿用首次成功写入。"""
     key = build_resource_pack_key("TFTCommon.wad.client", "MODE_TFT_NPC_ElderDragon_SFX")
     entity = _build_entity(key)
     bank = entity.resource_banks[0]
-    other = replace(bank, binding=replace(bank.binding, path="other.bnk", normalized_path="other.bnk", entry_hash="02"))
-    entity.resource_banks = (bank, bank, other)
+    other = replace(
+        bank,
+        binding=replace(bank.binding, path="other.bnk", normalized_path="other.bnk", entry_hash="0000000000000002"),
+    )
+    alias = replace(bank, binding=replace(bank.binding, category="OTHER_SFX"))
+    entity.resource_banks = (bank, bank, alias, other)
     wad_path = tmp_path / "game" / bank.binding.wad
     wad_path.parent.mkdir(parents=True)
     wad_path.write_bytes(b"wad")
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         game_path=tmp_path / "game",
         audio_path=tmp_path / "audios",
         report_path=tmp_path / "reports",
@@ -293,5 +304,12 @@ def test_parallel_extract_reuses_containers_and_keeps_first_wem(monkeypatch, tmp
     )
     assert stats.overall_result is UnpackStageResult.SUCCESS
     assert parsed == [bank.binding.path.encode(), b"other.bnk"]
-    assert {path.name: path.read_bytes() for path in persisted} == {"101.wem": b"first", "102.wem": b"unique"}
-    assert len(persisted) == len({path.name for path in persisted})
+    expected = {
+        ("101.wem", b"first"),
+        ("102.wem", b"unique"),
+    }
+    assert len(persisted) == len(set(persisted)) == len(expected)
+    assert {(path.name, path.read_bytes()) for path in persisted} == expected
+    indexed = tuple(Library(ctx.config.output_path).load("16.16", "zh_CN").iter_media())
+    assert len(indexed) == len(expected)
+    assert {ref.media_id for ref in indexed} == {101, 102}

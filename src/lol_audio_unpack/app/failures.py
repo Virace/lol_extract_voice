@@ -31,13 +31,13 @@ class TaskFailure:
         """返回能由当前证据支持的执行范围，未知完成范围只提供诊断。"""
         if self.resolved:
             return "none"
-        if self.wav_batch is not None and self.unit == "file":
-            return "wav_files"
+        if self.stage == "wav":
+            return "diagnostics"
         if self.stage == "extract" and self.detail is not None and self.detail.retryable:
             return "extract_bindings"
         if self.detail is not None:
             return "diagnostics"
-        if self.stage in {"extract", "mapping", "update", "wav"}:
+        if self.stage in {"extract", "mapping", "update"}:
             return (
                 "entity_stage"
                 if self.entity is not None and self.entity.entity_type in {"champion", "map", "resource_pack"}

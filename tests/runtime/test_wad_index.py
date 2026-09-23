@@ -18,6 +18,17 @@ UPDATED_WAD_COUNT = 2
 QUERY_COUNT = 8
 
 
+def test_default_language_resolves_independent_english_wad(tmp_path: Path) -> None:
+    """LCU default 选择必须落到 GAME en_US，不能遗漏英语或混入其他语言。"""
+    root = tmp_path / "Game" / "DATA" / "FINAL" / "Champions"
+    root.mkdir(parents=True)
+    for name in ("Annie.wad.client", "Annie.en_US.wad.client", "Annie.ja_JP.wad.client"):
+        (root / name).touch()
+    index = WadIndex(tmp_path, "default")
+    assert index.root_wads == (root / "Annie.wad.client",)
+    assert index.localized_wads == (root / "Annie.en_US.wad.client",)
+
+
 @dataclass
 class _Section:
     path_hash: int

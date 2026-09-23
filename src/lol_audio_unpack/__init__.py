@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,18 +16,25 @@ from .utils.versioning import resolve_runtime_version
 if TYPE_CHECKING:
     from .app import AppContext
 
-_STATIC_VERSION = "3.9.2"
+_STATIC_VERSION = "3.10.0"
 __version__ = resolve_runtime_version(Path(__file__).resolve().parents[2], _STATIC_VERSION)
 
 logger.disable("lol_audio_unpack")
 
 
-def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs) -> AppContext:
+def setup_app(
+    dev_mode: bool = False,
+    log_level: str = "INFO",
+    *,
+    source_check: Callable[[AppContext], None] | None = None,
+    **kwargs,
+) -> AppContext:
     """初始化应用并返回可注入上下文。
 
     Args:
         dev_mode: 是否开启开发模式。
         log_level: 日志级别，例如 ``INFO``、``DEBUG``。
+        source_check: 可选的所选来源文件检查，在文件日志与输出初始化前执行。
         **kwargs: 透传给 ``create_app_context`` 的参数。
 
     Returns:
@@ -42,6 +50,8 @@ def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs) -> AppC
         logger.warning("日志队列初始化失败，已回退为非 enqueue 模式。")
 
     app_context = _create_app_context(dev_mode=dev_mode, **kwargs)
+    if source_check is not None:
+        source_check(app_context)
 
     setup_logging(
         dev_mode=dev_mode,

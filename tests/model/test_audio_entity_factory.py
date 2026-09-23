@@ -22,7 +22,7 @@ def test_from_entity_dispatches_to_champion_factory(monkeypatch: pytest.MonkeyPa
     sentinel = object()
     captured: dict[str, object] = {}
 
-    def _fake_from_champion(cls, entity_id, reader, include_events=False, *, ctx):  # noqa: ANN001
+    def _fake_from_champion(cls, entity_id, reader, include_events=False, *, ctx, include_resources=True):  # noqa: ANN001, PLR0913
         captured.update(
             entity_id=entity_id,
             reader=reader,
@@ -56,7 +56,7 @@ def test_from_entity_dispatches_to_map_factory(monkeypatch: pytest.MonkeyPatch) 
     sentinel = object()
     captured: dict[str, object] = {}
 
-    def _fake_from_map(cls, entity_id, reader, include_events=False, *, ctx):  # noqa: ANN001
+    def _fake_from_map(cls, entity_id, reader, include_events=False, *, ctx, include_resources=True):  # noqa: ANN001, PLR0913
         captured.update(
             entity_id=entity_id,
             reader=reader,

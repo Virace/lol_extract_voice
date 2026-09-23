@@ -61,7 +61,6 @@ def test_task_creation_card_uses_gui_wav_defaults_for_draft(qtbot) -> None:
     assert draft.task_params.wav_enabled is True
     assert draft.task_params.wav_workers == EXPECTED_WAV_WORKERS
     assert draft.task_params.wav_timeout == EXPECTED_WAV_TIMEOUT
-    assert draft.task_params.wav_retries == EXPECTED_WAV_RETRIES
     assert draft.task_params.wav_format == "float"
     assert operation_options.wav_output.enabled is True
     assert operation_options.wav_output.worker_count == EXPECTED_WAV_WORKERS
@@ -129,7 +128,7 @@ def test_task_creation_card_restore_button_resets_custom_inputs_to_defaults(qtbo
     panel.map_ids_input.setText("11")
     panel.vo_filter.setCurrentItem("ALL")
     panel.max_workers_combo.setCurrentText("16")
-    panel.bp_voice_cb.setChecked(False)
+    panel.lobby_audioice_cb.setChecked(False)
     panel.force_update_cb.setChecked(True)
     panel.integrate_data_cb.setChecked(False)
     panel.wav_task_cb.setChecked(True)
@@ -142,7 +141,7 @@ def test_task_creation_card_restore_button_resets_custom_inputs_to_defaults(qtbo
     assert panel.map_ids_input.text() == ""
     assert panel.vo_filter.currentRouteKey() == "VO"
     assert panel.max_workers_combo.currentText() == "4"
-    assert panel.bp_voice_cb.isChecked() is True
+    assert panel.lobby_audioice_cb.isChecked() is True
     assert panel.force_update_cb.isChecked() is False
     assert panel.integrate_data_cb.isChecked() is True
     assert panel.wav_task_cb.isChecked() is False

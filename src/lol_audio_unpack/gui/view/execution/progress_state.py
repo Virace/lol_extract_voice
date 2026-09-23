@@ -111,24 +111,12 @@ def _build_global_strip_status_text(running_progress: ExecutionTaskProgress | No
     return "准备中"
 
 
-def _build_global_strip_rate_text(
-    running_task: QueuedExecutionTask | None,
-    running_progress: ExecutionTaskProgress | None,
-    *,
-    now: datetime | None,
-) -> str:
-    """构造底部全局进度条右上角的节奏指标。"""
-    if not isinstance(running_task, QueuedExecutionTask) or running_progress is None or running_task.started_at is None:
+def build_elapsed_text(elapsed_seconds: float | None, *, running: bool) -> str:
+    """格式化整轮任务耗时，终态保留最终总耗时。"""
+    if elapsed_seconds is None:
         return ""
-
-    reference_now = now or datetime.now()
-    elapsed_seconds = max((reference_now - running_task.started_at).total_seconds(), 0.0)
-    completed_count = max(running_progress.current, 0)
-    if completed_count > 0:
-        return f"均时 {elapsed_seconds / completed_count:.1f}s/实体"
-    if elapsed_seconds > 0:
-        return f"已运行 {elapsed_seconds:.1f}s"
-    return ""
+    label = "已运行" if running else "总耗时"
+    return f"{label} {max(elapsed_seconds, 0.0):.1f}s"
 
 
 def build_global_progress_strip_state(  # noqa: PLR0913
@@ -139,11 +127,12 @@ def build_global_progress_strip_state(  # noqa: PLR0913
     progress_current: int | None = None,
     progress_total: int | None = None,
     now: datetime | None = None,
+    elapsed_seconds: float | None = None,
 ) -> GlobalProgressStripState:
-    """根据当前队列状态构造底部全局进度条展示快照。"""
+    """构造进度快照，优先使用页面单调时钟提供的整轮耗时。"""
     has_visible_task = counts[TASK_STATUS_RUNNING] > 0 or counts[TASK_STATUS_WAITING] > 0
     if not has_visible_task:
-        if not note_text:
+        if not note_text and elapsed_seconds is None:
             return GlobalProgressStripState()
 
         total = max(progress_total or 1, 1)
@@ -151,11 +140,19 @@ def build_global_progress_strip_state(  # noqa: PLR0913
         return GlobalProgressStripState(
             visible=False,
             title_text="任务已结束",
-            detail_text=note_text,
+            detail_text=note_text or "",
             progress_current=current,
             progress_total=total,
             status_text=f"{current}/{total}",
+            rate_text=build_elapsed_text(elapsed_seconds, running=False),
         )
+
+    if (
+        elapsed_seconds is None
+        and isinstance(running_task, QueuedExecutionTask)
+        and running_task.started_at is not None
+    ):
+        elapsed_seconds = ((now or datetime.now()) - running_task.started_at).total_seconds()
 
     running_progress = (
         running_task.progress_detail
@@ -217,6 +214,6 @@ def build_global_progress_strip_state(  # noqa: PLR0913
         detail_text=detail_text,
         progress_current=progress_value,
         progress_total=progress_bar_total,
-        rate_text=_build_global_strip_rate_text(running_task, running_progress, now=now),
+        rate_text=build_elapsed_text(elapsed_seconds, running=True),
         status_text=_build_global_strip_status_text(running_progress, resolved_note),
     )

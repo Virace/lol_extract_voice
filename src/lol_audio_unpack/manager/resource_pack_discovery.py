@@ -567,7 +567,7 @@ class ResourcePackDiscovery:
 
     def _snapshot_artifact(self, base: Path) -> tuple[Path, bytes | None]:
         """保存当前 serializer 会覆盖的精确文件字节；不存在时记录空快照。"""
-        suffix = ".yml" if self._is_dev_mode() else ".msgpack"
+        suffix = ".msgpack"
         path = base.with_suffix(suffix)
         return path, path.read_bytes() if path.is_file() else None
 
@@ -607,7 +607,7 @@ class ResourcePackDiscovery:
 
     def _artifact_dir(self, version: str, kind: str) -> Path:
         """返回当前版本 resource-pack artifact group 根目录。"""
-        return Path(self.ctx.paths.manifest_path) / version / kind / RESOURCE_PACK_GROUP
+        return self.ctx.version_path("manifest", version) / kind / RESOURCE_PACK_GROUP
 
     def _is_dev_mode(self) -> bool:
         """返回当前 artifact serializer 是否应使用开发格式。"""

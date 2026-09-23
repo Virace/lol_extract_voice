@@ -12,6 +12,21 @@ from lol_audio_unpack.gui.service.data_loader import EntityDataLoader
 from lol_audio_unpack.gui.service.worker import DataLoadWorker
 
 
+def test_preview_does_not_preload_source_banks(monkeypatch) -> None:
+    """浏览已解包产物只需实体身份，不为预览提前读取源资源。"""
+    loader = _build_loader()
+    loader.ctx = object()
+    loader.data_reader = object()
+    entity = object()
+
+    def fail_preload(*_args, **_kwargs):
+        pytest.fail("预览不应预读 banks")
+
+    monkeypatch.setattr(loader, "_preload_bank_artifact", fail_preload)
+    monkeypatch.setattr(data_loader_module.AudioEntityData, "from_map", lambda *_args, **_kwargs: entity)
+    assert loader._load_preview_entity("maps", "0", allow_unprepared=True) is entity
+
+
 def _build_loader() -> EntityDataLoader:
     """构造最小 `EntityDataLoader` 实例。"""
     return EntityDataLoader.__new__(EntityDataLoader)

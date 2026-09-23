@@ -1,8 +1,8 @@
 """验证单实体选择的路径身份、紧凑描述与撤销契约。"""
 
-import json
 from pathlib import Path
 
+import msgpack
 import pytest
 
 from lol_audio_unpack.app.audio_scope import MappingNode
@@ -74,8 +74,8 @@ def test_node_scope_resolves_in_background_and_rejects_changed_mapping(
         if integrated
         else {"skins": {"1000": {"events": events, "audioPaths": audio_paths}}}
     )
-    mapping_path = tmp_path / "mapping.json"
-    mapping_path.write_text(json.dumps(payload))
+    mapping_path = tmp_path / "mapping.msgpack"
+    mapping_path.write_bytes(msgpack.packb(payload, use_bin_type=True))
     stat = mapping_path.stat()
     node = MappingNode(mapping_path, "champions", "1", (stat.st_size, stat.st_mtime_ns), ("1000", "VO", "a"))
     selection = AudioSelection()
@@ -84,10 +84,10 @@ def test_node_scope_resolves_in_background_and_rejects_changed_mapping(
     selection.set_paths((members[0],), False)
     (scope,) = selection.build_scopes((root,), prefixes={root: prefix})
     assert scope.files == () and scope.directories == () and len(scope.nodes) == 1
-    assert scope.resolve_files() == (members[1],)
+    assert scope.resolve_files() == (members[1], root / "3.wem")
     selection.undo()
     (scope,) = selection.build_scopes((root,), prefixes={root: prefix})
-    assert set(scope.resolve_files()) == set(members)
-    mapping_path.write_text("{}")
+    assert set(scope.resolve_files()) == {*members, root / "3.wem"}
+    mapping_path.write_bytes(msgpack.packb({}))
     with pytest.raises(ValueError, match="映射已变化"):
         scope.resolve_files()

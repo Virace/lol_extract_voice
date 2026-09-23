@@ -11,11 +11,13 @@ import pytest
 import lol_audio_unpack.manager.data_reader as data_reader_module
 from lol_audio_unpack.manager.data_reader import DataReader
 from lol_audio_unpack.manager.errors import SharedDataCorruptError
+from tests.factories import make_context
 
 
 def test_write_unknown_categories_to_file_logs_error_with_exception(monkeypatch, tmp_path: Path) -> None:
     """写未知分类文件失败时应以带异常的 error 记录。"""
     reader = DataReader.__new__(DataReader)
+    reader.read_only = False
     reader.unknown_categories = {"CAT_A"}
     reader.unknown_categories_file = tmp_path / "unknown-category.txt"
 
@@ -41,6 +43,7 @@ def test_write_unknown_categories_to_file_logs_error_with_exception(monkeypatch,
 def test_validate_data_version_major_mismatch_does_not_emit_parse_error(monkeypatch) -> None:
     """大版本不匹配应只记录 critical 并抛错，不再追加解析错误日志。"""
     reader = DataReader.__new__(DataReader)
+    reader.read_only = False
     reader.version = "16.3"
     reader.data = {"metadata": {"gameVersion": "15.14"}}
 
@@ -69,6 +72,7 @@ def test_validate_data_version_major_mismatch_does_not_emit_parse_error(monkeypa
 def test_validate_data_version_parse_failure_logs_error_with_exception(monkeypatch) -> None:
     """版本号解析失败时应以带异常的 error 记录。"""
     reader = DataReader.__new__(DataReader)
+    reader.read_only = False
     reader.version = "16.bad"
     reader.data = {"metadata": {"gameVersion": "16.14"}}
 
@@ -95,6 +99,7 @@ def test_validate_data_version_parse_failure_logs_error_with_exception(monkeypat
 def test_get_champion_banks_logs_error_with_exception_on_unexpected_failure(monkeypatch) -> None:
     """英雄 banks 读取入口遇到非预期异常时应显式记录错误并返回 None。"""
     reader = DataReader.__new__(DataReader)
+    reader.read_only = False
     reader.ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False))
     reader.champion_banks_dir = Path("/virtual/champions")
     reader._champion_banks_cache = {}
@@ -126,7 +131,8 @@ def test_get_champion_banks_logs_error_with_exception_on_unexpected_failure(monk
 
 def test_data_reader_classifies_existing_unreadable_dataset_as_corrupt(monkeypatch, tmp_path: Path) -> None:
     """已有 data 文件无法形成内容时不能误报为缺失。"""
-    ctx = SimpleNamespace(
+    ctx = make_context(
+        tmp_path,
         config=SimpleNamespace(game_path=tmp_path, dev_mode=False),
         paths=SimpleNamespace(manifest_path=tmp_path / "manifest"),
     )
@@ -142,6 +148,7 @@ def test_data_reader_classifies_existing_unreadable_dataset_as_corrupt(monkeypat
 def test_get_map_events_logs_error_with_exception_on_unexpected_failure(monkeypatch) -> None:
     """地图 events 读取入口遇到非预期异常时应显式记录错误并返回 None。"""
     reader = DataReader.__new__(DataReader)
+    reader.read_only = False
     reader.ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False))
     reader.map_events_dir = Path("/virtual/maps")
     reader._map_events_cache = {}

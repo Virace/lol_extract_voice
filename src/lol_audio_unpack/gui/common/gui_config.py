@@ -50,7 +50,8 @@ class GuiConfig:
         # 内部缓存 — CLI 共享配置
         self._game_path: str = ""
         self._output_path: str = ""
-        self._game_region: str = "zh_CN"
+        self._game_region: str = ""
+        self._language_explicit = False
         self._group_by_type: bool = False
         self._wwiser_path: str = ""
         self._vgmstream_path: str = ""
@@ -98,18 +99,19 @@ class GuiConfig:
         # 1. 读取共享配置
         self._game_path = _shared_value(SettingKey.GAME_PATH, "")
         self._output_path = _shared_value(SettingKey.OUTPUT_PATH, "")
-        self._game_region = _shared_value(SettingKey.GAME_REGION, "zh_CN")
+        self._game_region = _shared_value(SettingKey.GAME_REGION, "")
+        self._language_explicit = self._to_bool(_gui_value("language_explicit", str(bool(self._game_region))))
         self._group_by_type = self._to_bool(_shared_value(SettingKey.GROUP_BY_TYPE, "false"))
         self._wwiser_path = _shared_value(SettingKey.WWISER_PATH, "")
         self._wav_enabled = bool(wav_settings.get("wav", False))
         self._wav_workers = int(wav_settings.get("wav_workers", 2))
         self._wav_timeout = int(wav_settings.get("wav_timeout", 5))
-        self._wav_retries = int(wav_settings.get("wav_retries", 3))
+        self.wav_retries = int(wav_settings.get("wav_retries", 3))
         self._wav_format = str(wav_settings.get("wav_format", "pcm16") or "pcm16")
 
         # 2. GUI 专有配置统一走项目 INI，不再读取用户全局 QSettings。
         self._prepare_data_on_startup = self._to_bool(_gui_value("prepare_data_on_startup", "false"))
-        self._vgmstream_path = _gui_value("vgmstream_path", "")
+        self._vgmstream_path = _shared_value(SettingKey.VGMSTREAM_PATH, _gui_value("vgmstream_path", ""))
 
         self._theme_mode = _gui_value("theme_mode", "Auto") or "Auto"
         self._accent_preset_id = resolve_accent_preset_id(_gui_value("accent_preset_id", self._accent_preset_id))
@@ -133,6 +135,7 @@ class GuiConfig:
                 SettingKey.GAME_REGION: self._game_region,
                 SettingKey.GROUP_BY_TYPE: self._group_by_type,
                 SettingKey.WWISER_PATH: self._wwiser_path,
+                SettingKey.VGMSTREAM_PATH: self._vgmstream_path,
             },
         )
         write_command_config(
@@ -173,6 +176,7 @@ class GuiConfig:
             SettingKey.GAME_REGION: self._game_region,
             SettingKey.GROUP_BY_TYPE: self._group_by_type,
             SettingKey.WWISER_PATH: self._wwiser_path,
+            SettingKey.VGMSTREAM_PATH: self._vgmstream_path,
         }
 
     def to_app_context_input_snapshot(self) -> AppContextInputSnapshot:
@@ -308,12 +312,23 @@ class GuiConfig:
 
     @property
     def game_region(self) -> str:
-        """Language / region tag, e.g. ``"zh_CN"``."""
+        """返回资源语言代码；空字符串表示尚未选择。"""
         return self._game_region
 
     @game_region.setter
     def game_region(self, v: str) -> None:
+        """记录用户的显式语言选择，包括主动留空。"""
         self._game_region = v
+        self._language_explicit = True
+
+    @property
+    def language_explicit(self) -> bool:
+        """返回用户是否已有语言偏好，包括主动留空。"""
+        return self._language_explicit
+
+    def apply_discovered_language(self, locale: str) -> None:
+        """保存目录发现派生的语言，不把自动恢复空值记为用户主动留空。"""
+        self._game_region = locale
 
     @property
     def group_by_type(self) -> bool:
@@ -375,11 +390,13 @@ class GuiConfig:
 
     @property
     def wav_retries(self) -> int:
-        """返回默认音频转码最大重试次数。"""
+        """返回单文件转码任务的最大尝试次数，包含首次。"""
         return self._wav_retries
 
     @wav_retries.setter
     def wav_retries(self, value: int) -> None:
+        if int(value) < 1:
+            raise ValueError("WAV 最大尝试次数必须至少为 1")
         self._wav_retries = int(value)
 
     @property
@@ -538,6 +555,7 @@ class GuiConfig:
             section=ConfigSection.GUI,
             values={
                 "prepare_data_on_startup": self._prepare_data_on_startup,
+                "language_explicit": self._language_explicit,
                 "vgmstream_path": self._vgmstream_path,
                 "theme_mode": self._theme_mode,
                 "accent_preset_id": self._accent_preset_id,

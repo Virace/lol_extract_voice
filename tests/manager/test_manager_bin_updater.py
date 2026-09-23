@@ -280,8 +280,9 @@ def test_map_event_preparation_reports_missing_bin_with_cached_banks(tmp_path) -
     assert read_data(processor.map_banks_dir / "11", dev_mode=False) == cached
 
 
-def test_update_includes_common_map_in_targeted_scope(tmp_path, monkeypatch):
-    """验证精确地图更新由核心层自动包含 Map 0。"""
+@pytest.mark.parametrize("selected,expected", [(["33"], ["0", "33"]), ([], [])])
+def test_update_preserves_explicit_map_scope(tmp_path, monkeypatch, selected, expected):
+    """非空地图范围自动包含 Common；显式空范围不启动全量更新。"""
     updater = m_bin_updater.BinUpdater.__new__(m_bin_updater.BinUpdater)
     updater.ctx = SimpleNamespace(config=SimpleNamespace(dev_mode=False), runtime_cache={}, paths=SimpleNamespace())
     updater.force_update = False
@@ -307,10 +308,10 @@ def test_update_includes_common_map_in_targeted_scope(tmp_path, monkeypatch):
         },
     )
 
-    results = updater.update(target="map", map_ids=["33"])
+    results = updater.update(target="map", map_ids=selected)
 
-    assert list(map_updates[0]["maps"]) == ["0", "33"]
-    assert [result.entity_id for result in results] == ["0", "33"]
+    assert [key for update in map_updates for key in update["maps"]] == expected
+    assert [result.entity_id for result in results] == expected
 
 
 def test_update_logs_stage_start_and_summary_for_targeted_mode(tmp_path, monkeypatch):

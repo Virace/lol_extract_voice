@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from time import monotonic
 
 from loguru import logger
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from lol_audio_unpack.app.results import ResultStatus, StageResult
+from lol_audio_unpack.app.targets import should_hide_champion_by_default
 from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.gui.controllers.contracts import (
     EntityRowsPayload,
@@ -21,6 +23,7 @@ from lol_audio_unpack.gui.shared_data import (
     SharedDataPrepareTrigger,
     SharedDataProblem,
     SharedDataProblemCode,
+    SharedDataProgress,
     SharedDataReadiness,
     SharedDataRepairScope,
     SharedDataScanResult,
@@ -66,6 +69,7 @@ class SharedDataController(QObject):
 
     state_changed = Signal(object)
     app_context_changed = Signal(object)
+    source_inventory_changed = Signal(object)
     shared_data_cleared = Signal()
     entity_data_replaced = Signal(object)
     entity_rows_updated = Signal(object)
@@ -126,6 +130,10 @@ class SharedDataController(QObject):
         self._notice_keys: set[tuple[int, str]] = set()
         self._pending_progress: tuple[int, object] | None = None
         self._closed = False
+        self._started_at = monotonic()
+        self.elapsed_timer = QTimer(self)
+        self.elapsed_timer.setInterval(250)
+        self.elapsed_timer.timeout.connect(self._refresh_elapsed)
 
         self._champions_worker = None
         self._maps_worker = None
@@ -151,10 +159,22 @@ class SharedDataController(QObject):
             return
         if not state.active or (state.phase is not self.state.phase and state.progress is None):
             self._clear_pending_progress()
+        if state.active:
+            if not self.elapsed_timer.isActive():
+                self.elapsed_timer.start()
+            state = replace(state, elapsed_seconds=monotonic() - self._started_at)
+        else:
+            self.elapsed_timer.stop()
+            state = replace(state, elapsed_seconds=self.state.elapsed_seconds)
         self.state = state
         self.is_loading_shared_data = state.phase in {SharedDataPhase.CHECKING, SharedDataPhase.VERIFYING}
         self.is_preparing_shared_data = state.phase is SharedDataPhase.PREPARING
         self.state_changed.emit(state)
+
+    def _refresh_elapsed(self) -> None:
+        """独立于后台文件吞吐更新耗时，耗时较长的单文件也有界面反馈。"""
+        if self.state.active and not self._closed:
+            self._publish_state(self.state)
 
     def _replace_state(self, **changes) -> None:
         """在当前 generation 上发布部分字段变更。"""
@@ -254,6 +274,7 @@ class SharedDataController(QObject):
         """使旧回调失效并初始化新 generation 的流程字段。"""
         self._clear_pending_progress()
         self.generation += 1
+        self._started_at = monotonic()
         self._trigger = trigger
         self.auto_prepare_attempted = False
         self._prepare_result = None
@@ -289,12 +310,33 @@ class SharedDataController(QObject):
             )
         )
 
-        worker = self._task_worker_cls(lambda: self._create_app_context(settings=config.to_app_context_settings()))
+        settings = dict(config.to_app_context_settings())
+
+        def build(signals):
+            def publish(progress):
+                signals.progress.emit(
+                    SharedDataProgress(generation, progress.stage_key, progress.event, progress.current, progress.total)
+                )
+
+            return self._create_app_context(settings=settings, progress_callback=publish)
+
+        worker = self._task_worker_cls(build, pass_signals=True)
+        worker.signals.progress.connect(self._on_build_progress)
         worker.signals.finished.connect(self._on_shared_context_build_payload)
         worker.signals.failed.connect(self._on_shared_context_build_error)
         self.build_worker = worker
         self.build_timeout_timer.start()
         self._start_worker(worker)
+
+    def _on_build_progress(self, progress) -> None:
+        """只接收当前上下文的后台启动进度。"""
+        if progress.generation != self.generation or self.build_worker is None:
+            return
+        if progress.stage_key == "library_migration":
+            self.build_timeout_timer.stop()
+        elif progress.stage_key == "source_inventory" and not self.build_timeout_timer.isActive():
+            self.build_timeout_timer.start()
+        self._publish_progress(progress.generation, progress)
 
     def _on_shared_context_build_payload(self, app_context) -> None:
         """在 controller 所在线程消费当前 build owner 的结果。"""
@@ -323,6 +365,21 @@ class SharedDataController(QObject):
         self.app_context = app_context
         self.app_context_changed.emit(app_context)
         self.shared_data_cleared.emit()
+        inventory = getattr(app_context, "runtime_cache", {}).get("source_inventory")
+        if inventory is not None:
+            inventory = replace(inventory, generation=generation)
+            app_context.runtime_cache["source_inventory"] = inventory
+            self.source_inventory_changed.emit(inventory)
+            # 自动选中或清空语言会启动新 generation，不能再发布旧上下文的目录。
+            if generation != self.generation:
+                return
+            language = inventory.get_language(app_context.config.game_region)
+            if language is None or not language.available_count:
+                problem = SharedDataProblem(
+                    SharedDataProblemCode.CONFIGURATION_REQUIRED, "language", "请选择可用的游戏资源语言。"
+                )
+                self._publish_terminal(SharedDataPhase.BLOCKED, problem=problem)
+                return
         self._start_scan(generation, SharedDataPhase.CHECKING)
 
     def on_shared_context_build_failed(
@@ -527,6 +584,25 @@ class SharedDataController(QObject):
         scope = scope or SharedDataRepairScope(full=True)
         overrides = dict(config.to_app_context_settings())
         prepare_resources = config.prepare_data_on_startup
+        inventory = getattr(self.app_context, "runtime_cache", {}).get("source_inventory")
+        language = inventory.get_language(config.game_region) if inventory else None
+        if prepare_resources and language is not None:
+            # 自动准备只覆盖界面已判定可用的实体；用户任务另在启动时复核原始范围。
+            champions = tuple(
+                int(item.key)
+                for item in language.entities
+                if item.kind == "champion"
+                and item.available
+                and (scope.full or int(item.key) in scope.champion_ids)
+                and (not scope.full or not should_hide_champion_by_default({"id": item.key, "alias": item.alias}))
+            )
+            maps = tuple(
+                int(item.key)
+                for item in language.entities
+                if item.kind == "map" and item.available and (scope.full or int(item.key) in scope.map_ids)
+            )
+            scope = SharedDataRepairScope(full=False, champion_ids=champions, map_ids=maps)
+            self._prepare_scope = scope
 
         def run_prepare(signals) -> SharedDataPreparationResult:
             return self._prepare_shared_entity_data(
@@ -900,6 +976,7 @@ class SharedDataController(QObject):
     def shutdown_background_work(self) -> None:
         """在窗口关闭前失效 generation 并停止接受后台回调。"""
         self._closed = True
+        self.elapsed_timer.stop()
         self.generation += 1
         self.runtime_entity_refresh_timer.stop()
         self.build_timeout_timer.stop()

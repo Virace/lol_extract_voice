@@ -5,6 +5,10 @@
 - `unpack`：对应 `lol_audio_unpack.cli.cli:main`
 - `mapping`：同样对应 `lol_audio_unpack.cli.cli:main`，但默认以 `mapping` 模式启动
 - `python -m lol_audio_unpack`：薄壳转发到同一套 CLI 主入口
+- Windows 独立包 `LolAudioUnpack-CLI.exe`：提供相同动作，映射使用 `LolAudioUnpack-CLI.exe mapping ...`；使用说明见 [控制台独立包](../cli-package.md)。
+
+CLI 的相对输入、输出和工具路径均以调用终端的当前目录为起点，打包后也不切换到 EXE 所在目录。
+默认输出为当前目录的 `output/`；不带路径的 `-c` 读取当前目录的 `config/lol-audio-unpack.ini`。
 
 ## 1. 基础命令
 
@@ -46,7 +50,7 @@ uv run unpack update extract \
 ### 2.2 配置文件模式
 
 - 带 `-c` 或 `--config-file`
-- `-c` 不带路径：读取默认配置文件 `lol-audio-unpack.ini`
+- `-c` 不带路径：读取当前目录下的 `config/lol-audio-unpack.ini`
 - `-c <PATH>`：读取指定 INI 配置文件
 - 启用 `-c` 后，只允许提供配置文件路径；动作与参数都从配置文件读取
 - 这条规则对全部 CLI 参数都生效，包括 `--dev`、`--force`、`--max-workers`
@@ -94,7 +98,12 @@ uv run unpack -c ./config/custom.ini
 - `--exclude-type TYPES`
 - `--wwiser-path PATH`
 - `--group-by-type` / `--no-group-by-type`
-- `--with-bp-vo` / `--no-with-bp-vo`
+- `--no-lobby-audio`：关闭默认附带的大厅音频（选人语音、禁用语音和选人音效）。三种文件统一输出到英雄的 `lobby/`，不受 `--exclude-type` 的 VO/SFX 筛选影响。
+
+旧 `--with-bp-vo`、`--no-with-bp-vo` 会提示新用法并退出，不执行任务：默认包含时删除旧参数，关闭时改用 `--no-lobby-audio`。
+INI 使用 `[app] lobby_audio`，默认 `true`，显式 `false` 关闭。旧键 `with_bp_vo` 在加载时兼容读取并自动改名，保留原值、注释及其他配置；新旧键同时存在时以新键为准。文件无法写回时继续兼容读取并提示手动修改。
+LCU 基础数据更新默认同时预取大厅音频到 `manifest` 缓存；英雄解包时才从缓存硬链接到
+对应英雄的 `lobby/`，缓存缺失时按英雄补齐。大厅 OGG 不进入 WEM 内容库。
 
 通用参数：
 
@@ -188,7 +197,6 @@ enable = true
 
 - `--wav-workers N`
 - `--wav-timeout SECONDS`
-- `--wav-retries N`
 - `--wav-format {auto,pcm16,pcm24,pcm32,float}`
 
 在 `-c` 模式下：
@@ -209,7 +217,7 @@ wav_format = pcm16
 说明：
 
 - 当动作列表包含 `wav` 时，CLI 会执行一个独立的 `WAV 转码` stage。
-- `WAV 转码` stage 会直接消费当前版本默认 `audios/<version>` 输出树，并调用 `transcode_tree(...)` 批量生成镜像 WAV。
+- `WAV 转码` stage 消费当前版本/语言的 `audios/<version>/<region>` 输出树，按内容与转换方案复用已完成 WAV；需要转换的内容通过共用批处理生成镜像 WAV。
 
 ### 4.7 `mapping`
 
@@ -269,3 +277,9 @@ CLI 顶层根据同一个 `RunResult` 统一决定主结论与进程退出码；
 update 的共享数据、持久化或全局准备失败会阻断依赖阶段。extract partial 时，WAV 只接收
 success/partial 且 `artifacts` 非空的实体目标；mapping 不依赖 extract 产物时仍会继续。日志样本摘要用于诊断，
 不再作为退出状态的事实来源。
+
+外部转码可通过 `--vgmstream-path <vgmstream-cli路径>` 选择，支持 `auto`、`pcm16`、`pcm24`、
+`pcm32`、`float`，并发和单文件超时沿用 `--wav-workers`、`--wav-timeout`。
+空路径使用内置后端；两者启动前均进行真实样本预检，CLI 失败直接退出，不询问或自动切换。
+`--wav-retries N` 设置文件任务最大尝试次数（包含首次，默认 3，至少 1）。
+内外后端共用任务级重试，重试保持后端和参数，不重复预检；耗尽次数后保留失败诊断。

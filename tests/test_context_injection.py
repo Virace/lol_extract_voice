@@ -12,8 +12,9 @@ from lol_audio_unpack.manager.files import write_data
 from lol_audio_unpack.mapping import batch as mapping_batch
 from lol_audio_unpack.mapping import session as mapping_session
 from lol_audio_unpack.model import AudioEntityData
+from lol_audio_unpack.runtime import hirc as hirc_backend
 from lol_audio_unpack.unpack import batch as unpack_batch
-from lol_audio_unpack.unpack import bp_vo as unpack_bp_vo
+from lol_audio_unpack.unpack import lobby_audio as unpack_lobby_audio
 from lol_audio_unpack.unpack.stats import StageResult as UnpackStageResult
 from lol_audio_unpack.utils.path_constants import format_entity_folder_name, format_sub_entity_folder_name
 
@@ -25,7 +26,7 @@ def _build_ctx(  # noqa: PLR0913
     *,
     game_region: str = "zh_CN",
     group_by_type: bool = False,
-    with_bp_vo: bool = False,
+    lobby_audio: bool = False,
     wwiser_path: Path | None = None,
     game_version: str = "16.3",
 ) -> AppContext:
@@ -39,7 +40,7 @@ def _build_ctx(  # noqa: PLR0913
         output_path=output_path,
         game_region=game_region,
         group_by_type=group_by_type,
-        with_bp_vo=with_bp_vo,
+        lobby_audio=lobby_audio,
         wwiser_path=wwiser_path,
     )
     app_paths = AppPaths(
@@ -67,7 +68,7 @@ def _write_reader_data(ctx: AppContext, *, version: str, alias: str) -> None:
             "champions": {"1": {"id": 1, "alias": alias}},
             "maps": {},
         },
-        ctx.paths.manifest_path / version / "data",
+        ctx.version_path("manifest", version) / "data",
         dev_mode=ctx.config.dev_mode,
     )
 
@@ -87,8 +88,8 @@ def test_data_reader_instances_are_isolated_by_app_context(tmp_path: Path) -> No
     assert reader_a is not reader_b
     assert reader_a.ctx is ctx_a
     assert reader_b.ctx is ctx_b
-    assert reader_a.version_manifest_path == ctx_a.paths.manifest_path / "16.3"
-    assert reader_b.version_manifest_path == ctx_b.paths.manifest_path / "16.4"
+    assert reader_a.version_manifest_path == ctx_a.version_path("manifest", "16.3")
+    assert reader_b.version_manifest_path == ctx_b.version_path("manifest", "16.4")
     assert reader_a.get_champion(1)["alias"] == "ContextA"
     assert reader_b.get_champion(1)["alias"] == "ContextB"
 
@@ -153,20 +154,18 @@ def test_generate_output_path_supports_ctx_grouping(tmp_path: Path) -> None:
     assert path_by_entity == by_entity_ctx.paths.audio_path / relative_path / "VO"
 
 
-def test_attach_bp_vo_to_champion_uses_ctx_without_global_config(
+def test_attach_lobby_audio_to_champion_uses_ctx_without_global_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     version = "16.3"
-    ctx = _build_ctx(tmp_path, game_region="zh_CN", with_bp_vo=True)
+    ctx = _build_ctx(tmp_path, game_region="zh_CN", lobby_audio=True)
 
     manifest_root = ctx.paths.manifest_path
-    (manifest_root / version / "lobby" / "zh_CN" / "champion-ban-vo").mkdir(parents=True, exist_ok=True)
-    (manifest_root / version / "lobby" / "zh_CN" / "champion-choose-vo").mkdir(parents=True, exist_ok=True)
+    (manifest_root / version / "zh_CN" / "lobby" / "zh_CN" / "champion-ban-vo").mkdir(parents=True, exist_ok=True)
+    (manifest_root / version / "zh_CN" / "lobby" / "zh_CN" / "champion-choose-vo").mkdir(parents=True, exist_ok=True)
 
-    (manifest_root / version / "lobby" / "zh_CN" / "champion-ban-vo" / "1.ogg").write_bytes(b"ban")
-    (manifest_root / version / "lobby" / "zh_CN" / "champion-choose-vo" / "1.ogg").write_bytes(b"choose")
-
-    monkeypatch.setattr(unpack_bp_vo.os, "link", lambda _src, _dst: (_ for _ in ()).throw(OSError("no link")))
+    (manifest_root / version / "zh_CN" / "lobby" / "zh_CN" / "champion-ban-vo" / "1.ogg").write_bytes(b"ban")
+    (manifest_root / version / "zh_CN" / "lobby" / "zh_CN" / "champion-choose-vo" / "1.ogg").write_bytes(b"choose")
 
     entity_data = AudioEntityData(
         entity_id="1",
@@ -180,10 +179,10 @@ def test_attach_bp_vo_to_champion_uses_ctx_without_global_config(
     )
     reader = SimpleNamespace(version=version)
 
-    unpack_bp_vo.attach_bp_vo(entity_data, reader, ctx=ctx)
+    unpack_lobby_audio.attach_lobby_audio(entity_data, reader, ctx=ctx)
 
     entity_folder = format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
-    target_dir = ctx.paths.audio_path / version / "champions" / entity_folder / "lobby"
+    target_dir = ctx.version_path("audio", version) / "champions" / entity_folder / "lobby"
     assert (target_dir / "ban.ogg").read_bytes() == b"ban"
     assert (target_dir / "choose.ogg").read_bytes() == b"choose"
 
@@ -200,7 +199,7 @@ def test_execute_tasks_defaults_to_native_hirc(monkeypatch: pytest.MonkeyPatch, 
         captured["ctx"] = kwargs.get("ctx")
         return {}
 
-    monkeypatch.setattr(mapping_session, "WwiserManager", fail_wwiser_manager)
+    monkeypatch.setattr(mapping_session, "WwiserTool", fail_wwiser_manager)
     monkeypatch.setattr(mapping_batch, "build_champion", fake_build_champion_mapping)
 
     reader = SimpleNamespace()
@@ -229,7 +228,7 @@ def test_execute_tasks_passes_wwiser_manager_and_ctx_to_runtime(
         captured["ctx"] = kwargs.get("ctx")
         return {}
 
-    monkeypatch.setattr(mapping_session, "WwiserManager", fake_wwiser_manager)
+    monkeypatch.setattr(mapping_session, "WwiserTool", fake_wwiser_manager)
     monkeypatch.setattr(mapping_batch, "build_champion", fake_build_champion_mapping)
 
     reader = SimpleNamespace()
@@ -348,15 +347,15 @@ def test_get_cached_hirc_uses_native_hirc_by_default(monkeypatch: pytest.MonkeyP
     native_hirc = object()
     captured: dict[str, object] = {}
 
-    def fake_native_from_bnk(path: Path, *, cache_dir: Path) -> object:
+    def fake_native_from_bnk(path: Path, *, cache_dir: Path, use_cache: bool = True) -> object:
         captured["native_args"] = (path, cache_dir)
         return native_hirc
 
     def fail_wwiser_from_bnk(*_args, **_kwargs) -> object:
         pytest.fail("默认路径不应调用 WwiserHIRC")
 
-    monkeypatch.setattr(mapping_session, "NativeHIRC", SimpleNamespace(from_bnk=fake_native_from_bnk))
-    monkeypatch.setattr(mapping_session, "WwiserHIRC", SimpleNamespace(from_bnk=fail_wwiser_from_bnk))
+    monkeypatch.setattr(hirc_backend, "NativeHIRC", SimpleNamespace(from_bnk=fake_native_from_bnk))
+    monkeypatch.setattr(hirc_backend, "WwiserHIRC", SimpleNamespace(from_bnk=fail_wwiser_from_bnk))
 
     result = mapping_session._get_cached_hirc(
         bnk_path=bnk_path,
@@ -379,12 +378,12 @@ def test_get_cached_hirc_uses_wwiser_when_manager_is_provided(monkeypatch: pytes
     def fail_native_from_bnk(*_args, **_kwargs) -> object:
         pytest.fail("显式提供 wwiser_manager 时不应调用 NativeHIRC")
 
-    def fake_wwiser_from_bnk(path: Path, *, cache_dir: Path, wwiser_manager: object) -> object:
+    def fake_wwiser_from_bnk(path: Path, *, cache_dir: Path, wwiser_manager: object, use_cache: bool = True) -> object:
         captured["wwiser_args"] = (path, cache_dir, wwiser_manager)
         return wwiser_hirc
 
-    monkeypatch.setattr(mapping_session, "NativeHIRC", SimpleNamespace(from_bnk=fail_native_from_bnk))
-    monkeypatch.setattr(mapping_session, "WwiserHIRC", SimpleNamespace(from_bnk=fake_wwiser_from_bnk))
+    monkeypatch.setattr(hirc_backend, "NativeHIRC", SimpleNamespace(from_bnk=fail_native_from_bnk))
+    monkeypatch.setattr(hirc_backend, "WwiserHIRC", SimpleNamespace(from_bnk=fake_wwiser_from_bnk))
 
     result = mapping_session._get_cached_hirc(
         bnk_path=bnk_path,

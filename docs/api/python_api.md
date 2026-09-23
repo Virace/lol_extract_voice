@@ -57,7 +57,7 @@ def create_app_context(
 ### 2.2 关键类型
 
 - `AppConfig`
-  - 环境级配置快照，包含 `game_path`、`output_path`、`game_region`、音频类型、分组、BP VO、
+  - 环境级配置快照，包含 `game_path`、`output_path`、`game_region`、音频类型、分组、大厅音频、
     `wwiser_path` 与开发模式等字段
 - `AppPaths`
   - 派生路径快照，包含 `audio_path`、`wav_path`、`cache_path`、`hash_path`、`report_path`、`manifest_path` 等字段
@@ -71,6 +71,7 @@ def create_app_context(
     `Game/DATA/FINAL`、后缀为 `.wad.client` 且 stat 未变化，artifact 不保存绝对路径。
 - `WavOutputOptions`
   - 独立 WAV 转码 stage 配置，包含 `enabled`、`worker_count`、`timeout_seconds`、`max_retries`、`format`
+  - `max_retries` 沿用历史语义，表示单文件任务最大尝试次数（含首次，默认 3）；内外后端共用，不自动切换后端。
 - `ResultStatus` / `EntityResult` / `StageResult` / `RunResult`
   - 统一描述实体、阶段和整轮工作流的 `success`、`partial`、`failed`、`cancelled` 事实；
     状态与计数从子结果派生，异常对象和 traceback 不进入公共结果；`EntityResult.artifacts`

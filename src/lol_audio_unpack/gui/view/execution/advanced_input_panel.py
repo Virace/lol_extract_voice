@@ -51,8 +51,8 @@ class AdvancedInputPanel(FormAccordionCard):
         self.max_workers_combo.setMinimumWidth(120)
         self.max_workers_combo.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.Fixed)
 
-        self.bp_voice_cb = CheckBox("启用")
-        self.bp_voice_cb.setChecked(True)
+        self.lobby_audioice_cb = CheckBox("启用")
+        self.lobby_audioice_cb.setChecked(True)
         self.force_update_cb = CheckBox("启用")
         self.integrate_data_cb = CheckBox("启用")
         self.wav_task_cb = CheckBox("启用")
@@ -75,7 +75,7 @@ class AdvancedInputPanel(FormAccordionCard):
         self.add_form_row("地图 ID", "多个地图 ID 用逗号分隔，如 0,11,12", self.map_ids_input)
         self.add_form_row("音频范围", "默认只处理 VO，需要时可切换为全部类型", self.vo_filter)
         self.add_form_row("并发数", "设置任务并发数；一般不建议超过 CPU 线程数", self.max_workers_combo)
-        self.add_form_row("附加 BP 语音", "默认同时处理 BP 语音", self.bp_voice_cb)
+        self.add_form_row("附加大厅音频", "默认同时处理大厅音频", self.lobby_audioice_cb)
         self.add_form_row("转码格式", "仅在启用音频转码时生效", self.wav_format_row)
         self.add_form_row(
             "前置强制更新",

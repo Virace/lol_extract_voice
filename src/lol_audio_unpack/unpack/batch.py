@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from league_tools.formats import WAD
 from loguru import logger
 
+from lol_audio_unpack.app.library import with_library
 from lol_audio_unpack.app.results import EntityResult, FailureDetail, ResultStatus, StageResult
 from lol_audio_unpack.manager import DataReader
 from lol_audio_unpack.model import AudioEntityData, generate_champion_tasks, generate_map_tasks
@@ -105,6 +106,7 @@ def _describe_entity_result(result: EntityResult) -> tuple[str, str]:
     return f"{result.entity_name} 解包失败", "warning"
 
 
+@with_library
 def execute_tasks(  # noqa: PLR0913
     tasks: list[tuple[str, int | str, str]],
     reader: DataReader,

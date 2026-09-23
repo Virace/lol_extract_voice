@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import pytest
 from PySide6.QtCore import Qt
 
 from lol_audio_unpack.app.resource_pack import ResourcePackWadRef, build_resource_pack_key
+from lol_audio_unpack.app.results import ResultStatus, RunResult, StageResult
 from lol_audio_unpack.gui.shared_data import (
     SharedDataPhase,
     SharedDataProblem,
     SharedDataProblemCode,
     SharedDataState,
+)
+from lol_audio_unpack.gui.task_models import (
+    AppContextInputSnapshot,
+    ExecutionTaskDraft,
+    ExecutionTaskParamsSnapshot,
+    ExecutionTaskProgress,
+    ExecutionTaskResult,
 )
 from lol_audio_unpack.gui.view.execution_page import ExecutionPage
 from lol_audio_unpack.gui.view.setting_page import SettingPage
@@ -17,6 +26,94 @@ from lol_audio_unpack.gui.view.setting_page import SettingPage
 EXPECTED_WAV_WORKERS = 8
 EXPECTED_WAV_TIMEOUT = 15
 EXPECTED_WAV_RETRIES = 5
+
+
+def _start_silent_task(qtbot, monkeypatch):
+    """隔离后台进程，让真实页面在没有进度事件时运行。"""
+    clock = [100.0]
+    monkeypatch.setattr("lol_audio_unpack.gui.view.execution_page.monotonic", lambda: clock[0])
+    page = ExecutionPage()
+    qtbot.addWidget(page)
+    monkeypatch.setattr(page._queue_controller, "start_task_worker", lambda _task: None)
+    page.set_shared_data_state(SharedDataState(SharedDataPhase.READY, 1))
+    draft = ExecutionTaskDraft(
+        source="default_scope",
+        source_summary="英雄任务",
+        context_input=AppContextInputSnapshot(),
+        task_params=ExecutionTaskParamsSnapshot(),
+    )
+    page.submit_task(draft)
+    return page, clock, draft
+
+
+def test_elapsed_time_advances_without_progress_and_survives_stage_changes(qtbot, monkeypatch) -> None:
+    """隐藏执行页也应持续发布整轮耗时，阶段计数清零不能重置时钟。"""
+    page, clock, draft = _start_silent_task(qtbot, monkeypatch)
+    published = []
+    page.global_progress_state_changed.connect(published.append)
+    initial = page.current_global_progress_state()
+    clock[0] = 102.4
+
+    qtbot.waitUntil(lambda: page.current_global_progress_state().rate_text == "已运行 2.4s", timeout=1500)
+
+    assert published[-1] == page.current_global_progress_state()
+    assert (published[-1].progress_current, published[-1].progress_total) == (
+        initial.progress_current,
+        initial.progress_total,
+    )
+    assert published[-1].detail_text == initial.detail_text
+    controller = page._queue_controller
+    task_id = controller.active_task_id
+    for stage, current in (("extract", 2), ("mapping", 0)):
+        controller.on_task_progress(
+            task_id,
+            ExecutionTaskProgress(stage, stage, "英雄", current=current, total=5),
+        )
+        assert page.current_global_progress_state().rate_text == "已运行 2.4s"
+
+    clock[0] = 107.6
+    qtbot.waitUntil(lambda: page.current_global_progress_state().rate_text == "已运行 7.6s", timeout=1500)
+    assert page.current_global_progress_state().progress_current == 0
+    controller.cancel_active_task()
+    page.submit_task(draft)
+    assert page.current_global_progress_state().rate_text == "已运行 0.0s"
+    controller.cancel_active_task()
+
+
+@pytest.mark.parametrize("outcome", ["success", "partial", "failed", "cancelled", "worker_error"])
+def test_elapsed_time_freezes_at_terminal_state(qtbot, monkeypatch, outcome) -> None:
+    """所有终态都应保存结束瞬间的总耗时，并停止后续刷新。"""
+    page, clock, _draft = _start_silent_task(qtbot, monkeypatch)
+    controller = page._queue_controller
+    task_id = controller.active_task_id
+    controller.on_task_progress(task_id, ExecutionTaskProgress("extract", "音频解包", "英雄", current=2, total=5))
+    clock[0] = 112.3
+    if outcome == "cancelled":
+        controller.cancel_active_task()
+    elif outcome == "worker_error":
+        controller.on_task_failed(task_id, "后台异常退出")
+    else:
+        controller.on_task_finished(
+            task_id,
+            ExecutionTaskResult(
+                (),
+                "任务结束",
+                12.0,
+                RunResult((StageResult("extract", status=ResultStatus(outcome)),)),
+            ),
+        )
+
+    terminal = page.current_global_progress_state()
+    assert terminal.visible is False
+    assert terminal.rate_text == "总耗时 12.3s"
+    if outcome == "cancelled":
+        assert (terminal.progress_current, terminal.progress_total) == (2, 5)
+    published = []
+    page.global_progress_state_changed.connect(published.append)
+    clock[0] = 200.0
+    qtbot.wait(250)
+    assert page.current_global_progress_state() == terminal
+    assert published == []
 
 
 def _build_linked_pages(qtbot) -> tuple[SettingPage, ExecutionPage]:
@@ -46,7 +143,7 @@ def test_execution_page_uses_latest_wav_defaults_from_setting_page(qtbot) -> Non
     assert draft.task_params.wav_enabled is True
     assert draft.task_params.wav_workers == EXPECTED_WAV_WORKERS
     assert draft.task_params.wav_timeout == EXPECTED_WAV_TIMEOUT
-    assert draft.task_params.wav_retries == EXPECTED_WAV_RETRIES
+    assert draft.task_params.to_operation_options().wav_output.max_retries == EXPECTED_WAV_RETRIES
     assert draft.task_params.wav_format == "float"
 
 
