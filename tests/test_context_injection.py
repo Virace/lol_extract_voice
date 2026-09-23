@@ -14,7 +14,7 @@ from lol_audio_unpack.mapping import session as mapping_session
 from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.runtime import hirc as hirc_backend
 from lol_audio_unpack.unpack import batch as unpack_batch
-from lol_audio_unpack.unpack import bp_vo as unpack_bp_vo
+from lol_audio_unpack.unpack import lobby_audio as unpack_lobby_audio
 from lol_audio_unpack.unpack.stats import StageResult as UnpackStageResult
 from lol_audio_unpack.utils.path_constants import format_entity_folder_name, format_sub_entity_folder_name
 
@@ -26,7 +26,7 @@ def _build_ctx(  # noqa: PLR0913
     *,
     game_region: str = "zh_CN",
     group_by_type: bool = False,
-    with_bp_vo: bool = False,
+    lobby_audio: bool = False,
     wwiser_path: Path | None = None,
     game_version: str = "16.3",
 ) -> AppContext:
@@ -40,7 +40,7 @@ def _build_ctx(  # noqa: PLR0913
         output_path=output_path,
         game_region=game_region,
         group_by_type=group_by_type,
-        with_bp_vo=with_bp_vo,
+        lobby_audio=lobby_audio,
         wwiser_path=wwiser_path,
     )
     app_paths = AppPaths(
@@ -154,11 +154,11 @@ def test_generate_output_path_supports_ctx_grouping(tmp_path: Path) -> None:
     assert path_by_entity == by_entity_ctx.paths.audio_path / relative_path / "VO"
 
 
-def test_attach_bp_vo_to_champion_uses_ctx_without_global_config(
+def test_attach_lobby_audio_to_champion_uses_ctx_without_global_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     version = "16.3"
-    ctx = _build_ctx(tmp_path, game_region="zh_CN", with_bp_vo=True)
+    ctx = _build_ctx(tmp_path, game_region="zh_CN", lobby_audio=True)
 
     manifest_root = ctx.paths.manifest_path
     (manifest_root / version / "zh_CN" / "lobby" / "zh_CN" / "champion-ban-vo").mkdir(parents=True, exist_ok=True)
@@ -179,7 +179,7 @@ def test_attach_bp_vo_to_champion_uses_ctx_without_global_config(
     )
     reader = SimpleNamespace(version=version)
 
-    unpack_bp_vo.attach_bp_vo(entity_data, reader, ctx=ctx)
+    unpack_lobby_audio.attach_lobby_audio(entity_data, reader, ctx=ctx)
 
     entity_folder = format_entity_folder_name("1", "annie", "安妮", "黑暗之女")
     target_dir = ctx.version_path("audio", version) / "champions" / entity_folder / "lobby"

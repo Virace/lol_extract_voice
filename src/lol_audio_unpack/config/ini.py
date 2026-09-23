@@ -11,6 +11,7 @@ from typing import Any
 
 from loguru import logger
 
+from ..utils.atomic import replace_file
 from ..utils.runtime_paths import RuntimePaths, detect_runtime_paths
 from ..utils.type_hints import StrPath
 from .schema import (
@@ -25,6 +26,65 @@ DEFAULT_DEV_CONFIG_FILENAME = "lol-audio-unpack.dev.ini"
 CONFIG_SECTION = ConfigSection.APP
 
 _MISSING = object()
+
+
+def _rename_lobby_key(source: str, *, keep: str | None) -> str:
+    """只改写 app 段的旧键，保留其他配置、注释、缩进和换行。"""
+    lines: list[str] = []
+    section = ""
+    option_indent: int | None = None
+    drop = False
+    for line in source.splitlines(keepends=True):
+        updated = line
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", ";")):
+            lines.append(line)
+            continue
+        indent = len(line) - len(line.lstrip())
+        # 跟随被移除旧键的多行值也需移除，不能误接到前一个配置项上。
+        if option_indent is not None and indent > option_indent:
+            if not drop:
+                lines.append(line)
+            continue
+        if match := configparser.ConfigParser.SECTCRE.match(stripped):
+            section = match.group("header")
+            option_indent = None
+            drop = False
+        elif match := configparser.ConfigParser.OPTCRE.match(stripped):
+            option_indent = indent
+            key = match.group("option").rstrip()
+            legacy = section == ConfigSection.APP and key.lower() == "with_bp_vo"
+            drop = legacy and key != keep
+            if legacy and not drop:
+                updated = line[:indent] + "lobby_audio" + line[indent + len(key) :]
+        if not drop:
+            lines.append(updated)
+    return "".join(lines)
+
+
+def _migrate_lobby_audio(path: Path, parser: configparser.ConfigParser, source: str) -> None:
+    """兼容读取旧大厅开关，并原子迁移文件；新键优先，写回失败不阻止读取。"""
+    if not parser.has_section(ConfigSection.APP):
+        return
+    section = parser[ConfigSection.APP]
+    legacy = [key for key in section if key.lower() == "with_bp_vo"]
+    if not legacy:
+        return
+    has_new = any(key.lower() == "lobby_audio" for key in section)
+    updated = _rename_lobby_key(source, keep=None if has_new else legacy[-1])
+    if updated == source:
+        return
+    if not has_new:
+        section["lobby_audio"] = section[legacy[-1]]
+    for key in legacy:
+        section.pop(key, None)
+    try:
+        replace_file(path, lambda temp: temp.write_bytes(updated.encode("utf-8")), write_stage="config_migration")
+    except OSError as exc:
+        logger.warning("旧配置 with_bp_vo 已兼容读取，但无法写回 {}；请手动改为 lobby_audio：{}", path, exc)
+    else:
+        detail = "；新旧键同时存在，保留新键的值" if has_new else "；保留原值"
+        logger.warning("已将 {} 中的 with_bp_vo 迁移为 lobby_audio{}", path, detail)
 
 
 def _ensure_parser(config_file: StrPath) -> tuple[Path, configparser.ConfigParser]:
@@ -70,7 +130,10 @@ def _load_config_parser(
 
     parser = configparser.ConfigParser(interpolation=None)
     parser.optionxform = str
-    parser.read(config_path, encoding="utf-8")
+    with config_path.open(encoding="utf-8", newline="") as handle:
+        source = handle.read()
+    parser.read_string(source, source=str(config_path))
+    _migrate_lobby_audio(config_path, parser, source)
     return parser
 
 

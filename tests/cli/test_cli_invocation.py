@@ -33,7 +33,10 @@ def _build_runtime_paths(tmp_path: Path):
     )
 
 
-def test_build_explicit_cli_argv_omits_defaults_but_keeps_required_and_changed_values(tmp_path: Path) -> None:
+@pytest.mark.parametrize("lobby_audio", [True, False])
+def test_build_explicit_cli_argv_omits_defaults_but_keeps_required_and_changed_values(
+    tmp_path: Path, lobby_audio: bool
+) -> None:
     """完整显式命令应保留必需项，同时省略默认值。"""
     runtime_paths = _build_runtime_paths(tmp_path)
     request = CliInvocationRequest(
@@ -42,7 +45,7 @@ def test_build_explicit_cli_argv_omits_defaults_but_keeps_required_and_changed_v
             (SettingKey.GAME_PATH, "game-root"),
             (SettingKey.OUTPUT_PATH, str(get_default_output_root(runtime_paths))),
             (SettingKey.GAME_REGION, "zh_CN"),
-            (SettingKey.WITH_BP_VO, True),
+            (SettingKey.LOBBY_AUDIO, lobby_audio),
             (SettingKey.EXCLUDE_TYPE, ""),
         ),
         max_workers=DEFAULT_CLI_MAX_WORKERS,
@@ -57,7 +60,7 @@ def test_build_explicit_cli_argv_omits_defaults_but_keeps_required_and_changed_v
     assert argv[:5] == ["uv", "run", "unpack", "extract", "wav"]
     assert "--game-path" in argv
     assert argv[argv.index("--game-path") + 1] == "game-root"
-    assert "--with-bp-vo" in argv
+    assert ("--no-lobby-audio" in argv) is (not lobby_audio)
     assert "--exclude-type" in argv
     assert argv[argv.index("--exclude-type") + 1] == ""
     assert "--output-path" not in argv

@@ -190,7 +190,9 @@ def generate_output_path(
 若当前工作流启用了 WAV，则由独立 `WAV 转码` stage 消费当前版本/语言的 `audios/<version>/<region>` 输出树，
 按内容、输出参数和后端构建复用完整 WAV，需要转换的内容再通过共用批处理生成镜像输出。
 
-英雄解包在 `ctx.config.with_bp_vo` 启用时会额外处理大厅 BP 语音。
+LCU 基础数据更新默认同时预取选人语音、禁用语音和选人音效到 `manifest` 缓存。
+英雄解包时才将对应文件硬链接到英雄的 `lobby/`，缓存缺失时按英雄补齐；三种文件不受
+VO/SFX 筛选影响，也不进入 WEM 内容库。`ctx.config.lobby_audio=False` 可关闭大厅音频。
 
 ## 2. 映射入口
 

@@ -29,7 +29,7 @@ from lol_audio_unpack.runtime.library import MediaRef
 from lol_audio_unpack.runtime.wad import extract_wad, get_wad, resolve_bound_wad
 from lol_audio_unpack.utils.logging import performance_monitor
 
-from .bp_vo import attach_bp_vo
+from .lobby_audio import attach_lobby_audio
 from .stats import EntityUnpackStats, FileProcessResult, ProcessingStatsContext
 
 if TYPE_CHECKING:
@@ -970,7 +970,7 @@ def unpack_champion(  # noqa: PLR0913
             persisted_wem_callback=persisted_wem_callback,
             max_workers=max_workers,
         )
-        attach_bp_vo(
+        attach_lobby_audio(
             entity_data,
             reader,
             ctx=ctx,

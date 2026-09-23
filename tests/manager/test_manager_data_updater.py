@@ -21,7 +21,7 @@ def _build_updater(game_path: Path, version: str = "16.3"):
             output_path=game_path,
             game_region="zh_CN",
             dev_mode=False,
-            with_bp_vo=False,
+            lobby_audio=False,
         ),
         runtime_cache={},
         paths=SimpleNamespace(
@@ -136,10 +136,10 @@ def test_check_languages_rejects_invalid_metadata(tmp_path, payload):
     assert updater._check_languages() is False
 
 
-@pytest.mark.parametrize("with_bp_vo", [False, True])
-def test_check_and_update_skips_when_canonical_languages_are_fresh(tmp_path, monkeypatch, with_bp_vo):
+@pytest.mark.parametrize("lobby_audio", [False, True])
+def test_check_and_update_skips_when_canonical_languages_are_fresh(tmp_path, monkeypatch, lobby_audio):
     updater = _build_updater(tmp_path)
-    updater.ctx.config.with_bp_vo = with_bp_vo
+    updater.ctx.config.lobby_audio = lobby_audio
     updater.force_update = False
     updater.temp_path = tmp_path / "temp"
     updater.version_manifest_path = tmp_path / "manifest" / updater.version
@@ -152,14 +152,14 @@ def test_check_and_update_skips_when_canonical_languages_are_fresh(tmp_path, mon
     )
     process_calls: list[Path] = []
     lobby_calls = []
-    monkeypatch.setattr(updater, "ensure_bp_vo", lambda ids: lobby_calls.append(tuple(ids)))
+    monkeypatch.setattr(updater, "ensure_lobby_audio", lambda ids: lobby_calls.append(tuple(ids)))
     monkeypatch.setattr(updater, "_process_data", process_calls.append)
 
     result = updater.check_and_update()
 
     assert result == updater.data_file_base
     assert process_calls == []
-    assert lobby_calls == ([("1",)] if with_bp_vo else [])
+    assert lobby_calls == ([("1",)] if lobby_audio else [])
 
 
 def test_extract_wad_data_collects_all_default_asset_volumes(tmp_path, monkeypatch):
@@ -419,7 +419,7 @@ def test_extract_wad_data_returns_when_region_wad_missing(tmp_path, monkeypatch)
     assert calls == []
 
 
-def test_extract_wad_data_includes_bp_vo_when_enabled(tmp_path, monkeypatch):
+def test_extract_wad_data_includes_lobby_audio_when_enabled(tmp_path, monkeypatch):
     wad_root = tmp_path / "LeagueClient" / "Plugins" / "rcp-be-lol-game-data"
     wad_root.mkdir(parents=True, exist_ok=True)
     (wad_root / "zh_CN-assets.wad").write_bytes(b"")
@@ -457,7 +457,7 @@ def test_extract_wad_data_includes_bp_vo_when_enabled(tmp_path, monkeypatch):
     monkeypatch.setattr(m_data_updater, "WAD", FakeWAD)
 
     updater = _build_updater(tmp_path)
-    updater.ctx.config.with_bp_vo = True
+    updater.ctx.config.lobby_audio = True
     updater._extract_wad_data(tmp_path / "out", "zh_CN")
 
     all_requested_paths = [path for _, hash_table in calls for path in hash_table]
@@ -510,14 +510,14 @@ def test_extract_wad_data_writes_default_sfx_audio_into_region_output(tmp_path, 
     monkeypatch.setattr(m_data_updater, "WAD", FakeWAD)
 
     updater = _build_updater(tmp_path)
-    updater.ctx.config.with_bp_vo = True
+    updater.ctx.config.lobby_audio = True
     updater._extract_wad_data(tmp_path / "out", "zh_CN")
 
     assert extracted_outputs == [tmp_path / "out" / updater.version / "zh_CN" / "champion-sfx-audios" / "1.ogg"]
     assert extracted_outputs[0].read_bytes() == b"sfx"
 
 
-def test_persist_bp_vo_files_keeps_sfx_in_lobby(tmp_path):
+def test_persist_lobby_audio_files_keeps_sfx_in_lobby(tmp_path):
     updater = _build_updater(tmp_path)
     updater.version_manifest_path = tmp_path / "manifest" / updater.version
     updater.process_languages = ["zh_CN"]
@@ -527,7 +527,7 @@ def test_persist_bp_vo_files_keeps_sfx_in_lobby(tmp_path):
     source_dir.mkdir(parents=True, exist_ok=True)
     (source_dir / "1.ogg").write_bytes(b"sfx")
 
-    updater._persist_bp_vo_files(temp_root)
+    updater._persist_lobby_audio_files(temp_root)
 
     target_file = updater.version_manifest_path / "lobby" / "zh_CN" / "champion-sfx-audios" / "1.ogg"
     assert target_file.read_bytes() == b"sfx"

@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
 from typing import Literal
 
 from .. import __version__
@@ -14,6 +16,36 @@ from .invocation import DEFAULT_CLI_MAX_WORKERS
 from .text import text
 
 EntryMode = Literal["unpack", "mapping"]
+
+
+class _LegacyLobbyAction(argparse.Action):
+    """在旧参数入口给出迁移提示，避免改变旧脚本的执行意图。"""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        """拒绝旧参数，并说明启用或关闭大厅音频的新用法。"""
+        if option_string == "--with-bp-vo":
+            parser.error("--with-bp-vo 已停用；大厅音频默认包含，请删除此参数。需要关闭时使用 --no-lobby-audio。")
+        parser.error("--no-with-bp-vo 已停用，请改用 --no-lobby-audio。")
+
+
+def add_lobby_audio_option(parser: argparse.ArgumentParser) -> None:
+    """注册大厅音频关闭参数和旧参数的定向提示。"""
+    parser.add_argument(
+        "--no-lobby-audio",
+        dest="lobby_audio",
+        action="store_false",
+        default=None,
+        help=text("help.lobby_audio"),
+    )
+    parser.add_argument(
+        "--with-bp-vo",
+        "--no-with-bp-vo",
+        dest="lobby_audio",
+        action=_LegacyLobbyAction,
+        nargs=0,
+        default=argparse.SUPPRESS,
+        help=argparse.SUPPRESS,
+    )
 
 
 def _create_shared_parser() -> argparse.ArgumentParser:
@@ -50,12 +82,7 @@ def _create_shared_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=text("help.skip_events"),
     )
-    parser.add_argument(
-        "--with-bp-vo",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help=text("help.with_bp_vo"),
-    )
+    add_lobby_audio_option(parser)
     parser.add_argument(
         "--enable-league-tools-log",
         action="store_true",
@@ -211,7 +238,7 @@ def create_parser(mode: EntryMode = "unpack") -> argparse.ArgumentParser:
     """
     shared_parser = _create_shared_parser()
     parser = argparse.ArgumentParser(
-        prog="mapping" if mode == "mapping" else "unpack",
+        prog=Path(sys.executable).name if getattr(sys, "frozen", False) else mode,
         description=text("parser.mapping.description") if mode == "mapping" else text("parser.unpack.description"),
         formatter_class=argparse.RawTextHelpFormatter,
         parents=[shared_parser],
@@ -270,5 +297,6 @@ __all__ = [
     "_add_update",
     "_create_shared_parser",
     "EntryMode",
+    "add_lobby_audio_option",
     "create_parser",
 ]

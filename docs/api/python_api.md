@@ -57,7 +57,7 @@ def create_app_context(
 ### 2.2 关键类型
 
 - `AppConfig`
-  - 环境级配置快照，包含 `game_path`、`output_path`、`game_region`、音频类型、分组、BP VO、
+  - 环境级配置快照，包含 `game_path`、`output_path`、`game_region`、音频类型、分组、大厅音频、
     `wwiser_path` 与开发模式等字段
 - `AppPaths`
   - 派生路径快照，包含 `audio_path`、`wav_path`、`cache_path`、`hash_path`、`report_path`、`manifest_path` 等字段

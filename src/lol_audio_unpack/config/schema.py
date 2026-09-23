@@ -25,7 +25,7 @@ class SettingKey:
     GAME_REGION = "GAME_REGION"
     EXCLUDE_TYPE = "EXCLUDE_TYPE"
     GROUP_BY_TYPE = "GROUP_BY_TYPE"
-    WITH_BP_VO = "WITH_BP_VO"
+    LOBBY_AUDIO = "LOBBY_AUDIO"
     WWISER_PATH = "WWISER_PATH"
     VGMSTREAM_PATH = "VGMSTREAM_PATH"
 
@@ -69,7 +69,7 @@ SHARED_SETTING_FIELDS: tuple[SharedSettingField, ...] = (
     SharedSettingField(SettingKey.GAME_REGION, "game_region", "game_region", "zh_CN"),
     SharedSettingField(SettingKey.EXCLUDE_TYPE, "exclude_type", "exclude_type", "SFX,MUSIC"),
     SharedSettingField(SettingKey.GROUP_BY_TYPE, "group_by_type", "group_by_type", False),
-    SharedSettingField(SettingKey.WITH_BP_VO, "with_bp_vo", "with_bp_vo", False),
+    SharedSettingField(SettingKey.LOBBY_AUDIO, "lobby_audio", "lobby_audio", True),
     SharedSettingField(SettingKey.WWISER_PATH, "wwiser_path", "wwiser_path"),
     SharedSettingField(SettingKey.VGMSTREAM_PATH, "vgmstream_path", "vgmstream_path"),
 )

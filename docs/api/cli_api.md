@@ -5,6 +5,10 @@
 - `unpack`：对应 `lol_audio_unpack.cli.cli:main`
 - `mapping`：同样对应 `lol_audio_unpack.cli.cli:main`，但默认以 `mapping` 模式启动
 - `python -m lol_audio_unpack`：薄壳转发到同一套 CLI 主入口
+- Windows 独立包 `LolAudioUnpack-CLI.exe`：提供相同动作，映射使用 `LolAudioUnpack-CLI.exe mapping ...`；使用说明见 [控制台独立包](../cli-package.md)。
+
+CLI 的相对输入、输出和工具路径均以调用终端的当前目录为起点，打包后也不切换到 EXE 所在目录。
+默认输出为当前目录的 `output/`；不带路径的 `-c` 读取当前目录的 `config/lol-audio-unpack.ini`。
 
 ## 1. 基础命令
 
@@ -46,7 +50,7 @@ uv run unpack update extract \
 ### 2.2 配置文件模式
 
 - 带 `-c` 或 `--config-file`
-- `-c` 不带路径：读取默认配置文件 `lol-audio-unpack.ini`
+- `-c` 不带路径：读取当前目录下的 `config/lol-audio-unpack.ini`
 - `-c <PATH>`：读取指定 INI 配置文件
 - 启用 `-c` 后，只允许提供配置文件路径；动作与参数都从配置文件读取
 - 这条规则对全部 CLI 参数都生效，包括 `--dev`、`--force`、`--max-workers`
@@ -94,7 +98,12 @@ uv run unpack -c ./config/custom.ini
 - `--exclude-type TYPES`
 - `--wwiser-path PATH`
 - `--group-by-type` / `--no-group-by-type`
-- `--with-bp-vo` / `--no-with-bp-vo`
+- `--no-lobby-audio`：关闭默认附带的大厅音频（选人语音、禁用语音和选人音效）。三种文件统一输出到英雄的 `lobby/`，不受 `--exclude-type` 的 VO/SFX 筛选影响。
+
+旧 `--with-bp-vo`、`--no-with-bp-vo` 会提示新用法并退出，不执行任务：默认包含时删除旧参数，关闭时改用 `--no-lobby-audio`。
+INI 使用 `[app] lobby_audio`，默认 `true`，显式 `false` 关闭。旧键 `with_bp_vo` 在加载时兼容读取并自动改名，保留原值、注释及其他配置；新旧键同时存在时以新键为准。文件无法写回时继续兼容读取并提示手动修改。
+LCU 基础数据更新默认同时预取大厅音频到 `manifest` 缓存；英雄解包时才从缓存硬链接到
+对应英雄的 `lobby/`，缓存缺失时按英雄补齐。大厅 OGG 不进入 WEM 内容库。
 
 通用参数：
 

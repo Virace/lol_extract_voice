@@ -35,6 +35,7 @@ from loguru import logger
 from lol_audio_unpack.app.context import create_app_context
 from lol_audio_unpack.app.facade import LolAudioUnpackApp
 from lol_audio_unpack.app.types import OperationOptions
+from lol_audio_unpack.cli.parser import add_lobby_audio_option
 from lol_audio_unpack.manager.files import find_data_file, read_data
 
 CHAMPION_ID_POOL: tuple[str, ...] = (
@@ -339,12 +340,7 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help="更新阶段是否跳过事件处理（默认不跳过）",
     )
-    parser.add_argument(
-        "--with-bp-vo",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="显式覆盖 WITH_BP_VO（未设置则沿用默认配置）",
-    )
+    add_lobby_audio_option(parser)
     parser.add_argument(
         "--single-vo-exclude-type",
         type=str,
@@ -820,20 +816,13 @@ def build_base_command(ctx: BenchmarkContext) -> list[str]:
     return [ctx.uv_entry, "run", "python", "-m", "lol_audio_unpack"]
 
 
-def append_bool_flag(cmd: list[str], flag: str, value: bool | None) -> None:
-    """按值追加 bool 可选参数。"""
-    if value is None:
-        return
-    cmd.append(flag if value else f"--no-{flag.removeprefix('--')}")
-
-
 def build_update_command(  # noqa: PLR0913
     ctx: BenchmarkContext,
     game_path: Path,
     output_path: Path,
     *,
     skip_events: bool,
-    with_bp_vo: bool | None,
+    lobby_audio: bool | None,
     champion_ids: tuple[str, ...] = (),
     map_ids: tuple[str, ...] = (),
 ) -> list[str]:
@@ -858,7 +847,8 @@ def build_update_command(  # noqa: PLR0913
         cmd.extend(["--maps", ",".join(map_ids)])
     if skip_events:
         cmd.append("--skip-events")
-    append_bool_flag(cmd, "--with-bp-vo", with_bp_vo)
+    if lobby_audio is False:
+        cmd.append("--no-lobby-audio")
     return cmd
 
 
@@ -869,7 +859,7 @@ def build_single_vo_command(  # noqa: PLR0913
     *,
     champion_id: str,
     exclude_type: str,
-    with_bp_vo: bool | None,
+    lobby_audio: bool | None,
 ) -> list[str]:
     """构建 single_vo 解包命令。"""
     cmd = build_base_command(ctx)
@@ -890,7 +880,8 @@ def build_single_vo_command(  # noqa: PLR0913
             exclude_type,
         ]
     )
-    append_bool_flag(cmd, "--with-bp-vo", with_bp_vo)
+    if lobby_audio is False:
+        cmd.append("--no-lobby-audio")
     return cmd
 
 
@@ -900,7 +891,7 @@ def build_full_extract_command(
     output_path: Path,
     *,
     exclude_type: str,
-    with_bp_vo: bool | None,
+    lobby_audio: bool | None,
 ) -> list[str]:
     """构建全量解包命令。"""
     cmd = build_base_command(ctx)
@@ -919,7 +910,8 @@ def build_full_extract_command(
             exclude_type,
         ]
     )
-    append_bool_flag(cmd, "--with-bp-vo", with_bp_vo)
+    if lobby_audio is False:
+        cmd.append("--no-lobby-audio")
     return cmd
 
 
@@ -931,7 +923,7 @@ def build_targeted_extract_command(  # noqa: PLR0913
     champion_ids: tuple[str, ...] = (),
     map_ids: tuple[str, ...] = (),
     exclude_type: str,
-    with_bp_vo: bool | None,
+    lobby_audio: bool | None,
 ) -> list[str]:
     """构建显式英雄或地图范围的解包命令。
 
@@ -942,7 +934,7 @@ def build_targeted_extract_command(  # noqa: PLR0913
         champion_ids: 要解包的英雄 ID。
         map_ids: 要解包的地图 ID。
         exclude_type: 传给 CLI 的音频类型排除值。
-        with_bp_vo: BP VO 覆盖值。
+        lobby_audio: 大厅音频 覆盖值。
 
     Returns:
         可直接交给子进程执行的 CLI 参数列表。
@@ -973,7 +965,8 @@ def build_targeted_extract_command(  # noqa: PLR0913
         cmd.extend(["--champions", ",".join(champion_ids)])
     if map_ids:
         cmd.extend(["--maps", ",".join(map_ids)])
-    append_bool_flag(cmd, "--with-bp-vo", with_bp_vo)
+    if lobby_audio is False:
+        cmd.append("--no-lobby-audio")
     return cmd
 
 
@@ -1031,7 +1024,7 @@ def create_api_app(
     game_path: Path,
     output_path: Path,
     exclude_type: str,
-    with_bp_vo: bool | None,
+    lobby_audio: bool | None,
     log_level: str,
 ) -> Any:
     """创建 API 运行时 app 实例。"""
@@ -1040,8 +1033,8 @@ def create_api_app(
         "OUTPUT_PATH": str(output_path),
         "EXCLUDE_TYPE": exclude_type,
     }
-    if with_bp_vo is not None:
-        settings["WITH_BP_VO"] = with_bp_vo
+    if lobby_audio is not None:
+        settings["LOBBY_AUDIO"] = lobby_audio
 
     _ = log_level
     app_context = create_app_context(dev_mode=False, settings=settings)
@@ -1053,7 +1046,7 @@ def run_update_api(  # noqa: PLR0913
     game_path: Path,
     output_path: Path,
     skip_events: bool,
-    with_bp_vo: bool | None,
+    lobby_audio: bool | None,
     log_level: str,
     workers: int,
     exclude_type: str,
@@ -1065,7 +1058,7 @@ def run_update_api(  # noqa: PLR0913
         game_path=game_path,
         output_path=output_path,
         exclude_type=exclude_type,
-        with_bp_vo=with_bp_vo,
+        lobby_audio=lobby_audio,
         log_level=log_level,
     )
     options = OperationOptions(
@@ -1082,7 +1075,7 @@ def run_single_vo_api(  # noqa: PLR0913
     game_path: Path,
     output_path: Path,
     champion_id: str,
-    with_bp_vo: bool | None,
+    lobby_audio: bool | None,
     log_level: str,
     workers: int,
     exclude_type: str,
@@ -1092,7 +1085,7 @@ def run_single_vo_api(  # noqa: PLR0913
         game_path=game_path,
         output_path=output_path,
         exclude_type=exclude_type,
-        with_bp_vo=with_bp_vo,
+        lobby_audio=lobby_audio,
         log_level=log_level,
     )
     options = OperationOptions(max_workers=workers, champion_ids=(int(champion_id),))
@@ -1103,7 +1096,7 @@ def run_full_extract_api(  # noqa: PLR0913
     *,
     game_path: Path,
     output_path: Path,
-    with_bp_vo: bool | None,
+    lobby_audio: bool | None,
     log_level: str,
     workers: int,
     exclude_type: str,
@@ -1113,7 +1106,7 @@ def run_full_extract_api(  # noqa: PLR0913
         game_path=game_path,
         output_path=output_path,
         exclude_type=exclude_type,
-        with_bp_vo=with_bp_vo,
+        lobby_audio=lobby_audio,
         log_level=log_level,
     )
     options = OperationOptions(max_workers=workers)
@@ -1126,7 +1119,7 @@ def run_targeted_extract_api(  # noqa: PLR0913
     output_path: Path,
     champion_ids: tuple[str, ...],
     map_ids: tuple[str, ...],
-    with_bp_vo: bool | None,
+    lobby_audio: bool | None,
     log_level: str,
     workers: int,
     exclude_type: str,
@@ -1136,7 +1129,7 @@ def run_targeted_extract_api(  # noqa: PLR0913
         game_path=game_path,
         output_path=output_path,
         exclude_type=exclude_type,
-        with_bp_vo=with_bp_vo,
+        lobby_audio=lobby_audio,
         log_level=log_level,
     )
     options = OperationOptions(
@@ -1352,7 +1345,7 @@ def run_single_vo_scenario(
                 game_path,
                 scenario_output,
                 skip_events=args.skip_events,
-                with_bp_vo=args.with_bp_vo,
+                lobby_audio=args.lobby_audio,
             )
             update_result = run_cli_step(ctx, cmd=update_cmd, output_root=scenario_output, step_name="single_vo_update")
             add_result(
@@ -1371,7 +1364,7 @@ def run_single_vo_scenario(
                     game_path=game_path,
                     output_path=scenario_output,
                     skip_events=args.skip_events,
-                    with_bp_vo=args.with_bp_vo,
+                    lobby_audio=args.lobby_audio,
                     log_level=ctx.log_level,
                     workers=ctx.workers,
                     exclude_type=exclude_type,
@@ -1415,7 +1408,7 @@ def run_single_vo_scenario(
             scenario_output,
             champion_id=champion_id,
             exclude_type=exclude_type,
-            with_bp_vo=args.with_bp_vo,
+            lobby_audio=args.lobby_audio,
         )
         extract_result = run_cli_step(
             ctx,
@@ -1440,7 +1433,7 @@ def run_single_vo_scenario(
             game_path=game_path,
             output_path=scenario_output,
             champion_id=champion_id,
-            with_bp_vo=args.with_bp_vo,
+            lobby_audio=args.lobby_audio,
             log_level=ctx.log_level,
             workers=ctx.workers,
             exclude_type=exclude_type,
@@ -1481,7 +1474,7 @@ def run_targeted_scenario(  # noqa: PLR0913
                 game_path,
                 scenario_output,
                 skip_events=args.skip_events,
-                with_bp_vo=args.with_bp_vo,
+                lobby_audio=args.lobby_audio,
                 champion_ids=champion_ids,
                 map_ids=update_map_ids,
             )
@@ -1504,7 +1497,7 @@ def run_targeted_scenario(  # noqa: PLR0913
                     game_path=game_path,
                     output_path=scenario_output,
                     skip_events=args.skip_events,
-                    with_bp_vo=args.with_bp_vo,
+                    lobby_audio=args.lobby_audio,
                     log_level=ctx.log_level,
                     workers=ctx.workers,
                     exclude_type=exclude_type,
@@ -1532,7 +1525,7 @@ def run_targeted_scenario(  # noqa: PLR0913
             champion_ids=champion_ids,
             map_ids=map_ids,
             exclude_type=exclude_type,
-            with_bp_vo=args.with_bp_vo,
+            lobby_audio=args.lobby_audio,
         )
         extract_result = run_cli_step(
             ctx,
@@ -1558,7 +1551,7 @@ def run_targeted_scenario(  # noqa: PLR0913
             output_path=scenario_output,
             champion_ids=champion_ids,
             map_ids=map_ids,
-            with_bp_vo=args.with_bp_vo,
+            lobby_audio=args.lobby_audio,
             log_level=ctx.log_level,
             workers=ctx.workers,
             exclude_type=exclude_type,
@@ -1594,7 +1587,7 @@ def run_full_extract_scenario(
                 game_path,
                 scenario_output,
                 skip_events=args.skip_events,
-                with_bp_vo=args.with_bp_vo,
+                lobby_audio=args.lobby_audio,
             )
             update_result = run_cli_step(
                 ctx,
@@ -1618,7 +1611,7 @@ def run_full_extract_scenario(
                     game_path=game_path,
                     output_path=scenario_output,
                     skip_events=args.skip_events,
-                    with_bp_vo=args.with_bp_vo,
+                    lobby_audio=args.lobby_audio,
                     log_level=ctx.log_level,
                     workers=ctx.workers,
                     exclude_type=exclude_type,
@@ -1642,7 +1635,7 @@ def run_full_extract_scenario(
             game_path,
             scenario_output,
             exclude_type=exclude_type,
-            with_bp_vo=args.with_bp_vo,
+            lobby_audio=args.lobby_audio,
         )
         extract_result = run_cli_step(
             ctx,
@@ -1666,7 +1659,7 @@ def run_full_extract_scenario(
         lambda: run_full_extract_api(
             game_path=game_path,
             output_path=scenario_output,
-            with_bp_vo=args.with_bp_vo,
+            lobby_audio=args.lobby_audio,
             log_level=ctx.log_level,
             workers=ctx.workers,
             exclude_type=exclude_type,

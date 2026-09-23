@@ -31,7 +31,7 @@ def _build_ctx(tmp_path: Path):
             manifest_path=str(tmp_path / "manifest"),
             dev_mode=False,
             include_types=("VO", "SFX", "MUSIC"),
-            with_bp_vo=False,
+            lobby_audio=False,
             output_path=str(tmp_path / "output"),
             hash_path=str(tmp_path / "hashes"),
             cache_path=str(tmp_path / "cache"),

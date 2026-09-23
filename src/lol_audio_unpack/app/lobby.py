@@ -36,7 +36,7 @@ def repair_lobby(ctx: AppContext) -> None:
         with Library(root) as writer:
             current = {key for patch, key, _ in pending if patch == version}
             if current:
-                DataUpdater(ctx).ensure_bp_vo(current)
+                DataUpdater(ctx).ensure_lobby_audio(current)
             added = missing = 0
             for patch, key, target in pending:
                 paths = []

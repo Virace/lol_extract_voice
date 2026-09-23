@@ -5,7 +5,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from multiprocessing import get_context
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from shutil import copytree
 
 import msgpack
@@ -19,6 +19,7 @@ from lol_audio_unpack.runtime.library import (
     ObjectRef,
     WavRef,
 )
+from lol_audio_unpack.runtime.library.types import resolve_path
 from lol_audio_unpack.utils import atomic
 from lol_audio_unpack.utils.atomic import ArtifactWriteError
 
@@ -233,6 +234,37 @@ def test_unsafe_paths_rejected(tmp_path, path):
     """相对字段不能通过 Windows/POSIX 路径语义逃逸。"""
     with pytest.raises(LibraryError):
         Library(tmp_path).resolve(path)
+
+
+@pytest.mark.parametrize("prefixes", [(False, True), (True, False), (True, True), (False, False)])
+@pytest.mark.parametrize(
+    "case",
+    [
+        ("H:/库 空格", "h:/库 空格/audios/file.wem", True),
+        ("H:/库 空格", "H:/库 空格-外部/file.wem", False),
+        ("H:/库 空格", "D:/库 空格/audios/file.wem", False),
+        ("//server/share/库", "//SERVER/share/库/audios/file.wem", True),
+        ("//server/share/库", "//server/share/库外/file.wem", False),
+        ("//server/share/库", "//server/other/库/audios/file.wem", False),
+    ],
+)
+def test_resolved_windows_path_boundaries(tmp_path, monkeypatch, case, prefixes):
+    """系统返回普通或扩展路径时，库内同路径可用，库外仍被拒绝。"""
+    root = tmp_path / "library"
+    boundary, target, allowed = case
+    resolved = []
+    for value, extended in zip((boundary, target), prefixes, strict=True):
+        text = str(PureWindowsPath(value))
+        if extended:
+            text = "\\\\?\\UNC\\" + text[2:] if text.startswith("\\\\") else "\\\\?\\" + text
+        resolved.append(PureWindowsPath(text))
+    # 只固定操作系统解析结果，比较与拒绝行为走公开路径入口。
+    monkeypatch.setattr(Path, "resolve", lambda path: resolved[0] if path == root else resolved[1])
+    if allowed:
+        assert resolve_path(root, "audios/file.wem") == root / "audios/file.wem"
+    else:
+        with pytest.raises(LibraryError, match="路径超出资源库"):
+            resolve_path(root, "audios/file.wem")
 
 
 def test_copy_library_and_reparse_escape(tmp_path):

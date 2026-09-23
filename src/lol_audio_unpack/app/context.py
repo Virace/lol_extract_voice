@@ -128,7 +128,7 @@ def _build_config(*, settings: Mapping[str, Any], dev_mode: bool) -> AppConfig:
         exclude_types=exclude_types,
         include_types=include_types,
         group_by_type=_parse_bool(settings.get(SettingKey.GROUP_BY_TYPE, False)),
-        with_bp_vo=_parse_bool(settings.get(SettingKey.WITH_BP_VO, False)),
+        lobby_audio=_parse_bool(settings.get(SettingKey.LOBBY_AUDIO, True)),
         wwiser_path=(
             resolve_runtime_path(str(wwiser_path_raw).strip(), relative_to=runtime_root) if wwiser_path_raw else None
         ),

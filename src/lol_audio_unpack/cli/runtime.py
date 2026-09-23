@@ -19,6 +19,7 @@ from ..config import (
     COMMAND_CONFIG_FIELDS,
     CONTEXT_OPTION_ATTRS,
     ConfigSection,
+    SettingKey,
     load_command_config,
     load_settings,
     resolve_default_path,
@@ -27,6 +28,7 @@ from ..config import (
     build_settings as build_config_settings,
 )
 from ..runtime.probe import require_tool
+from ..utils.runtime_paths import detect_runtime_paths, get_default_output_relative_path
 from .invocation import (
     DEFAULT_WAV_FORMAT,
     DEFAULT_WAV_RETRIES,
@@ -262,7 +264,7 @@ def _config_path(args: argparse.Namespace) -> Path | None:
     if args.config_file is None:
         return None
     if args.config_file == "":
-        return resolve_default_path(dev_mode=args.dev)
+        return resolve_default_path(dev_mode=args.dev, runtime_paths=detect_runtime_paths(is_frozen=False))
     return Path(args.config_file)
 
 
@@ -300,6 +302,14 @@ def initialize_app(args: argparse.Namespace) -> AppContext:
         else:
             logger.error("当前命令未启用 -c，请通过命令行显式传入缺失的共享配置。")
         raise CliInputError(str(exc)) from exc
+
+    # 控制台以调用目录为锚点，传入绝对路径后不依赖共享层的冻结态默认根目录。
+    if not str(context_settings.get(SettingKey.OUTPUT_PATH) or "").strip():
+        context_settings[SettingKey.OUTPUT_PATH] = get_default_output_relative_path()
+    for key in (SettingKey.GAME_PATH, SettingKey.OUTPUT_PATH, SettingKey.WWISER_PATH, SettingKey.VGMSTREAM_PATH):
+        value = context_settings.get(key)
+        if value is not None and str(value).strip():
+            context_settings[key] = str(Path(str(value).strip()).expanduser().resolve())
 
     def check_context(ctx: AppContext) -> None:
         """在文件日志初始化前验证原始选择，alias 不需要先写元数据。"""

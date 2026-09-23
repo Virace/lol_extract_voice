@@ -88,7 +88,7 @@ WAD stat key 在单次运行中不被重复构造。
 - `--max-workers auto|N`：并发 worker 数。
 - `--timeout SEC`：单个 CLI 子进程的超时。
 - `--skip-events/--no-skip-events`：控制更新阶段是否处理事件。
-- `--with-bp-vo/--no-with-bp-vo`：显式覆盖 BP VO。
+- `--no-lobby-audio`：关闭默认附带的大厅音频。
 - `--single-vo-exclude-type`：单英雄场景默认排除 `SFX,MUSIC`。
 - `--full-extract-exclude-type`：全量场景默认不排除音频类型。
 - `--target-champions`：targeted 英雄场景的逗号分隔 ID。

@@ -235,21 +235,21 @@ def _validate_special_targets(task: QueuedExecutionTask) -> None:
 def _build_runtime_settings(
     task: QueuedExecutionTask,
     *,
-    force_bp_vo: bool = False,
+    force_lobby_audio: bool = False,
 ) -> dict[str, str | bool]:
     """合并运行任务所需的上下文覆盖配置。
 
     Args:
         task: 已入队任务。
-        force_bp_vo: 是否在当前阶段强制准备 BP 语音资源。
+        force_lobby_audio: 是否在当前阶段强制准备大厅音频资源。
 
     Returns:
         可直接传给 ``create_app_context`` 的共享配置映射。
     """
     settings = task.draft.context_input.to_settings()
     settings.update(task.draft.task_params.to_runtime_overrides())
-    if force_bp_vo:
-        settings[SettingKey.WITH_BP_VO] = True
+    if force_lobby_audio:
+        settings[SettingKey.LOBBY_AUDIO] = True
     return settings
 
 
@@ -555,7 +555,7 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     message="正在强制刷新所选数据…" if task_params.run_update else "正在检查所选对象的数据…",
                 )
                 if task_params.run_update:
-                    update_app = create_runtime_app(_build_runtime_settings(task, force_bp_vo=True))
+                    update_app = create_runtime_app(_build_runtime_settings(task, force_lobby_audio=True))
                 else:
                     runtime_app = create_runtime_app(runtime_settings)
                     update_app = runtime_app

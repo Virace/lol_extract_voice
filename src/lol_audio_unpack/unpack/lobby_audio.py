@@ -1,4 +1,4 @@
-"""大厅 BP 音频附加逻辑。"""
+"""将缓存中的大厅音频附加到英雄输出目录。"""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
 
 
-def find_bp_vo_source(
+def find_lobby_audio_source(
     reader: DataReader,
     champion_id: str,
     category: str,
@@ -67,7 +67,7 @@ def link_audio(source: Path, target: Path) -> str:
     return mode
 
 
-def attach_bp_vo(
+def attach_lobby_audio(
     entity: AudioEntityData,
     reader: DataReader,
     *,
@@ -85,11 +85,11 @@ def attach_bp_vo(
     Returns:
         本轮成功写入的大厅音频路径。
     """
-    if not bool(ctx.config.with_bp_vo):
+    if not bool(ctx.config.lobby_audio):
         return ()
 
-    if any(find_bp_vo_source(reader, entity.entity_id, category, ctx=ctx) is None for category in LOBBY_FILES):
-        DataUpdater(ctx).ensure_bp_vo((entity.entity_id,))
+    if any(find_lobby_audio_source(reader, entity.entity_id, category, ctx=ctx) is None for category in LOBBY_FILES):
+        DataUpdater(ctx).ensure_lobby_audio((entity.entity_id,))
 
     audio_root = ctx.version_path("audio", reader.version)
     entity_folder = format_entity_folder_name(
@@ -109,7 +109,7 @@ def attach_bp_vo(
     persisted_paths: list[Path] = []
 
     for category, target_name in LOBBY_FILES.items():
-        source = find_bp_vo_source(reader, entity.entity_id, category, ctx=ctx)
+        source = find_lobby_audio_source(reader, entity.entity_id, category, ctx=ctx)
         if source is None:
             logger.warning(
                 f"未找到英雄 {entity.entity_id} 的大厅音频文件: {category}/{entity.entity_id}.ogg；"

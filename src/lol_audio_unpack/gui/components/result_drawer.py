@@ -239,7 +239,7 @@ class ResultDrawer(QDialog):
             f"转码并发 {request.options.worker_count} · 已有输出{'覆盖' if request.overwrite else '跳过'}"
             if request
             else f"并发 {params.max_workers} · 转码并发 {params.wav_workers} · "
-            f"附加 BP 语音{'开启' if params.with_bp_vo else '关闭'} · "
+            f"附加大厅音频{'开启' if params.lobby_audio else '关闭'} · "
             f"数据整合{'开启' if params.integrate_data else '关闭'}"
         )
         if request is not None:

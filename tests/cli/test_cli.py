@@ -1,3 +1,6 @@
+"""验证控制台参数、运行前适配和任务退出状态。"""
+
+import sys
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -135,18 +138,27 @@ def test_build_context_settings_only_keeps_explicit_values() -> None:
     }
 
 
-def test_build_context_settings_includes_bp_voice() -> None:
+@pytest.mark.parametrize("flags, expected", [([], {}), (["--no-lobby-audio"], {"LOBBY_AUDIO": False})])
+def test_build_context_settings_controls_lobby_audio(flags, expected) -> None:
+    """仅显式关闭大厅音频时覆盖共享默认值。"""
     parser = create_parser()
-    args = parser.parse_args(
-        [
-            "update",
-            "--with-bp-vo",
-        ]
-    )
+    args = parser.parse_args(["extract", *flags])
 
     settings = runtime_cli.build_settings(args)
 
-    assert settings == {"WITH_BP_VO": True}
+    assert settings == expected
+
+
+@pytest.mark.parametrize(
+    "flag, guidance",
+    [("--with-bp-vo", "请删除此参数"), ("--no-with-bp-vo", "请改用 --no-lobby-audio")],
+)
+def test_legacy_lobby_flags_explain_replacement(flag, guidance, capsys) -> None:
+    """旧脚本得到明确迁移提示，不能按新默认值静默执行。"""
+    with pytest.raises(SystemExit) as exc:
+        create_parser().parse_args(["extract", flag])
+    assert exc.value.code == EXIT_INPUT
+    assert guidance in capsys.readouterr().err
 
 
 def test_initialize_app_passes_settings_to_setup_app(monkeypatch, tmp_path: Path) -> None:
@@ -193,6 +205,52 @@ def test_initialize_app_passes_settings_to_setup_app(monkeypatch, tmp_path: Path
         "WWISER_PATH": str(tmp_path / "wwiser.pyz"),
         "GROUP_BY_TYPE": True,
     }
+
+
+@pytest.mark.parametrize("config_mode", [False, True])
+@pytest.mark.parametrize("output", [None, "", " ", "导出 音频"])
+def test_frozen_cli_resolves_user_paths_from_cwd(monkeypatch, tmp_path: Path, config_mode, output) -> None:
+    """冻结入口的参数和 INI 路径均锚定调用目录，而非 EXE 目录。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "程序" / "unpack.exe"))
+    parser = create_parser()
+    settings = {"GAME_PATH": "客户端", "WWISER_PATH": "工具/wwiser.pyz", "VGMSTREAM_PATH": "工具/vgmstream.exe"}
+    if output is not None:
+        settings["OUTPUT_PATH"] = output
+    if config_mode:
+        args = parser.parse_args(["-c", "任务.ini"])
+        args.actions = ["update"]
+        args._loaded_settings = settings
+    else:
+        argv = [
+            "update",
+            "--game-path",
+            "客户端",
+            "--wwiser-path",
+            "工具/wwiser.pyz",
+            "--vgmstream-path",
+            "工具/vgmstream.exe",
+        ]
+        if output is not None:
+            argv += ["--output-path", output]
+        args = parser.parse_args(argv)
+
+    # 在公共初始化边界观察已固定的配置；资源预检与业务执行由真实 EXE 验收覆盖。
+    monkeypatch.setattr(runtime_cli, "setup_app", lambda **kwargs: kwargs["settings"])
+    actual = runtime_cli.initialize_app(args)
+    assert actual["GAME_PATH"] == str(tmp_path / "客户端")
+    assert actual["OUTPUT_PATH"] == str(tmp_path / (output.strip() if output and output.strip() else "output"))
+    assert actual["WWISER_PATH"] == str(tmp_path / "工具" / "wwiser.pyz")
+    assert actual["VGMSTREAM_PATH"] == str(tmp_path / "工具" / "vgmstream.exe")
+
+
+def test_frozen_cli_default_config_uses_cwd(monkeypatch, tmp_path: Path) -> None:
+    """无路径的 -c 仍选择调用目录中的标准配置。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "程序" / "unpack.exe"))
+    assert runtime_cli._config_path(create_parser().parse_args(["-c"])) == tmp_path / "config" / "lol-audio-unpack.ini"
 
 
 def test_apply_config_profile_loads_command_section(monkeypatch, tmp_path: Path) -> None:
