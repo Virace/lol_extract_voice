@@ -35,6 +35,7 @@ class OverviewPreviewLoadResult:
     mapping_notice: str | None = None
     placeholder_message: str | None = None
     resolve_ref: Callable[[str], AudioRef | None] | None = None
+    version: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -127,6 +128,7 @@ class OverviewPreviewController:
             resolve_ref=resolve_ref,
             audio_refs_loaded=False,
             audio_roots=audio_roots,
+            version=loader.data_reader.version,
             default_preview_mode=EVENT_PREVIEW_MODE if mapping_path is not None else ALL_AUDIO_PREVIEW_MODE,
             mapping_notice=(
                 str(mapping_data.get("previewNotice") or "") or None
