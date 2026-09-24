@@ -11,6 +11,7 @@ import lol_audio_unpack.cli.cli as cli_module
 import lol_audio_unpack.cli.dispatch as dispatch_cli
 import lol_audio_unpack.cli.runtime as runtime_cli
 from lol_audio_unpack.app.results import EntityResult, ResultStatus, StageResult
+from lol_audio_unpack.app.targets import TargetSelectionError
 from lol_audio_unpack.cli.cli import _detect_mode
 from lol_audio_unpack.cli.parser import create_parser
 
@@ -45,6 +46,8 @@ def test_parse_ids() -> None:
     assert runtime_cli.parse_ids(None) is None
     assert runtime_cli.parse_ids("all") is None
     assert runtime_cli.parse_ids("1,2, 3 , ,") == ["1", "2", "3"]
+    assert runtime_cli.parse_int_ids("1，103, 1，，") == (1, 103)
+    assert runtime_cli.parse_ids("Annie，Ahri") == ["Annie", "Ahri"]
 
 
 def test_validate_args_requires_action_subcommand() -> None:
@@ -715,6 +718,24 @@ def test_main_stops_dependent_stages_after_update_failure(monkeypatch) -> None:
     exit_code = cli_module.main()
 
     assert exit_code == EXIT_FAILED
+
+
+def test_main_stops_on_unknown_ids_without_skipping_or_prompting(monkeypatch) -> None:
+    """预检错误经真实 dispatch 转为退出码 2，后续阶段不能继续。"""
+    _patch_main_runtime(monkeypatch, actions=["update", "extract"])
+
+    class InvalidApp:
+        def __init__(self, _ctx) -> None:
+            pass
+
+        def update(self, _opts, **_kwargs):
+            return StageResult.from_error("update", TargetSelectionError("未找到英雄 ID：999"))
+
+    monkeypatch.setattr(cli_module, "LolAudioUnpackApp", InvalidApp)
+    monkeypatch.setattr(cli_module, "run_update", dispatch_cli.run_update)
+    monkeypatch.setattr(cli_module, "run_extract", lambda *_args: pytest.fail("错误输入不得继续解包"))
+    monkeypatch.setattr("builtins.input", lambda *_args: pytest.fail("CLI 不交互等待"))
+    assert cli_module.main() == EXIT_INPUT
 
 
 def test_main_treats_missing_selected_stage_result_as_failure(monkeypatch) -> None:

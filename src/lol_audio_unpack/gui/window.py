@@ -524,6 +524,7 @@ class MainWindow(FluentWindow):
         self.executionInterface.result_ready.connect(self._on_task_result_ready)
         self.overviewInterface.selection_sync_requested.connect(
             lambda payload: forward_selection_sync_feedback(
+                show_execution=lambda: self.switchTo(self.executionInterface),
                 payload=payload,
                 execution_page=self.executionInterface,
                 feedback_parent=self,

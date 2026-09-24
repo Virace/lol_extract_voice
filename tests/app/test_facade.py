@@ -34,6 +34,48 @@ def _success_result(stage: str, entity_type: str = "champion", entity_id: int | 
     )
 
 
+def _catalog_reader(**kwargs) -> SimpleNamespace:
+    """为阶段分派提供独立的小型目录，不伪造资源文件或绑定。"""
+    return SimpleNamespace(
+        get_champions=lambda: [{"id": 1}, {"id": 103}, {"id": 66600}],
+        get_maps=lambda: [{"id": 0}, {"id": 11}],
+        **kwargs,
+    )
+
+
+@pytest.mark.parametrize("stage", ["update", "extract", "mapping", "transcode_wav"])
+def test_unknown_ids_stop_before_resource_consumers(tmp_path, monkeypatch, stage) -> None:
+    """目录预检拒绝整组错误输入；update 先准备目录，其余阶段消费已有目录。"""
+    app = LolAudioUnpackApp(make_context(tmp_path))
+    calls = []
+
+    def read_catalog():
+        calls.append("catalog")
+        return _catalog_reader()
+
+    def forbid_consumer(*_args, **_kwargs):
+        pytest.fail("无效 ID 不得进入资源处理")
+
+    monkeypatch.setattr(app, "_get_reader", read_catalog)
+    monkeypatch.setattr(app, "prepare_update_data", lambda **_kwargs: calls.append("data"))
+    for name in ("BinUpdater", "unpack_champions", "build_champions", "run_tree"):
+        monkeypatch.setattr(facade_module, name, forbid_consumer)
+
+    result = getattr(app, stage)(OperationOptions(champion_ids=(1, 999), map_ids=(11, 888)))
+
+    assert result.status is ResultStatus.FAILED
+    assert result.error_type == "TargetSelectionError"
+    assert "999" in result.error_message and "888" in result.error_message
+    assert calls[0] == ("data" if stage == "update" else "catalog")
+
+
+def test_target_check_accepts_explicit_empty_without_loading_catalog(tmp_path, monkeypatch) -> None:
+    """不处理类别无需目录查询，也不会被转换为全量。"""
+    app = LolAudioUnpackApp(make_context(tmp_path))
+    monkeypatch.setattr(app, "_get_reader", lambda: pytest.fail("空范围不需要读取目录"))
+    app.check_targets(OperationOptions(champion_ids=(), map_ids=()))
+
+
 def test_facade_lazily_reuses_and_explicitly_resets_its_reader(tmp_path, monkeypatch) -> None:
     """同一 app 复用 reader，显式失效后才创建新实例。"""
     expected_reader_count = 3
@@ -200,6 +242,7 @@ def test_update_adapts_entity_outcomes_and_forwards_structured_progress(tmp_path
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(app, "prepare_update_data", lambda **_kwargs: None)
+    monkeypatch.setattr(app, "_get_reader", _catalog_reader)
 
     class FakeUpdater:
         def __init__(self, **kwargs) -> None:
@@ -291,7 +334,7 @@ def test_transcode_wav_passes_entity_display_labels_to_runtime(
 ) -> None:
     """独立 WAV stage 应将实体列表式名称传给 runtime 作为展示标签。"""
     app = LolAudioUnpackApp(SimpleNamespace())
-    reader = SimpleNamespace(version="15.8")
+    reader = _catalog_reader(version="15.8")
     audio_root = tmp_path / "audios" / "15.8" / "champions" / "103-ahri"
     audio_root.mkdir(parents=True, exist_ok=True)
     captured: dict[str, object] = {}
@@ -397,7 +440,7 @@ def test_extract_runs_explicit_champions_and_maps_without_dropping_either_target
     )
     app = LolAudioUnpackApp(ctx)
     calls: list[tuple[str, list[int]]] = []
-    reader = SimpleNamespace()
+    reader = _catalog_reader()
     monkeypatch.setattr(app, "_get_reader", lambda: reader)
     monkeypatch.setattr(
         facade_module,
@@ -440,7 +483,7 @@ def test_mapping_runs_explicit_champions_and_maps_without_dropping_either_target
     )
     app = LolAudioUnpackApp(ctx)
     calls: list[tuple[str, list[int]]] = []
-    reader = SimpleNamespace()
+    reader = _catalog_reader()
     backend = "native"
     monkeypatch.setattr(app, "_get_reader", lambda: reader)
     monkeypatch.setattr(app, "_describe_mapping_backend", lambda: backend)
@@ -481,7 +524,7 @@ def test_update_with_resource_pack_wad_skips_default_entity_update_and_runs_disc
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(app, "prepare_update_data", lambda **_kwargs: None)
-    monkeypatch.setattr(app, "_get_reader", lambda: SimpleNamespace(version="16.16"))
+    monkeypatch.setattr(app, "_get_reader", lambda: _catalog_reader(version="16.16"))
     monkeypatch.setattr(facade_module, "BinUpdater", lambda **_kwargs: pytest.fail("不得执行默认 BinUpdater.update"))
 
     class _Discovery:
@@ -531,7 +574,7 @@ def test_update_runs_explicit_entity_update_and_resource_pack_discovery_together
     calls: list[str] = []
 
     monkeypatch.setattr(app, "prepare_update_data", lambda **_kwargs: None)
-    monkeypatch.setattr(app, "_get_reader", lambda: SimpleNamespace(version="16.16"))
+    monkeypatch.setattr(app, "_get_reader", lambda: _catalog_reader(version="16.16"))
 
     class _Updater:
         def __init__(self, **_kwargs):
@@ -601,7 +644,7 @@ def test_extract_resource_pack_only_uses_special_consumer_without_all_fallback(t
     )
     app = LolAudioUnpackApp(ctx)
     calls: list[list[str]] = []
-    monkeypatch.setattr(app, "_get_reader", SimpleNamespace)
+    monkeypatch.setattr(app, "_get_reader", _catalog_reader)
     monkeypatch.setattr(
         facade_module,
         "unpack_resource_packs",
@@ -628,7 +671,7 @@ def test_extract_dispatches_champion_map_and_resource_pack_together(tmp_path, mo
     )
     app = LolAudioUnpackApp(ctx)
     calls: list[tuple[str, list[object]]] = []
-    monkeypatch.setattr(app, "_get_reader", SimpleNamespace)
+    monkeypatch.setattr(app, "_get_reader", _catalog_reader)
     monkeypatch.setattr(
         facade_module,
         "unpack_champions",
@@ -663,7 +706,7 @@ def test_mapping_resource_pack_only_uses_special_consumer_without_all_fallback(t
     )
     app = LolAudioUnpackApp(ctx)
     calls: list[list[str]] = []
-    monkeypatch.setattr(app, "_get_reader", SimpleNamespace)
+    monkeypatch.setattr(app, "_get_reader", _catalog_reader)
     monkeypatch.setattr(app, "_describe_mapping_backend", lambda: "native")
     monkeypatch.setattr(
         facade_module,
@@ -687,7 +730,7 @@ def test_mapping_dispatches_champion_map_and_resource_pack_together(tmp_path, mo
     )
     app = LolAudioUnpackApp(ctx)
     calls: list[tuple[str, list[object]]] = []
-    monkeypatch.setattr(app, "_get_reader", SimpleNamespace)
+    monkeypatch.setattr(app, "_get_reader", _catalog_reader)
     monkeypatch.setattr(app, "_describe_mapping_backend", lambda: "native")
     monkeypatch.setattr(
         facade_module,

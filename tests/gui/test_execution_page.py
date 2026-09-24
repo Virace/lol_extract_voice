@@ -135,6 +135,7 @@ def test_execution_page_uses_latest_wav_defaults_from_setting_page(qtbot) -> Non
     setting_page.wavRetriesCard.comboBox.setCurrentText(str(EXPECTED_WAV_RETRIES))
 
     execution_page.advancedPanel.wav_task_cb.setChecked(True)
+    execution_page.taskBuilderPanel.champion_scope.set_scope("all")
     execution_page.advancedPanel.wav_format_combo.setCurrentText("float")
     execution_page.taskBuilderPanel.sync_state_from_widgets()
 
@@ -147,8 +148,8 @@ def test_execution_page_uses_latest_wav_defaults_from_setting_page(qtbot) -> Non
     assert draft.task_params.wav_format == "float"
 
 
-def test_execution_page_normalizes_synced_full_selection_to_default_scope(qtbot) -> None:
-    """总览页同步的整页全选在执行中心应等价于默认全量。"""
+def test_execution_page_preserves_synced_full_selection_as_explicit_ids(qtbot) -> None:
+    """总览全选不能被转换成目录变化后可能扩大的默认全量。"""
     page = ExecutionPage()
     qtbot.addWidget(page)
     page.set_entity_data("champions", [{"id": "1"}, {"id": "103"}])
@@ -164,10 +165,10 @@ def test_execution_page_normalizes_synced_full_selection_to_default_scope(qtbot)
     )
     draft = page.taskBuilderPanel.build_task_draft(gui_config=page.gui_config)
 
-    assert summary == "已同步全部实体。"
+    assert summary
     assert page.taskBuilderPanel.current_target_ids() == (("1", "103"), ("11",))
-    assert draft.task_params.champion_ids is None
-    assert draft.task_params.map_ids is None
+    assert draft.task_params.champion_ids == (1, 103)
+    assert draft.task_params.map_ids == (11,)
 
 
 def test_execution_page_treats_changed_resource_pack_snapshot_as_selection_conflict(qtbot, monkeypatch) -> None:
@@ -216,6 +217,9 @@ def test_execution_page_primary_button_cancels_running_task(qtbot, monkeypatch) 
     monkeypatch.setattr("lol_audio_unpack.gui.view.execution_page.get_block_reason", lambda _cfg: None)
     monkeypatch.setattr(execution_page._queue_controller, "start_task_worker", lambda _task: None)
     execution_page.set_shared_data_state(SharedDataState(SharedDataPhase.READY, 1))
+    execution_page.set_entity_data("champions", [{"id": "1", "name": "安妮"}])
+    execution_page.taskBuilderPanel.champion_scope.set_scope("ids", "1")
+    monkeypatch.setattr(execution_page, "_confirm_task", lambda review: True)
 
     execution_page._queue_task_draft()
 
@@ -232,6 +236,38 @@ def test_execution_page_primary_button_cancels_running_task(qtbot, monkeypatch) 
     qtbot.mouseClick(execution_page.create_task_btn, Qt.MouseButton.LeftButton)
 
     assert cancelled == [True]
+
+
+@pytest.mark.parametrize("answer", ["return", "confirm", "stale"])
+def test_create_task_uses_confirmed_snapshot_or_keeps_draft(qtbot, monkeypatch, answer) -> None:
+    """返回不启动，确认只执行有效快照，目录代次变化要求重新确认。"""
+    _settings, page = _build_linked_pages(qtbot)
+    monkeypatch.setattr("lol_audio_unpack.gui.view.execution_page.get_block_reason", lambda _cfg: None)
+    started = []
+    monkeypatch.setattr(page._queue_controller, "start_task_worker", started.append)
+    page.set_shared_data_state(SharedDataState(SharedDataPhase.READY, 1))
+    page.set_entity_data("champions", [{"id": "1", "name": "安妮"}])
+    page.taskBuilderPanel.champion_scope.set_scope("ids", "1，999")
+
+    def confirm(review):
+        assert review.draft.task_params.champion_ids == (1,)
+        assert review.draft.excluded_targets == ("英雄 ID 999",)
+        if answer == "stale":
+            page.set_shared_data_state(SharedDataState(SharedDataPhase.READY, 2))
+        return answer != "return"
+
+    monkeypatch.setattr(page, "_confirm_task", confirm)
+    page._queue_task_draft()
+    if answer == "confirm":
+        assert len(started) == 1
+        assert started[0].draft.task_params.champion_ids == (1,)
+        assert started[0].draft.task_params.map_ids == ()
+        assert started[0].draft.excluded_targets == ("英雄 ID 999",)
+        assert page.taskBuilderPanel.current_modes() == ("none", "none")
+        page._queue_controller.cancel_active_task()
+    else:
+        assert started == []
+        assert page.taskBuilderPanel.champion_ids_input.text() == "1，999"
 
 
 def test_execution_page_blocks_tasks_across_shared_data_states(qtbot, monkeypatch) -> None:

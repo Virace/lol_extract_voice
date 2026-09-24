@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -12,6 +13,44 @@ EntityRef = tuple[str, int]
 EntityTask = tuple[str, int, str]
 _HIDDEN_CHAMPION_PREFIXES = ("ruby_", "jade_")
 _MapId = TypeVar("_MapId", int, str)
+
+
+def split_ids(text: str) -> tuple[str, ...]:
+    """统一中英文逗号，保留首次出现的非空选择器。"""
+    return tuple(dict.fromkeys(part.strip() for part in text.replace("，", ",").split(",") if part.strip()))
+
+
+class TargetSelectionError(ValueError):
+    """实体目录中不存在请求的目标。"""
+
+
+@dataclass(frozen=True, slots=True)
+class TargetCheck:
+    """仅描述实体 ID 的存在性，不检查资源文件或解包结果。"""
+
+    valid: tuple[int, ...]
+    unknown: tuple[int, ...]
+
+    def require_valid(self, label: str) -> tuple[int, ...]:
+        """严格入口遇到未知 ID 时拒绝整个选择。"""
+        if self.unknown:
+            raise TargetSelectionError(f"未找到{label} ID：{', '.join(map(str, self.unknown))}。请修正后重试。")
+        return self.valid
+
+
+def check_ids(ids: Sequence[int], rows: Iterable[Mapping[str, Any]]) -> TargetCheck:
+    """用已取得的实体信息划分有效与未知 ID，不访问任何文件。
+
+    Args:
+        ids: 请求的显式整数 ID。
+        rows: 来自当前 game data 的实体信息，包含稳定 id 字段。
+    """
+    available = {int(row["id"]) for row in rows if row.get("id") is not None}
+    unique = tuple(dict.fromkeys(ids))
+    return TargetCheck(
+        tuple(value for value in unique if value in available),
+        tuple(value for value in unique if value not in available),
+    )
 
 
 def with_common_map(ids: Sequence[_MapId] | None, common_id: _MapId) -> tuple[_MapId, ...] | None:
@@ -81,8 +120,8 @@ def resolve_scope(
     """根据实体选择推导后端目标范围。
 
     Args:
-        champion_ids: 指定的英雄 ID 集合；为 ``None`` 表示未显式限定。
-        map_ids: 指定的地图 ID 集合；为 ``None`` 表示未显式限定。
+        champion_ids: 指定的英雄 ID 集合；``None`` 表示未限定，空集合明确不处理。
+        map_ids: 指定的地图 ID 集合；``None`` 表示未限定，空集合明确不处理。
 
     Returns:
         tuple[str, bool, bool]:
@@ -90,11 +129,13 @@ def resolve_scope(
     """
     if champion_ids is None and map_ids is None:
         return "all", True, True
-    if champion_ids is not None and map_ids is not None:
+    if champion_ids and map_ids:
         return "all", True, True
-    if champion_ids is not None:
+    if champion_ids:
         return "skin", True, False
-    return "map", False, True
+    if map_ids:
+        return "map", False, True
+    return "all", False, False
 
 
 def iter_entity_refs(
@@ -206,11 +247,15 @@ def _validate_ids(*, label: str, ids: Sequence[int] | None, available_ids: set[i
 
 __all__ = [
     "EntityTask",
+    "TargetCheck",
+    "TargetSelectionError",
     "build_tasks",
+    "check_ids",
     "filter_default_visible_champions",
     "get_default_hidden_champion_markers",
     "get_default_visible_champions",
     "iter_entity_refs",
     "resolve_scope",
     "should_hide_champion_by_default",
+    "split_ids",
 ]

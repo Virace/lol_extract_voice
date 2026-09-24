@@ -130,7 +130,20 @@ BIN 更新会保留每个英雄或地图的 `success` / `partial` / `failed` 事
   - `mapping(opts, *, include_champions=True, include_maps=True, progress_callback=None)`
 - 数据与目标辅助
   - `prepare_update_data(*, force_update=False)`
+  - `check_targets(opts)`
   - `resolve_champion_ids(selectors)`
+
+`check_targets(opts)` 使用已准备的 `data.msgpack` 中的英雄、地图 ID 做存在性检查，包含显式
+`champion:<id>` 特殊选择；发现未知 ID 时抛出 `app.targets.TargetSelectionError`，不读取 GAME WAD
+内容。需要有效/未知两份清单时，可用 `app.targets.check_ids(ids, rows)`，结果包含 `valid` 与 `unknown`。
+
+`update` 在基础 game data 准备完成后、BIN 更新前执行该检查；`extract`、`mapping`、`transcode_wav`
+在消费资源前复检已有目录。阶段内的未知 ID 转成 `failed` 的 `StageResult`，其 `error_type` 为
+`TargetSelectionError`，不会静默处理有效子集。资源是否存在、WAD/BIN 内容是否可用仍由各自阶段负责。
+CLI 的既有本地源检查也可能在写入前提前发现错误目标，缺失文件与未知 ID 仍分别报告。
+
+GUI 的确认窗口允许用户明确接受有效子集：确认后只提交有效 ID，排除项保留在任务详情中；若没有
+有效目标则不能提交。英雄和地图都使用显式元组，空元组表示不处理该类；过滤成空集合不会回退全量。
 
 所有方法只消费 `AppContext.config.game_path` 指向的本地目录。`create_app_context(...)` 会在任何
 输出初始化前验证共享结构；目标级 WAD/BIN/bank 完整性继续由 update 与 v2 bindings 证明。

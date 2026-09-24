@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from lol_audio_unpack.gui.controllers.execution_selection import (
     ExecutionSelectionController,
-    ExecutionSelectionUpdate,
 )
 
 
@@ -19,12 +18,11 @@ def test_execution_selection_controller_merge_keeps_order_and_deduplicates() -> 
         resolution="merge",
     )
 
-    assert result == ExecutionSelectionUpdate(
-        champion_ids=("1", "103", "222"),
-        map_ids=("11", "12"),
-        source="overview_selection",
-        summary="已合并到当前任务：3 个英雄、2 张地图。请前往执行中心继续创建任务。",
-    )
+    assert result is not None
+    assert result.champion_ids == ("1", "103", "222")
+    assert result.map_ids == ("11", "12")
+    assert result.modes == ("ids", "ids")
+    assert result.source == "overview_selection"
 
 
 def test_execution_selection_controller_replace_builds_default_summary_when_missing() -> None:
@@ -40,12 +38,11 @@ def test_execution_selection_controller_replace_builds_default_summary_when_miss
         resolution=None,
     )
 
-    assert result == ExecutionSelectionUpdate(
-        champion_ids=("1", "103"),
-        map_ids=("11",),
-        source="overview_selection",
-        summary="已同步 2 个英雄、1 张地图，请前往执行中心继续创建任务。",
-    )
+    assert result is not None
+    assert result.champion_ids == ("1", "103")
+    assert result.map_ids == ("11",)
+    assert result.modes == ("ids", "ids")
+    assert result.summary
 
 
 def test_execution_selection_controller_cancel_returns_none() -> None:
@@ -62,6 +59,25 @@ def test_execution_selection_controller_cancel_returns_none() -> None:
     )
 
     assert result is None
+
+
+def test_merge_preserves_all_but_replace_uses_incoming_ids() -> None:
+    """模式也是冲突的一部分，合并全部与指定时不缩小原范围。"""
+    controller = ExecutionSelectionController()
+    kwargs = dict(
+        current_champion_ids=(),
+        current_map_ids=(),
+        current_modes=("all", "none"),
+        incoming_champion_ids=("1",),
+        incoming_map_ids=(),
+        source="overview_selection",
+        summary="",
+    )
+    assert controller.resolve_selection_update(**kwargs, resolution="cancel") is None
+    merged = controller.resolve_selection_update(**kwargs, resolution="merge")
+    assert merged.modes == ("all", "none") and merged.champion_ids == ()
+    replaced = controller.resolve_selection_update(**kwargs, resolution="replace")
+    assert replaced.modes == ("ids", "none") and replaced.champion_ids == ("1",)
 
 
 def test_execution_selection_controller_detects_conflict_only_when_targets_differ() -> None:

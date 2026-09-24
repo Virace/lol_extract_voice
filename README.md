@@ -108,6 +108,9 @@ uv sync
 uv run unpack update extract --champions Annie,Ahri --game-path "D:/Games/英雄联盟"
 ```
 
+英雄和地图列表支持中英文逗号（如 `--champions "1，103"`）。CLI 遇到未知 ID 会停止并返回
+退出码 `2`；GUI 可在创建任务时核对名字和 ID，确认跳过无效项后执行有效范围。
+
 如果需要界面，再安装 GUI 依赖并启动：
 
 ```bash
