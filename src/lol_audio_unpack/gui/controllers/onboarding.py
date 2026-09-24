@@ -478,8 +478,8 @@ class OnboardingTourController:
                 key="item-lookup-search",
                 page_name="item_lookup",
                 target=lambda: getattr(self._item_lookup_page, "search_input", None),
-                title="装备查询：查找并复制编号",
-                content="输入装备名称或 ID，选择游戏模式，再点击装备卡片复制编号。这是独立工具，不用先提取音频。",
+                title="装备查询：查找装备事件",
+                content="输入装备名称或 ID，选择游戏模式，再点击装备卡片，跳转到实体总览的地图「常规」并搜索该 ID。查询装备资料不用先提取音频。",
             ),
             TourStep(
                 key="ready",
