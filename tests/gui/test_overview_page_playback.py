@@ -805,6 +805,7 @@ def test_entity_click_keeps_empty_preview_until_content_arrives(qtbot, tmp_path,
 
 
 def test_overview_page_preview_search_filters_event_tree(qtbot) -> None:
+    """连续输入延后筛选，回车立即应用，切换视图保留待搜索关键词。"""
     page = OverviewPage()
     qtbot.addWidget(page)
     page._preview_playback_controller = SimpleNamespace(
@@ -840,10 +841,40 @@ def test_overview_page_preview_search_filters_event_tree(qtbot) -> None:
 
     page._load_preview_for_item("champions", object())
     qtbot.waitUntil(lambda: not page._preview_workers)
-    page.previewPanel.preview_search_input.setText("Baron")
-
+    search = page.previewPanel.preview_search_input
+    resets = []
+    page.audio_preview_tree.model().modelReset.connect(lambda: resets.append(True))
+    search.setText("B")
+    qtbot.wait(200)
+    search.setText("Baron")
+    qtbot.wait(200)
+    assert resets == []
+    qtbot.waitUntil(lambda: "匹配 ID 2" in page.audio_preview_summary_label.text())
+    assert resets == [True]
     assert "匹配事件 1" in page.audio_preview_summary_label.text()
     assert "匹配 ID 2" in page.audio_preview_summary_label.text()
+
+    resets.clear()
+    search.setText("Dragon")
+    qtbot.keyClick(search, Qt.Key.Key_Return)
+    assert "匹配 ID 1" in page.audio_preview_summary_label.text()
+    qtbot.wait(600)
+    assert resets == [True]
+
+    resets.clear()
+    search.setText("Baron")
+    page.preview_mode_pivot.setCurrentItem(ALL_AUDIO_PREVIEW_MODE)
+    qtbot.wait(600)
+    assert resets == []
+    page.preview_mode_pivot.setCurrentItem(EVENT_PREVIEW_MODE)
+    assert search.text() == "Baron"
+    qtbot.waitUntil(lambda: "匹配 ID 2" in page.audio_preview_summary_label.text())
+    assert resets == [True]
+
+    resets.clear()
+    search.clear()
+    qtbot.waitUntil(lambda: "匹配事件" not in page.audio_preview_summary_label.text())
+    assert resets == [True]
 
 
 def test_overview_page_audio_menu_uses_exact_ref_without_toggling_playback(qtbot) -> None:
