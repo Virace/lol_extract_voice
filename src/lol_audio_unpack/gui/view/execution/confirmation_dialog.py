@@ -2,7 +2,7 @@
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QStandardItem, QStandardItemModel
-from PySide6.QtWidgets import QAbstractItemView, QHeaderView
+from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QVBoxLayout, QWidget
 from qfluentwidgets import BodyLabel, MessageBoxBase, SubtitleLabel, TableView
 
 from lol_audio_unpack.config import SettingKey
@@ -31,24 +31,38 @@ class ConfirmationDialog(MessageBoxBase):
 
         self.table = TableView(self)
         self.model = QStandardItemModel(self)
-        self.model.setHorizontalHeaderLabels(["对象名称", "ID"])
+        group_rows = []
         group = None
         for row in review.items:
             if row.group != group:
                 group = row.group
                 heading = QStandardItem(group)
+                identifier = QStandardItem(
+                    "ID" if any(item.identifier for item in review.items if item.group == group) else ""
+                )
                 font = heading.font()
                 font.setBold(True)
                 heading.setFont(font)
-                self.model.appendRow([heading, QStandardItem("")])
+                identifier.setFont(font)
+                identifier.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                group_rows.append(self.model.rowCount())
+                self.model.appendRow([heading, identifier])
             self.model.appendRow([QStandardItem(row.name), QStandardItem(row.identifier)])
         self.table.setModel(self.model)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.verticalHeader().hide()
+        self.table.horizontalHeader().hide()
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.setFixedHeight(210)
+        self.table.verticalHeader().setDefaultSectionSize(34)
+        self.table.verticalHeader().setMinimumSectionSize(28)
+        for row in group_rows:
+            self.table.setRowHeight(row, 28)
+        # 清单在确认期间不可编辑；按全部行高收缩，超过原高度上限后滚动查看。
+        height = self.table.verticalHeader().length() + self.table.frameWidth() * 2
+        self.table.setFixedHeight(min(210, height))
+        self.table.setVisible(bool(review.items))
         self.viewLayout.addWidget(self.table)
 
         params = review.draft.task_params
@@ -72,12 +86,21 @@ class ConfirmationDialog(MessageBoxBase):
                 f"输出：{settings.get(SettingKey.OUTPUT_PATH) or '默认输出目录'}",
             )
         )
-        detail = BodyLabel("\n".join(lines), self)
-        detail.setWordWrap(True)
-        detail.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.viewLayout.addWidget(detail)
-        self.widget.setMinimumWidth(580)
-        self.widget.setMaximumWidth(720)
+        details = QWidget(self)
+        detail_layout = QVBoxLayout(details)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        detail_layout.setSpacing(8)
+        for line in lines:
+            detail = BodyLabel(line, details)
+            detail.setWordWrap(True)
+            detail.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            detail_layout.addWidget(detail)
+        self.viewLayout.addWidget(details)
+        self.widget.setMinimumWidth(520)
+        self.widget.setMaximumWidth(640)
         self.yesButton.setText("确认")
         self.cancelButton.setText("返回修改")
+        self.buttonLayout.removeWidget(self.cancelButton)
+        self.buttonLayout.insertWidget(0, self.cancelButton, 1, Qt.AlignmentFlag.AlignVCenter)
+        self.setTabOrder(self.cancelButton, self.yesButton)
         self.yesButton.setEnabled(review.can_submit)

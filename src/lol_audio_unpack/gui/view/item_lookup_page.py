@@ -5,14 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from loguru import logger
-from PySide6.QtCore import Qt, QThreadPool, QTimer
+from PySide6.QtCore import Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QShowEvent
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
     CaptionLabel,
-    InfoBar,
-    InfoBarPosition,
     PushButton,
     SearchLineEdit,
     SegmentedWidget,
@@ -45,6 +43,8 @@ class ItemLookupPage(QWidget):
 
     页面不依赖 ``AppContext``，也不读取本地 WAD 或音频实体数据。
     """
+
+    item_search_requested = Signal(str)
 
     def __init__(
         self,
@@ -113,32 +113,6 @@ class ItemLookupPage(QWidget):
         self.source_label.setToolTip(self.source_label.text())
         self._update_count_status()
 
-    def copy_item_id(self, item_id: str) -> bool:
-        """复制纯装备 ID 到系统剪贴板。
-
-        Args:
-            item_id: 待复制装备 ID。
-
-        Returns:
-            bool: 成功写入剪贴板时返回 ``True``。
-        """
-        normalized = str(item_id).strip()
-        if not normalized:
-            return False
-        clipboard = QApplication.clipboard()
-        if clipboard is None:
-            self.status_label.setText("剪贴板不可用")
-            return False
-
-        clipboard.setText(normalized)
-        InfoBar.success(
-            "已复制装备 ID",
-            normalized,
-            parent=self.window(),
-            position=InfoBarPosition.TOP,
-        )
-        return True
-
     def _build_ui(self) -> None:
         """创建页面布局与控件。"""
         root_layout = QVBoxLayout(self)
@@ -178,6 +152,7 @@ class ItemLookupPage(QWidget):
         root_layout.addWidget(self.status_label)
 
         self.item_grid = ItemGridView(self)
+        self.item_grid.setToolTip("点击装备，在实体总览的地图「常规」中搜索该 ID")
         root_layout.addWidget(self.item_grid, 1)
 
     def _setup_connections(self) -> None:
@@ -229,10 +204,10 @@ class ItemLookupPage(QWidget):
             self._update_count_status()
 
     def _on_item_clicked(self, index) -> None:
-        """点击装备行后复制对应 ID。"""
+        """请求在实体总览中搜索点击的原始装备 ID。"""
         item = self.item_grid.item_from_index(index)
         if item is not None:
-            self.copy_item_id(item.item_id)
+            self.item_search_requested.emit(item.item_id)
 
     def _update_count_status(self) -> None:
         """刷新当前宫格计数文案。"""

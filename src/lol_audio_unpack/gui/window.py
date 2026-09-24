@@ -478,6 +478,11 @@ class MainWindow(FluentWindow):
         self.switchTo(self.settingInterface)
         self.settingInterface.focus_resource_language()
 
+    def _show_item_events(self, item_id: str) -> None:
+        """在常规地图中定位装备事件后切换到实体总览。"""
+        if self.overviewInterface.search_item_events(item_id):
+            self.switchTo(self.overviewInterface)
+
     def _connect_pages(self):
         """连接页面间的数据同步"""
         si = self.settingInterface
@@ -517,6 +522,7 @@ class MainWindow(FluentWindow):
         # 注入配置到各业务页面
         self.executionInterface.set_gui_config(cfg)
         self.overviewInterface.set_gui_config(cfg)
+        self.itemLookupInterface.item_search_requested.connect(self._show_item_events)
         self.overviewInterface.audio_export_requested.connect(self.executionInterface.submit_audio_export)
         self.overviewInterface.background_work_changed.connect(self.executionInterface.set_external_busy)
         self.overviewInterface.background_work_changed.connect(self._sync_heavy_work_state)

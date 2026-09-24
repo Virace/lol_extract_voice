@@ -39,21 +39,27 @@ def test_review_partitions_ids_and_keeps_complete_diagnostics() -> None:
 
 
 def test_review_freezes_all_without_including_special_content() -> None:
-    """全部普通英雄固定为当前清单；显式特殊内容保留独立范围。"""
+    """全部范围折叠展示但冻结完整目标，显式特殊内容仍独立列出。"""
     catalog = {
-        "champions": [{"id": "1", "name": "安妮"}],
+        "champions": [{"id": "1", "name": "安妮"}, {"id": "103", "name": "阿狸"}],
+        "maps": [{"id": "0", "name": "常规"}, {"id": "11", "name": "召唤师峡谷"}],
         "special": [
             {"id": "66600", "key": "champion:66600", "display_name": "斗魂竞技场"},
         ],
     }
-    draft = _draft(None)
+    draft = _draft(None, None)
     draft = replace(draft, task_params=replace(draft.task_params, special_targets=("champion:66600",)))
     review = build_review(draft, catalog)
-    catalog["champions"].append({"id": "103", "name": "阿狸"})
-    assert review.draft.task_params.champion_ids == (1,)
-    assert review.draft.task_params.map_ids == ()
+    catalog["champions"].append({"id": "2", "name": "奥拉夫"})
+    catalog["maps"].append({"id": "12", "name": "嚎哭深渊"})
+    assert review.draft.task_params.champion_ids == (1, 103)
+    assert review.draft.task_params.map_ids == (0, 11)
     assert review.draft.task_params.special_targets == ("champion:66600",)
-    assert review.items[-1].name == "斗魂竞技场"
+    assert [(item.group, item.name, item.identifier) for item in review.items] == [
+        ("英雄", "全部", ""),
+        ("地图", "全部", ""),
+        ("特殊内容", "斗魂竞技场", "66600"),
+    ]
 
 
 @pytest.mark.parametrize("ids, allowed", [((999,), False), ((1, 999), True)])

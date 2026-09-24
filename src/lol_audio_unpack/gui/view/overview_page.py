@@ -177,6 +177,7 @@ class OverviewPage(QWidget):
         self._audio_refs_token = 0
         self._audio_refs_cache: OrderedDict[tuple[str, str], tuple[AudioRef, ...]] = OrderedDict()
         self._preview_loading = False
+        self._pending_event_search: tuple[int, str] | None = None
         self._preview_placeholder: str | None = None
         self._preview_pool = QThreadPool(self)
         self._preview_pool.setMaxThreadCount(1)
@@ -313,6 +314,54 @@ class OverviewPage(QWidget):
             self._load_preview_for_item(self._current_entity_type(), current_index)
         else:
             self._sync_current_list_view()
+
+    def search_item_events(self, item_id: str) -> bool:
+        """定位常规地图的事件视图，并以原始装备 ID 筛选。
+
+        Args:
+            item_id: 装备查询页提供的 ID，不推断模式变体与基础装备的关系。
+
+        Returns:
+            已定位常规地图时返回 True；目录缺失或用户取消切换时返回 False。
+        """
+        if not any(str(row["id"]) == "0" for row in self._entity_data_store.rows_for("maps")):
+            InfoBar.warning(
+                "常规地图尚未就绪",
+                "请先在主页完成数据准备，再查找装备事件。",
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+            )
+            return False
+
+        request = self.export_controller.request
+        if request is not None and (request.entity_type, request.entity_id) != ("maps", "0"):
+            if not self.export_controller.confirm_change():
+                return False
+            self.export_controller.reset()
+
+        # 一次更新目录与预览对象，避免旧筛选隐藏常规地图或触发中间实体加载。
+        blockers = [QSignalBlocker(self.nav_pivot), QSignalBlocker(self.search_input)]
+        self.nav_pivot.setCurrentItem("maps")
+        self.search_input.clear()
+        self._current_preview_ids["maps"] = "0"
+        del blockers
+        self._update_catalog_subtitle()
+        self._update_catalog_search_placeholder()
+        self._sync_current_list_view()
+        self._current_entity_list().scrollTo(self._current_entity_list().currentIndex())
+
+        # 预览完成会重置搜索；将本次搜索绑定到加载代次，避免被旧请求覆盖。
+        self._pending_event_search = (self._audio_refs_token, item_id) if self._preview_loading else None
+        self._preview_search_keywords[EVENT_PREVIEW_MODE] = item_id
+        blocker = QSignalBlocker(self.preview_mode_pivot)
+        self.preview_mode_pivot.setCurrentItem(EVENT_PREVIEW_MODE)
+        del blocker
+        self._active_preview_mode = EVENT_PREVIEW_MODE
+        self._apply_preview_mode(EVENT_PREVIEW_MODE)
+        if not self._preview_loading:
+            self._refresh_audio_preview_tree()
+        self.previewPanel.preview_search_input.setFocus()
+        return True
 
     def set_entity_data(self, entity_type: str, data: list[dict[str, Any]]) -> None:
         """更新页面缓存的实体数据。"""
@@ -1011,17 +1060,22 @@ class OverviewPage(QWidget):
             EVENT_PREVIEW_MODE: "",
             ALL_AUDIO_PREVIEW_MODE: "",
         }
+        mode = preview_result.default_preview_mode
+        if self._pending_event_search is not None and self._pending_event_search[0] == token:
+            self._preview_search_keywords[EVENT_PREVIEW_MODE] = self._pending_event_search[1]
+            mode = EVENT_PREVIEW_MODE
+        self._pending_event_search = None
         self._refresh_audio_preview_tree()
-        if self._audio_refs_loaded and preview_result.default_preview_mode == ALL_AUDIO_PREVIEW_MODE:
+        if self._audio_refs_loaded and mode == ALL_AUDIO_PREVIEW_MODE:
             self._populate_audio_list()
         self._refresh_all_audio_preview()
         self.previewPanel.show_current_preview()
         self._sync_audio_preview_playback_state()
         pivot_blocker = QSignalBlocker(self.preview_mode_pivot)
-        self.preview_mode_pivot.setCurrentItem(preview_result.default_preview_mode)
+        self.preview_mode_pivot.setCurrentItem(mode)
         del pivot_blocker
-        self._active_preview_mode = preview_result.default_preview_mode
-        self._apply_preview_mode(preview_result.default_preview_mode)
+        self._active_preview_mode = mode
+        self._apply_preview_mode(mode)
 
     def _on_audio_preview_toggle_requested(self, audio_ref: AudioRef) -> None:
         """响应路径级试听项点击并触发精确 WEM 播放控制。"""

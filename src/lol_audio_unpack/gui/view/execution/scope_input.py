@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QRectF, QSignalBlocker, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QHBoxLayout, QLineEdit, QSizePolicy, QWidget
 from qfluentwidgets import ComboBox, LineEdit, isDarkTheme, qconfig, setCustomStyleSheet, themeColor
 
@@ -75,7 +75,7 @@ class ScopeInput(QWidget):
         self.selector.setCurrentIndex(self.MODES.index(mode))
         QLineEdit.setText(self.edit, text)
         self.edit.setEnabled(mode == "ids")
-        hint = {"none": "无需填写 ID", "all": f"全部{self.label}", "ids": "ID，用逗号分隔"}
+        hint = {"none": "无需填写 ID", "all": f"全部{self.label}", "ids": "用逗号分割"}
         self.edit.setPlaceholderText(hint[mode])
         self.edit.clearButton.setVisible(mode == "ids" and bool(text) and self.edit.hasFocus())
         del blockers
@@ -133,5 +133,9 @@ class ScopeInput(QWidget):
         x = self.selector.geometry().right() + 1
         painter.drawLine(x, 7, x, self.height() - 7)
         if self.edit.hasFocus() or self.selector.hasFocus():
-            painter.setPen(QPen(themeColor(), 2))
-            painter.drawLine(5, self.height() - 1, self.width() - 5, self.height() - 1)
+            # 与原生 LineEdit 一致，用圆角底边裁出 2px 色带，避免两端生硬截断。
+            path = QPainterPath()
+            path.addRoundedRect(QRectF(0, self.height() - 10, self.width(), 10), 5, 5)
+            cutout = QPainterPath()
+            cutout.addRect(QRectF(0, self.height() - 10, self.width(), 8))
+            painter.fillPath(path.subtracted(cutout), themeColor())

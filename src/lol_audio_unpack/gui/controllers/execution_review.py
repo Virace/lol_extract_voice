@@ -63,9 +63,13 @@ def build_review(draft: ExecutionTaskDraft, catalog: dict[str, list[dict]]) -> E
             warnings.append(f"{len(result.unknown)} 个{label} ID 未找到，确认后跳过")
             excluded.extend(f"{label} ID {value}" for value in result.unknown)
             items.extend(ReviewItem("未找到的 ID（将跳过）", label, str(value)) for value in result.unknown)
-        for value in result.valid:
-            row = row_by_id[value]
-            items.append(ReviewItem(label, str(row.get("name") or row.get("alias") or value), str(value)))
+        if ids is None and result.valid:
+            # 仅折叠确认名单，执行目标仍使用上面冻结的完整 ID 快照。
+            items.append(ReviewItem(label, "全部", ""))
+        else:
+            for value in result.valid:
+                row = row_by_id[value]
+                items.append(ReviewItem(label, str(row.get("name") or row.get("alias") or value), str(value)))
 
     special_by_key = {str(row.get("key")): row for row in catalog.get("special", [])}
     for key in params.special_targets:
