@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from lol_audio_unpack.app.audio_export import AudioExportRequest
+from lol_audio_unpack.app.types import WavOutputOptions
 from lol_audio_unpack.gui.components.item_lookup_grid import ITEM_MODE_ARENA
 from lol_audio_unpack.gui.controllers.overview_preview import EVENT_PREVIEW_MODE, OverviewPreviewLoadResult
 from lol_audio_unpack.gui.service.item_catalog import ItemCatalogPayload, ItemRecord
@@ -103,13 +105,23 @@ def test_item_navigation_cancel_preserves_export_and_filters(qtbot, monkeypatch)
     overview.set_entity_data("maps", [{"id": "0", "name": "常规"}])
     overview.search_input.setText("Annie")
     overview.previewPanel.preview_search_input.setText("Attack")
-    request = SimpleNamespace(entity_type="champions", entity_id="1")
+    request = AudioExportRequest(
+        entity_type="champions",
+        entity_id="1",
+        entity_name="Annie",
+        version="16.12",
+        version_root=Path("16.12"),
+        targets=(),
+        report_root=Path("reports"),
+        options=WavOutputOptions(),
+    )
     overview.export_controller.request = request
     monkeypatch.setattr(overview.export_controller, "confirm_change", lambda: False)
     destinations = []
     window = SimpleNamespace(overviewInterface=overview, switchTo=destinations.append)
 
     MainWindow._show_item_events(window, "3084")
+    qtbot.waitUntil(lambda: not overview._event_search_pending)
 
     assert destinations == []
     assert overview.export_controller.request is request
