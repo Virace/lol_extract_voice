@@ -130,11 +130,13 @@ def forward_selection_sync_feedback(
     execution_page,
     feedback_parent,
     show_feedback: Callable[..., None],
+    show_execution: Callable[[], None],
 ) -> None:
     """处理总览页向执行中心同步后的全局反馈。"""
     summary = execution_page.set_selected_entities(payload, feedback_parent=feedback_parent)
     if summary is None:
         return
+    show_execution()
     show_feedback(
         title="已同步到执行中心",
         content=summary,
@@ -143,13 +145,14 @@ def forward_selection_sync_feedback(
     )
 
 
-def dispatch_shared_data_action(
+def dispatch_shared_data_action(  # noqa: PLR0913
     action_key: str,
     *,
     shared_data_controller,
     show_settings: Callable[[], None],
     show_execution: Callable[[], None],
     show_overview: Callable[[], None],
+    show_language: Callable[[], None],
 ) -> None:
     """把稳定共享数据动作 key 绑定到窗口层真实行为。
 
@@ -159,6 +162,7 @@ def dispatch_shared_data_action(
         show_settings: 导航到全局设置的回调。
         show_execution: 导航到执行中心的回调。
         show_overview: 导航到实体总览的回调。
+        show_language: 导航到资源语言选择项的回调。
     """
     if action_key == "retry":
         shared_data_controller.request_shared_data_retry()
@@ -168,6 +172,8 @@ def dispatch_shared_data_action(
         show_execution()
     elif action_key == "view_overview":
         show_overview()
+    elif action_key == "select_language":
+        show_language()
     elif action_key in {"open_settings", "open_output_settings"}:
         show_settings()
 

@@ -92,6 +92,11 @@
 使用 `-c` 时，动作和参数都从文件读取，不再混用命令行选项。
 更多例子和路径规则见 [CLI 使用说明](docs/cli-package.md)，完整参数见 [CLI API](docs/api/cli_api.md)。
 
+只需部分音效时，可以先 `update mapping`，通过独立 `export-json --maps 0`（或
+`--champions 1`）导出已有映射并查找事件，再解包对应实体。
+独立 `convert-wem --input-list ./selected.txt --output-path ./selected-wavs` 可按逐行 WEM 路径清单
+只转码所选文件；两种独立命令的完整用法与 Agent 使用指引见上述 CLI 使用说明。
+
 ### 从仓库运行
 
 已经有 Python 和 uv，或想直接使用仓库中的代码，可以这样安装：
@@ -107,6 +112,9 @@ uv sync
 ```bash
 uv run unpack update extract --champions Annie,Ahri --game-path "D:/Games/英雄联盟"
 ```
+
+英雄和地图列表支持中英文逗号（如 `--champions "1，103"`）。CLI 遇到未知 ID 会停止并返回
+退出码 `2`；GUI 可在创建任务时核对名字和 ID，确认跳过无效项后执行有效范围。
 
 如果需要界面，再安装 GUI 依赖并启动：
 

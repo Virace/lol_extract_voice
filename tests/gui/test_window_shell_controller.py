@@ -62,9 +62,10 @@ def test_forward_selection_sync_feedback_emits_success_only_when_summary_exists(
         execution_page=_FakeExecutionPage(),
         feedback_parent="host",
         show_feedback=lambda **kwargs: calls.append((kwargs["title"], kwargs["content"])),
+        show_execution=lambda: calls.append(("navigate", "execution")),
     )
 
-    assert calls == [("已同步到执行中心", "已同步")]
+    assert calls == [("navigate", "execution"), ("已同步到执行中心", "已同步")]
 
 
 def test_forward_selection_sync_feedback_skips_when_summary_is_none() -> None:
@@ -79,6 +80,7 @@ def test_forward_selection_sync_feedback_skips_when_summary_is_none() -> None:
         execution_page=_FakeExecutionPage(),
         feedback_parent="host",
         show_feedback=lambda **kwargs: calls.append(kwargs),
+        show_execution=lambda: calls.append({"navigate": "execution"}),
     )
 
     assert calls == []
@@ -175,8 +177,9 @@ def test_dispatch_shared_data_action_routes_stable_action_keys() -> None:
         "show_settings": lambda: events.append(("navigate", "settings")),
         "show_execution": lambda: events.append(("navigate", "execution")),
         "show_overview": lambda: events.append(("navigate", "overview")),
+        "show_language": lambda: events.append(("navigate", "language")),
     }
-    for action_key in ("retry", "regenerate", "open_settings", "view_execution", "view_overview"):
+    for action_key in ("retry", "regenerate", "open_settings", "view_execution", "view_overview", "select_language"):
         dispatch_shared_data_action(
             action_key,
             shared_data_controller=_FakeController(),
@@ -189,6 +192,7 @@ def test_dispatch_shared_data_action_routes_stable_action_keys() -> None:
         ("navigate", "settings"),
         ("navigate", "execution"),
         ("navigate", "overview"),
+        ("navigate", "language"),
     ]
 
 

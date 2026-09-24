@@ -20,6 +20,7 @@ from PySide6.QtCore import (
     Qt,
     QThread,
     QThreadPool,
+    QTimer,
     QUrl,
     Signal,
 )
@@ -177,6 +178,7 @@ class OverviewPage(QWidget):
         self._audio_refs_token = 0
         self._audio_refs_cache: OrderedDict[tuple[str, str], tuple[AudioRef, ...]] = OrderedDict()
         self._preview_loading = False
+        self._pending_event_search: tuple[int, str] | None = None
         self._preview_placeholder: str | None = None
         self._preview_pool = QThreadPool(self)
         self._preview_pool.setMaxThreadCount(1)
@@ -203,6 +205,11 @@ class OverviewPage(QWidget):
             EVENT_PREVIEW_MODE: "",
             ALL_AUDIO_PREVIEW_MODE: "",
         }
+        self._event_search_pending = False
+        self._event_search_timer = QTimer(self)
+        self._event_search_timer.setSingleShot(True)
+        self._event_search_timer.setInterval(300)
+        self._event_search_timer.timeout.connect(self._apply_event_search)
         self._preview_audio_volume_percent = DEFAULT_PREVIEW_AUDIO_VOLUME_PERCENT
         self._preview_audio_output_device_key = DEFAULT_PREVIEW_AUDIO_OUTPUT_DEVICE_KEY
         self._resource_pack_scan_worker: TaskWorker | None = None
@@ -314,6 +321,54 @@ class OverviewPage(QWidget):
         else:
             self._sync_current_list_view()
 
+    def search_item_events(self, item_id: str) -> bool:
+        """定位常规地图的事件视图，并以原始装备 ID 筛选。
+
+        Args:
+            item_id: 装备查询页提供的 ID，不推断模式变体与基础装备的关系。
+
+        Returns:
+            已定位常规地图时返回 True；目录缺失或用户取消切换时返回 False。
+        """
+        if not any(str(row["id"]) == "0" for row in self._entity_data_store.rows_for("maps")):
+            InfoBar.warning(
+                "常规地图尚未就绪",
+                "请先在主页完成数据准备，再查找装备事件。",
+                parent=self.window(),
+                position=InfoBarPosition.TOP,
+            )
+            return False
+
+        request = self.export_controller.request
+        if request is not None and (request.entity_type, request.entity_id) != ("maps", "0"):
+            if not self.export_controller.confirm_change():
+                return False
+            self.export_controller.reset()
+
+        # 一次更新目录与预览对象，避免旧筛选隐藏常规地图或触发中间实体加载。
+        blockers = [QSignalBlocker(self.nav_pivot), QSignalBlocker(self.search_input)]
+        self.nav_pivot.setCurrentItem("maps")
+        self.search_input.clear()
+        self._current_preview_ids["maps"] = "0"
+        del blockers
+        self._update_catalog_subtitle()
+        self._update_catalog_search_placeholder()
+        self._sync_current_list_view()
+        self._current_entity_list().scrollTo(self._current_entity_list().currentIndex())
+
+        # 预览完成会重置搜索；将本次搜索绑定到加载代次，避免被旧请求覆盖。
+        self._pending_event_search = (self._audio_refs_token, item_id) if self._preview_loading else None
+        self._preview_search_keywords[EVENT_PREVIEW_MODE] = item_id
+        blocker = QSignalBlocker(self.preview_mode_pivot)
+        self.preview_mode_pivot.setCurrentItem(EVENT_PREVIEW_MODE)
+        del blocker
+        self._active_preview_mode = EVENT_PREVIEW_MODE
+        self._apply_preview_mode(EVENT_PREVIEW_MODE)
+        if not self._preview_loading:
+            self._refresh_audio_preview_tree()
+        self.previewPanel.preview_search_input.setFocus()
+        return True
+
     def set_entity_data(self, entity_type: str, data: list[dict[str, Any]]) -> None:
         """更新页面缓存的实体数据。"""
         if not self._entity_data_store.set_rows(entity_type, data):
@@ -386,6 +441,7 @@ class OverviewPage(QWidget):
         self.preview_mode_pivot.currentItemChanged.connect(self._on_preview_mode_changed)
         self.search_input.textChanged.connect(self._on_search_text_changed)
         self.previewPanel.preview_search_input.textChanged.connect(self._on_preview_search_text_changed)
+        self.previewPanel.preview_search_input.returnPressed.connect(self._apply_event_search)
         self.sync_selection_btn.clicked.connect(self._sync_selected_entities)
         self.clear_selection_btn.clicked.connect(self._clear_selected_entities)
         self.entityListPanel.scan_resource_packs_action.triggered.connect(self._select_resource_pack_wads)
@@ -458,6 +514,7 @@ class OverviewPage(QWidget):
 
     def _apply_preview_mode(self, mode_key: str) -> None:
         """应用模式壳层状态，不重建另一种预览的模型或滚动位置。"""
+        self._event_search_timer.stop()
         search = self.previewPanel.preview_search_input
         if mode_key == RAW_PREVIEW_MODE:
             self._ensure_raw_preview()
@@ -481,6 +538,8 @@ class OverviewPage(QWidget):
         if mode_key == EVENT_PREVIEW_MODE:
             self.audioPreviewPanel.clear_load_progress()
             self.audioPreviewPanel.set_summary_text(self._event_preview_summary)
+            if self._event_search_pending:
+                self._event_search_timer.start()
         elif mode_key == ALL_AUDIO_PREVIEW_MODE:
             self._ensure_audio_refs()
             self._refresh_all_audio_preview()
@@ -875,7 +934,17 @@ class OverviewPage(QWidget):
         if mode_key not in self._preview_search_keywords:
             return
         self._preview_search_keywords[mode_key] = self.previewPanel.preview_search_input.text()
+        if mode_key == EVENT_PREVIEW_MODE:
+            # 连续输入只更新关键词，停顿后再重建大事件树。
+            self._event_search_pending = True
+            self._event_search_timer.start()
+            return
         self._refresh_current_preview_mode()
+
+    def _apply_event_search(self) -> None:
+        """等待结束或按下回车时，应用当前事件视图的待搜索关键词。"""
+        if self._event_search_pending and self._active_preview_mode == EVENT_PREVIEW_MODE and not self._preview_loading:
+            self._refresh_audio_preview_tree()
 
     def _on_current_item_changed(self, entity_type: str, current, _previous) -> None:
         if entity_type != self._current_entity_type():
@@ -928,6 +997,8 @@ class OverviewPage(QWidget):
             return
         self.previewPanel.clear_resource_info()
 
+        self._event_search_timer.stop()
+        self._event_search_pending = False
         self._current_preview_entity_type = preview_entity_type
         self._current_preview_entity_id = preview_entity_id
         self._current_preview_entity_name = str(row.get("display_name", row["name"]))
@@ -1011,17 +1082,22 @@ class OverviewPage(QWidget):
             EVENT_PREVIEW_MODE: "",
             ALL_AUDIO_PREVIEW_MODE: "",
         }
+        mode = preview_result.default_preview_mode
+        if self._pending_event_search is not None and self._pending_event_search[0] == token:
+            self._preview_search_keywords[EVENT_PREVIEW_MODE] = self._pending_event_search[1]
+            mode = EVENT_PREVIEW_MODE
+        self._pending_event_search = None
         self._refresh_audio_preview_tree()
-        if self._audio_refs_loaded and preview_result.default_preview_mode == ALL_AUDIO_PREVIEW_MODE:
+        if self._audio_refs_loaded and mode == ALL_AUDIO_PREVIEW_MODE:
             self._populate_audio_list()
         self._refresh_all_audio_preview()
         self.previewPanel.show_current_preview()
         self._sync_audio_preview_playback_state()
         pivot_blocker = QSignalBlocker(self.preview_mode_pivot)
-        self.preview_mode_pivot.setCurrentItem(preview_result.default_preview_mode)
+        self.preview_mode_pivot.setCurrentItem(mode)
         del pivot_blocker
-        self._active_preview_mode = preview_result.default_preview_mode
-        self._apply_preview_mode(preview_result.default_preview_mode)
+        self._active_preview_mode = mode
+        self._apply_preview_mode(mode)
 
     def _on_audio_preview_toggle_requested(self, audio_ref: AudioRef) -> None:
         """响应路径级试听项点击并触发精确 WEM 播放控制。"""
@@ -1233,6 +1309,8 @@ class OverviewPage(QWidget):
         )
 
     def _show_placeholder(self, message: str) -> None:
+        self._event_search_timer.stop()
+        self._event_search_pending = False
         # 空实体共享同一空态；只在进入空态时清理，避免反复重置右侧模型与布局。
         if self._preview_placeholder == message:
             return
@@ -1268,6 +1346,8 @@ class OverviewPage(QWidget):
 
     def _refresh_audio_preview_tree(self) -> None:
         """根据当前搜索状态刷新右侧事件树。"""
+        self._event_search_timer.stop()
+        self._event_search_pending = False
         keyword = self._preview_search_keywords[EVENT_PREVIEW_MODE]
         filter_result = filter_preview_mapping_data(self._current_preview_mapping_data, keyword)
         summary_text = (

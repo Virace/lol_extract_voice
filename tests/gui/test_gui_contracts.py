@@ -38,5 +38,6 @@ def test_execution_page_accepts_overview_selection_sync_request(qtbot) -> None:
 
     summary = page.set_selected_entities(payload)
 
-    assert summary == payload.summary
+    assert summary
+    assert page.taskBuilderPanel.current_modes() == ("ids", "ids")
     assert page.taskBuilderPanel.current_target_ids() == (("1", "103"), ("11",))

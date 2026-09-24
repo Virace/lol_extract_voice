@@ -145,6 +145,13 @@ uv run unpack update extract wav mapping --champions Annie,Ahri --game-path "./g
 
 它们会对本次命令中出现的所有动作同时生效。
 
+列表同时支持英文逗号和中文逗号，例如 `--champions "1，103,555"`，会先统一分隔符、去除空白和重复项。
+英雄继续支持纯 ID 或纯 alias，不混用两者；负数不承担“不处理”或“全部”的含义。
+
+未知 ID 会列出并以退出码 `2` 停止，不询问、不自动跳过。需要修改参数后重新运行。
+存在性检查只依赖实体目录；`update` 取得基础 game data 后可检查 ID，再进入 BIN 和资源处理。
+既有本地源检查可能更早发现未知选择；资源文件缺失、损坏和解析失败仍按原阶段边界报告。
+
 在 `-c` 模式下，应写入 `[targets]`：
 
 ```ini
@@ -232,6 +239,22 @@ integrate_data = true
 ```
 
 ## 5. 执行与校验规则
+
+除下述主动作外，还提供两个独立命令，必须放在参数首位，不能与主动作组合，也不读取 `-c`：
+
+| 命令 | 输入与输出 |
+| --- | --- |
+| `export-json --champions ID` 或 `export-json --maps ID` | 按一个实体 ID 定位已有映射；`--output-path` 为数据根，默认 `./output`；`--game-region` 默认 `zh_CN`；多版本用 `--game-version` 选择；`--json-output FILE.json` 保存文件，省略则 stdout 为完整 JSON |
+| `convert-wem --input WEM...` 或 `convert-wem --input-list FILE.txt` | 读取明确 WEM 文件，UTF-8 清单每行一个路径，相对条目基于清单目录；两种输入可合用；`--output-path` 为 WAV 目标，默认 `./output/wavs` |
+
+`export-json` 不初始化客户端、不自动运行 mapping；缺失时提示 `update mapping`。
+仅有一个匹配版本时自动选择；普通和整合映射都存在时取最近生成的一份，同时间优先整合版。
+完整 JSON 保留原字段，整数对象键转为字符串；诊断始终写入 stderr。
+
+`convert-wem` 使用现有 WAV 批处理和 `--wav-workers / --wav-format / --wav-timeout / --wav-retries / --vgmstream-path`
+配置，默认值与主流程一致。默认镜像共同父目录，跨卷按卷分批并使用 `volume-N` 子目录；
+`--input-root` 可固定镜像根，默认跳过已有 WAV，`--overwrite` 覆盖。报告写入目标下 `reports/`。
+两个命令沿用第 7 节退出码。具体工作流及示例见 [控制台独立包](../cli-package.md)。
 
 - 纯 CLI 模式下，必须提供至少一个动作：`update` / `extract` / `wav` / `mapping`
 - `-c` 模式下，必须在配置文件里启用至少一个动作

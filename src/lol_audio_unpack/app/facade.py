@@ -41,11 +41,12 @@ from .preflight import SourcePreflightError, check_source_files
 from .resource_pack import partition_special_targets
 from .results import EntityResult, ResultStatus, StageResult
 from .special_content import merge_champion_ids
-from .targets import with_common_map
+from .targets import TargetSelectionError, check_ids, with_common_map
 from .types import AppContext, OperationOptions
 
 UPDATE_PREPARED_KEY = "update_data_prepared_force"
 EXPECTED_STAGE_ERRORS = (
+    TargetSelectionError,
     SourcePreflightError,
     SharedDataNotReadyError,
     OSError,
@@ -86,6 +87,31 @@ class LolAudioUnpackApp:
         """失效当前 reader，使下一次读取重新加载最新 artifact。"""
         with self._reader_lock:
             self._reader = None
+
+    def check_targets(self, opts: OperationOptions) -> None:
+        """依据已准备的实体目录严格校验 ID，不读取 WAD 内容。
+
+        Args:
+            opts: 本次显式目标；None 与空集合无需存在性校验。
+
+        Raises:
+            TargetSelectionError: 至少一个英雄或地图 ID 不存在。
+        """
+        champions = merge_champion_ids(
+            opts.champion_ids, partition_special_targets(opts.special_targets).champion_targets
+        )
+        errors = []
+        for ids, getter, label in (
+            (champions, "get_champions", "英雄"),
+            (opts.map_ids, "get_maps", "地图"),
+        ):
+            if not ids:
+                continue
+            result = check_ids(ids, getattr(self._get_reader(), getter)())
+            if result.unknown:
+                errors.append(f"{label} ID：{', '.join(map(str, result.unknown))}")
+        if errors:
+            raise TargetSelectionError("未找到" + "；".join(errors) + "。请修正后重试。")
 
     def _resolve_operation_options(self, opts: OperationOptions) -> OperationOptions:
         """分区 special target，避免 resource pack 进入数值英雄归约。"""
@@ -452,6 +478,7 @@ class LolAudioUnpackApp:
                     if progress_callback is not None:
                         progress_callback(OperationProgress("update", "data", "started"))
                     self.prepare_update_data(force_update=opts.force_update)
+                    self.check_targets(opts)
                     if progress_callback is not None:
                         progress_callback(OperationProgress("update", "data", "finished"))
                     has_resource_pack_scope = self._has_resource_pack_targets(opts)
@@ -529,6 +556,7 @@ class LolAudioUnpackApp:
             raise ValueError("resource pack 当前不支持 WAV 转码；请先只执行 extract 或 mapping。")
         try:
             reader = self._get_reader()
+            self.check_targets(opts)
             audio_targets: tuple[TranscodeTarget, ...] | None = None
             if opts.champion_ids is not None or opts.map_ids is not None:
                 resolved_targets: list[TranscodeTarget] = []
@@ -594,6 +622,7 @@ class LolAudioUnpackApp:
         """
         opts = self._resolve_operation_options(opts)
         try:
+            self.check_targets(opts)
             self._check_source(opts, include_champions=include_champions, include_maps=include_maps)
             if opts.wav_output.enabled:
                 self.check_tools(opts)
@@ -680,6 +709,7 @@ class LolAudioUnpackApp:
         """
         opts = self._resolve_operation_options(opts)
         try:
+            self.check_targets(opts)
             self.check_tools(opts, mapping=True)
             backend_label = self._describe_mapping_backend()
             self._check_source(opts, include_champions=include_champions, include_maps=include_maps)

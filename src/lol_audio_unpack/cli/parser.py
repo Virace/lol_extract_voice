@@ -240,6 +240,7 @@ def create_parser(mode: EntryMode = "unpack") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog=Path(sys.executable).name if getattr(sys, "frozen", False) else mode,
         description=text("parser.mapping.description") if mode == "mapping" else text("parser.unpack.description"),
+        epilog="独立命令（不能与 ACTION 组合）：\n  export-json   按英雄或地图 ID 导出映射 JSON\n  convert-wem   转码指定 WEM 或逐行路径清单\n使用 <命令> --help 查看参数。",
         formatter_class=argparse.RawTextHelpFormatter,
         parents=[shared_parser],
     )

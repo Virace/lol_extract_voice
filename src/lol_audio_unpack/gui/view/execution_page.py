@@ -40,6 +40,7 @@ from lol_audio_unpack.gui.controllers import (
 )
 from lol_audio_unpack.gui.controllers.contracts import OverviewSelectionSyncRequest
 from lol_audio_unpack.gui.controllers.entity_data_store import EntityDataStore
+from lol_audio_unpack.gui.controllers.execution_review import ExecutionReview, build_review
 from lol_audio_unpack.gui.controllers.task_results import TaskResultsController
 from lol_audio_unpack.gui.shared_data import SharedDataPhase, SharedDataState
 from lol_audio_unpack.gui.shared_data_view import describe_shared_data_state
@@ -51,6 +52,7 @@ from lol_audio_unpack.gui.task_models import (
     QueuedExecutionTask,
 )
 from lol_audio_unpack.gui.theme import get_accent_text_color_pair
+from lol_audio_unpack.gui.view.execution.confirmation_dialog import ConfirmationDialog
 from lol_audio_unpack.gui.view.execution.progress_state import build_elapsed_text, build_global_progress_strip_state
 from lol_audio_unpack.gui.view.execution.selection_conflict_dialog import (
     ask_selection_conflict_resolution,
@@ -81,6 +83,7 @@ class ExecutionPage(SmoothScrollArea):
         self._is_task_running = False
         self._is_task_queue_busy = False
         self._external_busy = False
+        self._confirming = False
         self._shared_data_state = SharedDataState(SharedDataPhase.BLOCKED, 0)
         self._current_global_progress_state = GlobalProgressStripState()
         self._started_at: float | None = None
@@ -293,6 +296,7 @@ class ExecutionPage(SmoothScrollArea):
         current_champion_ids, current_map_ids = self.taskBuilderPanel.current_target_ids()
         current_special_targets = self.taskBuilderPanel.current_special_targets()
         current_resource_pack_wads = self.taskBuilderPanel.current_resource_pack_wads()
+        current_modes = self.taskBuilderPanel.current_modes()
         if self._selection_controller.has_conflict(
             current_champion_ids=current_champion_ids,
             current_map_ids=current_map_ids,
@@ -302,6 +306,7 @@ class ExecutionPage(SmoothScrollArea):
             incoming_special_targets=special_targets,
             current_resource_pack_wads=current_resource_pack_wads,
             incoming_resource_pack_wads=resource_pack_wads,
+            current_modes=current_modes,
         ):
             choice = ask_selection_conflict_resolution(
                 content=self._selection_controller.build_conflict_dialog_content(
@@ -313,6 +318,7 @@ class ExecutionPage(SmoothScrollArea):
                     incoming_special_targets=special_targets,
                     current_resource_pack_wads=current_resource_pack_wads,
                     incoming_resource_pack_wads=resource_pack_wads,
+                    current_modes=current_modes,
                 ),
                 parent=self._feedback_parent(feedback_parent),
             )
@@ -333,24 +339,18 @@ class ExecutionPage(SmoothScrollArea):
             incoming_special_target_names=special_target_names,
             current_resource_pack_wads=current_resource_pack_wads,
             incoming_resource_pack_wads=resource_pack_wads,
+            current_modes=current_modes,
         )
         if update is None:
             self._log_gui_event("info", "[同步] 已取消从实体总览同步选择。")
             return None
 
-        all_champion_ids = {str(row.get("id")) for row in self._entity_data_store.rows_for("champions")}
-        all_map_ids = {str(row.get("id")) for row in self._entity_data_store.rows_for("maps")}
-        select_all = (
-            not update.special_targets
-            and bool(all_champion_ids and all_map_ids)
-            and (set(update.champion_ids) == all_champion_ids and set(update.map_ids) == all_map_ids)
-        )
         self.taskBuilderPanel.apply_selected_entities(
             champion_ids=update.champion_ids,
             map_ids=update.map_ids,
             source=update.source,
             summary=update.summary,
-            select_all=select_all,
+            modes=update.modes,
             special_targets=update.special_targets,
             special_target_names=update.special_target_names,
             resource_pack_wads=update.resource_pack_wads,
@@ -499,8 +499,10 @@ class ExecutionPage(SmoothScrollArea):
         dialog.button(QMessageBox.StandardButton.Cancel).setText("取消")
         return dialog.exec() == int(QMessageBox.StandardButton.Yes)
 
-    def _queue_task_draft(self) -> None:
-        """将当前界面参数写入任务队列，并自动开始首个任务。"""
+    def _queue_task_draft(self) -> None:  # noqa: PLR0911
+        """先核对冻结的目标清单，确认后才提交任务。"""
+        if self._confirming or self.has_active_background_task() or self._external_busy:
+            return
         if self._shared_data_state.blocks_new_tasks:
             display = describe_shared_data_state(self._shared_data_state)
             self._log_gui_event("warning", f"[队列] {display.task_block_reason}")
@@ -538,7 +540,11 @@ class ExecutionPage(SmoothScrollArea):
             return
 
         try:
+            self.taskBuilderPanel.sync_state_from_widgets()
             draft = self.taskBuilderPanel.build_task_draft(gui_config=self.gui_config)
+            state = self._shared_data_state
+            version = state.scan.version if state.scan is not None else ""
+            review = build_review(replace(draft, version=version), self._entity_data_store.snapshot())
         except ValueError as exc:
             self._log_gui_event("warning", f"[队列] {exc}")
             show_feedback_infobar(
@@ -550,10 +556,30 @@ class ExecutionPage(SmoothScrollArea):
             )
             return
 
-        version = self._shared_data_state.scan.version if self._shared_data_state.scan is not None else ""
-        draft = replace(draft, version=version)
-        self.submit_task(draft)
-        self.taskBuilderPanel.reset_custom_inputs_to_defaults()
+        self._confirming = True
+        try:
+            confirmed = self._confirm_task(review)
+        finally:
+            self._confirming = False
+        if not confirmed or not review.can_submit:
+            return
+        current_context = (
+            self.gui_config.to_app_context_input_snapshot() if self.gui_config else AppContextInputSnapshot()
+        )
+        if self._shared_data_state.generation != state.generation or current_context != draft.context_input:
+            show_feedback_infobar(
+                title="任务范围需要重新确认",
+                content="数据目录或配置已变化，请重新创建任务核对。",
+                parent=self._feedback_parent(),
+                level="warning",
+            )
+            return
+        if self.submit_task(review.draft):
+            self.taskBuilderPanel.reset_custom_inputs_to_defaults()
+
+    def _confirm_task(self, review: ExecutionReview) -> bool:
+        """展示只读确认，关闭窗口视为返回修改。"""
+        return bool(ConfirmationDialog(review, self._feedback_parent()).exec())
 
     def set_external_busy(self, busy: bool) -> None:
         """共享扫描之外的显式资源扫描也占用重任务执行入口。"""
@@ -593,10 +619,10 @@ class ExecutionPage(SmoothScrollArea):
         )
         self.submit_task(draft)
 
-    def submit_task(self, draft: ExecutionTaskDraft) -> None:
+    def submit_task(self, draft: ExecutionTaskDraft) -> bool:
         """统一检查全局忙碌状态，拒绝排队和并行重负载任务。"""
         if (
-            self._is_task_running
+            self.has_active_background_task()
             or self._external_busy
             or (draft.export_request is None and self._shared_data_state.blocks_new_tasks)
         ):
@@ -606,8 +632,9 @@ class ExecutionPage(SmoothScrollArea):
                 content="已有任务运行或共享数据尚未就绪，请等待完成后重试。",
                 level="warning",
             )
-            return
+            return False
         self._queue_controller.enqueue_task(draft=draft, summary=draft.source_summary)
+        return True
 
     def _debug_fill_mock_queue(self, count: int) -> str:
         """填充指定数量的 mock 队列项，方便调试全局进度状态。"""
