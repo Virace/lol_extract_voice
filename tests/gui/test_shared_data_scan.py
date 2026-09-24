@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 
 import pytest
@@ -421,8 +422,8 @@ def test_preload_bank_artifact_suppresses_per_item_read_traceback(monkeypatch, t
     assert captured["log_errors"] is False
 
 
-def test_scan_worker_emits_one_typed_result_and_progress(monkeypatch) -> None:
-    """完整扫描 worker 应把结果与进度保持在同一 generation。"""
+def test_scan_worker_emits_one_typed_result_and_progress(monkeypatch, qtbot) -> None:
+    """扫描期间转发进度，但必须等线程退出后才交付同一 generation 的结果。"""
     ctx = SimpleNamespace()
     expected = build_scan_failure_result(WORKER_GENERATION, SharedDataMissingError("missing"))
 
@@ -439,20 +440,44 @@ def test_scan_worker_emits_one_typed_result_and_progress(monkeypatch) -> None:
     finished = []
     progress_events = []
     errors = []
-    worker = SharedDataScanWorker(ctx, WORKER_GENERATION)
-    worker.finished.connect(finished.append)
+    scanned = Event()
+    release = Event()
+
+    class DelayedWorker(SharedDataScanWorker):
+        """暂停在扫描结束与线程退出之间，稳定复现结果交接竞态。"""
+
+        def run(self) -> None:
+            """完成真实扫描入口后等待测试允许线程退出。"""
+            super().run()
+            scanned.set()
+            release.wait(5)
+
+    worker = DelayedWorker(ctx, WORKER_GENERATION)
+    running_at_result = []
+    worker.result_ready.connect(finished.append)
+    worker.result_ready.connect(lambda _result: running_at_result.append(worker.isRunning()))
     worker.progress.connect(progress_events.append)
     worker.error.connect(errors.append)
 
-    worker.run()
+    try:
+        worker.start()
+        qtbot.waitUntil(lambda: scanned.is_set() and bool(progress_events))
+        assert worker.isRunning()
+        assert finished == []
+        release.set()
+        qtbot.waitUntil(lambda: bool(finished))
+    finally:
+        release.set()
+        worker.wait()
 
     assert finished == [expected]
     assert progress_events[0].generation == WORKER_GENERATION
     assert errors == []
+    assert running_at_result == [False]
 
 
-def test_scan_worker_returns_typed_result_for_expected_init_failure(monkeypatch) -> None:
-    """缺失 dataset 仍走 finished typed result，不退化为字符串 error。"""
+def test_scan_worker_returns_typed_result_for_expected_init_failure(monkeypatch, qtbot) -> None:
+    """缺失 dataset 在线程退出后交付 typed result，不退化为字符串 error。"""
     ctx = SimpleNamespace()
 
     class FakeLoader:
@@ -463,16 +488,23 @@ def test_scan_worker_returns_typed_result_for_expected_init_failure(monkeypatch)
     finished = []
     errors = []
     worker = SharedDataScanWorker(ctx, 11)
-    worker.finished.connect(finished.append)
+    running_at_result = []
+    worker.result_ready.connect(finished.append)
+    worker.result_ready.connect(lambda _result: running_at_result.append(worker.isRunning()))
     worker.error.connect(errors.append)
 
-    worker.run()
+    try:
+        worker.start()
+        qtbot.waitUntil(lambda: bool(finished))
+    finally:
+        worker.wait()
 
     assert finished[0].problems[0].code is SharedDataProblemCode.DATASET_MISSING
     assert errors == []
+    assert running_at_result == [False]
 
 
-def test_scan_worker_emits_typed_problem_for_unexpected_failure(monkeypatch) -> None:
+def test_scan_worker_emits_typed_problem_for_unexpected_failure(monkeypatch, qtbot) -> None:
     """无法形成扫描结果的程序错误才使用 worker-level typed error。"""
     ctx = SimpleNamespace()
 
@@ -493,10 +525,17 @@ def test_scan_worker_emits_typed_problem_for_unexpected_failure(monkeypatch) -> 
     finished = []
     errors = []
     worker = SharedDataScanWorker(ctx, 12)
-    worker.finished.connect(finished.append)
+    running_at_error = []
+    worker.result_ready.connect(finished.append)
     worker.error.connect(errors.append)
+    worker.error.connect(lambda _problem: running_at_error.append(worker.isRunning()))
 
-    worker.run()
+    try:
+        worker.start()
+        qtbot.waitUntil(lambda: bool(errors))
+    finally:
+        worker.wait()
 
     assert finished == []
     assert errors[0].code is SharedDataProblemCode.UNEXPECTED
+    assert running_at_error == [False]

@@ -175,8 +175,9 @@ def test_dispatch_shared_data_action_routes_stable_action_keys() -> None:
         "show_settings": lambda: events.append(("navigate", "settings")),
         "show_execution": lambda: events.append(("navigate", "execution")),
         "show_overview": lambda: events.append(("navigate", "overview")),
+        "show_language": lambda: events.append(("navigate", "language")),
     }
-    for action_key in ("retry", "regenerate", "open_settings", "view_execution", "view_overview"):
+    for action_key in ("retry", "regenerate", "open_settings", "view_execution", "view_overview", "select_language"):
         dispatch_shared_data_action(
             action_key,
             shared_data_controller=_FakeController(),
@@ -189,6 +190,7 @@ def test_dispatch_shared_data_action_routes_stable_action_keys() -> None:
         ("navigate", "settings"),
         ("navigate", "execution"),
         ("navigate", "overview"),
+        ("navigate", "language"),
     ]
 
 
