@@ -237,17 +237,40 @@ def resolve_mapping_path(
     Returns:
         命中的映射文件路径；不存在时返回 ``None``。
     """
-    hash_root = ctx.version_path("hash", version)
+    return find_mapping(
+        ctx.version_path("hash", version),
+        entity_dir=entity_dir,
+        entity_id=entity_id,
+        integrate_data=integrate_data,
+    )
+
+
+def find_mapping(
+    hash_root: Path,
+    *,
+    entity_dir: str,
+    entity_id: int | str,
+    integrate_data: bool | None = None,
+) -> Path | None:
+    """从固定版本和语言的哈希目录定位映射，不初始化游戏上下文。
+
+    Args:
+        hash_root: 已选版本和语言的 hashes 根目录。
+        entity_dir: 实体目录名。
+        entity_id: 实体 ID。
+        integrate_data: 为空时选择最近生成的映射，同时间优先整合版。
+
+    Returns:
+        已有映射路径；未生成时返回 ``None``。
+    """
     base_paths = _build_mapping_bases(
         hash_root=hash_root,
         entity_dir=entity_dir,
         entity_id=entity_id,
         integrate_data=integrate_data,
     )
-    dev_mode = getattr(ctx.config, "dev_mode", False)
-
     if integrate_data is None:
-        candidates = [path for base in base_paths if (path := find_data_file(base, dev_mode=dev_mode)) is not None]
+        candidates = [path for base in base_paths if (path := find_data_file(base)) is not None]
         return max(candidates, key=lambda path: path.stat().st_mtime_ns, default=None)
 
     suffix = ".msgpack"
@@ -283,6 +306,7 @@ __all__ = [
     "AudioIndexProgress",
     "AudioRef",
     "enumerate_audio_refs",
+    "find_mapping",
     "inspect_shared_copies",
     "resolve_audio_refs",
     "resolve_audio_paths",

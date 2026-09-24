@@ -23,6 +23,7 @@ from .dispatch import (
     run_update,
     run_wav,
 )
+from .file_commands import FILE_COMMANDS, run_file_command
 from .parser import EntryMode, create_parser
 from .runtime import CliInputError, _apply_config_profile, _validate_config_argv, initialize_app, validate_args
 
@@ -77,6 +78,8 @@ def _configure_streams() -> None:
 def main() -> int:
     """统一 CLI 主入口，并返回稳定进程退出码。"""
     _configure_streams()
+    if sys.argv[1:2] and sys.argv[1] in FILE_COMMANDS:
+        return run_file_command(sys.argv[1:])
     app_context: AppContext | None = None
     app: LolAudioUnpackApp | None = None
     run_summary = None
