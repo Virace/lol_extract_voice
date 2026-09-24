@@ -470,7 +470,13 @@ class MainWindow(FluentWindow):
             show_settings=lambda: self.switchTo(self.settingInterface),
             show_execution=lambda: self.switchTo(self.executionInterface),
             show_overview=lambda: self.switchTo(self.overviewInterface),
+            show_language=self._show_resource_language,
         )
+
+    def _show_resource_language(self) -> None:
+        """打开全局设置并定位到待选择的资源语言。"""
+        self.switchTo(self.settingInterface)
+        self.settingInterface.focus_resource_language()
 
     def _connect_pages(self):
         """连接页面间的数据同步"""

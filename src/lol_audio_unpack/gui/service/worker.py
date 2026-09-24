@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from loguru import logger
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal, Slot
 
 if TYPE_CHECKING:
     from lol_audio_unpack.app.types import AppContext
@@ -18,7 +18,7 @@ from lol_audio_unpack.manager.errors import is_shared_data_not_ready
 class SharedDataScanWorker(QThread):
     """在单一 generation 中生成完整类型化共享目录快照。"""
 
-    finished = Signal(object)
+    result_ready = Signal(object)
     progress = Signal(object)
     error = Signal(object)
 
@@ -34,9 +34,13 @@ class SharedDataScanWorker(QThread):
         self.app_context = app_context
         self.generation = generation
         self.require_resources = require_resources
+        self._result = None
+        self._problem = None
+        # 控制器收到结果后会释放线程引用，必须等原生 finished 后才交付。
+        self.finished.connect(self._publish_result, Qt.ConnectionType.QueuedConnection)
 
     def run(self) -> None:
-        """执行完整扫描；预期数据问题仍通过 finished 返回 typed result。"""
+        """保存扫描结果或问题，待线程退出后通过对应信号交付。"""
         logger.debug(f"SharedDataScanWorker 线程启动: generation={self.generation}")
         try:
             loader = EntityDataLoader(self.app_context)
@@ -50,14 +54,23 @@ class SharedDataScanWorker(QThread):
             problem = result.problems[0]
             if problem.code is SharedDataProblemCode.UNEXPECTED:
                 logger.opt(exception=exc).error(f"共享实体目录扫描发生未预期失败: generation={self.generation}")
-                self.error.emit(problem)
+                self._problem = problem
                 return
             logger.info(
                 "共享实体目录当前不可用: generation={} code={}",
                 self.generation,
                 problem.code.value,
             )
-        self.finished.emit(result)
+        self._result = result
+
+    @Slot()
+    def _publish_result(self) -> None:
+        """线程结束后在 GUI 线程交付结果，允许接收方安全释放 worker。"""
+        logger.debug(f"SharedDataScanWorker 线程已结束: generation={self.generation}")
+        if self._problem is not None:
+            self.error.emit(self._problem)
+        elif self._result is not None:
+            self.result_ready.emit(self._result)
 
 
 class DataLoadWorker(QThread):

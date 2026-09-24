@@ -102,7 +102,10 @@ def _recovery_action(state: SharedDataState) -> tuple[str | None, str]:
         SharedDataProblemCode.CONFIGURATION_INVALID,
         SharedDataProblemCode.OUTPUT_NOT_WRITABLE,
     }:
-        return "open_settings", "打开全局设置"
+        needs_language = (
+            problem_code is SharedDataProblemCode.CONFIGURATION_REQUIRED and state.problem.scope == "language"
+        )
+        return ("select_language", "选择资源语言") if needs_language else ("open_settings", "打开全局设置")
     if state.prepare_attempted and problem_code is not None and problem_code.auto_repairable:
         return "regenerate", "重新生成实体数据"
     return "retry", "重试更新"
@@ -124,9 +127,10 @@ def describe_shared_data_state(state: SharedDataState) -> SharedDataDisplay:  # 
 
     if state.phase is SharedDataPhase.BLOCKED:
         detail = problem_text or "配置有效目录后会自动加载英雄和地图列表。"
+        needs_language = action_key == "select_language"
         return SharedDataDisplay(
-            "需要配置共享数据",
-            "等待配置",
+            "请选择资源语言" if needs_language else "需要配置共享数据",
+            "等待选择语言" if needs_language else "等待配置",
             detail,
             state.status_role,
             "创建任务",

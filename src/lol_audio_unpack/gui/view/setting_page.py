@@ -346,6 +346,11 @@ class SettingPage(SmoothScrollArea):
         """在共享目录 generation 完成时同步语言状态。"""
         self.language_controller.apply_inventory(inventory)
 
+    def focus_resource_language(self) -> None:
+        """将资源语言选择项滚动到可见区域并交给键盘操作。"""
+        self.ensureWidgetVisible(self.gameRegionCard)
+        self.gameRegionCard.comboBox.setFocus(Qt.FocusReason.OtherFocusReason)
+
     def _confirm_language(self, language: SourceLanguage) -> bool:
         """缺失语言只能在查看影响范围后使用可用部分。"""
         inventory = self.language_controller.inventory

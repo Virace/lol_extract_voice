@@ -32,7 +32,9 @@ from lol_audio_unpack.gui.shared_data import (
     SharedDataScanResult,
     SharedDataSectionResult,
 )
+from lol_audio_unpack.gui.shared_data_view import describe_shared_data_state
 from lol_audio_unpack.gui.task_models import OutputStateRefreshRequest
+from lol_audio_unpack.gui.view.setting_page import SettingPage
 from lol_audio_unpack.manager.errors import SharedDataMissingError
 from lol_audio_unpack.manager.files import write_data
 from lol_audio_unpack.manager.source_inventory import SourceEntity, SourceInventory, SourceLanguage
@@ -139,7 +141,7 @@ class _FakeScanWorker:
         self.generation = generation
         self.require_resources = require_resources
         self.progress = _FakeSignal()
-        self.finished = _FakeSignal()
+        self.result_ready = _FakeSignal()
         self.error = _FakeSignal()
         self.started = False
         self.__class__.instances.append(self)
@@ -564,13 +566,68 @@ def test_shared_data_controller_publishes_ready_only_from_complete_scan() -> Non
     controller.load_initial_data()
     started_workers[0].run()
     scan_worker = _FakeScanWorker.instances[-1]
-    scan_worker.finished.emit(_scan_result(controller.generation))
+    scan_worker.result_ready.emit(_scan_result(controller.generation))
 
     assert controller.state.phase is SharedDataPhase.READY
     assert controller.state.summary.champion_loaded == 1
     assert [payload.entity_type for payload in rows] == ["champions", "special", "maps"]
     assert notices == []
     assert states[-1].blocks_new_tasks is False
+
+
+def test_multiple_languages_wait_for_selection_then_resume(qtbot, tmp_path) -> None:
+    """多个候选语言只提示待选择，选定后自动继续当前目录的加载。"""
+    page = SettingPage()
+    qtbot.addWidget(page)
+    inventory = SourceInventory(
+        tmp_path,
+        0,
+        tuple(
+            SourceLanguage(locale, (SourceEntity("champion", "1", "Annie", (), ()),)) for locale in ("zh_CN", "ja_JP")
+        ),
+    )
+
+    def build_context(*, settings, **_kwargs):
+        return SimpleNamespace(
+            config=SimpleNamespace(game_region=settings["GAME_REGION"]),
+            runtime_cache={"source_inventory": inventory},
+        )
+
+    _FakeScanWorker.instances.clear()
+    started = []
+    notices = []
+    controller = _build_controller(
+        task_worker_cls=_FakeTaskWorker,
+        data_load_worker_cls=_FakeScanWorker,
+        create_app_context_fn=build_context,
+        start_worker_fn=started.append,
+    )
+    controller._get_config = lambda: page.config
+    controller.source_inventory_changed.connect(page.set_source_inventory)
+    page.shared_context_input_changed.connect(controller.on_context_input_changed)
+    controller.notice_requested.connect(notices.append)
+    try:
+        controller.bootstrap()
+        started[-1].run()
+
+        assert page.config.game_region == ""
+        assert controller.state.phase is SharedDataPhase.BLOCKED
+        assert controller.state.blocks_new_tasks
+        assert _FakeScanWorker.instances == []
+        assert [notice.level for notice in notices] == ["warning"]
+        assert describe_shared_data_state(controller.state).action_key == "select_language"
+
+        page.gameRegionCard.setValue("ja_JP")
+        qtbot.waitUntil(lambda: controller.build_worker is not None)
+        started[-1].run()
+        scan = _FakeScanWorker.instances[-1]
+        assert scan.app_context.config.game_region == "ja_JP"
+        scan.result_ready.emit(_scan_result(controller.generation))
+        assert controller.state.phase is SharedDataPhase.READY
+        assert not controller.state.blocks_new_tasks
+        assert all(notice.level != "error" for notice in notices)
+    finally:
+        controller.shutdown_background_work()
 
 
 @pytest.mark.parametrize("prepare_resources", [False, True])
@@ -595,11 +652,11 @@ def test_controller_applies_preparation_preference_through_verification(prepare_
     started[0].run()
     scan = _FakeScanWorker.instances[-1]
     assert scan.require_resources is prepare_resources
-    scan.finished.emit(build_scan_failure_result(controller.generation, SharedDataMissingError("missing")))
+    scan.result_ready.emit(build_scan_failure_result(controller.generation, SharedDataMissingError("missing")))
     started[1].run()
     verified = _FakeScanWorker.instances[-1]
     assert verified.require_resources is prepare_resources
-    verified.finished.emit(_scan_result(controller.generation))
+    verified.result_ready.emit(_scan_result(controller.generation))
 
     assert requested == [prepare_resources]
     assert controller.state.phase is SharedDataPhase.READY
@@ -657,7 +714,7 @@ def test_shared_data_controller_consumes_prepare_stage_result_four_states(
         SharedDataProblemCode.RESOURCE_SCHEMA_MISMATCH,
         "共享 banks artifact 仍使用旧版资源结构。",
     )
-    _FakeScanWorker.instances[-1].finished.emit(_scan_result(controller.generation, champion_failures=(failure,)))
+    _FakeScanWorker.instances[-1].result_ready.emit(_scan_result(controller.generation, champion_failures=(failure,)))
 
     prepare_worker = started_workers[1]
     prepare_worker.signals.started.emit()
@@ -665,7 +722,7 @@ def test_shared_data_controller_consumes_prepare_stage_result_four_states(
     if expects_verification:
         assert controller.state.phase is SharedDataPhase.VERIFYING
         assert len(_FakeScanWorker.instances) == EXPECTED_SCAN_COUNT_AFTER_VERIFICATION
-        _FakeScanWorker.instances[-1].finished.emit(_scan_result(controller.generation))
+        _FakeScanWorker.instances[-1].result_ready.emit(_scan_result(controller.generation))
 
     assert controller.state.phase is expected_phase
     assert len(prepare_calls) == 1
@@ -708,9 +765,9 @@ def test_shared_data_controller_does_not_auto_prepare_twice_after_failed_verific
     )
     controller.load_initial_data()
     started_workers[0].run()
-    _FakeScanWorker.instances[-1].finished.emit(_scan_result(controller.generation, champion_failures=(failure,)))
+    _FakeScanWorker.instances[-1].result_ready.emit(_scan_result(controller.generation, champion_failures=(failure,)))
     started_workers[1].run()
-    _FakeScanWorker.instances[-1].finished.emit(_scan_result(controller.generation, champion_failures=(failure,)))
+    _FakeScanWorker.instances[-1].result_ready.emit(_scan_result(controller.generation, champion_failures=(failure,)))
 
     assert prepare_count == 1
     assert controller.state.phase is SharedDataPhase.PARTIAL
@@ -775,7 +832,7 @@ def test_shared_data_manual_retry_forwards_explicit_force_only() -> None:
         SharedDataProblemCode.RESOURCE_SCHEMA_MISMATCH,
         "共享 banks artifact 仍使用旧版资源结构。",
     )
-    _FakeScanWorker.instances[-1].finished.emit(_scan_result(controller.generation, champion_failures=(failure,)))
+    _FakeScanWorker.instances[-1].result_ready.emit(_scan_result(controller.generation, champion_failures=(failure,)))
     started_workers[1].run()
 
     assert prepare_calls[0]["force_update"] is True
@@ -938,14 +995,14 @@ def test_legacy_schema_fixture_uses_normal_update_adapter_then_verifies_ready(
     controller.load_initial_data()
     started_workers[0].run()
     initial_scan = scan_fixture(controller.generation)
-    _FakeScanWorker.instances[-1].finished.emit(initial_scan)
+    _FakeScanWorker.instances[-1].result_ready.emit(initial_scan)
 
     assert initial_scan.readiness is SharedDataReadiness.FAILED
     assert {problem.code for problem in initial_scan.problems} == {SharedDataProblemCode.RESOURCE_SCHEMA_MISMATCH}
 
     started_workers[1].run()
     verified_scan = scan_fixture(controller.generation)
-    _FakeScanWorker.instances[-1].finished.emit(verified_scan)
+    _FakeScanWorker.instances[-1].result_ready.emit(verified_scan)
 
     assert len(update_options) == 1
     assert verified_scan.readiness is SharedDataReadiness.COMPLETE

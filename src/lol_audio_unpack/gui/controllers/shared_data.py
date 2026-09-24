@@ -29,6 +29,7 @@ from lol_audio_unpack.gui.shared_data import (
     SharedDataScanResult,
     SharedDataState,
 )
+from lol_audio_unpack.gui.shared_data_view import describe_shared_data_state
 from lol_audio_unpack.gui.task_models import OutputStateRefreshRequest
 
 SHARED_CONTEXT_BUILD_TIMEOUT_MS = 15000
@@ -375,8 +376,17 @@ class SharedDataController(QObject):
                 return
             language = inventory.get_language(app_context.config.game_region)
             if language is None or not language.available_count:
+                available = [item for item in inventory.languages if item.available_count]
+                if len(available) > 1:
+                    message = "检测到多种本地资源语言，请在全局设置中选择想处理的语言，选定后会自动继续。"
+                elif available:
+                    message = "请在全局设置中选择资源语言，选定后会自动继续。"
+                else:
+                    message = "当前目录没有可用的资源语言，请检查本地资源或选择其他游戏目录。"
                 problem = SharedDataProblem(
-                    SharedDataProblemCode.CONFIGURATION_REQUIRED, "language", "请选择可用的游戏资源语言。"
+                    SharedDataProblemCode.CONFIGURATION_REQUIRED,
+                    "language" if available else "context",
+                    message,
                 )
                 self._publish_terminal(SharedDataPhase.BLOCKED, problem=problem)
                 return
@@ -441,7 +451,7 @@ class SharedDataController(QObject):
             require_resources=self._get_config().prepare_data_on_startup,
         )
         worker.progress.connect(self._on_scan_progress_payload)
-        worker.finished.connect(self._on_scan_finished_payload)
+        worker.result_ready.connect(self._on_scan_finished_payload)
         worker.error.connect(self._on_scan_error_payload)
         self._scan_worker = worker
         self._scan_generation = generation
@@ -744,7 +754,7 @@ class SharedDataController(QObject):
         preparation: SharedDataPreparationResult | None = None,
         notice_title: str | None = None,
     ) -> None:
-        """发布 partial/failed/cancelled 终态及一次可操作通知。"""
+        """发布等待配置或准备终态，并发送一次可操作通知。"""
         self._publish_state(
             SharedDataState(
                 phase,
@@ -765,8 +775,9 @@ class SharedDataController(QObject):
             logger.error(log_message)
         else:
             logger.warning(log_message)
-        level = "warning" if phase in {SharedDataPhase.PARTIAL, SharedDataPhase.CANCELLED} else "error"
+        level = "error" if phase is SharedDataPhase.FAILED else "warning"
         title = notice_title or {
+            SharedDataPhase.BLOCKED: describe_shared_data_state(self.state).status_text,
             SharedDataPhase.PARTIAL: "实体数据未完整",
             SharedDataPhase.CANCELLED: "实体数据准备已取消",
         }.get(phase, "实体数据准备失败")
