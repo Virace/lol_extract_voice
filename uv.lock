@@ -82,7 +82,7 @@ wheels = [
 
 [[package]]
 name = "lol-audio-unpack"
-version = "3.10.4"
+version = "3.10.5"
 source = { editable = "." }
 dependencies = [
     { name = "league-tools" },
