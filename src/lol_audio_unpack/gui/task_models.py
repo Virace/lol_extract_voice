@@ -42,8 +42,8 @@ class ExecutionTaskParamsSnapshot:
     """任务创建时记录的单次执行参数快照。
 
     Args:
-        champion_ids: 目标英雄 ID；为空时表示不限制英雄范围。
-        map_ids: 目标地图 ID；为空时表示不限制地图范围。
+        champion_ids: 目标英雄 ID；None 沿用旧全量语义，空元组明确不处理。确认后的任务使用具体元组。
+        map_ids: 目标地图 ID；None 沿用旧全量语义，空元组明确不处理。确认后的任务使用具体元组。
         special_targets: 从特殊内容目录同步的稳定选择 key。
         run_update: 是否在执行解包/映射前先强制刷新基础数据；GUI 中等价于前置一次 ``update --force``。
         run_extract: 是否执行音频解包。
@@ -147,6 +147,8 @@ class ExecutionTaskDraft:
         source_summary: 创建任务时展示给用户的来源摘要。
         context_input: 创建任务当时的共享上下文输入快照。
         task_params: 创建任务当时的单次任务参数快照。
+        requested_targets: 确认时请求的完整目标，用于保留过滤前的输入事实。
+        excluded_targets: 用户确认跳过的未知 ID，供结果详情追溯。
     """
 
     source: str
@@ -162,6 +164,8 @@ class ExecutionTaskDraft:
     retry_extract: tuple[EntityResult, ...] = ()
     retry_stages: tuple[ExecutionRetryStage, ...] = ()
     retry_keys: frozenset[tuple[str, ...]] = frozenset()
+    requested_targets: tuple[str, ...] = ()
+    excluded_targets: tuple[str, ...] = ()
 
 
 @dataclass(slots=True, frozen=True)

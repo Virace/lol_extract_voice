@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSignalBlocker, Qt
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
     BodyLabel,
@@ -15,7 +15,6 @@ from qfluentwidgets import (
     HeaderCardWidget,
     IconWidget,
     InfoBarIcon,
-    LineEdit,
     PrimaryPushButton,
     SegmentedWidget,
     SimpleCardWidget,
@@ -29,6 +28,7 @@ from qfluentwidgets import (
 )
 
 from lol_audio_unpack.app.resource_pack import ResourcePackWadRef
+from lol_audio_unpack.app.targets import split_ids
 from lol_audio_unpack.gui.common.font_compat import apply_tool_button_safe_font
 from lol_audio_unpack.gui.common.styles import (
     build_fluent_panel_frame_theme_pair,
@@ -41,13 +41,15 @@ from lol_audio_unpack.gui.task_models import (
 )
 from lol_audio_unpack.gui.theme import get_accent_text_color_pair, get_semantic_text_color_pair
 
+from .scope_input import ScopeInput
+
 _WIDE_FORM_LAYOUT_MIN_WIDTH = 980
 _FORM_ROW_HEIGHT = 78
 
 
 def _parse_csv_ids(text: str) -> tuple[str, ...]:
     """将逗号分隔的 ID 输入解析为字符串元组。"""
-    return tuple(part.strip() for part in text.split(",") if part.strip())
+    return split_ids(text)
 
 
 def _parse_csv_int_ids(text: str, *, label: str) -> tuple[int, ...] | None:
@@ -57,9 +59,11 @@ def _parse_csv_int_ids(text: str, *, label: str) -> tuple[int, ...] | None:
         return None
 
     try:
-        return tuple(int(entity_id) for entity_id in raw_ids)
+        if any(not entity_id.isdecimal() for entity_id in raw_ids):
+            raise ValueError("ID 必须是非负整数")
+        return tuple(dict.fromkeys(int(entity_id) for entity_id in raw_ids))
     except ValueError as exc:
-        raise ValueError(f"{label} 仅支持逗号分隔的数字 ID。") from exc
+        raise ValueError(f"{label} 仅支持用中英文逗号分隔的非负整数。") from exc
 
 
 def _build_target_summary(
@@ -67,11 +71,16 @@ def _build_target_summary(
     map_ids: tuple[str, ...],
     special_targets: tuple[str, ...] = (),
     special_target_names: tuple[str, ...] = (),
+    modes: tuple[str, str] = ("none", "none"),
 ) -> str:
     """构造当前目标范围摘要。"""
-    if not champion_ids and not map_ids and not special_targets:
-        return "全部英雄+地图"
-    summary = f"英雄 {len(champion_ids)} 个，地图 {len(map_ids)} 个，特殊内容 {len(special_targets)} 个"
+    parts = []
+    for label, ids, mode in zip(("英雄", "地图"), (champion_ids, map_ids), modes, strict=True):
+        scope = {"none": "不处理", "all": "全部", "ids": f"指定 {len(ids)} 个"}[mode]
+        parts.append(f"{label}：{scope}")
+    if special_targets:
+        parts.append(f"特殊内容 {len(special_targets)} 个")
+    summary = "，".join(parts)
     return f"{summary}（{'、'.join(special_target_names)}）" if special_target_names else summary
 
 
@@ -116,6 +125,7 @@ class _ExecutionTaskFormState:
 
     champion_ids: tuple[str, ...] = ()
     map_ids: tuple[str, ...] = ()
+    modes: tuple[str, str] = ("none", "none")
     special_targets: tuple[str, ...] = ()
     special_target_names: tuple[str, ...] = ()
     include_extract: bool = True
@@ -136,6 +146,7 @@ class _ExecutionTaskFormState:
             self.map_ids,
             self.special_targets,
             self.special_target_names,
+            self.modes,
         )
 
     def task_scope_summary(self) -> str:
@@ -198,7 +209,7 @@ class TaskCreationCard(HeaderCardWidget):
         self.scope_hint_icon = IconWidget(InfoBarIcon.INFORMATION, self.scope_hint_widget)
         self.scope_hint_icon.setFixedSize(16, 16)
         self.scope_hint_label = BodyLabel(
-            "两项均留空时处理全部；填写任一项后，仅处理已输入的 ID。",
+            "每类可独立选择不处理、全部或指定 ID；支持中英文逗号分隔。",
             self.scope_hint_widget,
         )
         self.scope_hint_label.setWordWrap(True)
@@ -222,17 +233,10 @@ class TaskCreationCard(HeaderCardWidget):
 
     def _build_form_controls(self) -> None:
         """创建全部参数输入控件与分组。"""
-        self.champion_ids_input = LineEdit(self)
-        self.champion_ids_input.setPlaceholderText("英雄 ID，如 1,103,555")
-        self.champion_ids_input.setMinimumWidth(220)
-        self.champion_ids_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.champion_ids_input.setClearButtonEnabled(True)
-
-        self.map_ids_input = LineEdit(self)
-        self.map_ids_input.setPlaceholderText("地图 ID，如 0,11,12")
-        self.map_ids_input.setMinimumWidth(220)
-        self.map_ids_input.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.map_ids_input.setClearButtonEnabled(True)
+        self.champion_scope = ScopeInput("英雄", self)
+        self.map_scope = ScopeInput("地图", self)
+        self.champion_ids_input = self.champion_scope.edit
+        self.map_ids_input = self.map_scope.edit
 
         self.vo_filter = SegmentedWidget(self)
         self.vo_filter.addItem("VO", "仅 VO")
@@ -268,16 +272,16 @@ class TaskCreationCard(HeaderCardWidget):
         self.scope_groups = (
             self._create_option_group(
                 FIF.PEOPLE,
-                "英雄 ID",
-                "多个英雄 ID 用逗号分隔，如 1,103,555",
-                self.champion_ids_input,
+                "英雄",
+                "选择全部或指定英雄 ID",
+                self.champion_scope,
                 stretch=1,
             ),
             self._create_option_group(
                 FIF.GLOBE,
-                "地图 ID",
-                "多个地图 ID 用逗号分隔，如 0,11,12",
-                self.map_ids_input,
+                "地图",
+                "选择全部或指定地图 ID",
+                self.map_scope,
                 stretch=1,
             ),
         )
@@ -331,7 +335,8 @@ class TaskCreationCard(HeaderCardWidget):
     def _build_action_controls(self) -> None:
         """创建任务范围摘要与底部操作控件。"""
         self.hintIcon = IconWidget(InfoBarIcon.INFORMATION, self)
-        self.target_summary_value = BodyLabel("执行范围：全部英雄+地图", self)
+        self.target_summary_value = BodyLabel("执行范围：英雄不处理，地图不处理", self)
+        self.target_summary_value.setWordWrap(True)
         self.extract_task_cb = CheckBox("音频解包", self)
         self.extract_task_cb.setChecked(True)
         self.wav_task_cb = CheckBox("音频转码", self)
@@ -357,8 +362,7 @@ class TaskCreationCard(HeaderCardWidget):
 
         self.hintIcon.setFixedSize(16, 16)
         self.bottom_toolbar_layout.addWidget(self.hintIcon, 0, Qt.AlignmentFlag.AlignLeft)
-        self.bottom_toolbar_layout.addWidget(self.target_summary_value, 0, Qt.AlignmentFlag.AlignLeft)
-        self.bottom_toolbar_layout.addStretch(1)
+        self.bottom_toolbar_layout.addWidget(self.target_summary_value, 1)
         self.bottom_toolbar_layout.addWidget(self.extract_task_cb, 0, Qt.AlignmentFlag.AlignRight)
         self.bottom_toolbar_layout.addWidget(self.wav_task_cb, 0, Qt.AlignmentFlag.AlignRight)
         self.bottom_toolbar_layout.addWidget(self.mapping_task_cb, 0, Qt.AlignmentFlag.AlignRight)
@@ -486,7 +490,6 @@ class TaskCreationCard(HeaderCardWidget):
             "special_target_names": (),
             "resource_pack_wads": (),
             "summary": "尚未从实体总览同步选择。",
-            "select_all": False,
         }
 
     def connect_form_signals(self, callback) -> None:
@@ -494,8 +497,8 @@ class TaskCreationCard(HeaderCardWidget):
         self.extract_task_cb.stateChanged.connect(callback)
         self.wav_task_cb.stateChanged.connect(callback)
         self.mapping_task_cb.stateChanged.connect(callback)
-        self.champion_ids_input.textChanged.connect(callback)
-        self.map_ids_input.textChanged.connect(callback)
+        self.champion_scope.changed.connect(callback)
+        self.map_scope.changed.connect(callback)
         self.vo_filter.currentItemChanged.connect(callback)
         self.max_workers_combo.currentTextChanged.connect(callback)
         self.lobby_audioice_cb.stateChanged.connect(callback)
@@ -544,17 +547,15 @@ class TaskCreationCard(HeaderCardWidget):
         """从当前控件值同步内部任务表单状态。"""
         include_extract = self.extract_task_cb.isChecked()
         wav_enabled = self._sync_wav_control_state()
-        champion_ids = _parse_csv_ids(self.champion_ids_input.text())
-        map_ids = _parse_csv_ids(self.map_ids_input.text())
-        is_current_sync = champion_ids == tuple(self._synced_selection["champion_ids"]) and map_ids == tuple(
-            self._synced_selection["map_ids"]
-        )
+        champion_ids = self.champion_scope.tokens()
+        map_ids = self.map_scope.tokens()
         self._state = _ExecutionTaskFormState(
             champion_ids=champion_ids,
             map_ids=map_ids,
-            special_targets=tuple(self._synced_selection["special_targets"]) if is_current_sync else (),
-            special_target_names=tuple(self._synced_selection["special_target_names"]) if is_current_sync else (),
-            resource_pack_wads=tuple(self._synced_selection["resource_pack_wads"]) if is_current_sync else (),
+            modes=(self.champion_scope.mode, self.map_scope.mode),
+            special_targets=tuple(self._synced_selection["special_targets"]),
+            special_target_names=tuple(self._synced_selection["special_target_names"]),
+            resource_pack_wads=tuple(self._synced_selection["resource_pack_wads"]),
             include_extract=include_extract,
             include_mapping=self.mapping_task_cb.isChecked(),
             vo_filter_key=self.vo_filter.currentRouteKey() or self._defaults.vo_filter_key,
@@ -574,6 +575,10 @@ class TaskCreationCard(HeaderCardWidget):
     def current_target_ids(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
         """返回当前任务目标中的英雄和地图 ID。"""
         return self._state.champion_ids, self._state.map_ids
+
+    def current_modes(self) -> tuple[str, str]:
+        """返回两个类别的独立范围模式。"""
+        return self._state.modes
 
     def current_special_targets(self) -> tuple[str, ...]:
         """返回当前同步的特殊内容稳定 key。"""
@@ -595,9 +600,10 @@ class TaskCreationCard(HeaderCardWidget):
             and champion_ids == tuple(self._synced_selection["champion_ids"])
             and map_ids == tuple(self._synced_selection["map_ids"])
             and self._state.special_targets == tuple(self._synced_selection["special_targets"])
+            and self._state.modes == tuple(self._synced_selection.get("modes", ("none", "none")))
         ):
             return str(self._synced_selection["source"])
-        if champion_ids or map_ids:
+        if self._state.modes != ("none", "none"):
             return "manual_input"
         return "default_scope"
 
@@ -621,16 +627,16 @@ class TaskCreationCard(HeaderCardWidget):
     def build_task_draft(self, *, gui_config) -> ExecutionTaskDraft:
         """根据当前表单状态构造任务草稿。"""
         state = self._state
-        champion_ids = _parse_csv_int_ids(",".join(state.champion_ids), label="英雄 ID")
-        map_ids = _parse_csv_int_ids(",".join(state.map_ids), label="地图 ID")
-        special_targets = (
-            state.special_targets if self.current_selection_source() == str(self._synced_selection["source"]) else ()
-        )
-        if self._synced_selection["select_all"] and self.current_selection_source() == str(
-            self._synced_selection["source"]
-        ):
-            champion_ids = None
-            map_ids = None
+        ids = []
+        for mode, tokens, label in zip(state.modes, (state.champion_ids, state.map_ids), ("英雄", "地图"), strict=True):
+            parsed = _parse_csv_int_ids(",".join(tokens), label=f"{label} ID") if mode == "ids" else None
+            if mode == "ids" and not parsed:
+                raise ValueError(f"请填写指定的{label} ID，或切换范围模式。")
+            ids.append(() if mode == "none" else parsed)
+        champion_ids, map_ids = ids
+        special_targets = state.special_targets
+        if state.modes == ("none", "none") and not special_targets:
+            raise ValueError("请至少选择英雄、地图或特殊内容中的一个范围。")
         exclude_types = ("SFX", "MUSIC") if state.vo_filter_key == "VO" else ()
         wav_workers = int(getattr(gui_config, "wav_workers", 2) if gui_config else 2)
         wav_timeout = int(getattr(gui_config, "wav_timeout", 5) if gui_config else 5)
@@ -643,11 +649,7 @@ class TaskCreationCard(HeaderCardWidget):
                 champion_ids=champion_ids,
                 map_ids=map_ids,
                 special_targets=special_targets,
-                resource_pack_wads=(
-                    state.resource_pack_wads
-                    if self.current_selection_source() == str(self._synced_selection["source"])
-                    else ()
-                ),
+                resource_pack_wads=state.resource_pack_wads,
                 run_update=state.force_update,
                 run_extract=state.include_extract,
                 run_mapping=state.include_mapping,
@@ -684,8 +686,25 @@ class TaskCreationCard(HeaderCardWidget):
             wav_enabled=defaults.wav_enabled,
             wav_format=defaults.wav_format,
         )
-        self.champion_ids_input.setText("")
-        self.map_ids_input.setText("")
+        # 批量重置期间不允许控件信号把尚未重置的旧值写回表单状态。
+        blockers = [
+            QSignalBlocker(widget)
+            for widget in (
+                self.champion_scope,
+                self.map_scope,
+                self.extract_task_cb,
+                self.wav_task_cb,
+                self.mapping_task_cb,
+                self.vo_filter,
+                self.max_workers_combo,
+                self.lobby_audioice_cb,
+                self.wav_format_combo,
+                self.force_update_cb,
+                self.integrate_data_cb,
+            )
+        ]
+        self.champion_scope.reset()
+        self.map_scope.reset()
         self.extract_task_cb.setChecked(self._state.include_extract)
         self.wav_task_cb.setChecked(self._state.wav_enabled)
         self.mapping_task_cb.setChecked(self._state.include_mapping)
@@ -695,6 +714,7 @@ class TaskCreationCard(HeaderCardWidget):
         self.wav_format_combo.setCurrentText(self._state.wav_format)
         self.force_update_cb.setChecked(self._state.force_update)
         self.integrate_data_cb.setChecked(self._state.integrate_data)
+        del blockers
         self._sync_wav_control_state()
         self.refresh_summary()
 
@@ -705,12 +725,18 @@ class TaskCreationCard(HeaderCardWidget):
         map_ids: tuple[str, ...],
         source: str,
         summary: str,
-        select_all: bool = False,
         special_targets: tuple[str, ...] = (),
         special_target_names: tuple[str, ...] = (),
         resource_pack_wads: tuple[ResourcePackWadRef, ...] = (),
+        modes: tuple[str, str] | None = None,
     ) -> None:
         """将实体总览选择应用到任务表单。"""
+        modes = modes or ("ids" if champion_ids else "none", "ids" if map_ids else "none")
+        if any(
+            mode not in ScopeInput.MODES or (mode != "ids" and ids)
+            for mode, ids in zip(modes, (champion_ids, map_ids), strict=True)
+        ):
+            raise ValueError("同步范围与 ID 不一致。")
         self._synced_selection = {
             "source": source,
             "champion_ids": champion_ids,
@@ -719,8 +745,10 @@ class TaskCreationCard(HeaderCardWidget):
             "special_target_names": special_target_names,
             "resource_pack_wads": tuple(dict.fromkeys(resource_pack_wads)),
             "summary": summary,
-            "select_all": select_all,
+            "modes": modes,
         }
-        self.champion_ids_input.setText(",".join(champion_ids))
-        self.map_ids_input.setText(",".join(map_ids))
+        blockers = [QSignalBlocker(self.champion_scope), QSignalBlocker(self.map_scope)]
+        self.champion_scope.set_scope(modes[0], ",".join(champion_ids))
+        self.map_scope.set_scope(modes[1], ",".join(map_ids))
+        del blockers
         self.sync_state_from_widgets()

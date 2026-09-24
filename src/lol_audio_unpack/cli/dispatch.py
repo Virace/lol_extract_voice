@@ -110,6 +110,8 @@ def _log_stage_done(stage: str, detail: str | None = None) -> None:
 
 def _log_stage_result(stage: str, result: StageResult, detail: str | None = None) -> None:
     """仅在 typed result 成功时输出完成结论。"""
+    if result.error_type == "TargetSelectionError":
+        raise CliInputError(result.error_message or "目标 ID 无效，请修正后重试。")
     if result.status is ResultStatus.SUCCESS:
         _log_stage_done(stage, detail)
         return

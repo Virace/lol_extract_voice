@@ -7,13 +7,16 @@ from types import SimpleNamespace
 import pytest
 
 from lol_audio_unpack.app.targets import (
+    TargetSelectionError,
     build_tasks,
+    check_ids,
     filter_default_visible_champions,
     get_default_hidden_champion_markers,
     get_default_visible_champions,
     iter_entity_refs,
     resolve_scope,
     should_hide_champion_by_default,
+    split_ids,
     with_common_map,
 )
 
@@ -54,6 +57,11 @@ def _build_reader() -> SimpleNamespace:
         ((1,), None, ("skin", True, False)),
         (None, (11,), ("map", False, True)),
         ((1,), (11,), ("all", True, True)),
+        ((1,), (), ("skin", True, False)),
+        ((), (11,), ("map", False, True)),
+        ((), (), ("all", False, False)),
+        (None, (), ("all", False, False)),
+        ((), None, ("all", False, False)),
     ],
 )
 def test_resolve_scope_matches_existing_backend_contract(
@@ -121,3 +129,20 @@ def test_build_tasks_validates_explicit_ids_and_formats_labels() -> None:
 
     with pytest.raises(ValueError, match=r"无效的地图ID: \[999\]"):
         build_tasks(reader, map_ids=(999,), include_champions=False)
+
+
+def test_id_check_separates_unknown_ids_without_expanding_empty_scope() -> None:
+    """实体目录只有 1 和 103，未知项必须独立返回或严格报错。"""
+    rows = [{"id": 1}, {"id": 103}]
+    result = check_ids((1, 999, 103, 1), rows)
+    assert result.valid == (1, 103)
+    assert result.unknown == (999,)
+    with pytest.raises(TargetSelectionError, match="999"):
+        result.require_valid("英雄")
+    assert check_ids((), rows).valid == ()
+
+
+def test_id_separators_accept_mixed_chinese_and_english_commas() -> None:
+    """分隔符归一化不改变 ID／alias 内容，也不保留重复和空项。"""
+    assert split_ids(" 1，103,，1, 555 ") == ("1", "103", "555")
+    assert split_ids("Annie，Ahri") == ("Annie", "Ahri")

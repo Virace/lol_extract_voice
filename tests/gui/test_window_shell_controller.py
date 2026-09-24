@@ -62,9 +62,10 @@ def test_forward_selection_sync_feedback_emits_success_only_when_summary_exists(
         execution_page=_FakeExecutionPage(),
         feedback_parent="host",
         show_feedback=lambda **kwargs: calls.append((kwargs["title"], kwargs["content"])),
+        show_execution=lambda: calls.append(("navigate", "execution")),
     )
 
-    assert calls == [("已同步到执行中心", "已同步")]
+    assert calls == [("navigate", "execution"), ("已同步到执行中心", "已同步")]
 
 
 def test_forward_selection_sync_feedback_skips_when_summary_is_none() -> None:
@@ -79,6 +80,7 @@ def test_forward_selection_sync_feedback_skips_when_summary_is_none() -> None:
         execution_page=_FakeExecutionPage(),
         feedback_parent="host",
         show_feedback=lambda **kwargs: calls.append(kwargs),
+        show_execution=lambda: calls.append({"navigate": "execution"}),
     )
 
     assert calls == []

@@ -130,11 +130,13 @@ def forward_selection_sync_feedback(
     execution_page,
     feedback_parent,
     show_feedback: Callable[..., None],
+    show_execution: Callable[[], None],
 ) -> None:
     """处理总览页向执行中心同步后的全局反馈。"""
     summary = execution_page.set_selected_entities(payload, feedback_parent=feedback_parent)
     if summary is None:
         return
+    show_execution()
     show_feedback(
         title="已同步到执行中心",
         content=summary,

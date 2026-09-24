@@ -14,6 +14,7 @@ from loguru import logger
 from .. import setup_app
 from ..app.facade import LolAudioUnpackApp
 from ..app.preflight import SourcePreflightError, check_source_files
+from ..app.targets import split_ids
 from ..app.types import AppContext, AppContextValidationError, OperationOptions, WavOutputOptions
 from ..config import (
     COMMAND_CONFIG_FIELDS,
@@ -331,11 +332,14 @@ def initialize_app(args: argparse.Namespace) -> AppContext:
             dev_mode=args.dev, log_level=args.log_level.upper(), settings=context_settings, source_check=check_context
         )
     except (AppContextValidationError, SourcePreflightError, ValueError) as exc:
-        logger.error(f"配置初始化失败: {exc}")
-        if config_file is not None:
-            logger.error(f"请检查当前命令使用的配置文件: {config_file}")
+        if isinstance(exc, SourcePreflightError):
+            logger.error(f"输入预检失败: {exc}")
         else:
-            logger.error("当前命令未启用 -c，请通过命令行显式传入缺失的共享配置。")
+            logger.error(f"配置初始化失败: {exc}")
+            if config_file is not None:
+                logger.error(f"请检查当前命令使用的配置文件: {config_file}")
+            else:
+                logger.error("当前命令未启用 -c，请通过命令行显式传入缺失的共享配置。")
         raise CliInputError(str(exc)) from exc
 
     logger.info("命令行工具启动...")
@@ -353,7 +357,7 @@ def parse_ids(id_string: str | None) -> list[str] | None:
         去除空白后的字符串列表；当输入为 `None` 或 `all` 时返回 `None`。
     """
     if id_string and id_string != "all":
-        return [item.strip() for item in id_string.split(",") if item.strip()]
+        return list(split_ids(id_string))
     return None
 
 

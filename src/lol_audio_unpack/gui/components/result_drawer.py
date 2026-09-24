@@ -225,6 +225,8 @@ class ResultDrawer(QDialog):
         pending = sum(not issue.resolved for issue in issues)
         resolved = len(issues) - pending
         self.summary.setText(f"{result.summary}\n{task.draft.source_summary}")
+        if task.draft.excluded_targets:
+            self.summary.setText(self.summary.text() + "\n输入阶段已跳过：" + "、".join(task.draft.excluded_targets))
         params = task.draft.task_params
         request = task.draft.export_request
         scope = "、".join(params.selected_steps())
