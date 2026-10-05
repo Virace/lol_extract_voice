@@ -10,7 +10,7 @@ from time import perf_counter
 from loguru import logger
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QThreadPool, QTimer
 from PySide6.QtGui import QCloseEvent, QIcon, QResizeEvent, QShowEvent
-from PySide6.QtWidgets import QApplication, QMessageBox, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets import (
     FluentWindow,

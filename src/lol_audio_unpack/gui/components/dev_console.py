@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QWidget
-from qfluentwidgets import CaptionLabel, LineEdit, PlainTextEdit, StrongBodyLabel
+from qfluentwidgets import CaptionLabel, FluentStyleSheet, LineEdit, PlainTextEdit, StrongBodyLabel
 
 
 class DevConsoleWindow(QDialog):
@@ -44,6 +44,7 @@ class DevConsoleWindow(QDialog):
         layout.addWidget(hint)
         layout.addWidget(self.command_input)
         layout.addWidget(self.output_panel, 1)
+        FluentStyleSheet.DIALOG.apply(self)
 
     def focus_command_input(self) -> None:
         """将焦点移动到命令输入框。"""
