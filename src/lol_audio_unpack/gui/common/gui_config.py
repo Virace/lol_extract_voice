@@ -401,7 +401,7 @@ class GuiConfig:
 
     @property
     def wav_format(self) -> str:
-        """返回执行中心默认的 WAV 输出格式。"""
+        """返回执行中心默认的采样格式。"""
         return self._wav_format
 
     @wav_format.setter

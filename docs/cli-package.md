@@ -99,7 +99,8 @@
 默认输出到 `./output/wavs`，按输入文件的共同父目录保留子目录。`--input-root` 可固定这个根目录；
 未指定根且输入跨卷时，各卷分别输出到 `volume-1`、`volume-2` 等目录。
 已有 WAV 默认跳过，`--overwrite` 可覆盖。报告保存在输出目录的 `reports/`。
-并发、格式、重试和外部后端等参数见 `convert-wem --help`。
+转码统一输出 WAV；`--wav-format` 设置采样格式，默认 `pcm16` 表示 16 位整数 PCM。
+其他采样格式见 [CLI API](api/cli_api.md#46-wav)，并发、重试和外部后端等参数见 `convert-wem --help`。
 
 ## 输出与诊断
 

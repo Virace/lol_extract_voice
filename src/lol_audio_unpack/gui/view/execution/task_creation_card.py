@@ -300,7 +300,7 @@ class TaskCreationCard(HeaderCardWidget):
                 self.max_workers_combo,
             ),
             self._create_option_group(FIF.MUSIC, "附加大厅音频", "默认同时处理大厅音频", self.lobby_audioice_cb),
-            self._create_option_group(FIF.ALBUM, "转码格式", "仅在启用音频转码时生效", self.wav_format_row),
+            self._create_option_group(FIF.ALBUM, "采样格式", "仅在启用音频转码时生效", self.wav_format_row),
             self._create_option_group(
                 FIF.SYNC,
                 "前置强制更新",
@@ -539,7 +539,7 @@ class TaskCreationCard(HeaderCardWidget):
         return wav_enabled
 
     def set_wav_control_state(self, *, wav_enabled: bool) -> None:
-        """同步 WAV 开关与格式控件的可见性。"""
+        """同步 WAV 开关与采样格式控件的可见性。"""
         self.wav_format_combo.setVisible(True)
         self.wav_format_combo.setEnabled(wav_enabled)
 
@@ -618,7 +618,7 @@ class TaskCreationCard(HeaderCardWidget):
             f"{state.task_scope_summary()} · 范围={state.target_summary()} · "
             f"VO={state.vo_filter_key} · "
             f"大厅音频={state.lobby_audio} · "
-            f"转码={state.wav_format if state.wav_enabled else '关闭'} · "
+            f"采样格式={state.wav_format if state.wav_enabled else '未启用'} · "
             f"前置强制更新={state.force_update} · "
             f"整合={state.integrate_data} · "
             f"并发={state.max_workers_text}"

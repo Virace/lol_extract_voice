@@ -76,7 +76,7 @@ class AdvancedInputPanel(FormAccordionCard):
         self.add_form_row("音频范围", "默认只处理 VO，需要时可切换为全部类型", self.vo_filter)
         self.add_form_row("并发数", "设置任务并发数；一般不建议超过 CPU 线程数", self.max_workers_combo)
         self.add_form_row("附加大厅音频", "默认同时处理大厅音频", self.lobby_audioice_cb)
-        self.add_form_row("转码格式", "仅在启用音频转码时生效", self.wav_format_row)
+        self.add_form_row("采样格式", "仅在启用音频转码时生效", self.wav_format_row)
         self.add_form_row(
             "前置强制更新",
             "在执行解包或映射前先强制刷新基础数据，相当于先跑一次 update --force",
@@ -90,6 +90,6 @@ class AdvancedInputPanel(FormAccordionCard):
         self.set_wav_control_state(wav_enabled=False)
 
     def set_wav_control_state(self, *, wav_enabled: bool) -> None:
-        """同步音频转码格式控件状态。"""
+        """同步采样格式控件状态。"""
         self.wav_format_combo.setVisible(True)
         self.wav_format_combo.setEnabled(wav_enabled)
