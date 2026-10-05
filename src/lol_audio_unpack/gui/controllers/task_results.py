@@ -7,8 +7,8 @@ from dataclasses import replace
 from uuid import uuid4
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtWidgets import QMessageBox, QWidget
-from qfluentwidgets import PushButton
+from PySide6.QtWidgets import QWidget
+from qfluentwidgets import MessageBox, PushButton
 from shiboken6 import isValid
 
 from lol_audio_unpack.app.failures import TaskFailure, collect_failures, reconcile_failures
@@ -132,19 +132,20 @@ class TaskResultsController(QObject):
         plan = build_retry_stages(self.task.draft.task_params, active)
         if not plan:
             return
-        dialog = QMessageBox(self.drawer or self._feedback_parent())
-        dialog.setWindowTitle("核对失败重试范围")
-        dialog.setText(self.task.draft.source_summary)
         outputs = tuple(dict.fromkeys(issue.output_path for issue in active if issue.output_path))
-        dialog.setInformativeText(
-            "\n".join(stage.label for stage in plan)
+        dialog = MessageBox(
+            "核对失败重试范围",
+            self.task.draft.source_summary
+            + "\n\n"
+            + "\n".join(stage.label for stage in plan)
             + "\n复用原任务的格式和输出位置。请先处理权限、空间或输入问题；未知解析错误直接重试可能无效。"
-            + ("\n输出示例：" + "\n".join(outputs[:3]) if outputs else "")
+            + ("\n输出示例：" + "\n".join(outputs[:3]) if outputs else ""),
+            self.drawer or self._feedback_parent(),
         )
-        dialog.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        dialog.button(QMessageBox.StandardButton.Ok).setText("按此范围重试")
-        dialog.button(QMessageBox.StandardButton.Cancel).setText("返回详情")
-        if dialog.exec() != int(QMessageBox.StandardButton.Ok):
+        dialog.yesButton.setText("按此范围重试")
+        dialog.cancelButton.setText("返回详情")
+        dialog.setContentCopyable(True)
+        if not dialog.exec():
             return
         draft = replace(
             self.task.draft,

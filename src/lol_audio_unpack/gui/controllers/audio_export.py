@@ -6,14 +6,15 @@ from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QModelIndex, QObject, QPoint, Qt, Signal
-from PySide6.QtWidgets import QFileDialog, QMessageBox
-from qfluentwidgets import Action, CheckBox, RoundMenu
+from PySide6.QtWidgets import QFileDialog
+from qfluentwidgets import Action, MessageBox, RoundMenu
 
 from lol_audio_unpack.app.artifacts import AudioRef
 from lol_audio_unpack.app.audio_export import AudioExportRequest, ExportTarget
 from lol_audio_unpack.app.audio_scope import AudioScope, MappingNode
 from lol_audio_unpack.app.audio_selection import AudioSelection
 from lol_audio_unpack.gui.view.overview.export_bar import AudioExportBar
+from lol_audio_unpack.gui.view.overview.export_dialog import AudioExportDialog
 
 
 class AudioExportController(QObject):
@@ -96,15 +97,15 @@ class AudioExportController(QObject):
         """切换实体前告知将清空范围，取消可继续留在原实体。"""
         if not self.selection.has_selection:
             return True
-        dialog = QMessageBox(self.bar.window())
-        dialog.setWindowTitle("切换预览对象")
-        dialog.setText("切换对象将清空当前音频导出选择。")
-        dialog.setInformativeText("左侧任务对象的勾选不受影响。")
-        dialog.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        dialog.button(QMessageBox.StandardButton.Yes).setText("清空并切换")
-        dialog.button(QMessageBox.StandardButton.Cancel).setText("留在当前对象")
-        return dialog.exec() == int(QMessageBox.StandardButton.Yes)
+        dialog = MessageBox(
+            "切换预览对象",
+            "切换对象将清空当前音频导出选择。\n\n左侧任务对象的勾选不受影响。",
+            self.bar.window(),
+        )
+        dialog.yesButton.setText("清空并切换")
+        dialog.cancelButton.setText("留在当前对象")
+        dialog.cancelButton.setFocus()
+        return bool(dialog.exec())
 
     def set_available(self, refs: tuple[AudioRef, ...], *, complete: bool) -> None:
         """应用已完成的路径索引，不把映射不可用叶子纳入选择。"""
@@ -248,26 +249,21 @@ class AudioExportController(QObject):
             return
         output = Path(output_text)
         targets = tuple(ExportTarget(scope, output / self._output_prefix(scope.root)) for scope in scopes)
-        dialog = QMessageBox(self.bar.window())
-        dialog.setWindowTitle("核对音频导出")
-        dialog.setText(f"{request.entity_name} · WAV ({request.options.format})")
         scope_text = "当前实体目录全部 WEM" if selection.state.all_selected else f"所选 {selection.count:,} 个音频"
         exclusions = len(selection.state.excluded)
         if exclusions:
             scope_text += f"，排除 {exclusions:,} 个"
-        dialog.setInformativeText(
+        details = (
             f"范围：{scope_text}\n源目录："
             + "\n".join(str(scope.root) for scope in scopes)
             + f"\n输出：{output}\n保留目录结构与原始 ID。\n已知可用 {selection.count:,} 个；最终目录数量在后台扫描时复核。"
             + f"\n对应文件不可用的映射项 {self._unavailable_count:,} 个，本次不会自动解包。"
         )
-        overwrite = CheckBox("覆盖本次范围内的已有 WAV（默认跳过）", dialog)
-        dialog.setCheckBox(overwrite)
-        dialog.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        dialog.button(QMessageBox.StandardButton.Ok).setText("开始导出")
-        dialog.button(QMessageBox.StandardButton.Cancel).setText("返回选择")
-        if dialog.exec() == int(QMessageBox.StandardButton.Ok):
-            self.export_requested.emit(replace(request, targets=targets, overwrite=overwrite.isChecked()))
+        dialog = AudioExportDialog(
+            f"{request.entity_name} · WAV ({request.options.format})", details, self.bar.window()
+        )
+        if dialog.exec():
+            self.export_requested.emit(replace(request, targets=targets, overwrite=dialog.overwrite.isChecked()))
 
     def _output_prefix(self, root: Path) -> str:
         """按现有按类型分目录布局保留逻辑路径，不用实体显示名拼路径。"""

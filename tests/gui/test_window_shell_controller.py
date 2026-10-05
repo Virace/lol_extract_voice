@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import QWidget
+from qfluentwidgets import MessageBox
+
 from lol_audio_unpack.gui.controllers.window_shell import (
     apply_task_queue_busy_state,
     bind_shared_data_controller_signals,
@@ -196,61 +201,31 @@ def test_dispatch_shared_data_action_routes_stable_action_keys() -> None:
     ]
 
 
-def test_confirm_force_close_running_tasks_returns_true_for_close(monkeypatch) -> None:
-    button_texts: list[tuple[int, str]] = []
+@pytest.mark.parametrize("action", ["confirm", "cancel", "enter", "escape"])
+def test_confirm_force_close_running_tasks_requires_confirmation(qtbot, monkeypatch, action: str) -> None:
+    """仅明确点击关闭才允许退出，默认回车和 Escape 保持当前任务。"""
+    host = QWidget()
+    qtbot.addWidget(host)
+    host.resize(800, 600)
+    host.show()
 
-    class _FakeButton:
-        def __init__(self, which: int) -> None:
-            self.which = which
+    def make_dialog(title: str, content: str, parent: QWidget) -> MessageBox:
+        dialog = MessageBox(title, content, parent)
+        qtbot.addWidget(dialog)
 
-        def setText(self, text: str) -> None:
-            button_texts.append((self.which, text))
+        def choose() -> None:
+            if action in {"enter", "escape"}:
+                key = Qt.Key.Key_Return if action == "enter" else Qt.Key.Key_Escape
+                qtbot.keyClick(dialog, key)
+            else:
+                button = dialog.yesButton if action == "confirm" else dialog.cancelButton
+                qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
 
-    class _FakeMessageBox:
-        class StandardButton:
-            Close = 1
-            Cancel = 2
+        QTimer.singleShot(250, choose)
+        return dialog
 
-        class Icon:
-            Warning = 1
-
-        def __init__(self, parent=None) -> None:
-            self.parent = parent
-
-        def setIcon(self, _icon) -> None:
-            pass
-
-        def setWindowTitle(self, _title: str) -> None:
-            pass
-
-        def setText(self, _text: str) -> None:
-            pass
-
-        def setInformativeText(self, _text: str) -> None:
-            pass
-
-        def setStandardButtons(self, _buttons) -> None:
-            pass
-
-        def setDefaultButton(self, _button) -> None:
-            pass
-
-        def button(self, which: int):
-            return _FakeButton(which)
-
-        def exec(self) -> int:
-            return int(self.StandardButton.Close)
-
-    monkeypatch.setattr(
-        "lol_audio_unpack.gui.controllers.window_shell.QMessageBox",
-        _FakeMessageBox,
-    )
-
-    assert confirm_force_close_running_tasks(parent="host") is True
-    assert button_texts == [
-        (_FakeMessageBox.StandardButton.Close, "关闭"),
-        (_FakeMessageBox.StandardButton.Cancel, "取消"),
-    ]
+    monkeypatch.setattr("lol_audio_unpack.gui.controllers.window_shell.MessageBox", make_dialog)
+    assert confirm_force_close_running_tasks(parent=host) is (action == "confirm")
 
 
 def test_force_quit_application_quits_app_and_schedules_fallback_exit() -> None:

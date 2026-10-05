@@ -9,7 +9,6 @@ from PySide6.QtCore import QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QKeySequence, QPalette, QTextOption
 from PySide6.QtWidgets import (
     QApplication,
-    QDialog,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -24,11 +23,12 @@ from qfluentwidgets import (
     CaptionLabel,
     LineEdit,
     MenuAnimationType,
-    PrimaryPushButton,
+    MessageBoxBase,
     PushButton,
     RoundMenu,
     SearchLineEdit,
     SegmentedWidget,
+    SubtitleLabel,
     Theme,
     TransparentToolButton,
     qconfig,
@@ -104,7 +104,7 @@ def create_preview_search_input(parent: QWidget | None = None) -> SearchLineEdit
     return line_edit
 
 
-class ResourceInfoDialog(QDialog):
+class ResourceInfoDialog(MessageBoxBase):
     """展示当前实体的文件、映射和引用统计。"""
 
     open_requested = Signal(object)
@@ -115,7 +115,7 @@ class ResourceInfoDialog(QDialog):
         details: Mapping[str, str],
         source_path: Path | None,
         audio_roots: tuple[Path, ...] = (),
-        parent: QWidget | None = None,
+        parent: QWidget,
     ) -> None:
         """初始化资源信息对话框。
 
@@ -123,21 +123,18 @@ class ResourceInfoDialog(QDialog):
             details: 按显示顺序提供的标签和值。
             source_path: 可打开和复制的映射来源路径。
             audio_roots: 当前实体的音频目录。
-            parent: 父级窗口。
+            parent: 承载模态遮罩的主窗口。
         """
         super().__init__(parent)
         self.source_path = source_path
         self.setWindowTitle("资源信息")
-        self.setModal(False)
-        self.setMinimumWidth(460)
+        self.widget.setMinimumWidth(460)
+        self.widget.setMaximumWidth(640)
 
-        layout = QVBoxLayout(self)
+        layout = self.viewLayout
         layout.setContentsMargins(20, 18, 20, 18)
         layout.setSpacing(12)
-        title = BodyLabel("资源信息", self)
-        title_font = title.font()
-        title_font.setBold(True)
-        title.setFont(title_font)
+        title = SubtitleLabel("资源信息", self.widget)
         layout.addWidget(title)
 
         form = QFormLayout()
@@ -145,20 +142,20 @@ class ResourceInfoDialog(QDialog):
         form.setHorizontalSpacing(18)
         form.setVerticalSpacing(8)
         for name, value in details.items():
-            key_label = CaptionLabel(str(name), self)
-            value_label = BodyLabel(str(value), self)
+            key_label = CaptionLabel(str(name), self.widget)
+            value_label = BodyLabel(str(value), self.widget)
             value_label.setWordWrap(True)
             value_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             form.addRow(key_label, value_label)
         layout.addLayout(form)
 
         for number, root in enumerate(audio_roots, start=1):
-            location = create_preview_path_edit(self)
+            location = create_preview_path_edit(self.widget)
             location.setText(str(root))
             location.setCursorPosition(0)
             location.setToolTip(str(root))
             location.setAccessibleName(f"音频目录 {number}")
-            open_button = TransparentToolButton(FIF.FOLDER, self)
+            open_button = TransparentToolButton(FIF.FOLDER, self.widget)
             open_button.setToolTip("打开音频目录")
             open_button.setAccessibleName(f"打开音频目录 {number}")
             open_button.setFixedSize(32, 32)
@@ -167,13 +164,13 @@ class ResourceInfoDialog(QDialog):
             path_row.setSpacing(6)
             path_row.addWidget(location, 1)
             path_row.addWidget(open_button)
-            layout.addWidget(CaptionLabel("音频位置" if len(audio_roots) == 1 else f"音频位置 {number}", self))
+            layout.addWidget(CaptionLabel("音频位置" if len(audio_roots) == 1 else f"音频位置 {number}", self.widget))
             layout.addLayout(path_row)
         if not audio_roots:
-            layout.addWidget(CaptionLabel("暂无可用音频目录", self))
+            layout.addWidget(CaptionLabel("暂无可用音频目录", self.widget))
 
-        source_label = CaptionLabel("映射来源", self)
-        self.source_edit = create_preview_path_edit(self)
+        source_label = CaptionLabel("映射来源", self.widget)
+        self.source_edit = create_preview_path_edit(self.widget)
         source_text = str(source_path) if source_path is not None else "暂无映射来源"
         self.source_edit.setText(source_text)
         self.source_edit.setCursorPosition(0)
@@ -186,32 +183,21 @@ class ResourceInfoDialog(QDialog):
         layout.addWidget(source_label)
         layout.addLayout(source_row)
 
-        action_row = QHBoxLayout()
-        action_row.setContentsMargins(0, 6, 0, 0)
-        action_row.setSpacing(8)
-        self.copy_source_btn = PushButton("复制来源", self)
+        action_row = self.buttonLayout
+        action_row.removeWidget(self.yesButton)
+        action_row.removeWidget(self.cancelButton)
+        self.cancelButton.hide()
+        self.copy_source_btn = PushButton("复制来源", self.buttonGroup)
         self.copy_source_btn.setEnabled(source_path is not None)
         self.copy_source_btn.clicked.connect(self._copy_source)
-        self.open_source_btn = PushButton("打开来源", self)
+        self.open_source_btn = PushButton("打开来源", self.buttonGroup)
         self.open_source_btn.setEnabled(source_path is not None)
         self.open_source_btn.clicked.connect(lambda: self.open_requested.emit(self.source_path))
-        close_btn = PrimaryPushButton("关闭", self)
-        close_btn.clicked.connect(self.close)
+        self.yesButton.setText("关闭")
         action_row.addWidget(self.copy_source_btn)
         action_row.addWidget(self.open_source_btn)
         action_row.addStretch(1)
-        action_row.addWidget(close_btn)
-        layout.addLayout(action_row)
-        self.refresh_theme()
-
-    def refresh_theme(self) -> None:
-        """让原生对话框底色与 Fluent 子控件保持同一深浅主题。"""
-        palette = self.palette()
-        dark = qconfig.theme == Theme.DARK
-        palette.setColor(QPalette.ColorRole.Window, QColor("#292929" if dark else "#FFFFFF"))
-        palette.setColor(QPalette.ColorRole.WindowText, QColor(get_fluent_text_primary_pair()[int(dark)]))
-        self.setPalette(palette)
-        self.setAutoFillBackground(True)
+        action_row.addWidget(self.yesButton)
 
     def _copy_source(self) -> None:
         """复制当前映射来源路径。"""
@@ -488,8 +474,6 @@ class OverviewPreviewPanel(QWidget):
         raw_palette.setColor(QPalette.ColorRole.WindowText, text_color)
         self.text_preview.setPalette(raw_palette)
         self.text_preview.setStyleSheet(dark_qss if qconfig.theme == Theme.DARK else light_qss)
-        if dialog := getattr(self, "_resource_info_dialog", None):
-            dialog.refresh_theme()
 
     def _close_resource_info_dialog(self) -> None:
         """关闭仍属于旧实体的资源信息窗口。"""
@@ -497,6 +481,8 @@ class OverviewPreviewPanel(QWidget):
         if dialog is None:
             return
         self._resource_info_dialog = None
+        # 切换实体时立即隐藏旧信息，不让关闭动画延长旧对象的可操作时间。
+        dialog.hide()
         dialog.close()
 
     def _resource_info_dialog_finished(self, _result: int) -> None:

@@ -8,9 +8,8 @@ from collections.abc import Callable
 
 from loguru import logger
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QMessageBox
 from qfluentwidgets import FluentIcon as FIF
-from qfluentwidgets import NavigationItemPosition
+from qfluentwidgets import MessageBox, NavigationItemPosition
 
 from lol_audio_unpack.gui.common import apply_smooth_scroll_enabled
 from lol_audio_unpack.gui.controllers.contracts import RuntimeLoggingConfig
@@ -62,16 +61,15 @@ def sync_existing_runtime_logging(
 
 def confirm_force_close_running_tasks(*, parent) -> bool:
     """在执行中心仍有运行中任务时确认是否强制关闭。"""
-    dialog = QMessageBox(parent)
-    dialog.setIcon(QMessageBox.Icon.Warning)
-    dialog.setWindowTitle("任务仍在运行")
-    dialog.setText("当前仍有后台任务正在运行。")
-    dialog.setInformativeText("关闭窗口会直接结束当前进程，正在运行的任务不会继续在后台执行。")
-    dialog.setStandardButtons(QMessageBox.StandardButton.Close | QMessageBox.StandardButton.Cancel)
-    dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
-    dialog.button(QMessageBox.StandardButton.Close).setText("关闭")
-    dialog.button(QMessageBox.StandardButton.Cancel).setText("取消")
-    return dialog.exec() == int(QMessageBox.StandardButton.Close)
+    dialog = MessageBox(
+        "任务仍在运行",
+        "当前仍有后台任务正在运行。\n\n关闭窗口会直接结束当前进程，正在运行的任务不会继续在后台执行。",
+        parent,
+    )
+    dialog.yesButton.setText("关闭")
+    dialog.cancelButton.setText("取消")
+    dialog.cancelButton.setFocus()
+    return bool(dialog.exec())
 
 
 def force_quit_application(
