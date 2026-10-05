@@ -268,7 +268,7 @@ class ResultDrawer(QDialog):
             f"版本：{result.version or task.draft.version or '未确认'}\n动作：{scope}"
             + (f"\n解包类型：{audio_types or '无'}" if request is None and params.run_extract else "")
             + (
-                f"\nWAV 格式：{request.options.format if request else params.wav_format}"
+                f"\n采样格式：{request.options.format if request else params.wav_format}"
                 if request or params.wav_enabled
                 else ""
             )

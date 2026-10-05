@@ -117,6 +117,10 @@ def write_command_config(
 - `[wav]`：`enable`、`wav_workers`、`wav_timeout`、`wav_retries`、`wav_format`
 - `[mapping]`：`enable`、`integrate_data`
 
+`[wav] wav_format` 设置采样格式，转码统一输出 WAV。默认 `pcm16` 表示 16 位整数 PCM；
+`pcm24` / `pcm32` 表示 24 / 32 位整数 PCM，`float` 表示 32 位浮点，
+`auto` 沿用解码器默认的输出采样格式。配置字段名保持为 `wav_format`。
+
 GUI 只读取 `[app]`。其余 section 仅供 CLI 配置文件模式使用；启用 `-c` 时，动作列表也由这些 section 的 `enable` 决定。
 
 ## 5. 共享设置字段

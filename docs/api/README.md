@@ -70,7 +70,7 @@
 - `manifest/<version>/<region>/events/**`：事件数据
 - `audios/<version>/<region>/...`：保留原 ID 的可见 `.wem`
 - `audios/_data/**` 与 `audios/_index/<version>/<region>.msgpack`：原始内容对象与归属索引
-- `wavs/<version>/<region>/...`：固定位置的 WAV 输出；格式变化时替换同一文件，不保存隐藏派生对象
+- `wavs/<version>/<region>/...`：固定位置的 WAV 输出；采样格式变化时替换同一文件，不保存隐藏派生对象
 - `hashes/<version>/<region>/...`：映射结果或整合结果
 - `reports/<version>/<region>/...`：解包、转码与汇总报告
 

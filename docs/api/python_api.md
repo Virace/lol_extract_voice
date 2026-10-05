@@ -71,6 +71,8 @@ def create_app_context(
     `Game/DATA/FINAL`、后缀为 `.wad.client` 且 stat 未变化，artifact 不保存绝对路径。
 - `WavOutputOptions`
   - 独立 WAV 转码 stage 配置，包含 `enabled`、`worker_count`、`timeout_seconds`、`max_retries`、`format`
+  - `format` 设置采样格式，转码统一输出 WAV；支持 `auto`、`pcm16`（默认）、`pcm24`、`pcm32`、`float`，
+    各值含义见 [CLI 采样格式说明](./cli_api.md#46-wav)
   - `max_retries` 沿用历史语义，表示单文件任务最大尝试次数（含首次，默认 3）；内外后端共用，不自动切换后端。
 - `ResultStatus` / `EntityResult` / `StageResult` / `RunResult`
   - 统一描述实体、阶段和整轮工作流的 `success`、`partial`、`failed`、`cancelled` 事实；

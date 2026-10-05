@@ -56,7 +56,7 @@ class ExecutionTaskParamsSnapshot:
         wav_workers: 音频转码使用的默认并发数。
         wav_timeout: 单个音频转码任务超时时间。
         wav_retries: 单文件任务最大尝试次数，包含首次。
-        wav_format: 音频转码输出格式。
+        wav_format: 音频转码的采样格式。
         resource_pack_wads: 已选历史资源包 WAD 的相对路径与 stat 快照。
     """
 

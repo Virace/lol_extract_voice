@@ -12,7 +12,7 @@ class AudioExportDialog(MessageBoxBase):
         """展示冻结的导出摘要，默认跳过已有 WAV。
 
         Args:
-            summary: 当前对象与 WAV 格式。
+            summary: 当前对象与采样格式。
             details: 导出范围、目录和文件可用性说明。
             parent: 承载模态遮罩的主窗口。
         """

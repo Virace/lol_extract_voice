@@ -35,6 +35,7 @@ class AppConfig:
 class WavOutputOptions:
     """独立 WAV 转码 stage 的输出配置。
 
+    ``format`` 设置采样格式，转码统一输出 WAV。
     ``backend_path`` 为空时使用内置批处理；超时参数约束外部单文件进程。
     ``max_retries`` 沿用历史语义，表示单文件任务的最大尝试次数（含首次）。
     内外后端共用任务级重试；重试不切换后端、不重复工具预检。

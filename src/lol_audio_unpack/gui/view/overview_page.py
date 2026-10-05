@@ -1167,7 +1167,7 @@ class OverviewPage(QWidget):
         menu.exec(global_pos, aniType=MenuAnimationType.DROP_DOWN)
 
     def _wav_format(self) -> str:
-        """返回右键单文件转码使用的 WAV 格式。"""
+        """返回右键单文件转码使用的采样格式。"""
         return str(getattr(self.gui_config, "wav_format", "pcm16") or "pcm16")
 
     def _configure_audio_export(self, name: str, version: str | None) -> None:

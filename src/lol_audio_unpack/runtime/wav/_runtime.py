@@ -118,16 +118,16 @@ def build_output_path(wem_path: Path, *, audio_root: Path, wav_root: Path) -> Pa
 
 
 def resolve_decode_config(raw_format: str) -> DecodeConfig | None:
-    """将 CLI 格式名映射为 `pyvgmstream` 解码配置。
+    """将 CLI 采样格式名映射为 `pyvgmstream` 解码配置。
 
     Args:
-        raw_format: 用户传入的 WAV 输出格式名。
+        raw_format: 用户传入的采样格式名。
 
     Returns:
-        对应的 `DecodeConfig`；当格式为 `auto` 时返回 `None`。
+        对应的 `DecodeConfig`；当采样格式为 `auto` 时返回 `None`。
 
     Raises:
-        ValueError: 当格式名不受支持时抛出。
+        ValueError: 当采样格式名不受支持时抛出。
     """
     normalized = raw_format.strip().lower()
     if normalized == "auto":

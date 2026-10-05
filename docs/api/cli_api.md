@@ -206,6 +206,19 @@ enable = true
 - `--wav-timeout SECONDS`
 - `--wav-format {auto,pcm16,pcm24,pcm32,float}`
 
+转码统一输出 WAV；`--wav-format` 设置采样格式，默认值为 `pcm16`。
+
+| 参数值 | 采样格式 |
+| --- | --- |
+| `auto` | 沿用解码器默认的输出采样格式 |
+| `pcm16` | 16 位整数 PCM（默认） |
+| `pcm24` | 24 位整数 PCM |
+| `pcm32` | 32 位整数 PCM |
+| `float` | 32 位浮点 |
+
+PCM 选项中的数字表示位深。32 位整数与 32 位浮点使用不同的数值表示方式；
+这些选项不改变文件容器，也不设置采样率。
+
 在 `-c` 模式下：
 
 - `[wav]` 负责 `enable`、`wav_workers`、`wav_timeout`、`wav_retries`、`wav_format`
@@ -301,8 +314,8 @@ update 的共享数据、持久化或全局准备失败会阻断依赖阶段。e
 success/partial 且 `artifacts` 非空的实体目标；mapping 不依赖 extract 产物时仍会继续。日志样本摘要用于诊断，
 不再作为退出状态的事实来源。
 
-外部转码可通过 `--vgmstream-path <vgmstream-cli路径>` 选择，支持 `auto`、`pcm16`、`pcm24`、
-`pcm32`、`float`，并发和单文件超时沿用 `--wav-workers`、`--wav-timeout`。
+外部转码可通过 `--vgmstream-path <vgmstream-cli路径>` 选择，同样输出 WAV，支持 `auto`、`pcm16`、
+`pcm24`、`pcm32`、`float` 采样格式，并发和单文件超时沿用 `--wav-workers`、`--wav-timeout`。
 空路径使用内置后端；两者启动前均进行真实样本预检，CLI 失败直接退出，不询问或自动切换。
 `--wav-retries N` 设置文件任务最大尝试次数（包含首次，默认 3，至少 1）。
 内外后端共用任务级重试，重试保持后端和参数，不重复预检；耗尽次数后保留失败诊断。

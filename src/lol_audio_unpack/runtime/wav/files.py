@@ -86,7 +86,7 @@ def convert_files(
     Args:
         scopes: 已解析的精确文件范围，不扫描额外 WEM。
         output_root: WAV 目标目录。
-        options: 与实体转码共用的并发、格式、重试和后端参数。
+        options: 与实体转码共用的并发、采样格式、重试和后端参数。
         overwrite: 是否覆盖已经存在的 WAV。
 
     Returns:
