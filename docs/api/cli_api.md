@@ -1,13 +1,13 @@
-# CLI API（命令行参数与执行语义）
+# 控制台参数参考
 
 当前入口：
 
 - `unpack`：对应 `lol_audio_unpack.cli.cli:main`
 - `mapping`：同样对应 `lol_audio_unpack.cli.cli:main`，但默认以 `mapping` 模式启动
-- `python -m lol_audio_unpack`：薄壳转发到同一套 CLI 主入口
+- `python -m lol_audio_unpack`：薄壳转发到同一套控制台主入口
 - Windows 独立包 `LolAudioUnpack-CLI.exe`：提供相同动作，映射使用 `LolAudioUnpack-CLI.exe mapping ...`；使用说明见 [控制台独立包](../cli-package.md)。
 
-CLI 的相对输入、输出和工具路径均以调用终端的当前目录为起点，打包后也不切换到 EXE 所在目录。
+控制台的相对输入、输出和工具路径均以调用终端的当前目录为起点，打包后也不切换到 EXE 所在目录。
 默认输出为当前目录的 `output/`；不带路径的 `-c` 读取当前目录的 `config/lol-audio-unpack.ini`。
 
 ## 1. 基础命令
@@ -30,9 +30,9 @@ python -m lol_audio_unpack <ACTION...> [OPTIONS]
 
 ## 2. 配置来源语义
 
-CLI 当前只有两种模式：
+控制台当前只有两种模式：
 
-### 2.1 纯 CLI 模式
+### 2.1 命令参数模式
 
 - 不带 `-c/--config-file`
 - 仅使用内建默认值 + 本次命令显式参数
@@ -47,13 +47,15 @@ uv run unpack update extract \
   --output-path "./output"
 ```
 
+<a id="config-file"></a>
+
 ### 2.2 配置文件模式
 
 - 带 `-c` 或 `--config-file`
 - `-c` 不带路径：读取当前目录下的 `config/lol-audio-unpack.ini`
 - `-c <PATH>`：读取指定 INI 配置文件
 - 启用 `-c` 后，只允许提供配置文件路径；动作与参数都从配置文件读取
-- 这条规则对全部 CLI 参数都生效，包括 `--dev`、`--force`、`--max-workers`
+- 这条规则对全部控制台参数都生效，包括 `--dev`、`--force`、`--max-workers`
 - 如果要切换到其他 profile（例如 `lol-audio-unpack.dev.ini`），请直接写显式 `-c <PATH>`
 
 默认配置文件名：
@@ -73,8 +75,8 @@ uv run unpack update extract \
 
 其中：
 
-- `GUI` 只读取 `[app]`
-- `[targets] / [runtime] / [update] / [extract] / [wav] / [mapping]` 仅在 CLI 的 `-c` 模式下生效
+- 界面读取 `[app]` 共享设置、`[wav]` 转码默认值与 `[gui]` 界面偏好，动作由执行中心选择
+- 控制台的 `-c` 模式读取共享设置、目标、运行参数和各动作分组，界面/控制台共用 WAV 输出规则
 
 示例配置文件中的约定：
 
@@ -90,7 +92,7 @@ uv run unpack -c ./config/custom.ini
 
 ## 3. 共享配置参数
 
-以下参数属于“共享配置”，只允许在纯 CLI 模式下显式传入：
+以下参数属于“共享配置”，只允许在纯控制台模式下显式传入：
 
 - `--game-path PATH`
 - `--output-path PATH`
@@ -100,12 +102,25 @@ uv run unpack -c ./config/custom.ini
 - `--group-by-type` / `--no-group-by-type`
 - `--no-lobby-audio`：关闭默认附带的大厅音频（选人语音、禁用语音和选人音效）。三种文件统一输出到英雄的 `lobby/`，不受 `--exclude-type` 的 VO/SFX 筛选影响。
 
-旧 `--with-bp-vo`、`--no-with-bp-vo` 会提示新用法并退出，不执行任务：默认包含时删除旧参数，关闭时改用 `--no-lobby-audio`。
-INI 使用 `[app] lobby_audio`，默认 `true`，显式 `false` 关闭。旧键 `with_bp_vo` 在加载时兼容读取并自动改名，保留原值、注释及其他配置；新旧键同时存在时以新键为准。文件无法写回时继续兼容读取并提示手动修改。
-LCU 基础数据更新默认同时预取大厅音频到 `manifest` 缓存；英雄解包时才从缓存硬链接到
-对应英雄的 `lobby/`，缓存缺失时按英雄补齐。大厅 OGG 不进入 WEM 内容库。
+<a id="audio-types"></a>
 
-通用参数：
+### 音频类型筛选
+
+`--exclude-type` 接受 `VO`、`SFX`、`MUSIC` 的逗号分隔列表，默认 `SFX,MUSIC`。
+`--exclude-type=` 显式传入空值，取消类型过滤。筛选示例见
+[控制台音频筛选](../cli-package.md#audio-types)，具体分组见 [音频类型](../audio-and-output.md#audio-types)。
+
+### 大厅音频与旧键
+
+| 项目 | 行为 |
+| --- | --- |
+| `[app] lobby_audio` | 默认 `true`，设为 `false` 关闭 |
+| 旧控制台 `--with-bp-vo` / `--no-with-bp-vo` | 提示新用法并退出；默认包含时删除旧参数，关闭改用 `--no-lobby-audio` |
+| 旧 INI `with_bp_vo` | 自动迁移为 `lobby_audio`，保留原值、注释与其他配置；新旧并存时以新键为准，无法写回时提示手动修改 |
+| 获取与保存 | 更新时预取到 `manifest`，英雄解包时硬链接到 `lobby/`；缓存缺失时按英雄补齐 |
+| 内容库 | 大厅 OGG 不进入 WEM 内容库 |
+
+### 通用参数
 
 - `-c, --config-file [PATH]`
 - `--max-workers N`
@@ -116,8 +131,8 @@ LCU 基础数据更新默认同时预取大厅音频到 `manifest` 缓存；英�
 注意：
 
 - `--max-workers` 在 `-c` 模式下应写入 `[runtime]`
-- `-l, --log-level`、`--dev`、`--enable-league-tools-log` 仍然只支持纯 CLI 显式传入
-- 一旦启用 `-c`，它们都不能再作为手工 CLI 参数追加
+- `-l, --log-level`、`--dev`、`--enable-league-tools-log` 仍然只支持纯控制台显式传入
+- 一旦启用 `-c`，它们都不能再作为手工控制台参数追加
 
 ## 4. 动作与参数
 
@@ -187,7 +202,7 @@ skip_events = false
 
 ### 4.5 `extract`
 
-`extract` 动作当前没有独立的专属 CLI 参数，主要复用共享目标与运行时参数。
+`extract` 动作当前没有独立的专属控制台参数，主要复用共享目标与运行时参数。
 
 在 `-c` 模式下：
 
@@ -200,10 +215,13 @@ skip_events = false
 enable = true
 ```
 
+<a id="wav-options"></a>
+
 ### 4.6 `wav`
 
 - `--wav-workers N`
 - `--wav-timeout SECONDS`
+- `--wav-retries N`
 - `--wav-format {auto,pcm16,pcm24,pcm32,float}`
 
 转码统一输出 WAV；`--wav-format` 设置采样格式，默认值为 `pcm16`。
@@ -236,7 +254,7 @@ wav_format = pcm16
 
 说明：
 
-- 当动作列表包含 `wav` 时，CLI 会执行一个独立的 `WAV 转码` stage。
+- 当动作列表包含 `wav` 时，控制台会执行一个独立的 `WAV 转码` stage。
 - `WAV 转码` stage 消费当前版本/语言的 `audios/<version>/<region>` 输出树，按内容与转换方案复用已完成 WAV；需要转换的内容通过共用批处理生成镜像 WAV。
 
 ### 4.7 `mapping`
@@ -253,23 +271,61 @@ integrate_data = true
 
 ## 5. 执行与校验规则
 
-除下述主动作外，还提供两个独立命令，必须放在参数首位，不能与主动作组合，也不读取 `-c`：
+除主动作外，还提供两个独立命令，必须放在参数首位，不能与主动作组合，也不读取 `-c`：
 
 | 命令 | 输入与输出 |
 | --- | --- |
 | `export-json --champions ID` 或 `export-json --maps ID` | 按一个实体 ID 定位已有映射；`--output-path` 为数据根，默认 `./output`；`--game-region` 默认 `zh_CN`；多版本用 `--game-version` 选择；`--json-output FILE.json` 保存文件，省略则 stdout 为完整 JSON |
 | `convert-wem --input WEM...` 或 `convert-wem --input-list FILE.txt` | 读取明确 WEM 文件，UTF-8 清单每行一个路径，相对条目基于清单目录；两种输入可合用；`--output-path` 为 WAV 目标，默认 `./output/wavs` |
 
+<a id="export-json"></a>
+
+### 映射导出 JSON
+
 `export-json` 不初始化客户端、不自动运行 mapping；缺失时提示 `update mapping`。
 仅有一个匹配版本时自动选择；普通和整合映射都存在时取最近生成的一份，同时间优先整合版。
 完整 JSON 保留原字段，整数对象键转为字符串；诊断始终写入 stderr。
 
-`convert-wem` 使用现有 WAV 批处理和 `--wav-workers / --wav-format / --wav-timeout / --wav-retries / --vgmstream-path`
-配置，默认值与主流程一致。默认镜像共同父目录，跨卷按卷分批并使用 `volume-N` 子目录；
-`--input-root` 可固定镜像根，默认跳过已有 WAV，`--overwrite` 覆盖。报告写入目标下 `reports/`。
-两个命令沿用第 7 节退出码。具体工作流及示例见 [控制台独立包](../cli-package.md)。
+| 映射类型 | 事件字段 |
+| --- | --- |
+| 整合英雄映射 | `data.skins[].events.<类别>.mapping` |
+| 整合地图映射 | `data.map.events.<类别>.mapping` |
+| 普通映射 | `skins` 或 `map` 中按子实体和类别组织 |
 
-- 纯 CLI 模式下，必须提供至少一个动作：`update` / `extract` / `wav` / `mapping`
+事件值为 WEM ID 列表，事件与音频可能为多对多关系。已解包时映射可能包含 `audioPaths`；
+只有 ID 时，可在对应版本、语言和实体的 `audios` 目录按 `<WEM ID>.wem` 查找。
+
+| 查找内容 | 入口或关键词 |
+| --- | --- |
+| 装备音效 | 地图 `0` 的 `ITEMS_Global` |
+| 英雄与装备交互台词 | 对应英雄语音 |
+| 装备事件 | ID 或内部名称，如心之钢 `3084`、中娅 `Zhonyas` |
+| 标记提示音 | `PING` |
+
+英文前缀可能命中其他变体，以完整事件名和本地资源为准。中文名称与 ID 可参考腾讯
+[装备资料 items.js](https://game.gtimg.cn/images/lol/act/img/js/items/items.js)，版本可能与本地客户端不同。
+
+<a id="convert-wem"></a>
+
+### 独立 WEM 转码
+
+| 独立转码配置 | 规则 |
+| --- | --- |
+| 共用参数 | 使用既有 WAV 批处理，支持 `--wav-workers`、`--wav-format`、`--wav-timeout`、`--wav-retries`、`--vgmstream-path`，默认值与主流程一致 |
+| 路径 | 默认镜像共同父目录，跨卷使用 `volume-N` 子目录；`--input-root` 可固定镜像根 |
+| 已有 WAV | 默认跳过，`--overwrite` 覆盖 |
+| 报告 | 写入目标下 `reports/` |
+
+两个独立命令沿用第 7 节退出码，示例见 [控制台使用说明](../cli-package.md)。
+
+清单支持 UTF-8 BOM、空行和包围路径的双引号；不展开通配符，重复文件只处理一次。
+清单内相对路径以清单目录为起点，命令行路径以当前终端目录为起点。
+帮助和重定向输出均使用 UTF-8。主流程中的 `manifest`、`hashes`、`audios` 与 `cache` 可复用，
+删除后相应步骤需重做；各阶段需使用相同输出根、版本和语言。
+
+### 主动作校验
+
+- 纯控制台模式下，必须提供至少一个动作：`update` / `extract` / `wav` / `mapping`
 - `-c` 模式下，必须在配置文件里启用至少一个动作
 - `--wav*` 仅允许和 `wav` 动作一起使用
 - `--integrate-data` 仅允许和 `mapping` 一起使用
@@ -298,9 +354,11 @@ output_path = ./output
 
 完整结构与迁移说明见 [已准备本地数据源合同](./prepared_source.md)。
 
+<a id="exit-status"></a>
+
 ## 7. 退出语义
 
-CLI 顶层根据同一个 `RunResult` 统一决定主结论与进程退出码；dispatch/runtime 不会在深层直接退出：
+控制台顶层根据同一个 `RunResult` 统一决定主结论与进程退出码；dispatch/runtime 不会在深层直接退出：
 
 | 结果 | 退出码 | 含义 |
 | --- | ---: | --- |
@@ -314,8 +372,13 @@ update 的共享数据、持久化或全局准备失败会阻断依赖阶段。e
 success/partial 且 `artifacts` 非空的实体目标；mapping 不依赖 extract 产物时仍会继续。日志样本摘要用于诊断，
 不再作为退出状态的事实来源。
 
-外部转码可通过 `--vgmstream-path <vgmstream-cli路径>` 选择，同样输出 WAV，支持 `auto`、`pcm16`、
-`pcm24`、`pcm32`、`float` 采样格式，并发和单文件超时沿用 `--wav-workers`、`--wav-timeout`。
-空路径使用内置后端；两者启动前均进行真实样本预检，CLI 失败直接退出，不询问或自动切换。
-`--wav-retries N` 设置文件任务最大尝试次数（包含首次，默认 3，至少 1）。
-内外后端共用任务级重试，重试保持后端和参数，不重复预检；耗尽次数后保留失败诊断。
+### 外部转码与重试
+
+| 参数或流程 | 规则 |
+| --- | --- |
+| `--vgmstream-path` | 指定外部 vgmstream-cli，空路径使用内置后端 |
+| 输出采样格式 | 两后端都输出 WAV，支持 `auto`、`pcm16`、`pcm24`、`pcm32`、`float` |
+| 并发与超时 | 沿用 `--wav-workers`、`--wav-timeout` |
+| 预检 | 均使用真实样本；失败直接退出，不询问或自动切换 |
+| `--wav-retries N` | 文件最大尝试次数含首次，默认 3，至少 1 |
+| 重试边界 | 内外后端共用，保持参数与后端，不重复预检；耗尽次数保留失败诊断 |
