@@ -30,7 +30,12 @@ uv sync --extra gui --group gui-test
 
 # 运行入口
 uv run unpack --help
+uv run unpack extract wav mapping --champions Annie --wav-group-by-event --game-path "<game-path>"
 uv run python -m lol_audio_unpack --help
+
+# 独立文件工具：已有映射导出 JSON、指定 WEM 清单转码
+uv run unpack export-json --maps 0 --json-output ./common.json
+uv run unpack convert-wem --input-list ./selected.txt --output-path ./selected-wavs
 
 # 对本轮改动的 Python 路径执行格式与静态检查
 uv run ruff format --check <changed-python-paths...>
@@ -54,6 +59,9 @@ uv run pytest tests/system/test_wav_coordinator.py -q
 
 # 构建 Python 包
 uv build
+
+# 本地独立构建 Windows x64 CLI（不修改根 .venv）
+uv run --no-sync python scripts/pyinstaller/build_cli.py
 ```
 
 `<changed-python-paths...>` 必须替换为本轮实际新增或修改的 Python 路径。当前存量文件尚未建立
@@ -62,6 +70,19 @@ uv build
 当前没有声明类型检查器，因此不存在可声称通过的 typecheck 命令。GUI 可执行文件由
 `scripts/pyinstaller/build_gui.py` 和 tag release workflow 构建；稳定逻辑由显式 pytest-qt
 门禁验证，正式可执行文件和视觉质量仍属于发布与人工验收门禁。
+
+文档网站是 `docs/` 内的 Node 子项目，要求 Node.js >=22.12。根目录保持 Python 项目：
+
+```powershell
+cd docs
+npm ci
+npm run dev
+npm run build
+```
+
+README 和网页共用原始 Markdown；源码和配图入库，`node_modules`、生成网页、缓存与压缩包不入库。
+本地构建输出在 `.temp/.docs-site`，正式网站由文档 workflow 构建并上传 Cloudflare Pages。
+发布入口与凭证设置见 `docs/development/doc-site.md`。
 
 ## 3. 代码组织
 
@@ -111,18 +132,28 @@ uv build
 无关的全仓重构。`pyproject.toml`、依赖、公开 API、输出格式、配置 schema 或本地数据源契约变化
 需要相称的兼容分析与验证。
 
-最低门禁：
+按改动选择验证；以下不是每轮都执行的流水线：
 
-1. 对改动文件运行 Ruff 格式与静态检查。
-2. 运行能证明目标行为的最小 pytest 集合。
-3. 影响核心共享逻辑时运行默认离线门禁。
-4. 影响 WAD/BIN、目标选择、解包、mapping 或本地数据源合同时，运行对应显式系统门禁。
+1. 纯文案、注释和规范修改检查 diff；修改 Python 行为时，对改动路径运行 Ruff 格式与静态检查。
+2. 行为修改复用能回答本次问题的最小现有检查；没有必要的持久测试时，可用一次性真实验证，不能为满足门禁形式新增 pytest 用例。
+3. 已核实影响多个调用方、定向检查不足以覆盖传播风险时，运行相关跨模块集合；需要默认离线全量门禁时先说明具体原因。仅位于核心目录不构成理由。
+4. 影响 WAD/BIN、解包、mapping 或本地数据源兼容时，运行任务相关真实样本或对应显式系统门禁。目标选择等自有逻辑先定向验证，改变真实资源消费结果时再验证实际链路。缺少所需版本样本就报告未验证。
 5. 同步更新直接相关的命令与 API 文档。
 6. 最终报告已运行证据、未运行边界、人工验收项和推迟风险。
+
+已通过且未受后续改动影响的验证不重复执行。没有新失败、疑点、明确影响或发布要求时，完成定向验证即停止扩大检查。
 
 ### 测试策略
 
 测试目标是防止项目自有编排、配置、产物布局与边界适配回归；测试数量和覆盖率不是交付指标。
+
+**测试前置说明**：不默认 TDD，不按函数、方法或分支补齐测试。编写或修改任何测试代码之前，
+包括既有用例、fixture、mock、快照、样本生成器及一次性验证脚本中的测试逻辑，必须先向用户说明：
+要测什么、为什么这样测、输入与独立预期的依据，以及现有验证为什么不足。新增持久资产说明成本，
+修改预期说明外部依据；不能写完再补理由。相同行为的一组改动合并说明，单纯运行已有检查不触发此要求。
+这是告知而非审批，说明后在已授权范围内继续，不等待回复。理由不足时不新增测试，复用已有证据并
+继续主任务；不得因本条声称没有测试权限或停工。必要样本、环境或需求缺失须报告具体阻塞。
+下表描述已有验证能力，不是给每个模块新增测试的任务清单。
 
 | 风险或稳定契约 | 可观察行为 | 最低有效证据 | 环境或依赖 | 位置与时机 |
 | --- | --- | --- | --- | --- |
@@ -131,17 +162,26 @@ uv build
 | 公共 Python 入口漂移 | 文档推荐的关键符号可从声明模块导入 | 一组参数化 import smoke | 核心开发依赖 | `tests/test_public_api.py`；公开面修改时 |
 | GUI 稳定逻辑回归 | 配置持久化、任务状态、异步信号、错误恢复和试听生命周期稳定 | 精选 pytest-qt 行为测试 | `uv sync --extra gui --group gui-test`；原生 Windows 优先 | `tests/gui/`；GUI 逻辑修改时显式运行 |
 | 本地数据源合同漂移 | 真实客户端与外部准备目录使用同一结构预检；无效输入在输出初始化前失败 | AppContext 预检行为测试 | 临时目录 | `tests/app/test_app_context.py`；来源合同修改时 |
-| 本地真实音频链路失效 | `update -> bindings/events -> extract -> NativeHIRC mapping` 生成 WEM、报告与 hash | 单条共享准备系统测试；英雄 1、Jade 60009、地图 0/11/22；普通英雄、Jade 与地图 11 保留 mapping，Map 22 验证 binding 与 WEM | 当前版本含 Jade 的真实本地客户端、临时磁盘 | `tests/system/test_local_game.py`；核心 WAD/BIN 链路或交付前显式运行 |
+| 本地真实音频链路失效 | `update -> bindings/events -> extract -> NativeHIRC mapping` 生成 WEM、报告与可定位音频的 hash | 单条共享准备系统测试；英雄 1、Jade 60009、地图 0/11/22；普通英雄、Jade 与地图 0/11 验证普通和整合 mapping 的精确路径均可定位非空 WEM，Map 22 验证 binding 与 WEM | 当前版本含 Jade 的真实本地客户端、临时磁盘 | `tests/system/test_local_game.py`；核心 WAD/BIN 链路或交付前显式运行 |
 | 旧 WAV 协调器多进程兼容回归 | 超时重试、熔断、报告和进度生命周期一致 | 显式系统兼容测试 | Windows 多进程 | `tests/system/test_wav_coordinator.py`；该兼容面修改时 |
 
 明确边界：
 
 - 不单独复测 `league-tools`、`pyvgmstream` 等上游包内部算法；只验证本项目的
   调用契约与真实集成结果。
-- WAD/BNK/WPK 解包不建立庞大 mock 单测矩阵；真实正确性由一条本地系统链路证明，项目自有
-  的目标选择、错误处理和产物组织保留低层测试。
+- WAD/BNK/WPK 解包不建立猜测格式的 mock 单测矩阵；任务相关的真实文件是格式验证的主要输入。
+  当前系统链路只能证明本次客户端、代表实体及实际断言覆盖的结果，不能外推所有版本、格式和音频内容。
+  项目自有目标选择、错误处理、缓存和产物组织的低层测试仍须逐项说明独立价值，不能仅因属于纯逻辑就新增。
+- 新版本或历史资源兼容问题，先取得对应真实文件并验证实际入口。预期来自已确认的资源内容、格式依据、
+  可信参考工具或人工验收；不能由当前实现生成答案再自行通过。记录样本版本、来源和关键预期即可，
+  不默认新建样本框架或全版本矩阵。缺少样本就报告证据缺口，不用合成文件替代兼容验收。
+- 当前 `tests/system/test_local_game.py` 验证 binding、产物及 mapping 指向非空 WEM，未验证实际解码或
+  音频内容正确性。涉及这类问题时须核对可信解码结果或试听，不能以文件存在、非空或状态成功替代。
+  自身序列化往返只证明一致性；需要外部兼容结论时另需独立依据。
 - 同一状态矩阵只保留一个主要测试层。能参数化合并时不重复启动完整 CLI 或解包流程。
 - 不用源码字符串、私有名称、文件摆放、旧符号不存在或框架默认行为充当业务回归测试。
+- 单纯构造后读取相同字段、固定偶然文案、复刻实现或重复已有失败模式的用例不新增。存量测试清理须在
+  已授权范围内确认没有独有价值后处理，不按测试行数比例删除。
 - 私有 rename、注释、文案、格式和 benchmark 报告排版不新增自动化测试；使用 Ruff、目标
   diff 与真实命令验证。
 
@@ -149,6 +189,9 @@ GUI 自动化只保留不依赖视觉判定的稳定行为：配置读写、任�
 错误恢复、筛选和试听生命周期。截图、颜色、像素、边距、尺寸、控件类型、源码字面量以及
 框架默认行为不作为回归测试。首次启动整体流程、视觉层级、主题缩放、高日志量主观流畅度、
 重启和正式打包可执行文件由人工验收。
+
+tag release workflow 在打包前显式执行默认离线与 GUI 行为门禁；真实客户端链路不能由
+GitHub 托管 runner 替代，交付前仍须本地显式运行，并单独保留正式可执行文件的人工验收。
 
 外部工具准备目录与真实客户端共用同一消费合同；本仓库不在测试中下载客户端资源或 wwiser。
 需要验证某个外部准备器时，由该工具自行证明产物完整性，再用本项目的本地预检与系统链路验收。
