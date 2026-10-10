@@ -131,7 +131,7 @@ def derive_version_from_git_describe(describe_output: str, fallback_version: str
 
     Args:
         describe_output: `git describe --tags --long --dirty` 的输出。
-        fallback_version: 取不到 Git 信息时使用的静态回退版本。
+        fallback_version: 静态回退版本；显式声明的开发版本同时作为开发周期下限。
 
     Returns:
         适合展示的运行时版本号。
@@ -149,6 +149,14 @@ def derive_version_from_git_describe(describe_output: str, fallback_version: str
         return tag_version
 
     next_cycle_version = _next_cycle_version(tag_version)
+    base, pre, dev, _ = _parse_runtime_version(fallback_version)
+    if pre is None and dev is not None:
+        next_base, _, next_dev, _ = _parse_runtime_version(next_cycle_version)
+        declared_key = (*map(int, base.split(".")), dev)
+        tag_key = (*map(int, next_base.split(".")), next_dev)
+        # 发布标签可能只存在于主分支；开发分支使用显式基准，避免被旧祖先标签拉回旧周期。
+        if declared_key > tag_key:
+            next_cycle_version = f"{base}.dev{dev}"
     derived_version = _advance_dev_version(next_cycle_version, commit_count)
     local_suffix = f"g{sha}"
     if is_dirty:
@@ -157,11 +165,11 @@ def derive_version_from_git_describe(describe_output: str, fallback_version: str
 
 
 def resolve_runtime_version(repo_root: Path, fallback_version: str) -> str:
-    """优先根据 Git 历史派生运行时版本，失败时回退到静态版本。
+    """优先使用构建注入版本，否则结合 Git 历史与静态开发基准派生版本。
 
     Args:
         repo_root: 仓库根目录。
-        fallback_version: 无法访问 Git 信息时使用的静态版本。
+        fallback_version: 无法访问 Git 信息时使用的静态版本，也是显式开发周期的下限。
 
     Returns:
         运行时展示使用的版本号。
