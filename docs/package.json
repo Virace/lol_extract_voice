@@ -1,0 +1,18 @@
+{
+  "name": "lol-audio-unpack-docs",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "vitepress dev --host 127.0.0.1 --port 5173 --strictPort",
+    "build": "vitepress build",
+    "preview": "vite preview --outDir ../.temp/.docs-site/dist --host 127.0.0.1 --port 4173 --strictPort"
+  },
+  "devDependencies": {
+    "vite": "8.3.4",
+    "vitepress": "2.0.0-alpha.19",
+    "vue": "^3.5.40"
+  }
+}

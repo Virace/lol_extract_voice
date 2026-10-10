@@ -1,0 +1,142 @@
+name: docs-deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: '上传到 Cloudflare Pages；关闭时仅保存网站构建包'
+        type: boolean
+        default: true
+  workflow_call:
+    inputs:
+      deploy:
+        type: boolean
+        default: true
+    secrets:
+      CLOUDFLARE_ACCOUNT_ID:
+        required: false
+      CLOUDFLARE_API_TOKEN:
+        required: false
+  release:
+    types: [published, edited]
+
+permissions:
+  contents: read
+
+# 串行发布，避免同时上传时较早的构建覆盖新站点。
+concurrency:
+  group: docs-site-production
+  cancel-in-progress: false
+
+env:
+  CF_PAGES_PROJECT: lau
+
+jobs:
+  docs:
+    if: github.event_name != 'release' || (!github.event.release.draft && !github.event.release.prerelease)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: 获取主分支文档
+        uses: actions/checkout@v6.0.3
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+
+      - name: 安装文档依赖
+        working-directory: docs
+        run: npm ci
+
+      - name: 构建网站并获取最新正式版信息
+        working-directory: docs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CI: 'true'
+        run: npm run build
+
+      - name: 保存网站压缩包与构建信息
+        id: package
+        shell: bash
+        run: |
+          commit=$(git rev-parse HEAD)
+          package="lol-audio-unpack-docs-${commit:0:12}"
+          cd .temp/.docs-site/dist
+          zip -q -r "../$package.zip" .
+          cd ..
+          sha256sum "$package.zip" > "$package.zip.sha256"
+          jq --arg commit "$commit" --arg built_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '. + {commit: $commit, builtAt: $built_at}' release.json > "$package.json"
+          echo "name=$package" >> "$GITHUB_OUTPUT"
+          echo "网站源码提交：$commit" >> "$GITHUB_STEP_SUMMARY"
+          echo "下载本次运行的 docs-site 构建包，可解压到静态服务器目录。" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 留存网站构建包
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: docs-site-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .temp/.docs-site/${{ steps.package.outputs.name }}.zip
+            .temp/.docs-site/${{ steps.package.outputs.name }}.zip.sha256
+            .temp/.docs-site/${{ steps.package.outputs.name }}.json
+          include-hidden-files: true
+          compression-level: 0
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: 检查部署凭证并准备 Pages 项目
+        if: github.event_name == 'release' || inputs.deploy
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          node --input-type=module <<'NODE'
+          const account = process.env.CLOUDFLARE_ACCOUNT_ID
+          const token = process.env.CLOUDFLARE_API_TOKEN
+          const name = process.env.CF_PAGES_PROJECT
+          if (!account || !token) {
+            throw new Error('请设置 CLOUDFLARE_ACCOUNT_ID 和 CLOUDFLARE_API_TOKEN；网站构建包已保存。')
+          }
+          const endpoint = `https://api.cloudflare.com/client/v4/accounts/${account}/pages/projects`
+          const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+          let response = await fetch(`${endpoint}/${name}`, { headers, signal: AbortSignal.timeout(30000) })
+          if (response.status === 404) {
+            response = await fetch(endpoint, {
+              method: 'POST', headers,
+              body: JSON.stringify({ name, production_branch: 'main' }),
+              signal: AbortSignal.timeout(30000),
+            })
+          }
+          const body = await response.json()
+          if (!response.ok || !body.success) {
+            const errors = (body.errors || []).map(error => `${error.code}: ${error.message}`).join('; ')
+            throw new Error(`Pages 项目准备失败（HTTP ${response.status}）：${errors}`)
+          }
+          if (body.result.production_branch !== 'main') {
+            throw new Error(`Pages 项目 ${name} 的生产分支不是 main，请检查现有项目配置。`)
+          }
+          console.log(`Pages 项目已就绪：${body.result.name}（${body.result.subdomain}）`)
+          NODE
+
+      - name: 上传到 Cloudflare Pages
+        id: deploy
+        if: github.event_name == 'release' || inputs.deploy
+        uses: cloudflare/wrangler-action@v4.1.3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: docs
+          wranglerVersion: '4.112.0'
+          command: pages deploy ../.temp/.docs-site/dist --project-name=${{ env.CF_PAGES_PROJECT }} --branch=main
+
+      - name: 记录部署地址
+        if: steps.deploy.outcome == 'success'
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: echo "Pages 部署地址：$DEPLOYMENT_URL" >> "$GITHUB_STEP_SUMMARY"

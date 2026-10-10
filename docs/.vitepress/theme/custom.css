@@ -1,0 +1,157 @@
+:root {
+  --docs-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --vp-font-family-base: 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+}
+
+.VPHero .name { color: var(--vp-c-brand-1); background: none; -webkit-text-fill-color: currentColor; }
+.VPHero .text { font-size: clamp(2rem, 4vw, 3.5rem); line-height: 1.2; }
+.VPHero .image-bg { display: none; }
+.VPHero .image-src { max-width: 200px; max-height: 200px; }
+.release-info { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 24px; color: var(--vp-c-text-2); font-size: 14px; }
+.vp-doc h1, .vp-doc h2, .vp-doc h3 { overflow-wrap: anywhere; text-wrap: balance; }
+.vp-doc :not(pre) > code { overflow-wrap: anywhere; }
+.vp-doc img { border-radius: 8px; }
+.vp-doc .reference-table th,
+.vp-doc .reference-table td { white-space: nowrap; }
+@media (max-width: 959px) { .release-info { justify-content: center; } }
+
+.vp-doc .guide-details {
+  margin: 24px 0;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+}
+
+.vp-doc .guide-details > summary {
+  padding: 16px 20px;
+  border-radius: 8px;
+  background: var(--vp-c-bg-soft);
+  color: var(--vp-c-text-1);
+  font-weight: 600;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.vp-doc .guide-details > summary::marker { color: var(--vp-c-brand-1); }
+.vp-doc .guide-details > summary:focus-visible { outline: 2px solid var(--vp-c-brand-1); outline-offset: 3px; }
+.vp-doc .guide-details[open] > summary { border-bottom: 1px solid var(--vp-c-divider); border-radius: 8px 8px 0 0; }
+.vp-doc .guide-body { padding: 0 20px 12px; }
+.vp-doc .guide-body h4 { margin: 28px 0 12px; color: var(--vp-c-brand-1); font-size: 1.125rem; line-height: 1.5; }
+.vp-doc .guide-body > h4:first-child { margin-top: 20px; }
+.vp-doc .guide-body table { display: table; width: 100%; font-size: 1rem; line-height: 1.7; }
+.vp-doc .guide-body th { background: var(--vp-c-bg-soft); color: var(--vp-c-text-1); }
+.vp-doc .guide-body th, .vp-doc .guide-body td { padding: 10px 12px; }
+.vp-doc .guide-body blockquote,
+.vp-doc .guide-warning blockquote {
+  margin: 20px 0;
+  padding: 12px 16px;
+  border: 1px solid var(--vp-c-brand-soft);
+  border-radius: 6px;
+  background: var(--vp-c-brand-soft);
+  color: var(--vp-c-text-1);
+}
+.vp-doc .guide-body blockquote p, .vp-doc .guide-warning blockquote p { margin: 0; }
+.vp-doc .guide-warning blockquote { border-color: var(--vp-c-warning-3); background: var(--vp-c-warning-soft); }
+.vp-doc .guide-warning strong { color: var(--vp-c-warning-1); }
+@media (max-width: 639px) {
+  .vp-doc .guide-details > summary { padding: 14px 16px; }
+  .vp-doc .guide-body { padding: 0 16px 8px; }
+  .vp-doc .guide-body th, .vp-doc .guide-body td { padding: 8px; }
+  .vp-doc .guide-body blockquote { padding: 12px; }
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+.VPDoc .content-container,
+.NotFound {
+  animation: docs-page-enter 260ms var(--docs-ease-out);
+}
+
+.VPButton,
+.VPNavBarMenuLink,
+.VPSidebarItem .link {
+  transition-duration: 180ms;
+  transition-timing-function: var(--docs-ease-out);
+}
+
+.VPDocAsideOutline .outline-marker {
+  transition:
+    top 220ms var(--docs-ease-out),
+    background-color 180ms var(--docs-ease-out),
+    opacity 180ms var(--docs-ease-out);
+}
+
+.VPDocAsideOutline .outline-link {
+  transition: color 160ms var(--docs-ease-out);
+}
+
+@keyframes docs-page-enter {
+  from { opacity: 0.78; }
+  to { opacity: 1; }
+}
+
+/* 沿用参考站的桌面目录修正：正文居中，右侧目录与固定导航保持间距。 */
+@media (min-width: 1280px) {
+  .vp-doc [id] {
+    scroll-margin-top: calc(
+      var(--vp-nav-height) + var(--vp-layout-top-height, 0px) +
+        var(--vp-extra-scroll-margin, 1.5rem)
+    );
+  }
+
+  .VPLocalNav { display: none; }
+
+  .VPDoc .container {
+    display: flex;
+    justify-content: center;
+  }
+
+  .VPDoc .aside {
+    display: block;
+    flex: 0 0 12.5rem;
+    order: 2;
+    width: 12.5rem;
+    max-width: 12.5rem;
+    padding-left: 1.5rem;
+  }
+
+  .VPDoc > .container > .content {
+    order: 1;
+    margin: 0;
+    width: calc(100% - 12.5rem);
+    min-width: 0;
+  }
+
+  .VPDoc .aside-container {
+    top: calc(
+      var(--vp-nav-height) + var(--vp-layout-top-height, 0px) +
+        var(--vp-doc-top-height, 0px) + 1.5rem
+    );
+    width: 11rem;
+    height: calc(
+      100vh - var(--vp-nav-height) - var(--vp-layout-top-height, 0px) -
+        var(--vp-doc-top-height, 0px) - 3rem
+    );
+    padding-top: 0;
+  }
+
+  .VPDoc .aside-curtain { width: 11rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+
+  .VPDoc .content-container,
+  .NotFound {
+    animation: none !important;
+  }
+
+  .VPButton,
+  .VPNavBarMenuLink,
+  .VPSidebarItem .link,
+  .VPDocAsideOutline .outline-marker,
+  .VPDocAsideOutline .outline-link {
+    transition: none !important;
+  }
+}

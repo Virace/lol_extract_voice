@@ -214,3 +214,16 @@ jobs:
           prerelease: ${{ needs.verify-tag-target.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
           fail_on_unmatched_files: true
+
+  # GITHUB_TOKEN 发布的 Release 不会触发另一条 release workflow，发布成功后直接调用。
+  deploy-docs:
+    needs: [verify-tag-target, build-release]
+    if: needs.verify-tag-target.outputs.is_prerelease == 'false'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/docs-deploy.yml
+    with:
+      deploy: true
+    secrets:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
