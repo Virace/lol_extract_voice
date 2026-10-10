@@ -61,6 +61,7 @@ def test_gui_config_load_reads_wav_command_defaults(tmp_path: Path) -> None:
             f"wav_timeout = {EXPECTED_WAV_TIMEOUT}\n"
             f"wav_retries = {EXPECTED_WAV_RETRIES}\n"
             "wav_format = float\n"
+            "wav_group_by_event = true\n"
         ),
         encoding="utf-8",
     )
@@ -75,6 +76,7 @@ def test_gui_config_load_reads_wav_command_defaults(tmp_path: Path) -> None:
     assert cfg.wav_timeout == EXPECTED_WAV_TIMEOUT
     assert cfg.wav_retries == EXPECTED_WAV_RETRIES
     assert cfg.wav_format == "float"
+    assert cfg.wav_group_by_event is True
 
 
 def test_gui_config_save_updates_wav_group_enable_and_tuning(tmp_path: Path) -> None:
@@ -113,9 +115,31 @@ def test_gui_config_save_updates_wav_group_enable_and_tuning(tmp_path: Path) -> 
         "wav_timeout": 11,
         "wav_retries": EXPECTED_WAV_RETRIES,
         "wav_format": "auto",
+        "wav_group_by_event": False,
     }
     assert load_command_config(config_file, command="extract") == {}
     assert "wav = true" not in config_file.read_text(encoding="utf-8")
+
+
+def test_event_preference_migrates_to_shared_wav_section(tmp_path: Path) -> None:
+    """兼容旧 GUI 键，保存到 WAV 分组后由共享字段决定后续任务。"""
+    config_file = tmp_path / "settings.ini"
+    config_file.write_text("[gui]\nwav_group_by_event = true\n", encoding="utf-8")
+    cfg = GuiConfig()
+    cfg._config_file = config_file
+    cfg.load()
+    assert cfg.wav_group_by_event is True
+    cfg.save()
+    parser = configparser.ConfigParser()
+    parser.read(config_file, encoding="utf-8")
+    assert parser.getboolean("wav", "wav_group_by_event") is True
+    assert not parser.has_option("gui", "wav_group_by_event")
+    parser.set("wav", "wav_group_by_event", "false")
+    parser.set("gui", "wav_group_by_event", "true")
+    with config_file.open("w", encoding="utf-8") as stream:
+        parser.write(stream)
+    cfg.load()
+    assert cfg.wav_group_by_event is False
 
 
 def test_gui_config_uses_defaults_when_project_ini_is_missing() -> None:
@@ -126,6 +150,7 @@ def test_gui_config_uses_defaults_when_project_ini_is_missing() -> None:
 
     assert cfg.preview_audio_volume_percent == DEFAULT_PREVIEW_VOLUME_PERCENT
     assert cfg.prepare_data_on_startup is False
+    assert cfg.wav_group_by_event is False
 
 
 def test_gui_config_load_reads_gui_section_from_project_ini(tmp_path: Path) -> None:
@@ -175,6 +200,7 @@ def test_gui_config_save_persists_gui_state_to_project_ini(tmp_path: Path) -> No
     cfg._config_file = config_file
     cfg.vgmstream_path = "tools/vgmstream/vgmstream-cli.exe"
     cfg.prepare_data_on_startup = True
+    cfg.wav_group_by_event = True
     cfg.theme_mode = "Dark"
     cfg.accent_preset_id = "orange"
     cfg.page_smooth_scroll_enabled = True
@@ -193,6 +219,7 @@ def test_gui_config_save_persists_gui_state_to_project_ini(tmp_path: Path) -> No
 
     assert reloaded.vgmstream_path == "tools/vgmstream/vgmstream-cli.exe"
     assert reloaded.prepare_data_on_startup is True
+    assert reloaded.wav_group_by_event is True
     assert reloaded.theme_mode == "Dark"
     assert reloaded.accent_preset_id == "orange"
     assert reloaded.theme_color.lower() == get_accent_preset("orange").primary_hex.lower()

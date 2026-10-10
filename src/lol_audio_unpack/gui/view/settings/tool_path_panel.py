@@ -40,10 +40,16 @@ class BaseSettingsPanel:
             "提前准备数据",
             "启动时准备当前版本的数据，缩短后续任务的等待时间。",
         )
+        self.wavGroupByEventCard = LocalizedSwitchSettingCard(
+            FIF.FOLDER,
+            "按事件分类输出",
+            "仅对后续 WAV 转码和批量导出有效；默认另存到 wavs_by_event，无可用映射时保留普通目录。",
+        )
 
         self.group.addSettingCard(self.outputPathCard)
         self.group.addSettingCard(self.gameRegionCard)
         self.group.addSettingCard(self.groupByTypeCard)
+        self.group.addSettingCard(self.wavGroupByEventCard)
         self.group.addSettingCard(self.prepareDataCard)
 
 

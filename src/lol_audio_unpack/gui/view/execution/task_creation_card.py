@@ -662,6 +662,7 @@ class TaskCreationCard(HeaderCardWidget):
                 wav_timeout=wav_timeout,
                 wav_retries=wav_retries,
                 wav_format=state.wav_format,
+                wav_group_by_event=bool(getattr(gui_config, "wav_group_by_event", False)),
             ),
         )
 

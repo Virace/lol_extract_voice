@@ -104,6 +104,7 @@ COMMAND_CONFIG_FIELDS: dict[str, tuple[CommandConfigField, ...]] = {
         CommandConfigField("wav_timeout", "wav_timeout", "int"),
         CommandConfigField("wav_retries", "wav_retries", "int"),
         CommandConfigField("wav_format", "wav_format", "text"),
+        CommandConfigField("wav_group_by_event", "wav_group_by_event", "bool"),
     ),
     ConfigSection.MAPPING: (
         CommandConfigField("_mapping_enabled", "enable", "bool"),

@@ -118,7 +118,7 @@ def write_command_config(
 - `[runtime]`：`max_workers`
 - `[update]`：`enable`、`force`、`skip_events`
 - `[extract]`：`enable`
-- `[wav]`：`enable`、`wav_workers`、`wav_timeout`、`wav_retries`、`wav_format`
+- `[wav]`：`enable`、`wav_workers`、`wav_timeout`、`wav_retries`、`wav_format`、`wav_group_by_event`
 - `[mapping]`：`enable`、`integrate_data`
 
 `[wav] wav_format` 设置采样格式，转码统一输出 WAV。默认 `pcm16` 表示 16 位整数 PCM；
@@ -208,7 +208,7 @@ def setup_app(
 | --- | --- |
 | 版本产物 | `ctx.version_path(kind, version)` 加入版本和规范化语言 |
 | 示例 | `ctx.version_path("manifest", "16.18")` 返回 `manifest/16.18/zh_CN` |
-| `kind` | 使用 `manifest`、`audio`、`wav`、`hash`、`report` 等 `AppPaths` 前缀 |
+| `kind` | 使用 `manifest`、`audio`、`wav`、`wav_event`、`hash`、`report` 等 `AppPaths` 前缀 |
 | 英语与空语言 | `default` 规范化为 `en_US`；界面空语言使用只读 `_unselected`，不能执行源任务 |
 
 用户文件位置见 [统一输出目录](../audio-and-output.md#output-folders)，硬链接、完整搬迁与旧目录迁移见
@@ -227,6 +227,36 @@ prepare_data_on_startup = false
 版本、路径、区域变化时自动补齐普通英雄/地图的资源与事件缓存。普通准备复用同版本缓存，
 显式“前置强制更新”才强制重建。该偏好不进入 `AppContext` 共享设置，也不改变控制台的显式动作
 语义；运行任务期间开关与其他运行时配置一起锁定。
+
+<a id="wav-event-output"></a>
+
+`[wav] wav_group_by_event` 对应基础设置中的“按事件分类输出”，默认关闭，控制台同步提供
+`--wav-group-by-event` / `--no-wav-group-by-event`。界面兼容读取旧 `[gui]` 同名键，新字段优先，
+保存时迁移到 `[wav]`。例如：
+
+```ini
+[wav]
+enable = true
+wav_group_by_event = true
+```
+
+**参数生效：** 在创建新的 WAV 转码或批量导出任务时冻结，不重建共享数据或整理旧文件。
+Python 使用 `WavOutputOptions(group_by_event=True)`。
+
+| 输出情况 | 布局 |
+| --- | --- |
+| 普通默认根 | `wavs` |
+| 可分类默认根 | `wavs_by_event`；保留版本、语言、实体目录、原始 ID，在文件前增加事件层 |
+| 无可用精确映射 | 回到普通根 |
+| 映射可用但音频未关联 | 事件根的“未关联事件” |
+| 手动导出 | 使用所选根，不额外加 `wavs` 或 `wavs_by_event` |
+
+**交付时序：** 界面与控制台共用延后交付入口，等本轮已选映射步骤完成后分类，不隐式启用映射。
+独立 Python WAV 调用消费当时已有映射；需等待后续映射时，用 `app.defer_wav_output(opts)` 包住
+转码与映射，再调用 `app.finish_wav_output(output)`。
+
+解包前应同时确认 `[app] group_by_type`：它决定新 WEM 的类型层位置，WAV 镜像实际 WEM 目录。
+两项设置均不重排已有输出。跨事件的 WAV 使用独立副本，用户自行整理、打包与分发。
 
 ### 8.1 已安装客户端
 

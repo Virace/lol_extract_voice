@@ -75,6 +75,7 @@ class ExecutionTaskParamsSnapshot:
     wav_timeout: int = 5
     wav_retries: int = 3
     wav_format: str = "pcm16"
+    wav_group_by_event: bool = False
     resource_pack_wads: tuple[ResourcePackWadRef, ...] = ()
 
     def selected_steps(self) -> tuple[str, ...]:
@@ -117,6 +118,7 @@ class ExecutionTaskParamsSnapshot:
                 timeout_seconds=self.wav_timeout,
                 max_retries=self.wav_retries,
                 format=self.wav_format,
+                group_by_event=self.wav_group_by_event,
             ),
         )
 

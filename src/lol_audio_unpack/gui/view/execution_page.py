@@ -612,6 +612,7 @@ class ExecutionPage(SmoothScrollArea):
                 wav_workers=request.options.worker_count,
                 wav_timeout=request.options.timeout_seconds,
                 wav_retries=request.options.max_retries,
+                wav_group_by_event=request.options.group_by_event,
             ),
             export_request=request,
             version=request.version,

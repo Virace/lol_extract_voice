@@ -64,13 +64,18 @@ class WavBatchResult:
     report_error: str | None = None
     converted_count: int = 0
     reused_count: int = 0
+    classified_count: int = 0
+    unclassified_count: int = 0
+    plain_count: int = 0
+    output_count: int = 0
+    output_roots: tuple[Path, ...] = ()
 
     @property
     def status(self) -> str:
         """按成功与失败事实派生终态。"""
         if not self.failed_count and self.error_message is None:
             return "success"
-        return "partial" if self.success_count or self.skipped_count else "failed"
+        return "partial" if self.success_count or self.skipped_count or self.output_count else "failed"
 
     def retry_scope(self) -> AudioScope:
         """只构造本轮失败的精确文件集合，不重新枚举目录。"""
@@ -456,4 +461,9 @@ def read_batch_result(path: Path) -> WavBatchResult:
         report_error=payload.get("report_error"),
         converted_count=payload.get("converted_count", payload["success_count"]),
         reused_count=payload.get("reused_count", 0),
+        classified_count=payload.get("classified_count", 0),
+        unclassified_count=payload.get("unclassified_count", 0),
+        plain_count=payload.get("plain_count", 0),
+        output_count=payload.get("output_count", 0),
+        output_roots=tuple(Path(value) for value in payload.get("output_roots", ())),
     )

@@ -39,6 +39,7 @@ class WavOutputOptions:
     ``backend_path`` 为空时使用内置批处理；超时参数约束外部单文件进程。
     ``max_retries`` 沿用历史语义，表示单文件任务的最大尝试次数（含首次）。
     内外后端共用任务级重试；重试不切换后端、不重复工具预检。
+    ``group_by_event`` 仅改变本次 WAV 输出布局与默认根；无可用映射时保留普通目录，不整理旧输出。
     """
 
     enabled: bool = False
@@ -47,6 +48,7 @@ class WavOutputOptions:
     max_retries: int = 3
     format: str = "pcm16"
     backend_path: str | None = None
+    group_by_event: bool = False
 
 
 @dataclass(frozen=True)
@@ -65,6 +67,11 @@ class AppPaths:
     game_champion_path: Path
     game_maps_path: Path
     game_lcu_path: Path
+
+    @property
+    def wav_event_path(self) -> Path:
+        """返回与普通 WAV 同级的事件输出根，供版本和语言路径规则共用。"""
+        return self.wav_path.with_name("wavs_by_event")
 
 
 @dataclass(frozen=True)

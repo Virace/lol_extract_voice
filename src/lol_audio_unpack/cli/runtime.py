@@ -250,6 +250,7 @@ def build_invocation_request(args: argparse.Namespace) -> CliInvocationRequest:
         wav_timeout=DEFAULT_WAV_TIMEOUT if getattr(args, "wav_timeout", None) is None else args.wav_timeout,
         wav_retries=DEFAULT_WAV_RETRIES if getattr(args, "wav_retries", None) is None else args.wav_retries,
         wav_format=DEFAULT_WAV_FORMAT if getattr(args, "wav_format", None) is None else args.wav_format,
+        wav_group_by_event=bool(getattr(args, "wav_group_by_event", False)),
     )
 
 
@@ -442,6 +443,7 @@ def build_options(
             timeout_seconds=DEFAULT_WAV_TIMEOUT if getattr(args, "wav_timeout", None) is None else args.wav_timeout,
             max_retries=DEFAULT_WAV_RETRIES if getattr(args, "wav_retries", None) is None else args.wav_retries,
             format=DEFAULT_WAV_FORMAT if getattr(args, "wav_format", None) is None else args.wav_format,
+            group_by_event=bool(getattr(args, "wav_group_by_event", False)),
         ),
     )
 

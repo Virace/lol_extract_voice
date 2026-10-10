@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
 from dataclasses import asdict, replace
 from pathlib import Path
 from time import perf_counter
@@ -28,6 +29,7 @@ from lol_audio_unpack.gui.task_models import (
 from lol_audio_unpack.model.progress import OperationProgress
 from lol_audio_unpack.runtime.wav.batch import WavBatchResult, read_batch_result, retry_batch, run_batch
 from lol_audio_unpack.runtime.wav.cache import WavCache
+from lol_audio_unpack.runtime.wav.event_output import EventOutput
 from lol_audio_unpack.unpack.batch import execute_tasks as execute_extract_tasks
 
 if TYPE_CHECKING:
@@ -348,20 +350,39 @@ def _run_audio_export(task: QueuedExecutionTask, signals: WorkerSignals) -> Exec
     if request is not None:
         request.validate()
         cache = WavCache(request.options, request.library_root, request.version, request.region)
-        for target in request.targets:
-            batches.append(
-                run_batch(
-                    target.scope,
-                    target.output_root,
-                    options=request.options,
-                    report_root=request.report_root,
-                    overwrite=request.overwrite,
-                    progress=emit,
-                    output_file=request.output_file,
-                    prechecked=task.draft.tools_checked,
-                    cache=cache,
+        with ExitStack() as stack:
+            events = None
+            if request.options.group_by_event and request.output_file is None:
+                hash_root = None
+                if request.library_root is not None:
+                    hash_root = request.library_root / "hashes" / request.version
+                    if request.region:
+                        hash_root /= request.region
+                events = stack.enter_context(
+                    EventOutput(
+                        audio_root=request.version_root,
+                        hash_root=hash_root,
+                        version=request.version,
+                        scratch_root=(request.library_root or request.report_root) / ".temp",
+                    )
                 )
-            )
+            runner = events.run_batch if events is not None else run_batch
+            for target in request.targets:
+                batches.append(
+                    runner(
+                        target.scope,
+                        target.output_root,
+                        options=request.options,
+                        report_root=request.report_root,
+                        overwrite=request.overwrite,
+                        progress=emit,
+                        output_file=request.output_file,
+                        prechecked=task.draft.tools_checked,
+                        cache=cache,
+                    )
+                )
+            if events is not None:
+                batches = list(events.finish())
         report_root = request.report_root
         version = request.version
     else:
@@ -378,7 +399,9 @@ def _run_audio_export(task: QueuedExecutionTask, signals: WorkerSignals) -> Exec
             ResultStatus(batch.status),
             entity_name=task.draft.source_summary,
             error_message=batch.error_message,
-            artifacts=(str(batch.output_file or batch.output_root),) if batch.success_count else (),
+            artifacts=(str(batch.output_file or batch.output_root),)
+            if batch.success_count or batch.output_count
+            else (),
         )
         for batch in batches
     )
@@ -386,6 +409,12 @@ def _run_audio_export(task: QueuedExecutionTask, signals: WorkerSignals) -> Exec
     summary += f"；实际转换 {sum(batch.converted_count for batch in batches)}、复用 {sum(batch.reused_count for batch in batches)}"
     if unknown:
         summary += f"；{unknown} 个文件完成状态未知"
+    if request is not None and request.options.group_by_event:
+        summary += (
+            f"；关联事件 {sum(batch.classified_count for batch in batches)}、"
+            f"未关联 {sum(batch.unclassified_count for batch in batches)}、"
+            f"普通布局 {sum(batch.plain_count for batch in batches)} 个音频"
+        )
     stage = StageResult(
         "wav",
         entities,
@@ -412,7 +441,7 @@ def _run_audio_export(task: QueuedExecutionTask, signals: WorkerSignals) -> Exec
         summary += f"；报告保存失败：{exc}"
     _log_run_result(task.task_id, result, summary)
     return ExecutionTaskResult(
-        ("音频转码",) if success else (),
+        ("音频转码",) if success or any(batch.output_count for batch in batches) else (),
         summary,
         duration,
         result,
@@ -509,6 +538,8 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
     runtime_app: LolAudioUnpackApp | None = None
     runtime_context = None
     stage_key = "run"
+    event_stack = ExitStack()
+    event_output = None
 
     def create_runtime_app(settings) -> LolAudioUnpackApp:
         nonlocal runtime_context
@@ -640,6 +671,9 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                     logger.debug(f"[执行中心] 任务 #{task.task_id} 创建运行时 AppContext")
                     runtime_app = create_runtime_app(runtime_settings)
 
+                if options.wav_output.group_by_event:
+                    event_output = event_stack.enter_context(runtime_app.defer_wav_output(options))
+
                 _emit_stage_progress(
                     signals,
                     stage_key=stage_key,
@@ -708,11 +742,12 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
                 stage_results.append(resolved_result)
             if resolved_result.stage == "extract":
                 extract_result = resolved_result
-            _emit_terminal_stage_progress(
-                signals,
-                resolved_result,
-                entity_scope_label=task_scope_label,
-            )
+            if resolved_result.stage != "wav" or event_output is None:
+                _emit_terminal_stage_progress(
+                    signals,
+                    resolved_result,
+                    entity_scope_label=task_scope_label,
+                )
             if step_name != "准备任务数据" and _stage_produced_output(resolved_result):
                 completed_steps.append(step_name)
             if resolved_result.status is ResultStatus.CANCELLED:
@@ -724,6 +759,24 @@ def run_execution_task(task: QueuedExecutionTask, signals: WorkerSignals) -> Exe
         logger.exception(f"[执行中心] 任务 #{task.task_id} 执行失败")
         # 后续步骤的异常不能抹掉先前已经确认的成功与落盘事实。
         stage_results.append(StageResult.from_error(stage_key, exc))
+
+    if event_output is not None:
+        try:
+            if event_output.tree_payload is not None or event_output.has_pending:
+                logger.info("[执行中心] 任务 #{} 正在输出本轮 WAV 事件目录", task.task_id)
+                _emit_stage_progress(
+                    signals, stage_key="wav", entity_scope_label=task_scope_label, message="正在输出本轮 WAV 事件目录…"
+                )
+                final_wav = runtime_app.finish_wav_output(event_output)
+                stage_results = [final_wav if stage.stage == "wav" else stage for stage in stage_results]
+                if _stage_produced_output(final_wav) and "音频转码" not in completed_steps:
+                    completed_steps.append("音频转码")
+                _emit_terminal_stage_progress(signals, final_wav, entity_scope_label=task_scope_label)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("本轮 WAV 事件输出失败")
+            stage_results.append(StageResult.from_error("wav", exc))
+        finally:
+            event_stack.close()
 
     run_result = RunResult(tuple(stage_results))
     duration_seconds = perf_counter() - started_at

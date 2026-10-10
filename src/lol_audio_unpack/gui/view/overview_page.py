@@ -221,6 +221,7 @@ class OverviewPage(QWidget):
             self.audio_preview_tree,
             self.audio_list,
             parent=self,
+            group_by_event=lambda: bool(getattr(self.gui_config, "wav_group_by_event", False)),
         )
         self.export_controller.export_requested.connect(self.audio_export_requested.emit)
         self.export_controller.index_requested.connect(self._ensure_audio_refs)

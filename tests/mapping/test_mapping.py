@@ -793,6 +793,8 @@ def test_local_mapping_without_events_writes_partial_diagnostics(tmp_path: Path,
         )
         integrated = mapping_entity.integrate_entity(entity_data, reader, result)
         assert [skin["id"] for skin in integrated["data"]["skins"]] == [1000]
+        # 事件存在而没有实际文件引用时，整合输出仍标明已生成精确路径表。
+        assert integrated["data"]["skins"][0]["audioPaths"] == {}
         assert integrated["sharedAudio"] == result["sharedAudio"]
         assert integrated["data"]["skinAudio"]["1001"]["VO"] == "shared"
 

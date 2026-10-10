@@ -267,6 +267,7 @@ def create_parser(mode: EntryMode = "unpack") -> argparse.ArgumentParser:
         wav_timeout=None,
         wav_retries=None,
         wav_format=None,
+        wav_group_by_event=None,
     )
     parser.add_argument(
         "--integrate-data",
@@ -288,6 +289,12 @@ def create_parser(mode: EntryMode = "unpack") -> argparse.ArgumentParser:
         choices=("auto", "pcm16", "pcm24", "pcm32", "float"),
         default=None,
         help=text("help.wav_format"),
+    )
+    parser.add_argument(
+        "--wav-group-by-event",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=text("help.wav_group_by_event"),
     )
     return parser
 
