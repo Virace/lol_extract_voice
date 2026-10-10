@@ -15,6 +15,17 @@ from lol_audio_unpack.gui.controllers.overview_preview import (
     OverviewPreviewLoadResult,
 )
 from lol_audio_unpack.gui.service.data_loader import _normalize_integrated_mapping_data
+from tests.app.test_audio_index import make_grouped_refs
+
+
+def test_preview_warns_for_grouped_audio_link_outside_entity(tmp_path: Path) -> None:
+    """越出实体目录的音频链接不能进入试听，应返回界面警告。"""
+    _, direct_refs, _ = make_grouped_refs(tmp_path)
+    assert (
+        OverviewPreviewController()
+        .resolve_audio_preview_toggle(requested_audio=direct_refs[-1], current_audio_path=None)
+        .warning_message
+    )
 
 
 def test_overview_preview_controller_returns_placeholder_when_loader_missing() -> None:
