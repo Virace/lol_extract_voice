@@ -6,8 +6,8 @@
 - `tests/`：默认离线行为与集成测试；`tests/system/` 存放显式真实链路。
 - `scripts/`：benchmark、图标、构建和维护入口。
 - `config/`：可复制的配置样例。
-- `docs/`：用户与 API 文档。
-- `.github/`：tag 触发的 Windows GUI 构建与 release 流程。
+- `docs/`：用户与 API 文档，以及独立的 VitePress 子项目；根 README 直接参与网页构建。
+- `.github/`：tag 触发的 Windows 界面/控制台构建与 release 流程，以及正式发布和手动触发的文档网站部署。
 
 ## 入口与组合
 
@@ -32,9 +32,12 @@ CLI、Python API 与 GUI 共用 `ResultStatus`、`EntityResult`、`StageResult`
 - `manager/data_reader.py` 读取版本化结构化数据；`LolAudioUnpackApp` 在自身 `AppContext` 生命周期内懒加载并复用 reader，update/discovery 写入边界后整体失效。直接构造的 reader 实例彼此独立；精确 binding 消费可显式要求 v2。
 - `model/binding.py` 固定 declared BIN、bank reference、物理 WAD 与完整度诊断合同。
 - `runtime/wad_index.py` 对 FINAL root/current-language WAD 建立进程内 TOC cache，并按目标 hash 解析容器。
+- `runtime/library/` 管理实际 WEM 摘要对象与版本/区域单索引；`app/library.py` 按实体、皮肤、音频类型与原 ID 投影可见路径，来源信息留在资源绑定和解包报告。
+- `app/artifacts.py` 从资源库索引定位已完成媒体；元数据和可见产物通过 `AppContext.version_path` 按版本/语言隔离。`app/migration.py` 在启动时将旧版目录一次性搬入内容库，完成后移除旧位置，正常读取不回退旧目录。
 - `unpack/` 读取实体资源引用，从 WAD/BNK/WPK 落盘原始 WEM 与报告。
 - `mapping/` 读取 events 与音频容器，使用 NativeHIRC 或显式 wwiser 建立 hash 映射。
-- `runtime/wav/` 把独立 WAV stage 适配到 `pyvgmstream`，旧协调器仅保留显式兼容入口。
+- `runtime/wav/` 共用批处理调度内置 pyvgmstream 与外部 vgmstream；`cache.py` 以内容、转换方案和后端构建复用已完成 WAV，旧协调器仅保留显式兼容入口。
+- `runtime/wav/event_output.py` 暂存本轮 WAV，在已选择的映射步骤结束后按精确路径分类；CLI 与 GUI 共用 `app.defer_wav_output` / `finish_wav_output`，最终目录和失败事实以交付结果为准。
 
 ## 本地数据流
 
@@ -42,7 +45,7 @@ CLI、Python API 与 GUI 共用 `ResultStatus`、`EntityResult`、`StageResult`
 CLI / GUI
   -> create_app_context
   -> validate local source structure
-  -> DataUpdater: manifest/<version>/data.*
+  -> DataUpdater: manifest/<version>/<region>/data.msgpack
   -> BinUpdater: banks/** (local resource schema v2) + events/**
   -> optional selected-WAD discovery: banks/events/resource_packs/**
   -> DataReader
@@ -139,6 +142,17 @@ mapping 实际引用的路径；全量 WEM 枚举在首次进入“全部音频�
 低优先级线程池，并按整数百分比发送紧凑的索引进度；离开总览页后继续填充缓存，
 但不在隐藏页面创建列表模型，返回页面时再应用结果。
 
+左侧目录已确认音频与映射均为“未存在”或“未准备”时，右侧保持“尚未解包”；普通与特殊内容
+的未解包实体之间切换不重置预览。空态期间后台读取不切换面板、不显示隐藏的工具栏，结果就绪后
+才展示实际内容；不能在读取开始时露出“请选择实体”之类的默认模型内容。
+从有数据或加载中的实体切入空态时只清理一次，并使旧请求失效；切入有产物实体才加载或更新数据。
+加载期间保留原预览布局并冻结交互，150 毫秒后仍未完成才在列表区域显示加载文字，
+结果就绪后一次替换；不加入切换动画。映射加载器按实体缓存最近 64 份解析结果，
+每次访问核对文件路径、修改时间与大小，事件和音频节点仍按展开构建。
+全部音频索引按最近访问顺序保留最多 8 个实体、合计最多 100,000 条路径；超限结果仍可供当前
+视图使用，但不继续保留在缓存中。上下文或目录重载清空对应缓存，任务产物的增量刷新使受影响
+实体索引失效并重新加载当前预览；旧请求结果不能恢复新请求的交互或覆盖其数据。
+
 本地文件数按实际路径去重，事件引用次数按事件中的出现次数统计。同一文件可以被多个事件引用，
 同 WEM ID 的不同路径也可能对应不同文件；二者不能混用。全目录总数必须来自已完成的后台索引，
 mapping 中的可用文件只是其引用子集。资源信息分别展示本地文件、映射可用文件、可用引用和不可用
@@ -149,8 +163,9 @@ mapping 中的可用文件只是其引用子集。资源信息分别展示本地
 零散文件及旧版无精确路径 mapping 使用已解析引用。目录、节点、单文件与失败重试统一进入
 `runtime/wav/batch.py`，共用上游批处理及格式配置，默认跳过已有输出。
 
-执行中心的 `TaskResultsController` 持有最近任务及其手动重试结果。终态 InfoBar 居中常驻，提供
-“查看详情”；关闭后通过标题区“查看本次结果”恢复。`ResultDrawer` 覆盖当前窗口，按阶段与可靠
+执行中心的 `TaskResultsController` 持有最近任务及其手动重试结果。终态 InfoBar 居中显示，提供
+“查看详情”；打开详情时收起通知，之后通过标题区“查看本次结果”恢复。`ResultDrawer` 从右侧滑入、
+向右滑出并覆盖当前窗口；阶段列表占主要空间并默认展开，空失败记录只保留底部摘要。按阶段与可靠
 失败单位展示原始事实和重试进展。各次执行报告使用独立操作身份，失败 WAV 只重试精确文件，
 解包重试限定已知 binding 或 WEM；无法精确定位时明确显示实体/阶段重跑或仅提供诊断。
 
@@ -166,14 +181,24 @@ mapping 中的可用文件只是其引用子集。资源信息分别展示本地
 
 ## 输出与公共契约
 
-- `manifest/<version>/data.*`：聚合实体和版本元数据。
-- `manifest/<version>/banks/**`：音频容器路径；顶层含 `resourceSchemaVersion: 2` 与逐条 bindings。
-- `manifest/<version>/events/**`：事件数据。
-- `manifest/<version>/{banks,events}/resource_packs/**`：显式发现的历史资源包 artifact。
-- `audios/<version>/**`：原始 WEM。
-- `wavs/<version>/**`：可选 WAV。
-- `hashes/<version>/**`：mapping。
-- `reports/<version>/**`：解包与转码报告。
+- `manifest/<version>/<region>/data.msgpack`：聚合实体和版本元数据。
+- `manifest/<version>/<region>/banks/**`：音频容器路径；顶层含 `resourceSchemaVersion: 2` 与逐条 bindings。
+- `manifest/<version>/<region>/events/**`：事件数据。
+- `manifest/<version>/<region>/{banks,events}/resource_packs/**`：显式发现的历史资源包 artifact。
+- `audios/<version>/<region>/**`：原始 WEM，引用内容库中的唯一字节对象。
+- `wavs/<version>/<region>/**`：普通 WAV；无可用精确映射时也使用此根。
+- `wavs_by_event/<version>/<region>/**`：按事件分类的独立 WAV；有效映射中未关联的音频进入“未关联事件”。
+- `hashes/<version>/<region>/**`：mapping。
+- `reports/<version>/<region>/**`：解包与转码报告。
+
+手动导出的所选目录作为 WAV 根，保留版本、语言、实体和皮肤的镜像路径；单条另存为使用指定文件位置。分类与普通布局不自动整理、移动或删除已有文件，试听继续定位库内 WEM。
+
+## 文档构建与部署
+
+`docs/.vitepress/` 在渲染时适配导航和仓库文件链接，直接消费根 README 与 `docs/**/*.md`。
+依赖只安装到 `docs/node_modules`，本地构建与缓存位于 `.temp/.docs-site`。
+`docs-deploy` 在 GitHub runner 上构建 `main`，将静态输出上传到 Cloudflare Pages；正式软件发布后由
+`release-build` 调用，也可手动运行。生成网页不回写 Git，压缩包与构建信息留在 Actions artifact。
 
 关键 Python 导入面由各包 `__init__.py` 声明，并由 `tests/test_public_api.py` 做最小 import smoke。
 文件格式、CLI 和配置的详细契约分别以 `docs/api/python_api.md`、`docs/api/cli_api.md`、
