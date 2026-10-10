@@ -8,10 +8,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from lol_audio_unpack.app.artifacts import AudioIndexProgress, enumerate_audio_refs, resolve_audio_refs
+from lol_audio_unpack.app.artifacts import AudioIndexProgress, AudioRef, enumerate_audio_refs, resolve_audio_refs
 from lol_audio_unpack.app.outputs import save_outputs
 from lol_audio_unpack.app.path_layout import format_entity_folder_name, format_sub_entity_folder_name
-from lol_audio_unpack.gui.controllers.overview_preview import OverviewPreviewController
 from lol_audio_unpack.model import AudioEntityData
 from tests.factories import make_context, make_library_view
 
@@ -102,8 +101,15 @@ def test_resolve_audio_refs_only_checks_explicit_mapping_paths(tmp_path: Path, m
     ]
 
 
-def test_enumerate_audio_refs_uses_grouped_layout_and_rejects_escaping_symlink(tmp_path: Path) -> None:
-    """grouped 布局应保留类型段，且外部 symlink 不得进入引用集。"""
+def make_grouped_refs(tmp_path: Path) -> tuple[tuple[AudioRef, ...], tuple[AudioRef, ...], str]:
+    """复用分组音频与越界链接输入，供核心索引和界面试听分别验证。
+
+    Args:
+        tmp_path: 当前检查独占的临时目录。
+
+    Returns:
+        完整索引、指定映射路径的引用和皮肤目录名。
+    """
     ctx = _build_ctx(tmp_path, group_by_type=True, include_types=("VO",))
     entity = _build_entity()
     version = "16.16"
@@ -131,15 +137,17 @@ def test_enumerate_audio_refs_uses_grouped_layout_and_rejects_escaping_symlink(t
         ),
     )
 
+    return refs, direct_refs, skin0
+
+
+def test_enumerate_audio_refs_uses_grouped_layout_and_rejects_escaping_symlink(tmp_path: Path) -> None:
+    """grouped 布局应保留类型段，且外部 symlink 不得进入引用集。"""
+    refs, direct_refs, skin0 = make_grouped_refs(tmp_path)
+
     assert [(ref.relative_path, ref.audio_type, ref.sub_entity) for ref in refs] == [
         (f"SFX/{skin0}/202.wem", "SFX", "1000"),
         (f"VO/{skin0}/201.wem", "VO", "1000"),
     ]
-    assert (
-        OverviewPreviewController()
-        .resolve_audio_preview_toggle(requested_audio=direct_refs[-1], current_audio_path=None)
-        .warning_message
-    )
     assert [(ref.relative_path, ref.audio_type, ref.sub_entity) for ref in direct_refs[:-1]] == [
         (f"SFX/{skin0}/202.wem", "SFX", "1000"),
         (f"VO/{skin0}/201.wem", "VO", "1000"),
