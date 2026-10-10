@@ -6,7 +6,8 @@ Manager 与流程函数。
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from threading import Lock
@@ -34,6 +35,7 @@ from lol_audio_unpack.model import AudioEntityData
 from lol_audio_unpack.model.progress import OperationProgress
 from lol_audio_unpack.runtime.probe import require_tool
 from lol_audio_unpack.runtime.wav import TranscodeTarget, run_tree
+from lol_audio_unpack.runtime.wav.event_output import EVENT_SESSION_KEY, EventOutput
 from lol_audio_unpack.unpack import unpack_all, unpack_champions, unpack_maps, unpack_resource_packs
 
 from .artifacts import resolve_audio_paths
@@ -270,12 +272,14 @@ class LolAudioUnpackApp:
         batches = tuple(payload.get("batches", ()))
         errors = tuple(str(error) for error in payload.get("errors", ()))
         entities: tuple[EntityResult, ...] = ()
-        if processed_count > 0:
-            wav_root = payload.get("wav_root")
-            if not isinstance(wav_root, str) or not wav_root:
+        produced_count = int(payload.get("produced_file_count", processed_count))
+        pending = bool(payload.get("pending_event_output", False))
+        if (processed_count > 0 or produced_count > 0) and not pending:
+            wav_roots = tuple(payload.get("wav_roots", ())) or (payload.get("wav_root"),)
+            if any(not isinstance(root, str) or not root for root in wav_roots):
                 raise RuntimeError("WAV 转码汇总缺少已处理文件对应的 wav_root")
-            entity_status = ResultStatus.SUCCESS if failed_count == 0 else ResultStatus.PARTIAL
-            entities = (EntityResult("wav", "batch", entity_status, artifacts=(wav_root,)),)
+            entity_status = ResultStatus.SUCCESS if failed_count == 0 and not errors else ResultStatus.PARTIAL
+            entities = (EntityResult("wav", "batch", entity_status, artifacts=wav_roots),)
         if raw_status == "success" and failed_count == 0:
             note = (
                 f"已生成 {processed_count} 个文件，实际转换 {payload.get('converted_file_count', processed_count)}、复用 {payload.get('reused_file_count', 0)}，跳过已有输出 {skipped_count} 个。"
@@ -283,10 +287,18 @@ class LolAudioUnpackApp:
                 else "没有待转换的音频文件。"
             )
             if entities:
+                if "classified_file_count" in payload:
+                    note += (
+                        f"关联事件 {payload['classified_file_count']}、未关联 {payload['unclassified_file_count']} 个音频，"
+                        f"普通布局 {payload.get('plain_file_count', 0)} 个音频，"
+                        f"写入 {produced_count} 个 WAV 文件。"
+                    )
                 return StageResult("wav", entities, note=note, reports=reports, wav_batches=batches)
+            if pending:
+                note = f"已暂存 {processed_count} 个音频，等待本次映射步骤结束后输出事件目录。"
             return StageResult("wav", status=ResultStatus.SUCCESS, note=note, reports=reports, wav_batches=batches)
         if raw_status == "warning" and (failed_count > 0 or errors):
-            status = ResultStatus.PARTIAL if processed_count or skipped_count else ResultStatus.FAILED
+            status = ResultStatus.PARTIAL if processed_count or skipped_count or produced_count else ResultStatus.FAILED
             return StageResult(
                 "wav",
                 entities,
@@ -300,6 +312,45 @@ class LolAudioUnpackApp:
                 wav_batches=batches,
             )
         raise RuntimeError(f"未知 WAV 转码汇总状态: {raw_status}")
+
+    @contextmanager
+    def defer_wav_output(self, opts: OperationOptions) -> Iterator[EventOutput | None]:
+        """让整轮任务在映射步骤结束后交付 WAV，供 CLI 与 GUI 共用。
+
+        Args:
+            opts: 本轮固定的转码设置。
+
+        Yields:
+            事件输出会话；未启用事件分类时为 ``None``。
+        """
+        if not opts.wav_output.group_by_event:
+            yield None
+            return
+        if EVENT_SESSION_KEY in self.ctx.runtime_cache:
+            raise RuntimeError("当前上下文已有 WAV 事件输出任务")
+        version = self._get_reader().version
+        with EventOutput(
+            audio_root=self.ctx.version_path("audio", version),
+            hash_root=self.ctx.version_path("hash", version),
+            version=version,
+            scratch_root=self.ctx.paths.temp_path,
+        ) as output:
+            self.ctx.runtime_cache[EVENT_SESSION_KEY] = output
+            try:
+                yield output
+            finally:
+                self.ctx.runtime_cache.pop(EVENT_SESSION_KEY, None)
+
+    def finish_wav_output(self, output: EventOutput) -> StageResult:
+        """交付本轮暂存 WAV，并返回最终目录和失败事实。
+
+        Args:
+            output: 由本轮任务持有的事件输出会话。
+
+        Returns:
+            已交付 WAV 的阶段结果。
+        """
+        return self._adapt_wav_result(output.finish_tree())
 
     def _is_update_prepared(self, *, force_update: bool) -> bool:
         """判断当前上下文是否已完成数据预热。"""

@@ -27,6 +27,7 @@ class _FakeGuiConfig:
     wav_timeout: int = EXPECTED_WAV_TIMEOUT
     wav_retries: int = EXPECTED_WAV_RETRIES
     wav_format: str = "float"
+    wav_group_by_event: bool = True
 
     def to_app_context_input_snapshot(self) -> AppContextInputSnapshot:
         """返回最小共享上下文快照。"""
@@ -58,6 +59,7 @@ def test_task_creation_card_uses_gui_wav_defaults_for_draft(qtbot) -> None:
     panel.sync_state_from_widgets()
 
     draft = panel.build_task_draft(gui_config=gui_config)
+    gui_config.wav_group_by_event = False
     operation_options = draft.task_params.to_operation_options()
 
     assert draft.task_params.wav_enabled is True
@@ -69,6 +71,7 @@ def test_task_creation_card_uses_gui_wav_defaults_for_draft(qtbot) -> None:
     assert operation_options.wav_output.timeout_seconds == EXPECTED_WAV_TIMEOUT
     assert operation_options.wav_output.max_retries == EXPECTED_WAV_RETRIES
     assert operation_options.wav_output.format == "float"
+    assert operation_options.wav_output.group_by_event is True
 
 
 def test_task_creation_card_preserves_independent_wav_action_state(qtbot) -> None:

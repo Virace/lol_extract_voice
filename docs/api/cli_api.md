@@ -136,6 +136,9 @@ uv run unpack -c ./config/custom.ini
 
 ## 4. 动作与参数
 
+**执行前确认目录设置：** `--group-by-type` 决定新解包 WEM 的类型层位置，WAV 镜像实际 WEM 路径；
+`--wav-group-by-event` 仅控制 WAV 的事件分类和独立默认根。两者都不搬动或整理已有文件。
+
 ### 4.1 动作列表
 
 可以顺序提供多个动作：
@@ -152,6 +155,7 @@ uv run unpack update extract wav mapping --champions Annie,Ahri --game-path "./g
 4. `mapping`
 
 因此只要同次命令里包含 `update` 或 `wav`，运行时也会按上述顺序统一编排。
+事件分类 WAV 会在本轮已选择的映射步骤结束后交付，能使用本轮新映射；未选映射则只读取已有映射。
 
 ### 4.2 共享实体选择
 
@@ -223,6 +227,7 @@ enable = true
 - `--wav-timeout SECONDS`
 - `--wav-retries N`
 - `--wav-format {auto,pcm16,pcm24,pcm32,float}`
+- `--wav-group-by-event` / `--no-wav-group-by-event`（默认关闭，仅 WAV 有效）
 
 转码统一输出 WAV；`--wav-format` 设置采样格式，默认值为 `pcm16`。
 
@@ -239,7 +244,7 @@ PCM 选项中的数字表示位深。32 位整数与 32 位浮点使用不同的
 
 在 `-c` 模式下：
 
-- `[wav]` 负责 `enable`、`wav_workers`、`wav_timeout`、`wav_retries`、`wav_format`
+- `[wav]` 负责 `enable`、`wav_workers`、`wav_timeout`、`wav_retries`、`wav_format`、`wav_group_by_event`
 
 示例：
 
@@ -250,7 +255,26 @@ wav_workers = 2
 wav_timeout = 5
 wav_retries = 3
 wav_format = pcm16
+wav_group_by_event = false
 ```
+
+按事件输出完整目录的例子：
+
+```bash
+uv run unpack extract wav mapping --champions Annie --wav-group-by-event --game-path "./game" --output-path "./output"
+```
+
+| 输出模式 | 英雄示例路径 |
+| --- | --- |
+| 普通默认 | `output/wavs/<版本>/<语言>/champions/<英雄>/<皮肤>/VO/<ID>.wav` |
+| 开启事件分类且映射可用 | `output/wavs_by_event/<版本>/<语言>/champions/<英雄>/<皮肤>/VO/<事件名>/<ID>.wav` |
+
+- 类型分组保留实际 VO/SFX/MUSIC 层位置，WEM 目录与原始 ID 不变。
+- 无可用映射时保留普通 `wavs`；有映射但音频未关联时，进入“未关联事件”。不同版本、语言的映射不能互用，旧仅 ID 映射不用于猜测路径。
+- 事件副本是独立文件，可复制、压缩和分发；切换参数不整理、删除或迁移已有 WAV。
+
+上述选项用于消费应用 `audios` 树的 `wav` 动作；独立 `convert-wem` 消费用户指定的外部文件，
+没有版本/实体映射上下文，继续按其输入路径镜像转换。
 
 说明：
 

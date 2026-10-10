@@ -192,6 +192,7 @@ def run_wav(
     app: LolAudioUnpackApp,
     *,
     extract_result: StageResult | None = None,
+    defer_output: bool = False,
 ) -> StageResult | None:
     """执行独立的 WAV 转码 stage。"""
     if not _has_wav(args):
@@ -218,7 +219,10 @@ def run_wav(
     )
     _log_stage_start("WAV 转码", detail)
     result = app.transcode_wav(build_options(args, champion_ids=champion_ids, map_ids=map_ids))
-    _log_stage_result("WAV 转码", result, detail)
+    if defer_output and result.status is ResultStatus.SUCCESS:
+        logger.info("WAV 转码已暂存，等待本轮映射步骤结束后交付文件")
+    else:
+        _log_stage_result("WAV 转码", result, detail)
     return result
 
 

@@ -38,6 +38,26 @@ class AudioExportRequest:
     region: str | None = None
     library_root: Path | None = None
 
+    def build_targets(self, scopes: tuple[AudioScope, ...], output_root: Path) -> tuple[ExportTarget, ...]:
+        """将所选目录视为 WAV 根，保留版本、语言和实体的完整镜像路径。
+
+        Args:
+            scopes: 当前实体内已选定的导出范围。
+            output_root: 用户选择的额外 WAV 根目录。
+
+        Returns:
+            与正式 WAV 布局一致的镜像输出目标。
+        """
+        self.validate()
+        root = self.version_root.resolve()
+        prefix = Path(self.version)
+        if root.name != self.version:
+            prefix /= root.name
+        # 范围根只用于限定输入，不能截掉输出中的类型、英雄或皮肤归属。
+        return tuple(
+            ExportTarget(scope, output_root / prefix / scope.root.resolve().relative_to(root)) for scope in scopes
+        )
+
     def validate(self) -> None:
         """在后台开始前复核冻结的版本路径与所有源目录边界。"""
         if not self.targets:

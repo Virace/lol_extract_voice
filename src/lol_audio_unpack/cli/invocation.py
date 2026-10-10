@@ -46,6 +46,7 @@ class CliInvocationRequest:
     wav_timeout: int = DEFAULT_WAV_TIMEOUT
     wav_retries: int = DEFAULT_WAV_RETRIES
     wav_format: str = DEFAULT_WAV_FORMAT
+    wav_group_by_event: bool = False
 
     def to_settings(self) -> dict[str, str | bool]:
         """返回共享配置映射。"""
@@ -125,6 +126,7 @@ def validate_request(
         or request.wav_timeout != DEFAULT_WAV_TIMEOUT
         or request.wav_retries != DEFAULT_WAV_RETRIES
         or request.wav_format != DEFAULT_WAV_FORMAT
+        or request.wav_group_by_event
     )
     if request.wav_enabled and not wav_requested:
         raise CliInvocationValidationError("wav_enabled=true 时，actions 中必须包含 wav。")
@@ -132,7 +134,7 @@ def validate_request(
         raise CliInvocationValidationError("--wav-retries 必须至少为 1（最大尝试次数包含首次）。")
     if wav_tuning_explicit and not wav_requested:
         raise CliInvocationValidationError(
-            "--wav-workers / --wav-timeout / --wav-retries / --wav-format 只能与 wav 动作一起使用。"
+            "--wav-workers / --wav-timeout / --wav-retries / --wav-format / --wav-group-by-event 只能与 wav 动作一起使用。"
         )
 
     if request.integrate_data is not None and "mapping" not in actions:
@@ -209,6 +211,8 @@ def build_argv(
             argv.extend(["--wav-retries", str(request.wav_retries)])
         if request.wav_format != DEFAULT_WAV_FORMAT:
             argv.extend(["--wav-format", request.wav_format])
+        if request.wav_group_by_event:
+            argv.append("--wav-group-by-event")
 
     return argv
 

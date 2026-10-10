@@ -16,10 +16,23 @@ from lol_audio_unpack.cli.invocation import (
     CliInvocationValidationError,
     build_argv,
 )
+from lol_audio_unpack.cli.parser import create_parser
+from lol_audio_unpack.cli.runtime import build_options
 from lol_audio_unpack.config import SettingKey
 from lol_audio_unpack.utils.runtime_paths import detect_runtime_paths, get_default_output_root, get_default_wwiser_path
 
 EXPECTED_WAV_FORMAT = "float"
+
+
+def test_event_option_survives_command_generation_and_parsing(tmp_path: Path) -> None:
+    """生成的显式命令与主 CLI 解析使用同一个 WAV 事件分类字段。"""
+    request = CliInvocationRequest(
+        actions=("wav",), settings=((SettingKey.GAME_PATH, "game-root"),), wav_group_by_event=True
+    )
+    argv = build_argv(request, runtime_paths=_build_runtime_paths(tmp_path))
+    assert "--wav-group-by-event" in argv
+    args = create_parser().parse_args(argv[3:])
+    assert build_options(args).wav_output.group_by_event is True
 
 
 def _build_runtime_paths(tmp_path: Path):

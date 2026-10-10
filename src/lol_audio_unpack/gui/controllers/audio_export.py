@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -23,7 +24,9 @@ class AudioExportController(QObject):
     export_requested = Signal(object)
     index_requested = Signal()
 
-    def __init__(self, bar: AudioExportBar, tree, audio_list, *, parent=None) -> None:
+    def __init__(
+        self, bar: AudioExportBar, tree, audio_list, *, parent=None, group_by_event: Callable[[], bool] | None = None
+    ) -> None:
         """绑定既有预览视图及其行末选择信号。"""
         super().__init__(parent)
         self.bar = bar
@@ -31,6 +34,7 @@ class AudioExportController(QObject):
         self.audio_list = audio_list
         self.selection = AudioSelection()
         self.request: AudioExportRequest | None = None
+        self._event_output = group_by_event
         self.mode = False
         self.busy = False
         self.index_complete = False
@@ -228,6 +232,8 @@ class AudioExportController(QObject):
         request = self.request
         if request is None or self.busy:
             return
+        if self._event_output is not None:
+            request = replace(request, options=replace(request.options, group_by_event=self._event_output()))
         selection = self.selection
         if paths is not None:
             selection = AudioSelection()
@@ -248,7 +254,7 @@ class AudioExportController(QObject):
         if not output_text:
             return
         output = Path(output_text)
-        targets = tuple(ExportTarget(scope, output / self._output_prefix(scope.root)) for scope in scopes)
+        targets = request.build_targets(scopes, output)
         scope_text = "当前实体目录全部 WEM" if selection.state.all_selected else f"所选 {selection.count:,} 个音频"
         exclusions = len(selection.state.excluded)
         if exclusions:
@@ -256,7 +262,14 @@ class AudioExportController(QObject):
         details = (
             f"范围：{scope_text}\n源目录："
             + "\n".join(str(scope.root) for scope in scopes)
-            + f"\n输出：{output}\n保留目录结构与原始 ID。\n已知可用 {selection.count:,} 个；最终目录数量在后台扫描时复核。"
+            + "\n输出目录："
+            + "\n".join(str(target.output_root) for target in targets)
+            + (
+                "\n按事件分类；无可用映射时保留普通目录，有映射但无关联时放入“未关联事件”。"
+                if request.options.group_by_event
+                else ""
+            )
+            + f"\n保留版本、语言、完整目录结构与原始 ID。\n已知可用 {selection.count:,} 个；最终目录数量在后台扫描时复核。"
             + f"\n对应文件不可用的映射项 {self._unavailable_count:,} 个，本次不会自动解包。"
         )
         dialog = AudioExportDialog(
@@ -264,13 +277,6 @@ class AudioExportController(QObject):
         )
         if dialog.exec():
             self.export_requested.emit(replace(request, targets=targets, overwrite=dialog.overwrite.isChecked()))
-
-    def _output_prefix(self, root: Path) -> str:
-        """按现有按类型分目录布局保留逻辑路径，不用实体显示名拼路径。"""
-        if self.request is None or len(self.request.targets) == 1:
-            return ""
-        parts = root.relative_to(self.request.version_root).parts
-        return parts[0] if parts and parts[0] in {"VO", "SFX", "MUSIC"} else "lobby"
 
     def export_file(self, source: Path, output: Path, *, overwrite: bool, reveal: bool = False) -> None:
         """单文件另存为也进入共用执行器，不阻塞 UI 线程。"""
@@ -288,5 +294,6 @@ class AudioExportController(QObject):
                 output_file=output,
                 overwrite=overwrite,
                 reveal_output=reveal,
+                options=replace(request.options, group_by_event=False),
             )
         )

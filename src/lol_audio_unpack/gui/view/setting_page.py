@@ -231,6 +231,7 @@ class SettingPage(SmoothScrollArea):
         self.outputPathCard = self.baseSettingsPanel.outputPathCard
         self.gameRegionCard = self.baseSettingsPanel.gameRegionCard
         self.groupByTypeCard = self.baseSettingsPanel.groupByTypeCard
+        self.wavGroupByEventCard = self.baseSettingsPanel.wavGroupByEventCard
         self.prepareDataCard = self.baseSettingsPanel.prepareDataCard
         self.expandLayout.addWidget(self.baseGroup)
 
@@ -296,6 +297,7 @@ class SettingPage(SmoothScrollArea):
         apply_path_card_label(self.outputPathCard, cfg.output_path, f"./{get_default_output_relative_path()}")
         self.gameRegionCard.setValue(cfg.game_region)
         self.groupByTypeCard.setChecked(cfg.group_by_type)
+        self.wavGroupByEventCard.setChecked(cfg.wav_group_by_event)
         self.prepareDataCard.setChecked(cfg.prepare_data_on_startup)
 
         # 工具配置
@@ -328,6 +330,7 @@ class SettingPage(SmoothScrollArea):
         """将各控件当前值写入 GuiConfig 并持久化。"""
         cfg = self._cfg
         cfg.group_by_type = self.groupByTypeCard.isChecked()
+        cfg.wav_group_by_event = self.wavGroupByEventCard.isChecked()
         cfg.prepare_data_on_startup = self.prepareDataCard.isChecked()
         cfg.wav_workers = int(self.wavWorkersCard.value())
         cfg.wav_timeout = int(self.wavTimeoutCard.value())
@@ -442,6 +445,9 @@ class SettingPage(SmoothScrollArea):
 
         # 基础设置
         self.groupByTypeCard.checkedChanged.connect(self._save_config)
+        self.wavGroupByEventCard.checkedChanged.connect(
+            lambda _checked: self._save_config(emit_shared_context_input_change=False)
+        )
         self.prepareDataCard.checkedChanged.connect(self._save_config)
         self.wavWorkersCard.comboBox.currentTextChanged.connect(lambda _value: self._save_wav_defaults())
         self.wavTimeoutCard.comboBox.currentTextChanged.connect(lambda _value: self._save_wav_defaults())
