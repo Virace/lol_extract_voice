@@ -21,3 +21,15 @@ def test_preparation_switch_persists_and_notifies_context(qtbot) -> None:
     assert not page.prepareDataCard.isEnabled()
     page.set_runtime_config_locked(False)
     assert page.prepareDataCard.isEnabled()
+
+
+def test_event_switch_saves_future_output_preference_without_reloading_shared_data(qtbot) -> None:
+    """事件输出偏好只持久化，不使已经加载的 WEM 上下文失效。"""
+    page = SettingPage()
+    qtbot.addWidget(page)
+    assert not page.wavGroupByEventCard.isChecked()
+    with qtbot.assertNotEmitted(page.shared_context_input_changed):
+        page.wavGroupByEventCard.setChecked(True)
+    reloaded = GuiConfig()
+    reloaded.load()
+    assert reloaded.wav_group_by_event is True

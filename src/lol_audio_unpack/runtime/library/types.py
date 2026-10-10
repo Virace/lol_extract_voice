@@ -124,7 +124,7 @@ class MediaRef:
 
 @dataclass(frozen=True)
 class WavRef:
-    """一个固定输出位置当前保存的 WEM 内容和 WAV 格式。"""
+    """一个固定输出位置当前保存的 WEM 内容和 WAV 采样格式。"""
 
     path: str
     digest: str
@@ -136,7 +136,7 @@ class WavRef:
         if not self.path.startswith("wavs/") or not self.path.endswith(".wav"):
             raise LibraryError("WAV 输出必须位于 wavs 内")
         if self.format not in {"auto", "pcm16", "pcm24", "pcm32", "float"}:
-            raise LibraryError("WAV 格式无效")
+            raise LibraryError("采样格式无效")
 
 
 @dataclass(frozen=True)

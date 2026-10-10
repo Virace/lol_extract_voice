@@ -1,6 +1,7 @@
 """验证事件树与全部音频共享选择，筛选不会改写节点范围。"""
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import msgpack
 import pytest
@@ -14,6 +15,65 @@ from lol_audio_unpack.app.types import WavOutputOptions
 from lol_audio_unpack.gui.components.preview_tree import PreviewTreeModel, collect_tree_stats
 from lol_audio_unpack.gui.controllers.audio_export import AudioExportController
 from lol_audio_unpack.gui.view.overview.audio_preview_panel import OverviewAudioPreviewPanel
+from lol_audio_unpack.runtime.wav import build_output_path
+
+
+@pytest.mark.parametrize("node_export", [False, True])
+def test_review_export_keeps_full_wav_tree(qtbot, tmp_path: Path, monkeypatch, node_export: bool) -> None:
+    """多选和节点导出都把所选目录作为 WAV 根，不丢失版本、语言或单一类型前缀。"""
+    panel = OverviewAudioPreviewPanel(summary_placeholder="等待事件数据。")
+    qtbot.addWidget(panel)
+    root = tmp_path / "audios" / "16.18" / "zh_CN"
+    entity = root / "VO" / "champions" / "1·Annie·安妮"
+    files = (entity / "1000·基础/1.wem", entity / "1000·基础/2.wem")
+    enabled = [False]
+    controller = AudioExportController(
+        panel.export_bar,
+        panel.audio_preview_tree,
+        panel.audio_list,
+        parent=panel,
+        group_by_event=lambda: enabled[0],
+    )
+    controller.configure(
+        AudioExportRequest(
+            entity_type="champions",
+            entity_id="1",
+            entity_name="安妮",
+            version="16.18",
+            version_root=root,
+            targets=(ExportTarget(AudioScope(entity), tmp_path / "wavs"),),
+            report_root=tmp_path / "reports",
+            options=WavOutputOptions(enabled=True),
+            region="zh_CN",
+        )
+    )
+    controller.selection.set_available(files)
+    controller.selection.set_paths(files, True)
+    enabled[0] = True
+    output = tmp_path / "selected-wavs"
+    monkeypatch.setattr(
+        "lol_audio_unpack.gui.controllers.audio_export.QFileDialog.getExistingDirectory", lambda *_args: str(output)
+    )
+    monkeypatch.setattr(
+        "lol_audio_unpack.gui.controllers.audio_export.AudioExportDialog",
+        lambda *_args: SimpleNamespace(exec=lambda: True, overwrite=SimpleNamespace(isChecked=lambda: False)),
+    )
+
+    with qtbot.waitSignal(controller.export_requested) as submitted:
+        controller.review_export(frozenset(files) if node_export else None)
+    (request,) = submitted.args
+    enabled[0] = False
+    assert request.options.group_by_event is True
+    (target,) = request.targets
+    outputs = {
+        build_output_path(file, audio_root=target.scope.root, wav_root=target.output_root)
+        for file in target.scope.resolve_files()
+    }
+
+    assert outputs == {
+        output / "16.18/zh_CN/VO/champions/1·Annie·安妮/1000·基础/1.wav",
+        output / "16.18/zh_CN/VO/champions/1·Annie·安妮/1000·基础/2.wav",
+    }
 
 
 @pytest.fixture

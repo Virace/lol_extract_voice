@@ -56,7 +56,7 @@ class ExecutionTaskParamsSnapshot:
         wav_workers: 音频转码使用的默认并发数。
         wav_timeout: 单个音频转码任务超时时间。
         wav_retries: 单文件任务最大尝试次数，包含首次。
-        wav_format: 音频转码输出格式。
+        wav_format: 音频转码的采样格式。
         resource_pack_wads: 已选历史资源包 WAD 的相对路径与 stat 快照。
     """
 
@@ -75,6 +75,7 @@ class ExecutionTaskParamsSnapshot:
     wav_timeout: int = 5
     wav_retries: int = 3
     wav_format: str = "pcm16"
+    wav_group_by_event: bool = False
     resource_pack_wads: tuple[ResourcePackWadRef, ...] = ()
 
     def selected_steps(self) -> tuple[str, ...]:
@@ -117,6 +118,7 @@ class ExecutionTaskParamsSnapshot:
                 timeout_seconds=self.wav_timeout,
                 max_retries=self.wav_retries,
                 format=self.wav_format,
+                group_by_event=self.wav_group_by_event,
             ),
         )
 

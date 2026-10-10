@@ -27,7 +27,7 @@ def transcode_file(source: Path, output: Path, options: WavOutputOptions, cancel
     elif format_name in _FORMATS:
         args.extend(["-W", _FORMATS[format_name]])
     else:
-        raise ValueError(f"不支持的 WAV 格式：{options.format}")
+        raise ValueError(f"不支持的采样格式：{options.format}")
     output.parent.mkdir(parents=True, exist_ok=True)
     detail = run_tool(
         [*args, "-o", str(output.resolve()), str(source.resolve())], timeout=options.timeout_seconds, cancel=cancel

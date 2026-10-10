@@ -60,6 +60,7 @@ class GuiConfig:
         self._wav_timeout: int = 5
         self._wav_retries: int = 3
         self._wav_format: str = "pcm16"
+        self._wav_group_by_event: bool = False
 
         # GUI 专有配置
         self._prepare_data_on_startup: bool = False
@@ -108,6 +109,9 @@ class GuiConfig:
         self._wav_timeout = int(wav_settings.get("wav_timeout", 5))
         self.wav_retries = int(wav_settings.get("wav_retries", 3))
         self._wav_format = str(wav_settings.get("wav_format", "pcm16") or "pcm16")
+        self._wav_group_by_event = self._to_bool(
+            str(wav_settings.get("wav_group_by_event", _gui_value("wav_group_by_event", "false")))
+        )
 
         # 2. GUI 专有配置统一走项目 INI，不再读取用户全局 QSettings。
         self._prepare_data_on_startup = self._to_bool(_gui_value("prepare_data_on_startup", "false"))
@@ -147,6 +151,7 @@ class GuiConfig:
                 "wav_timeout": self._wav_timeout,
                 "wav_retries": self._wav_retries,
                 "wav_format": self._wav_format,
+                "wav_group_by_event": self._wav_group_by_event,
             },
         )
         remove_command_config_keys(
@@ -401,7 +406,7 @@ class GuiConfig:
 
     @property
     def wav_format(self) -> str:
-        """返回执行中心默认的 WAV 输出格式。"""
+        """返回执行中心默认的采样格式。"""
         return self._wav_format
 
     @wav_format.setter
@@ -411,6 +416,16 @@ class GuiConfig:
     # ------------------------------------------------------------------
     # Properties — GUI 专有
     # ------------------------------------------------------------------
+
+    @property
+    def wav_group_by_event(self) -> bool:
+        """返回新 WAV 任务是否按事件分类，不处理已经导出的文件。"""
+        return self._wav_group_by_event
+
+    @wav_group_by_event.setter
+    def wav_group_by_event(self, value: bool) -> None:
+        """保存后续 WAV 任务的事件分类偏好。"""
+        self._wav_group_by_event = bool(value)
 
     @property
     def prepare_data_on_startup(self) -> bool:
@@ -555,6 +570,7 @@ class GuiConfig:
             section=ConfigSection.GUI,
             values={
                 "prepare_data_on_startup": self._prepare_data_on_startup,
+                "wav_group_by_event": None,
                 "language_explicit": self._language_explicit,
                 "vgmstream_path": self._vgmstream_path,
                 "theme_mode": self._theme_mode,

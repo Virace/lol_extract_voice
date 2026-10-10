@@ -1,11 +1,15 @@
-# Python API（分域包与公开入口）
+# Python API
 
-## 1. 根包入口
+使用 Python 调用更新、解包、映射和转码。入口索引见 [API 总览](../API.md)，内部结构见 [模块与数据结构](README.md)。
+
+<a id="root"></a>
+
+## 根包入口
 
 根包 `lol_audio_unpack` 当前只保留两个顶层入口：
 
-- `setup_app`
-- `__version__`
+- <a id="setup-app"></a>`setup_app`
+- <a id="version"></a>`__version__`
 
 ```python
 from lol_audio_unpack import setup_app
@@ -17,7 +21,9 @@ def setup_app(dev_mode: bool = False, log_level: str = "INFO", **kwargs) -> AppC
 
 用途：初始化日志，并基于传入的 `settings` / `runtime_cache` 构建 `AppContext`。
 
-## 2. `lol_audio_unpack.app`
+<a id="package-app"></a>
+
+## 应用编排
 
 推荐把应用级类型和编排能力都从 `lol_audio_unpack.app` 导入：
 
@@ -40,7 +46,9 @@ from lol_audio_unpack.app import (
 )
 ```
 
-### 2.1 `create_app_context`
+<a id="create-app-context"></a>
+
+### 构建上下文
 
 ```python
 def create_app_context(
@@ -54,46 +62,58 @@ def create_app_context(
 
 用途：消费共享设置映射，构建 `AppConfig`、`AppPaths` 和 `AppContext`。
 
-### 2.2 关键类型
+<a id="types"></a>
 
-- `AppConfig`
+### 参数与结果类型
+
+- <a id="appcontextvalidationerror"></a>`AppContextValidationError`
+  - 本地目录或上下文配置不符合要求时抛出的校验异常
+- <a id="appconfig"></a>`AppConfig`
   - 环境级配置快照，包含 `game_path`、`output_path`、`game_region`、音频类型、分组、大厅音频、
     `wwiser_path` 与开发模式等字段
-- `AppPaths`
-  - 派生路径快照，包含 `audio_path`、`wav_path`、`cache_path`、`hash_path`、`report_path`、`manifest_path` 等字段
-- `AppContext`
+- <a id="apppaths"></a>`AppPaths`
+  - 派生路径快照，包含 `audio_path`、`wav_path`、`cache_path`、`hash_path`、`report_path`、`manifest_path` 等字段，
+    `wav_event_path` 返回独立的事件分类 WAV 根
+- <a id="appcontext"></a>`AppContext`
   - 运行时上下文对象，统一封装 `config`、`paths` 与 `runtime_cache`
-- `OperationOptions`
+- <a id="operationoptions"></a>`OperationOptions`
   - 单次操作参数，包含 `max_workers`、`force_update`、`process_events`、`integrate_data`、`champion_ids`、`map_ids`、`special_targets`、`resource_pack_wads`
-- `ResourcePackWadRef`
+- <a id="resourcepackwadref"></a>`ResourcePackWadRef`
   - 显式 selected-WAD 的相对 identity 与 `st_size` / `st_mtime_ns` 快照；使用
     `ResourcePackWadRef.from_path(game_root, path)` 创建。创建与执行均会验证路径仍在
     `Game/DATA/FINAL`、后缀为 `.wad.client` 且 stat 未变化，artifact 不保存绝对路径。
-- `WavOutputOptions`
-  - 独立 WAV 转码 stage 配置，包含 `enabled`、`worker_count`、`timeout_seconds`、`max_retries`、`format`
+- <a id="wavoutputoptions"></a>`WavOutputOptions`
+  - 独立 WAV 转码 stage 配置，包含 `enabled`、`worker_count`、`timeout_seconds`、`max_retries`、`format`、`group_by_event`
+  - `format` 设置采样格式，转码统一输出 WAV；支持 `auto`、`pcm16`（默认）、`pcm24`、`pcm32`、`float`，
+    各值含义见 [控制台采样格式说明](./cli_api.md#wav-options)
+  - `group_by_event` 默认关闭，启用后按同版本、同语言的精确映射分类；[输出与回退规则](./config_api.md#wav-event-output)
   - `max_retries` 沿用历史语义，表示单文件任务最大尝试次数（含首次，默认 3）；内外后端共用，不自动切换后端。
-- `ResultStatus` / `EntityResult` / `StageResult` / `RunResult`
+- <a id="resultstatus"></a>`ResultStatus` / <a id="entityresult"></a>`EntityResult` / <a id="stageresult"></a>`StageResult` / <a id="runresult"></a>`RunResult`
   - 统一描述实体、阶段和整轮工作流的 `success`、`partial`、`failed`、`cancelled` 事实；
     状态与计数从子结果派生，异常对象和 traceback 不进入公共结果；`EntityResult.artifacts`
     仅保存本轮已确认写入的真实产物路径。extract 包含 WEM 与大厅音频路径，mapping 包含最终
     mapping 文件；实体落盘后再失败时仍保留已有路径。WAV 有处理结果时使用稳定的 `wav:batch`
     实体指向 `wav_root`
-- `OperationProgress`
+- <a id="operationprogress"></a>`OperationProgress`
   - update 的可选结构化进度事件，稳定字段为 `operation_key`、`stage_key`、`event`、
     `current`、`total`、`entity_type`、`entity_id`；`event` 取值为 `started`、`advanced`、
     `finished`。进度只描述处理位置，最终业务成功与否仍以 `StageResult` 为准
 
-`special_targets` 可包含 GUI 特殊内容的 `champion:<id>`，也可保留已发现的
-`resource_pack:<wad-component>:<namespace-component>` key。应用门面只把前者归约为英雄数值 ID，
-不会把 resource pack 交给数值 target 合并。`extract` / `mapping` 会把 resource-pack key 交给专用 consumer；
-pack-only 选择不会回退到全量 champion/map 流程，混合选择会分别执行三类实体。WAV 转码当前明确
-不支持 resource pack，并在应用边界报错，不影响 extract 或 mapping。
+| `special_targets` 内容 | 处理方式 |
+| --- | --- |
+| `champion:<id>` | 归约为英雄数值 ID |
+| `resource_pack:<wad-component>:<namespace-component>` | 保留已发现的完整 key，不交给数值 target 合并 |
+| pack-only 选择 | extract/mapping 使用专用 consumer，不回退全量 champion/map |
+| 混合选择 | 分别执行英雄、地图与资源包 |
+| resource pack WAV | 当前不支持，在应用边界报错，不影响 extract/mapping |
 
-### 2.3 `LolAudioUnpackApp`
+<a id="lolaudiounpackapp"></a>
+
+### 应用门面
 
 `LolAudioUnpackApp` 是应用编排入口，负责 update / extract / wav / mapping。
 
-`update(...)`、`extract(...)`、`transcode_wav(...)`、`mapping(...)` 返回 `StageResult`。CLI 与 GUI
+`update(...)`、`extract(...)`、`transcode_wav(...)`、`mapping(...)` 返回 `StageResult`。控制台与界面
 可按执行顺序把这些阶段聚合成 `RunResult`。调用方应检查返回状态，不能以“没有抛异常”或返回
 `None` 推断成功。
 
@@ -123,111 +143,172 @@ BIN 更新会保留每个英雄或地图的 `success` / `partial` / `failed` 事
 当前公开方法可按职责分为两组：
 
 - 常规主链
-  - `update(opts, *, target="all", progress_callback=None)`
-  - `discover_resource_packs(opts)`
-  - `extract(opts, *, include_champions=True, include_maps=True, progress_callback=None, persisted_wem_callback=None)`
-  - `transcode_wav(opts, *, progress_callback=None, job_label=None)`
-  - `mapping(opts, *, include_champions=True, include_maps=True, progress_callback=None)`
+  - <a id="update"></a>
+
+    ```python
+    update(opts, *, target="all", progress_callback=None)
+    ```
+  - <a id="discover-resource-packs"></a>
+
+    ```python
+    discover_resource_packs(opts)
+    ```
+  - <a id="extract"></a>
+
+    ```python
+    extract(opts, *, include_champions=True, include_maps=True, progress_callback=None, persisted_wem_callback=None)
+    ```
+  - <a id="transcode-wav"></a>
+
+    ```python
+    transcode_wav(opts, *, progress_callback=None, job_label=None)
+    ```
+  - <a id="app-mapping"></a>
+
+    ```python
+    mapping(opts, *, include_champions=True, include_maps=True, progress_callback=None)
+    ```
 - 数据与目标辅助
-  - `prepare_update_data(*, force_update=False)`
-  - `check_targets(opts)`
-  - `resolve_champion_ids(selectors)`
+  - <a id="prepare-update-data"></a>
 
-`check_targets(opts)` 使用已准备的 `data.msgpack` 中的英雄、地图 ID 做存在性检查，包含显式
-`champion:<id>` 特殊选择；发现未知 ID 时抛出 `app.targets.TargetSelectionError`，不读取 GAME WAD
-内容。需要有效/未知两份清单时，可用 `app.targets.check_ids(ids, rows)`，结果包含 `valid` 与 `unknown`。
+    ```python
+    prepare_update_data(*, force_update=False)
+    ```
+  - <a id="check-targets"></a>
 
-`update` 在基础 game data 准备完成后、BIN 更新前执行该检查；`extract`、`mapping`、`transcode_wav`
-在消费资源前复检已有目录。阶段内的未知 ID 转成 `failed` 的 `StageResult`，其 `error_type` 为
-`TargetSelectionError`，不会静默处理有效子集。资源是否存在、WAD/BIN 内容是否可用仍由各自阶段负责。
-CLI 的既有本地源检查也可能在写入前提前发现错误目标，缺失文件与未知 ID 仍分别报告。
+    ```python
+    check_targets(opts)
+    ```
+  - <a id="resolve-champion-ids"></a>
 
-GUI 的确认窗口允许用户明确接受有效子集：确认后只提交有效 ID，排除项保留在任务详情中；若没有
+    ```python
+    resolve_champion_ids(selectors)
+    ```
+
+#### 目标检查
+
+| 入口或阶段 | 规则 |
+| --- | --- |
+| `check_targets(opts)` | 用 `data.msgpack` 检查英雄、地图及显式 `champion:<id>`；未知 ID 抛 `app.targets.TargetSelectionError`，不读 GAME WAD |
+| `app.targets.check_ids(ids, rows)` | 返回 `valid` 与 `unknown` 清单 |
+| update | 基础 game data 准备后、BIN 更新前检查 |
+| extract / mapping / transcode_wav | 消费资源前复检已有目录 |
+| 阶段内未知 ID | 返回 failed `StageResult`，`error_type = TargetSelectionError`，不静默处理有效子集 |
+
+资源存在性与 WAD/BIN 内容仍由各自阶段判断。控制台的本地源检查可能在写入前发现错误目标，
+缺失文件和未知 ID 分别报告。
+
+界面的确认窗口允许用户明确接受有效子集：确认后只提交有效 ID，排除项保留在任务详情中；若没有
 有效目标则不能提交。英雄和地图都使用显式元组，空元组表示不处理该类；过滤成空集合不会回退全量。
 
 所有方法只消费 `AppContext.config.game_path` 指向的本地目录。`create_app_context(...)` 会在任何
 输出初始化前验证共享结构；目标级 WAD/BIN/bank 完整性继续由 update 与 v2 bindings 证明。
 
-## 3. 其他公开分域包
+<a id="packages"></a>
 
-### 3.1 `lol_audio_unpack.config`
+## 其他模块
+
+<a id="config"></a>
+
+### 配置与 INI
+
+导入包：`lol_audio_unpack.config`。
 
 提供共享设置 schema 与标准 INI 读写能力：
 
-- `SettingKey`、`ConfigSection`
-- `SharedSettingField`、`CommandConfigField`
-- `build_settings(args)`
-- `load_settings(...)`、`write_settings(...)`
-- `load_command_config(...)`、`write_command_config(...)`
-- `resolve_default_path(...)`
+- <a id="settingkey"></a>`SettingKey`、<a id="configsection"></a>`ConfigSection`
+- <a id="sharedsettingfield"></a>`SharedSettingField`、<a id="commandconfigfield"></a>`CommandConfigField`
+- <a id="build-settings"></a>`build_settings(args)`
+- <a id="load-settings"></a>`load_settings(...)`、<a id="write-settings"></a>`write_settings(...)`
+- <a id="load-command-config"></a>`load_command_config(...)`、<a id="write-command-config"></a>`write_command_config(...)`
+- <a id="resolve-default-path"></a>`resolve_default_path(...)`
 
-### 3.2 `lol_audio_unpack.unpack`
+<a id="unpack"></a>
+
+### 音频解包
+
+导入包：`lol_audio_unpack.unpack`。
 
 提供解包入口：
 
-- `generate_output_path`
-- `unpack_all`
-- `unpack_entity`
-- `unpack_champion`
-- `unpack_champions`
-- `unpack_map`
-- `unpack_maps`
-- `unpack_resource_pack`
-- `unpack_resource_packs`
+- <a id="generate-output-path"></a>`generate_output_path`
+- <a id="unpack-all"></a>`unpack_all`
+- <a id="unpack-entity"></a>`unpack_entity`
+- <a id="unpack-champion"></a>`unpack_champion`
+- <a id="unpack-champions"></a>`unpack_champions`
+- <a id="unpack-map"></a>`unpack_map`
+- <a id="unpack-maps"></a>`unpack_maps`
+- <a id="unpack-resource-pack"></a>`unpack_resource_pack`
+- <a id="unpack-resource-packs"></a>`unpack_resource_packs`
 
-`unpack_entity`、`unpack_champion`、`unpack_map` 和 `unpack_resource_pack` 支持
-关键字参数 `max_workers=1`，用于 v2 binding 路径中实体内部的 WEM 写出并发。
-直接调用并启用并发时，`persisted_wem_callback` 会从写出线程触发，调用方需保证回调线程安全。
-应用批处理入口会协调回调，并从 `OperationOptions.max_workers` 的总配额中分配实体与写出并发，
-不会为每个实体额外启动一整套同规模写线程。默认保持整实体解包、原始 ID 与现有目录布局。
+- **实体内并发**：`unpack_entity`、`unpack_champion`、`unpack_map`、`unpack_resource_pack` 支持 `max_workers=1`，控制 v2 binding 路径中的 WEM 写出。
+- **直接回调**：并发时 `persisted_wem_callback` 从写线程触发，调用方需保证线程安全。
+- **批处理配额**：应用协调回调，从 `OperationOptions.max_workers` 总配额分配实体与写并发，不为每个实体额外启动同规模线程。
+- **默认行为**：保持整实体解包、原始 ID 与既有目录布局。
 
-### 3.3 `lol_audio_unpack.mapping`
+<a id="mapping"></a>
+
+### 事件映射
+
+导入包：`lol_audio_unpack.mapping`。
 
 提供映射入口：
 
-- `RuntimeCache`
-- `build_all`
-- `build_entity`
-- `build_champion`
-- `build_champions`
-- `build_map`
-- `build_maps`
-- `build_resource_pack`
-- `build_resource_packs`
-- `execute_tasks`
-- `integrate_entity`
-- `describe_hirc_backend`
+- <a id="runtimecache"></a>`RuntimeCache`
+- <a id="build-all"></a>`build_all`
+- <a id="build-entity"></a>`build_entity`
+- <a id="build-champion"></a>`build_champion`
+- <a id="build-champions"></a>`build_champions`
+- <a id="build-map"></a>`build_map`
+- <a id="build-maps"></a>`build_maps`
+- <a id="build-resource-pack"></a>`build_resource_pack`
+- <a id="build-resource-packs"></a>`build_resource_packs`
+- <a id="execute-tasks"></a>`execute_tasks`
+- <a id="integrate-entity"></a>`integrate_entity`
+- <a id="describe-hirc-backend"></a>`describe_hirc_backend`
 
-### 3.4 `lol_audio_unpack.model`
+<a id="model"></a>
+
+### 数据模型
+
+导入包：`lol_audio_unpack.model`。
 
 提供共享实体模型与任务生成：
 
-- `AudioEntityData`
-- `generate_champion_tasks`
-- `generate_map_tasks`
+- <a id="audioentitydata"></a>`AudioEntityData`
+- <a id="generate-champion-tasks"></a>`generate_champion_tasks`
+- <a id="generate-map-tasks"></a>`generate_map_tasks`
 
-### 3.5 `lol_audio_unpack.runtime.wav`
+<a id="wav"></a>
+
+### WAV 转码
+
+导入包：`lol_audio_unpack.runtime.wav`。
 
 提供独立 WAV 转码 stage 的路径装配与批处理能力：
 
-- `TranscodeCoordinator`
-- `TranscodePaths`
-- `TranscodeProgress`
-- `TranscodeSummary`
-- `build_output_path`
-- `build_transcode_paths`
-- `resolve_decode_config`
-- `run_tree`
-- `run_worker`
+- <a id="transcodecoordinator"></a>`TranscodeCoordinator`
+- <a id="transcodepaths"></a>`TranscodePaths`
+- <a id="transcodeprogress"></a>`TranscodeProgress`
+- <a id="transcodesummary"></a>`TranscodeSummary`
+- <a id="build-output-path"></a>`build_output_path`
+- <a id="build-transcode-paths"></a>`build_transcode_paths`
+- <a id="resolve-decode-config"></a>`resolve_decode_config`
+- <a id="run-tree"></a>`run_tree`
+- <a id="run-worker"></a>`run_worker`
 
-### 3.6 `lol_audio_unpack.manager`
+<a id="manager"></a>
+
+### 数据准备与读取
+
+导入包：`lol_audio_unpack.manager`。
 
 提供底层数据准备与读取类：
 
-- `DataUpdater`
-- `BinUpdater`
-- `DataReader`
-- `ResourcePackDiscovery`
+- <a id="dataupdater"></a>`DataUpdater`
+- <a id="binupdater"></a>`BinUpdater`
+- <a id="datareader"></a>`DataReader`
+- <a id="resourcepackdiscovery"></a>`ResourcePackDiscovery`
 
 `DataReader` 的 banks 读取边界：
 
@@ -242,13 +323,15 @@ GUI 的确认窗口允许用户明确接受有效子集：确认后只提交有�
   sub-entity，完整 key 保留在 payload/诊断中；输出、mapping hash 与 report 路径使用该 key 的
   Windows-safe component。
 
-这些类都要求显式传入 `ctx: AppContext`。`DataReader(ctx)` 每次构造都会得到独立实例，不存在
-进程级单例或跨 context registry。`LolAudioUnpackApp` 会为自己的 context 懒加载并复用一个 reader；
-`prepare_update_data()`、`update()` 或 selected-WAD discovery 可能改写结构化 artifact 后，门面会使
-该 reader 整体失效，下一次读取重新加载。直接使用 `DataReader` 的调用方若自行写入 artifact，也应
-丢弃旧实例并重新构造。
+#### reader 生命周期
 
-## 4. 快速示例
+- 所有类要求显式 `ctx: AppContext`。每次 `DataReader(ctx)` 都构造独立实例，无进程级单例或跨 context registry。
+- `LolAudioUnpackApp` 为自己的 context 懒加载并复用 reader；`prepare_update_data()`、`update()` 或 selected-WAD discovery 可能改写 artifact 后，使 reader 整体失效，下次重新加载。
+- 直接写入 artifact 的调用方应丢弃旧 `DataReader` 并重新构造。
+
+<a id="examples"></a>
+
+## 调用示例
 
 ### 4.1 已安装客户端
 

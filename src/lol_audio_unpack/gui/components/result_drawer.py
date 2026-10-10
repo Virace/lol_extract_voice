@@ -38,6 +38,7 @@ from qfluentwidgets import (
     TableView,
     TreeWidget,
     isDarkTheme,
+    qconfig,
 )
 
 from lol_audio_unpack.app.failures import TaskFailure
@@ -209,6 +210,10 @@ class ResultDrawer(QDialog):
         self._result: ExecutionTaskResult | None = None
         self._busy = False
         self._sync_geometry()
+        self._refresh_theme_styles()
+        # 等子控件完成主题更新后再重取动画快照，避免动画继续展示旧主题。
+        qconfig.themeChangedFinished.connect(self._refresh_theme_styles)
+        self.destroyed.connect(self._disconnect_theme_signals)
 
     def set_result(
         self,
@@ -263,7 +268,7 @@ class ResultDrawer(QDialog):
             f"版本：{result.version or task.draft.version or '未确认'}\n动作：{scope}"
             + (f"\n解包类型：{audio_types or '无'}" if request is None and params.run_extract else "")
             + (
-                f"\nWAV 格式：{request.options.format if request else params.wav_format}"
+                f"\n采样格式：{request.options.format if request else params.wav_format}"
                 if request or params.wav_enabled
                 else ""
             )
@@ -390,15 +395,29 @@ class ResultDrawer(QDialog):
         if path is not None:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(path if path.is_dir() else path.parent)))
 
-    def showEvent(self, event) -> None:
-        """每次打开按当前窗口和主题显示。"""
-        self._sync_geometry()
+    def _refresh_theme_styles(self) -> None:
+        """同步面板底色，并更新仍在用于开关动画的主题快照。"""
         background = "rgb(28, 31, 38)" if isDarkTheme() else "rgb(255, 255, 255)"
         border = get_fluent_frame_stroke_pair()[int(isDarkTheme())]
         self.panel.setStyleSheet(
             f"QFrame#TaskResultPanel {{ background-color: {background}; border: 1px solid {border}; }}"
             "QWidget#TaskResultContent { background-color: transparent; }"
         )
+        if self._panel_snapshot is not None:
+            self._capture_panel()
+        self.update()
+
+    def _disconnect_theme_signals(self, *_args: object) -> None:
+        """随抽屉销毁释放全局主题信号连接。"""
+        try:
+            qconfig.themeChangedFinished.disconnect(self._refresh_theme_styles)
+        except (RuntimeError, TypeError):
+            pass
+
+    def showEvent(self, event) -> None:
+        """每次打开按当前窗口几何和主题显示。"""
+        self._sync_geometry()
+        self._refresh_theme_styles()
         super().showEvent(event)
         self.close_button.setFocus()
         self._closing_result = None

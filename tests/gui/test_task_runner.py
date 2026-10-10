@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,6 +11,8 @@ import pytest
 import lol_audio_unpack.gui.window as window_module
 from lol_audio_unpack.app.audio_export import AudioExportRequest, ExportTarget
 from lol_audio_unpack.app.audio_scope import AudioScope
+from lol_audio_unpack.app.facade import LolAudioUnpackApp
+from lol_audio_unpack.app.outputs import save_outputs
 from lol_audio_unpack.app.resource_pack import ResourcePackWadRef, build_resource_pack_key
 from lol_audio_unpack.app.results import EntityResult, ResultStatus, StageResult
 from lol_audio_unpack.app.types import WavOutputOptions
@@ -24,9 +27,108 @@ from lol_audio_unpack.gui.task_models import (
 from lol_audio_unpack.gui.window import _prepare_shared_entity_data
 from lol_audio_unpack.model.progress import OperationProgress
 from lol_audio_unpack.runtime.wav.batch import WavBatchResult
+from lol_audio_unpack.runtime.wav.job import run_tree
+from tests.factories import make_context
+from tests.runtime.test_wav_cache import install_converter, make_library
+from tests.runtime.test_wav_event_output import write_mapping
 
 EXPECTED_CONTEXT_COUNT_WITH_UPDATE = 2
 PREPARE_GENERATION = 3
+EXPECTED_EVENT_OUTPUTS = 4
+
+
+@pytest.mark.parametrize("run_mapping", [False, True])
+def test_event_task_delivers_after_selected_mapping_without_creating_unselected_mapping(
+    tmp_path, monkeypatch, run_mapping
+):
+    """默认任务可使用后续映射；未选且不存在映射时完整输出普通目录。"""
+    scope = make_library(tmp_path)
+    save_outputs(tmp_path, "16.18", "zh_CN", "champion", "1", scope.resolve_files())
+    install_converter(monkeypatch)
+    ctx = make_context(tmp_path, runtime_cache={"tools_prechecked": True})
+
+    class App(LolAudioUnpackApp):
+        """隔离目标准备和映射生成，实际执行 WAV 输出与结果适配。"""
+
+        def __init__(self, _context):
+            self.ctx = ctx
+
+        def _get_reader(self):
+            return SimpleNamespace(version="16.18")
+
+        def update(self, *_args, **_kwargs):
+            return StageResult("update", status=ResultStatus.SUCCESS)
+
+        def transcode_wav(self, options, **_kwargs):
+            """转码暂存由真实输出层完成。"""
+            return self._adapt_wav_result(run_tree(ctx=ctx, version="16.18", wav_output=options.wav_output))
+
+        def mapping(self, *_args, **_kwargs):
+            """在转码之后生成本轮映射供最终分类使用。"""
+            assert not list(ctx.version_path("wav", "16.18").rglob("*.wav"))
+            path = write_mapping(ctx.version_path("hash", "16.18"), ("1001·皮肤/VO/101.wem", "1002·皮肤/VO/101.wem"))
+            return StageResult(
+                "mapping", (EntityResult("champion", "1", ResultStatus.SUCCESS, artifacts=(str(path),)),)
+            )
+
+    monkeypatch.setattr(task_runner, "create_app_context", lambda **_kwargs: ctx)
+    monkeypatch.setattr(task_runner, "LolAudioUnpackApp", App)
+    original = _build_task(run_extract=False, run_mapping=run_mapping, wav_enabled=True, champion_ids=(1,))
+    task = replace(
+        original,
+        draft=replace(original.draft, task_params=replace(original.draft.task_params, wav_group_by_event=True)),
+    )
+    progress = []
+    result = task_runner.run_execution_task(task, SimpleNamespace(progress=SimpleNamespace(emit=progress.append)))
+    output = ctx.version_path("wav_event" if run_mapping else "wav", "16.18")
+    assert result.run_result.status is ResultStatus.SUCCESS
+    assert "音频转码" in result.completed_steps
+    assert result.wav_batches[0].success_count == len(scope.files)
+    assert result.wav_batches[0].output_root == output
+    assert not list(ctx.paths.temp_path.rglob("*.wav"))
+    assert all(
+        stage.entities[0].artifacts == (str(output),) for stage in result.run_result.stages if stage.stage == "wav"
+    )
+    if run_mapping:
+        assert (output / "champions/1·Hero·英雄/1001·皮肤/VO/Play_Attack/101.wav").is_file()
+        assert result.wav_batches[0].unclassified_count == 1
+    else:
+        assert (output / "champions/1·Hero·英雄/1001·皮肤/VO/101.wav").is_file()
+        assert result.wav_batches[0].plain_count == len(scope.files)
+        assert result.wav_batches[0].unclassified_count == 0
+        assert not ctx.version_path("hash", "16.18").exists()
+    assert any(item.stage_key == "wav" and item.stage_finished for item in progress)
+
+
+def test_manual_event_export_keeps_the_selected_extra_wav_root(tmp_path, monkeypatch):
+    """手动导出经真实 worker 保留版本、语言与完整目录，并返回最终分类报告。"""
+    scope = make_library(tmp_path)
+    save_outputs(tmp_path, "16.18", "zh_CN", "champion", "1", scope.resolve_files())
+    install_converter(monkeypatch)
+    write_mapping(tmp_path / "hashes/16.18/zh_CN", ("1001·皮肤/VO/101.wem", "1002·皮肤/VO/101.wem"))
+    entity_root = scope.root / "champions/1·Hero·英雄"
+    request = AudioExportRequest(
+        "champions",
+        "1",
+        "英雄",
+        "16.18",
+        scope.root,
+        (ExportTarget(AudioScope(entity_root, directories=(".",)), tmp_path / "wavs"),),
+        tmp_path / "reports",
+        WavOutputOptions(enabled=True, group_by_event=True),
+        library_root=tmp_path,
+        region="zh_CN",
+    )
+    request = replace(request, targets=request.build_targets((request.targets[0].scope,), tmp_path / "chosen"))
+    task = QueuedExecutionTask(1, ExecutionTaskDraft("export", "英雄", export_request=request), "英雄")
+    signals = SimpleNamespace(progress=SimpleNamespace(emit=lambda _value: None))
+    result = task_runner.run_execution_task(task, signals)
+    expected = tmp_path / "chosen/16.18/zh_CN/champions/1·Hero·英雄/1001·皮肤/VO/Play_Attack/101.wav"
+    assert result.run_result.status is ResultStatus.SUCCESS
+    assert expected.is_file()
+    assert result.wav_batches[0].output_count == EXPECTED_EVENT_OUTPUTS
+    assert result.wav_batches[0].output_root == expected.parents[3]
+    assert not (tmp_path / "chosen/wavs").exists()
 
 
 def test_export_report_failure_preserves_successful_audio(tmp_path, monkeypatch) -> None:

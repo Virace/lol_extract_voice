@@ -1,4 +1,4 @@
-# CLI 本地打包与验收
+# 控制台本地打包与验收
 
 用户使用说明见 [控制台独立包](../cli-package.md)。
 
@@ -14,9 +14,9 @@ uv run --no-sync python scripts/pyinstaller/build_cli.py
 
 默认产物为单文件 `dist/LolAudioUnpack-CLI.exe`；旁边有 `LolAudioUnpack-CLI.exe.sha256` 和 `CLI-README.md`，构建根目录有 `build.log`、`build.json`、依赖环境与 PyInstaller 分析记录。
 
-CLI 使用 `scripts/pyinstaller/assets/cli_icon.ico`，在 GUI 图标的基础上增加终端角标。
+控制台使用 `scripts/pyinstaller/assets/cli_icon.ico`，在界面图标的基础上增加终端角标。
 同目录的 `cli_icon.png` 保留图标原图；ICO 包含 16、24、32、48、64、128、256 像素尺寸，
-仅作为构建时的 EXE 图标资源，不引入 GUI 运行依赖。
+仅作为构建时的 EXE 图标资源，不引入界面运行依赖。
 
 支持 `--output-root <新目录>`、`--mode onedir` 和无文件副作用的 `--dry-run`。已存在的输出根目录会被拒绝，不自动覆盖或清理历史产物。目录模式仅用于排障，最终仍需验收单文件。
 
@@ -32,10 +32,12 @@ CLI 使用 `scripts/pyinstaller/assets/cli_icon.ico`，在 GUI 图标的基础�
 
 ## Release 附件
 
-`.github/workflows/release-build.yml` 在 main 所包含的提交上收到 tag 推送后构建发布包。
-GUI 与 CLI 分别构建，共用版本规则；现有离线与 GUI 行为检查、CLI 工具自检和两份 EXE
-的版本一致性检查通过后，才会发布同一个 Release。构建版本取自触发发布的 tag（去掉开头的
-`v`），附件准备时同时核对 EXE 版本与 tag。CLI 的构建环境只安装核心和 build 依赖。
+| Release 构建 | 规则 |
+| --- | --- |
+| 触发 | `.github/workflows/release-build.yml` 收到包含于 main 的提交的 tag 推送 |
+| 版本 | 界面/控制台共用去掉 `v` 的 tag 版本，附件准备时核对 EXE 与 tag |
+| 检查 | 离线与界面行为检查、控制台工具自检、两份 EXE 版本一致性检查通过后发布同一 Release |
+| 控制台环境 | 仅安装核心和 build 依赖 |
 
 附件包括：
 

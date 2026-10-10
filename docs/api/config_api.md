@@ -1,4 +1,4 @@
-# 配置与上下文 API
+# 配置文件与运行上下文
 
 ## 1. 当前配置主线
 
@@ -8,7 +8,11 @@
 2. 标准 INI：`lol_audio_unpack.config.ini` 负责读写
 3. `AppContext`：只消费已经解析好的共享配置
 
-## 2. `lol_audio_unpack.config`
+<a id="config-files"></a>
+
+## 2. 配置读写
+
+导入路径：`lol_audio_unpack.config`。公开入口见 [Python API](python_api.md#config)。
 
 ### 2.1 schema 层
 
@@ -93,8 +97,8 @@ def write_command_config(
 
 也就是说：
 
-- 源码运行 GUI/CLI 时，默认配置文件落在当前启动目录
-- 打包运行 GUI 时，默认配置文件落在可执行文件同目录
+- 源码运行界面/控制台时，默认配置文件落在当前启动目录
+- 打包运行界面时，默认配置文件落在可执行文件同目录
 
 ## 4. 标准 INI 结构
 
@@ -114,10 +118,15 @@ def write_command_config(
 - `[runtime]`：`max_workers`
 - `[update]`：`enable`、`force`、`skip_events`
 - `[extract]`：`enable`
-- `[wav]`：`enable`、`wav_workers`、`wav_timeout`、`wav_retries`、`wav_format`
+- `[wav]`：`enable`、`wav_workers`、`wav_timeout`、`wav_retries`、`wav_format`、`wav_group_by_event`
 - `[mapping]`：`enable`、`integrate_data`
 
-GUI 只读取 `[app]`。其余 section 仅供 CLI 配置文件模式使用；启用 `-c` 时，动作列表也由这些 section 的 `enable` 决定。
+`[wav] wav_format` 设置采样格式，转码统一输出 WAV。默认 `pcm16` 表示 16 位整数 PCM；
+`pcm24` / `pcm32` 表示 24 / 32 位整数 PCM，`float` 表示 32 位浮点，
+`auto` 沿用解码器默认的输出采样格式。配置字段名保持为 `wav_format`。
+
+界面读取 `[app]` 共享设置、`[wav]` 转码默认值与 `[gui]` 界面偏好，任务动作由执行中心选择。
+控制台启用 `-c` 时，动作列表由动作 section 的 `enable` 决定，转码选项同样读取 `[wav]`。
 
 ## 5. 共享设置字段
 
@@ -137,12 +146,14 @@ GUI 只读取 `[app]`。其余 section 仅供 CLI 配置文件模式使用；启
 - `GAME_REGION = "zh_CN"`
 - `EXCLUDE_TYPE = "SFX,MUSIC"`
 - `GROUP_BY_TYPE = False`
-- `LOBBY_AUDIO = True`：默认附带选人语音、禁用语音及选人音效；INI 使用 `[app] lobby_audio = false` 关闭，CLI 使用 `--no-lobby-audio`。
+- `LOBBY_AUDIO = True`：默认附带选人语音、禁用语音及选人音效；INI 使用 `[app] lobby_audio = false` 关闭，控制台使用 `--no-lobby-audio`。
 
-上述语言默认值用于未显式提供参数的 CLI/API。GUI 首次配置保持“请选择”，只在发现唯一
+上述语言默认值用于未显式提供参数的控制台/API。界面首次配置保持“请选择”，只在发现唯一
 有效语言时自动选中；主动留空会持久化，刷新不重新填充。显式空语言不能执行源处理任务。
 
 旧 `[app] with_bp_vo` 在配置加载时自动迁移为 `lobby_audio` 并保留原值。新旧键同时存在时保留新键；迁移无法写回时告警并继续兼容读取。Python 配置字段和设置键统一为 `lobby_audio` / `LOBBY_AUDIO`，旧 Python 名称不保留别名。
+
+<a id="app-context"></a>
 
 ## 6. 上下文构建
 
@@ -193,15 +204,19 @@ def setup_app(
 `game_path` 可以指向已安装客户端，也可以指向外部工具准备的等价目录。两者必须满足同一个
 [已准备本地数据源合同](./prepared_source.md)，程序不提供下载或网络回退。
 
-版本产物统一由 `ctx.version_path(kind, version)` 定位，在对应根下加入版本和规范化语言；
-例如 `ctx.version_path("manifest", "16.18")` 返回 `manifest/16.18/zh_CN`。
-`kind` 使用 `manifest`、`audio`、`wav`、`hash`、`report` 等 `AppPaths` 路径前缀。
-`default` 英语规范化为 `en_US`；GUI 空语言使用只读占位 `_unselected`，不能执行源处理任务。
-硬链接、完整搬迁及旧目录一次性迁移规则见[资源库说明](./library_api.md)。
+| 路径规则 | 说明 |
+| --- | --- |
+| 版本产物 | `ctx.version_path(kind, version)` 加入版本和规范化语言 |
+| 示例 | `ctx.version_path("manifest", "16.18")` 返回 `manifest/16.18/zh_CN` |
+| `kind` | 使用 `manifest`、`audio`、`wav`、`wav_event`、`hash`、`report` 等 `AppPaths` 前缀 |
+| 英语与空语言 | `default` 规范化为 `en_US`；界面空语言使用只读 `_unselected`，不能执行源任务 |
+
+用户文件位置见 [统一输出目录](../audio-and-output.md#output-folders)，硬链接、完整搬迁与旧目录迁移见
+[资源库 API](./library_api.md)。
 
 ## 8. 配置示例
 
-GUI 的“提前准备数据”保存在独立偏好分组，默认关闭：
+界面的“提前准备数据”保存在独立偏好分组，默认关闭：
 
 ```ini
 [gui]
@@ -210,8 +225,38 @@ prepare_data_on_startup = false
 
 关闭时启动仅准备基础英雄/地图目录，解包或映射任务按所选目标补齐资源；开启后，在启动或游戏
 版本、路径、区域变化时自动补齐普通英雄/地图的资源与事件缓存。普通准备复用同版本缓存，
-显式“前置强制更新”才强制重建。该偏好不进入 `AppContext` 共享设置，也不改变 CLI 的显式动作
+显式“前置强制更新”才强制重建。该偏好不进入 `AppContext` 共享设置，也不改变控制台的显式动作
 语义；运行任务期间开关与其他运行时配置一起锁定。
+
+<a id="wav-event-output"></a>
+
+`[wav] wav_group_by_event` 对应基础设置中的“按事件分类输出”，默认关闭，控制台同步提供
+`--wav-group-by-event` / `--no-wav-group-by-event`。界面兼容读取旧 `[gui]` 同名键，新字段优先，
+保存时迁移到 `[wav]`。例如：
+
+```ini
+[wav]
+enable = true
+wav_group_by_event = true
+```
+
+**参数生效：** 在创建新的 WAV 转码或批量导出任务时冻结，不重建共享数据或整理旧文件。
+Python 使用 `WavOutputOptions(group_by_event=True)`。
+
+| 输出情况 | 布局 |
+| --- | --- |
+| 普通默认根 | `wavs` |
+| 可分类默认根 | `wavs_by_event`；保留版本、语言、实体目录、原始 ID，在文件前增加事件层 |
+| 无可用精确映射 | 回到普通根 |
+| 映射可用但音频未关联 | 事件根的“未关联事件” |
+| 手动导出 | 使用所选根，不额外加 `wavs` 或 `wavs_by_event` |
+
+**交付时序：** 界面与控制台共用延后交付入口，等本轮已选映射步骤完成后分类，不隐式启用映射。
+独立 Python WAV 调用消费当时已有映射；需等待后续映射时，用 `app.defer_wav_output(opts)` 包住
+转码与映射，再调用 `app.finish_wav_output(output)`。
+
+解包前应同时确认 `[app] group_by_type`：它决定新 WEM 的类型层位置，WAV 镜像实际 WEM 目录。
+两项设置均不重排已有输出。跨事件的 WAV 使用独立副本，用户自行整理、打包与分发。
 
 ### 8.1 已安装客户端
 
@@ -265,16 +310,23 @@ settings = load_settings(config_file)
 ### 外部工具选择与启动预检
 
 `[app] wwiser_path` 和 `vgmstream_path` 留空分别使用内置 NativeHIRC、pyvgmstream；
-填写路径明确选择该外部工具。GUI 旧 `[gui] vgmstream_path` 在首次保存时写入共享字段，
+填写路径明确选择该外部工具。界面旧 `[gui] vgmstream_path` 在首次保存时写入共享字段，
 新共享字段（包括空值）优先。清除仅移除配置，不删除文件；任务使用创建时的快照。
 
-启动前只探测本次会调用的后端，使用随包提供的小 WEM/BNK 实际调用，失败不会静默回退。
-GUI 可确认仅本次改用内置并复检，也可取消；CLI/API 直接返回失败。正式转换对失败文件自动重试
-完整任务流程，默认最多尝试 3 次（含首次），保持原后端和参数，不重复工具预检；
-耗尽次数后记录失败并继续其他文件。任务结束后 GUI 不提供失败项手动重试入口。
-CLI `--wav-retries`、INI `[wav] wav_retries` 和 Python API `WavOutputOptions.max_retries`
-使用相同语义：最大尝试次数包含首次，默认 3，至少 1。GUI 的“最大尝试次数”同步读写该 INI 字段，
-创建任务与导出时冻结为任务参数；GUI 保存不会再移除该键。
+| 后端检查与恢复 | 行为 |
+| --- | --- |
+| 启动预检 | 只探测本次后端，实际调用随包小 WEM/BNK；失败不静默回退 |
+| 界面预检失败 | 可确认仅本次改用内置并复检，或取消 |
+| 控制台/API 预检失败 | 直接返回失败 |
+| 文件转换重试 | 重试完整任务，保持后端与参数，不重复预检；耗尽后记失败并继续其他文件 |
+| 界面任务结束 | 不提供失败项手动重试入口 |
+
+最大尝试次数**包含首次**，默认 3，至少 1。以下入口使用相同语义：
+
+- 控制台：`--wav-retries`。
+- INI：`[wav] wav_retries`。
+- Python：`WavOutputOptions.max_retries`。
+- 界面：“最大尝试次数”同步读写该 INI 字段，在创建任务与导出时冻结；保存不移除此键。
 
 Windows 打包程序运行外部 `wwiser.pyz` 时，需要 PATH 中有可启动的 `python`；
 内置 NativeHIRC 不需要另装 Python。外部工具由用户自行准备，应用不自动下载。

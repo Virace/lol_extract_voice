@@ -118,6 +118,8 @@ test.py
 *.bak
 *.bak.*
 *.json
+!/docs/package.json
+!/docs/package-lock.json
 !.version-suffix-rules.json
 hashes.*.txt
 Temp
@@ -138,3 +140,7 @@ benchmarks/
 VERSIONING_GUIDE.md
 .serena/
 .envrc
+
+# 文档网站依赖与框架生成文件
+/docs/node_modules/
+/docs/.vitepress/.temp/

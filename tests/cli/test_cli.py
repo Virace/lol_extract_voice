@@ -10,10 +10,16 @@ import pytest
 import lol_audio_unpack.cli.cli as cli_module
 import lol_audio_unpack.cli.dispatch as dispatch_cli
 import lol_audio_unpack.cli.runtime as runtime_cli
+from lol_audio_unpack.app.facade import LolAudioUnpackApp
+from lol_audio_unpack.app.outputs import save_outputs
 from lol_audio_unpack.app.results import EntityResult, ResultStatus, StageResult
 from lol_audio_unpack.app.targets import TargetSelectionError
 from lol_audio_unpack.cli.cli import _detect_mode
 from lol_audio_unpack.cli.parser import create_parser
+from lol_audio_unpack.runtime.wav.job import run_tree
+from tests.factories import make_context
+from tests.runtime.test_wav_cache import install_converter, make_library
+from tests.runtime.test_wav_event_output import write_mapping
 
 pytestmark = pytest.mark.unit
 
@@ -86,12 +92,81 @@ def test_validate_config_mode_allows_only_config_path() -> None:
     runtime_cli._validate_config_argv(["--config-file", "config.ini"])
 
 
-def test_validate_args_rejects_wav_tuning_without_wav_action() -> None:
+@pytest.mark.parametrize("flag", ["--wav-workers", "--wav-group-by-event"])
+def test_validate_args_rejects_wav_tuning_without_wav_action(flag) -> None:
     parser = create_parser()
-    args = parser.parse_args(["extract", "--wav-workers", "4"])
+    args = parser.parse_args(["extract", flag, *(["4"] if flag == "--wav-workers" else [])])
 
     with pytest.raises(runtime_cli.CliInputError):
         runtime_cli.validate_args(args, parser)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("config_mode", [False, True])
+@pytest.mark.parametrize("mapping_state", ["absent", "success", "failure", "unexpected", "cancelled"])
+def test_cli_event_wav_uses_final_mapping_and_separate_roots(tmp_path, monkeypatch, config_mode, mapping_state):
+    """真实 CLI 编排读取本轮映射；配置模式相同，未选或失败时保留普通输出。"""
+    scope = make_library(tmp_path)
+    save_outputs(tmp_path, "16.18", "zh_CN", "champion", "1", scope.resolve_files())
+    install_converter(monkeypatch)
+    ctx = make_context(tmp_path)
+    actions = ["wav", "mapping"] if mapping_state != "absent" else ["wav"]
+
+    class App(LolAudioUnpackApp):
+        """跳过客户端准备，仅在 CLI 任务中实际执行 WAV 输出。"""
+
+        def _get_reader(self):
+            return SimpleNamespace(version="16.18")
+
+        def transcode_wav(self, options, **_kwargs):
+            """执行真实转码调度和结果适配。"""
+            return self._adapt_wav_result(run_tree(ctx=ctx, version="16.18", wav_output=options.wav_output))
+
+        def mapping(self, _options, **_kwargs):
+            """转换已暂存，再准备本次分类关系或返回映射失败。"""
+            assert not tuple(ctx.version_path("wav_event", "16.18").rglob("*.wav"))
+            if mapping_state == "failure":
+                return StageResult.from_error("mapping", OSError("mapping failed"))
+            if mapping_state == "unexpected":
+                raise RuntimeError("unexpected mapping failure")
+            if mapping_state == "cancelled":
+                raise KeyboardInterrupt
+            path = write_mapping(ctx.version_path("hash", "16.18"), ("1001·皮肤/VO/101.wem", "1002·皮肤/VO/101.wem"))
+            return StageResult(
+                "mapping", (EntityResult("champion", "1", ResultStatus.SUCCESS, artifacts=(str(path),)),)
+            )
+
+    argv = ["unpack", *actions, "--champions", "1", "--wav-group-by-event"]
+    if config_mode:
+        config = tmp_path / "task.ini"
+        config.write_text(
+            "[app]\ngame_path = game\n[targets]\nchampions = 1\n"
+            "[wav]\nenable = true\nwav_group_by_event = true\n"
+            f"[mapping]\nenable = {str(mapping_state != 'absent').lower()}\n",
+            encoding="utf-8",
+        )
+        argv = ["unpack", "-c", str(config)]
+    monkeypatch.setattr(cli_module.sys, "argv", argv)
+    monkeypatch.setattr(cli_module, "initialize_app", lambda _args: ctx)
+    monkeypatch.setattr(cli_module, "LolAudioUnpackApp", App)
+    monkeypatch.setattr(cli_module, "emit_cli_run_summary", lambda *_args, **_kwargs: None)
+    results = []
+    monkeypatch.setattr(cli_module, "_log_run_result", results.append)
+    expected_exit = {"failure": EXIT_PARTIAL, "unexpected": EXIT_FAILED, "cancelled": EXIT_CANCELLED}
+    assert cli_module.main() == expected_exit.get(mapping_state, EXIT_SUCCESS)
+    output = ctx.version_path("wav_event" if mapping_state == "success" else "wav", "16.18")
+    if mapping_state == "unexpected":
+        assert results[0].status is ResultStatus.FAILED
+    else:
+        wav = next(stage for stage in results[0].stages if stage.stage == "wav")
+        assert wav.status is ResultStatus.SUCCESS
+        assert wav.entities[0].artifacts == (str(output),)
+    suffix = "Play_Attack/101.wav" if mapping_state == "success" else "101.wav"
+    assert (output / "champions/1·Hero·英雄/1001·皮肤/VO" / suffix).is_file()
+    assert len(tuple(output.rglob("*.wav"))) == (4 if mapping_state == "success" else 3)
+    if mapping_state == "absent":
+        assert not ctx.version_path("hash", "16.18").exists()
+    assert not tuple(ctx.paths.temp_path.rglob("*.wav"))
 
 
 def test_validate_args_mapping_allows_integrate_data() -> None:

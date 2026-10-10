@@ -1,52 +1,54 @@
-# API 导航与模块视图
+# 模块与数据结构
+
+公开调用入口见 [API 总览](../API.md)，脚本示例见 [Python API](python_api.md#examples)。下列文件名可跳转到仓库源码。
 
 ## 1. 当前包结构
 
 - 根入口
-  - `lol_audio_unpack/__init__.py`
-  - `lol_audio_unpack/__main__.py`
+  - [`lol_audio_unpack/__init__.py`](../../src/lol_audio_unpack/__init__.py)
+  - [`lol_audio_unpack/__main__.py`](../../src/lol_audio_unpack/__main__.py)
 - 应用编排
-  - `app/context.py`
-  - `app/facade.py`
-  - `app/local_source.py`
-  - `app/results.py`
-  - `app/types.py`
+  - [`app/context.py`](../../src/lol_audio_unpack/app/context.py)
+  - [`app/facade.py`](../../src/lol_audio_unpack/app/facade.py)
+  - [`app/local_source.py`](../../src/lol_audio_unpack/app/local_source.py)
+  - [`app/results.py`](../../src/lol_audio_unpack/app/results.py)
+  - [`app/types.py`](../../src/lol_audio_unpack/app/types.py)
 - 配置与 INI
-  - `config/schema.py`
-  - `config/ini.py`
-- CLI
-  - `cli/cli.py`
-  - `cli/parser.py`
-  - `cli/runtime.py`
-  - `cli/dispatch.py`
-  - `cli/invocation.py`
+  - [`config/schema.py`](../../src/lol_audio_unpack/config/schema.py)
+  - [`config/ini.py`](../../src/lol_audio_unpack/config/ini.py)
+- 控制台
+  - [`cli/cli.py`](../../src/lol_audio_unpack/cli/cli.py)
+  - [`cli/parser.py`](../../src/lol_audio_unpack/cli/parser.py)
+  - [`cli/runtime.py`](../../src/lol_audio_unpack/cli/runtime.py)
+  - [`cli/dispatch.py`](../../src/lol_audio_unpack/cli/dispatch.py)
+  - [`cli/invocation.py`](../../src/lol_audio_unpack/cli/invocation.py)
 - 数据准备与读取
-  - `manager/data_updater.py`
-  - `manager/bin_updater.py`
-  - `manager/data_reader.py`
+  - [`manager/data_updater.py`](../../src/lol_audio_unpack/manager/data_updater.py)
+  - [`manager/bin_updater.py`](../../src/lol_audio_unpack/manager/bin_updater.py)
+  - [`manager/data_reader.py`](../../src/lol_audio_unpack/manager/data_reader.py)
 - 共享模型
-  - `model/entity.py`
-  - `model/binding.py`
+  - [`model/entity.py`](../../src/lol_audio_unpack/model/entity.py)
+  - [`model/binding.py`](../../src/lol_audio_unpack/model/binding.py)
 - 解包
-  - `unpack/entity.py`
-  - `unpack/batch.py`
-  - `unpack/lobby_audio.py`
-  - `unpack/stats.py`
+  - [`unpack/entity.py`](../../src/lol_audio_unpack/unpack/entity.py)
+  - [`unpack/batch.py`](../../src/lol_audio_unpack/unpack/batch.py)
+  - [`unpack/lobby_audio.py`](../../src/lol_audio_unpack/unpack/lobby_audio.py)
+  - [`unpack/stats.py`](../../src/lol_audio_unpack/unpack/stats.py)
 - 映射
-  - `mapping/entity.py`
-  - `mapping/batch.py`
-  - `mapping/session.py`
+  - [`mapping/entity.py`](../../src/lol_audio_unpack/mapping/entity.py)
+  - [`mapping/batch.py`](../../src/lol_audio_unpack/mapping/batch.py)
+  - [`mapping/session.py`](../../src/lol_audio_unpack/mapping/session.py)
 - 运行时支持
-  - `runtime/wad_index.py`
-  - `runtime/wav/job.py`
-  - `runtime/wav/transcode.py`
-  - `runtime/wav/_runtime.py`
-- GUI
-  - `gui/`
+  - [`runtime/wad_index.py`](../../src/lol_audio_unpack/runtime/wad_index.py)
+  - [`runtime/wav/job.py`](../../src/lol_audio_unpack/runtime/wav/job.py)
+  - [`runtime/wav/transcode.py`](../../src/lol_audio_unpack/runtime/wav/transcode.py)
+  - [`runtime/wav/_runtime.py`](../../src/lol_audio_unpack/runtime/wav/_runtime.py)
+- 界面
+  - [`gui/`](../../src/lol_audio_unpack/gui/)
 
 ## 2. 典型调用链
 
-### 2.1 CLI 主链
+### 2.1 控制台主链
 
 1. `unpack` / `mapping` console script 进入 `lol_audio_unpack.cli.cli:main`
 2. `cli.parser.create_parser(...)` 解析动作与共享参数
@@ -54,7 +56,7 @@
 4. `cli.runtime.validate_args(...)` 校验动作组合与参数边界
 5. `cli.runtime.initialize_app(...)` 构建 `AppContext`
 6. `LolAudioUnpackApp` 执行 `update / extract / wav / mapping`
-7. CLI 顶层聚合各阶段 `StageResult`，并从 `RunResult` 映射统一结论与退出码
+7. 控制台顶层聚合各阶段 `StageResult`，并从 `RunResult` 映射统一结论与退出码
 
 ### 2.2 Python 主链
 
@@ -70,24 +72,29 @@
 - `manifest/<version>/<region>/events/**`：事件数据
 - `audios/<version>/<region>/...`：保留原 ID 的可见 `.wem`
 - `audios/_data/**` 与 `audios/_index/<version>/<region>.msgpack`：原始内容对象与归属索引
-- `wavs/<version>/<region>/...`：固定位置的 WAV 输出；格式变化时替换同一文件，不保存隐藏派生对象
+- `wavs/<version>/<region>/...`：固定位置的 WAV 输出；采样格式变化时替换同一文件，不保存隐藏派生对象
 - `hashes/<version>/<region>/...`：映射结果或整合结果
 - `reports/<version>/<region>/...`：解包、转码与汇总报告
 
 管理目录可能通过硬链接共享内容；编辑前先复制到库外或导出独立副本。
 搬迁、备份、旧目录一次性迁移和转换复用合同见[资源库说明](./library_api.md)。
 
+<a id="data-format"></a>
+
 ## 4. 数据格式约定
 
 `manager.utils.write_data(...)` 在正常和开发模式下均写入 `.msgpack`。
 兼容参数 `dev_mode` 不再影响格式；开发模式的独立 INI 和调试日志保持原行为。
 
-写入会先在目标同目录完成序列化与文件同步，再以原子替换发布正式文件，并返回实际目标路径。
-序列化、同步或替换失败时抛出 `manager.errors.ArtifactWriteError`；已有正式文件保持原样，
-本轮临时文件会尽力清理。
-同一基础路径下的其他格式 sibling 不会被自动删除。
-该保证只覆盖通过 `manager.utils.write_data(...)` 发布的结构化 artifact；WEM、报告等其他输出
-仍遵循各自写入路径，不能据此推断为全项目原子写入。
+| 写入阶段 | 保证 |
+| --- | --- |
+| 发布前 | 在目标同目录完成序列化与文件同步 |
+| 发布 | 原子替换正式文件，返回实际目标路径 |
+| 失败 | 抛出 `manager.errors.ArtifactWriteError`，原正式文件不变，尽力清理本轮临时文件 |
+| 其他格式 | 不自动删除同一基础路径的其他格式 sibling |
+
+> 此保证仅覆盖 `manager.utils.write_data(...)` 发布的结构化 artifact。
+> WEM、报告等遵循各自写入路径，不代表全项目原子写入。
 
 `manager.utils.read_data(...)` 只读取同一基础路径的 `.msgpack`，不回退旧 YAML/JSON。
 缺失返回空字典；损坏或顶层不是字典时抛出 `SharedDataCorruptError`，不当作空库覆盖。
@@ -114,8 +121,8 @@ uv run scripts/convert_data.py --input data.msgpack --output readable.json --fro
 ## 5. 延伸文档
 
 - [Python API（分域包与公开入口）](./python_api.md)
-- [CLI API（命令行参数与执行语义）](./cli_api.md)
-- [配置与上下文 API](./config_api.md)
+- [控制台参数参考](./cli_api.md)
+- [配置文件与运行上下文](./config_api.md)
 - [解包与映射 API（核心流水线）](./pipeline_api.md)
 - [已准备本地数据源合同](./prepared_source.md)
 - [基准测试与性能参考](./benchmarking_and_performance.md)

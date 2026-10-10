@@ -17,6 +17,7 @@ from ...app.library import with_library
 from ...app.types import AppContext, WavOutputOptions
 from .batch import WavBatchResult, run_batch
 from .cache import WavCache
+from .event_output import EVENT_SESSION_KEY, with_event_output
 
 
 @dataclass(slots=True, frozen=True)
@@ -36,13 +37,16 @@ class TranscodeTarget:
     display_label: str
 
 
-def build_transcode_paths(*, ctx: AppContext, version: str, job_label: str | None = None) -> TranscodePaths:
+def build_transcode_paths(
+    *, ctx: AppContext, version: str, job_label: str | None = None, group_by_event: bool = False
+) -> TranscodePaths:
     """根据版本和可选标签构造 WAV 路径组合。
 
     Args:
         ctx: 运行时上下文。
         version: 当前数据版本号。
         job_label: 可选报告标签；提供时报告目录会追加该标签。
+        group_by_event: 是否使用独立事件 WAV 根；不可分类的音频仍回落到普通根。
 
     Returns:
         TranscodePaths: 当前版本对应的音频、WAV 和报告目录。
@@ -52,7 +56,7 @@ def build_transcode_paths(*, ctx: AppContext, version: str, job_label: str | Non
         report_root = report_root / job_label
     return TranscodePaths(
         audio_root=ctx.version_path("audio", version),
-        wav_root=ctx.version_path("wav", version),
+        wav_root=ctx.version_path("wav_event" if group_by_event else "wav", version),
         report_root=report_root,
     )
 
@@ -98,6 +102,7 @@ def _write_reports(
 
 
 @with_library
+@with_event_output
 def run_tree(  # noqa: PLR0913
     *,
     ctx: AppContext,
@@ -122,7 +127,9 @@ def run_tree(  # noqa: PLR0913
     Returns:
         dict[str, Any]: 供上层汇总与日志消费的转码结果摘要。
     """
-    paths = build_transcode_paths(ctx=ctx, version=version, job_label=job_label)
+    paths = build_transcode_paths(
+        ctx=ctx, version=version, job_label=job_label, group_by_event=wav_output.group_by_event
+    )
     wav_output = replace(
         wav_output,
         backend_path=str(ctx.config.vgmstream_path) if ctx.config.vgmstream_path else wav_output.backend_path,
@@ -193,7 +200,14 @@ def run_tree(  # noqa: PLR0913
         if progress_callback is not None:
             progress_callback("wav", root_index - 1, root_total, f"正在处理: {target_label}")
 
-        summary = run_batch(
+        event_output = ctx.runtime_cache.get(EVENT_SESSION_KEY)
+        runner = event_output.run_batch if wav_output.group_by_event else run_batch
+        layout_kwargs = (
+            {"fallback_root": ctx.version_path("wav", version) / input_root.relative_to(paths.audio_root)}
+            if wav_output.group_by_event
+            else {}
+        )
+        summary = runner(
             AudioScope(input_root, directories=(".",)),
             output_root,
             options=wav_output,
@@ -202,7 +216,8 @@ def run_tree(  # noqa: PLR0913
             prechecked=bool(ctx.runtime_cache.get("tools_prechecked")),
             cache=cache,
             overwrite=True,
-            managed=True,
+            managed=not wav_output.group_by_event,
+            **layout_kwargs,
         )
         processed_count += summary.success_count
         batches.append(summary)

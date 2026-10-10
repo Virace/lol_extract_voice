@@ -11,11 +11,7 @@ from lol_audio_unpack.utils import versioning
 
 def test_extract_windows_file_version_reads_utf16_version_string() -> None:
     payload = (
-        b"prefix"
-        + "ProductVersion".encode("utf-16le")
-        + b"\x00\x00"
-        + "16.5.751.1533".encode("utf-16le")
-        + b"suffix"
+        b"prefix" + "ProductVersion".encode("utf-16le") + b"\x00\x00" + "16.5.751.1533".encode("utf-16le") + b"suffix"
     )
 
     assert versioning.extract_windows_file_version(payload) == "16.5.751.1533"
@@ -41,7 +37,7 @@ def test_derive_version_from_git_describe_marks_dirty_worktree() -> None:
 
 def test_derive_version_from_git_describe_accepts_v_prefix_tag() -> None:
     assert (
-        versioning.derive_version_from_git_describe("v3.4.0-2-gabc1234", fallback_version="3.5.1.dev0")
+        versioning.derive_version_from_git_describe("v3.4.0-2-gabc1234", fallback_version="3.4.0")
         == "3.4.1.dev2+gabc1234"
     )
 
@@ -51,6 +47,19 @@ def test_derive_version_from_git_describe_returns_prerelease_for_exact_pre_tag()
         versioning.derive_version_from_git_describe("v3.5.1-pre.1-0-gabc1234", fallback_version="3.5.1.dev0")
         == "3.5.1-pre.1"
     )
+
+
+@pytest.mark.parametrize(
+    ("describe", "baseline", "expected"),
+    [
+        ("v3.7.0-94-gbfaf3fd-dirty", "3.10.4.dev0", "3.10.4.dev94+gbfaf3fd.dirty"),
+        ("v3.7.0-94-gbfaf3fd", "3.10.4.dev0", "3.10.4.dev94+gbfaf3fd"),
+        ("v3.10.3-2-gabc1234", "3.7.1.dev0", "3.10.4.dev2+gabc1234"),
+    ],
+)
+def test_dev_baseline_prevents_version_regression(describe: str, baseline: str, expected: str) -> None:
+    """旧祖先标签不能压低显式开发基准，较新的标签也不能被旧基准压低。"""
+    assert versioning.derive_version_from_git_describe(describe, baseline) == expected
 
 
 def test_format_windows_version_quad_uses_pre_number_for_prerelease() -> None:

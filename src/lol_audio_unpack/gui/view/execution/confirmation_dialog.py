@@ -74,7 +74,12 @@ class ConfirmationDialog(MessageBoxBase):
         ]
         if params.wav_enabled:
             lines.append(
-                f"转码：{params.wav_format}；并发：{params.wav_workers}；超时：{params.wav_timeout}s；最多尝试：{params.wav_retries} 次"
+                f"采样格式：{params.wav_format}；并发：{params.wav_workers}；超时：{params.wav_timeout}s；最多尝试：{params.wav_retries} 次"
+            )
+            lines.append(
+                "WAV 按事件输出到 wavs_by_event；无可用映射时输出到 wavs，有映射但无关联时放入“未关联事件”。"
+                if params.wav_group_by_event
+                else "WAV 保留原音频目录结构。"
             )
         if params.run_mapping:
             lines.append(f"映射整合：{'开启' if params.integrate_data else '关闭'}")

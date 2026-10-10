@@ -333,8 +333,8 @@ def _build_bound_entity(  # noqa: PLR0913, PLR0917
             if paths:
                 audio_paths[event_name] = paths
                 mapped_paths.update(paths)
-        if audio_paths:
-            sub_result.setdefault("audioPaths", {})[category] = audio_paths
+        # 已解析事件但没有对应文件时保留空关系，区别于未生成精确路径的旧映射。
+        sub_result.setdefault("audioPaths", {})[category] = audio_paths
 
     if skin_audio is not None:
         mapping_result["sharedAudio"] = skin_audio.shared_payload()
@@ -951,7 +951,7 @@ def integrate_entity(
             if banks_paths and mapping_events:
                 integrated_item["events"][category] = {"banks": banks_paths, "mapping": mapping_events}
 
-        if sub_audio_paths:
+        if isinstance(mapping_data.get(sub_id, {}).get("audioPaths"), dict):
             integrated_item["audioPaths"] = sub_audio_paths
 
         if integrated_item["events"]:

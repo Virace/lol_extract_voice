@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from contextlib import ExitStack
 from io import TextIOWrapper
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from .dispatch import (
     _has_mapping,
     _has_update,
     _has_wav,
+    _log_stage_result,
     _log_top_error,
     run_extract,
     run_mapping,
@@ -25,7 +27,14 @@ from .dispatch import (
 )
 from .file_commands import FILE_COMMANDS, run_file_command
 from .parser import EntryMode, create_parser
-from .runtime import CliInputError, _apply_config_profile, _validate_config_argv, initialize_app, validate_args
+from .runtime import (
+    CliInputError,
+    _apply_config_profile,
+    _validate_config_argv,
+    build_options,
+    initialize_app,
+    validate_args,
+)
 
 EXIT_CODE_BY_STATUS = {
     ResultStatus.SUCCESS: 0,
@@ -88,6 +97,8 @@ def main() -> int:
     input_failed = False
     should_log_result = True
     args = None
+    event_stack = ExitStack()
+    event_output = None
     try:
         mode = _detect_mode(sys.argv[0])
         parser = create_parser(mode)
@@ -130,9 +141,11 @@ def main() -> int:
             and not (extract_result is not None and extract_result.status is ResultStatus.FAILED)
         )
         if can_run_wav:
+            if bool(getattr(args, "wav_group_by_event", False)):
+                event_output = event_stack.enter_context(app.defer_wav_output(build_options(args)))
             with run_summary.stage_context("wav", label="WAV 转码"):
                 wav_result = _require_stage_result(
-                    run_wav(args, app, extract_result=extract_result),
+                    run_wav(args, app, extract_result=extract_result, defer_output=event_output is not None),
                     "wav",
                 )
             stages.append(wav_result)
@@ -155,6 +168,22 @@ def main() -> int:
         # 意外异常表示整轮运行不可信；不能因之前已有成功阶段而降级成 partial。
         stages = [StageResult.from_error("run", exc)]
     finally:
+        try:
+            if event_output is not None and (event_output.tree_payload is not None or event_output.has_pending):
+                # 与 GUI 共用最终交付入口；后续映射失败也要保留已完成的转码文件。
+                with run_summary.stage_context("wav", label="WAV 输出"):
+                    final_wav = app.finish_wav_output(event_output)
+                    _log_stage_result("WAV 转码", final_wav)
+                if any(stage.stage == "wav" for stage in stages):
+                    stages = [final_wav if stage.stage == "wav" else stage for stage in stages]
+                elif not any(stage.stage == "run" and stage.status is ResultStatus.FAILED for stage in stages):
+                    # 全局异常仍以 failed 交付，不能被收尾产物降级为 partial。
+                    stages.append(final_wav)
+        except Exception as exc:
+            _log_top_error(exc, dev_mode=bool(getattr(args, "dev", False)))
+            stages.append(StageResult.from_error("wav", exc))
+        finally:
+            event_stack.close()
         if summary_sink_id is not None:
             logger.remove(summary_sink_id)
         if app_context is not None and run_summary is not None:

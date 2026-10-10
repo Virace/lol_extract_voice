@@ -8,7 +8,7 @@ from typing import Any
 
 from loguru import logger
 from PySide6.QtCore import QTimer, Signal
-from PySide6.QtWidgets import QHBoxLayout, QMessageBox, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QSizePolicy, QVBoxLayout, QWidget
 from qfluentwidgets import (
     CaptionLabel,
     InfoBarPosition,
@@ -488,16 +488,15 @@ class ExecutionPage(SmoothScrollArea):
 
     def _confirm_force_stop_task(self) -> bool:
         """弹出全局确认框，确认是否强制结束当前任务。"""
-        dialog = QMessageBox(self._feedback_parent())
-        dialog.setIcon(QMessageBox.Icon.Warning)
-        dialog.setWindowTitle("结束当前任务")
-        dialog.setText("当前任务仍在执行。")
-        dialog.setInformativeText("确认后会强制结束当前任务，未完成的执行过程会立即停止。")
-        dialog.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        dialog.button(QMessageBox.StandardButton.Yes).setText("结束任务")
-        dialog.button(QMessageBox.StandardButton.Cancel).setText("取消")
-        return dialog.exec() == int(QMessageBox.StandardButton.Yes)
+        dialog = MessageBox(
+            "结束当前任务",
+            "当前任务仍在执行。\n\n确认后会强制结束当前任务，未完成的执行过程会立即停止。",
+            self._feedback_parent(),
+        )
+        dialog.yesButton.setText("结束任务")
+        dialog.cancelButton.setText("取消")
+        dialog.cancelButton.setFocus()
+        return bool(dialog.exec())
 
     def _queue_task_draft(self) -> None:  # noqa: PLR0911
         """先核对冻结的目标清单，确认后才提交任务。"""
@@ -613,6 +612,7 @@ class ExecutionPage(SmoothScrollArea):
                 wav_workers=request.options.worker_count,
                 wav_timeout=request.options.timeout_seconds,
                 wav_retries=request.options.max_retries,
+                wav_group_by_event=request.options.group_by_event,
             ),
             export_request=request,
             version=request.version,

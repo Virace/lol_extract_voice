@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
 from PySide6.QtCore import QModelIndex, QObject, QPoint, Qt, Signal
-from PySide6.QtWidgets import QFileDialog, QMessageBox
-from qfluentwidgets import Action, CheckBox, RoundMenu
+from PySide6.QtWidgets import QFileDialog
+from qfluentwidgets import Action, MessageBox, RoundMenu
 
 from lol_audio_unpack.app.artifacts import AudioRef
 from lol_audio_unpack.app.audio_export import AudioExportRequest, ExportTarget
 from lol_audio_unpack.app.audio_scope import AudioScope, MappingNode
 from lol_audio_unpack.app.audio_selection import AudioSelection
 from lol_audio_unpack.gui.view.overview.export_bar import AudioExportBar
+from lol_audio_unpack.gui.view.overview.export_dialog import AudioExportDialog
 
 
 class AudioExportController(QObject):
@@ -22,7 +24,9 @@ class AudioExportController(QObject):
     export_requested = Signal(object)
     index_requested = Signal()
 
-    def __init__(self, bar: AudioExportBar, tree, audio_list, *, parent=None) -> None:
+    def __init__(
+        self, bar: AudioExportBar, tree, audio_list, *, parent=None, group_by_event: Callable[[], bool] | None = None
+    ) -> None:
         """绑定既有预览视图及其行末选择信号。"""
         super().__init__(parent)
         self.bar = bar
@@ -30,6 +34,7 @@ class AudioExportController(QObject):
         self.audio_list = audio_list
         self.selection = AudioSelection()
         self.request: AudioExportRequest | None = None
+        self._event_output = group_by_event
         self.mode = False
         self.busy = False
         self.index_complete = False
@@ -96,15 +101,15 @@ class AudioExportController(QObject):
         """切换实体前告知将清空范围，取消可继续留在原实体。"""
         if not self.selection.has_selection:
             return True
-        dialog = QMessageBox(self.bar.window())
-        dialog.setWindowTitle("切换预览对象")
-        dialog.setText("切换对象将清空当前音频导出选择。")
-        dialog.setInformativeText("左侧任务对象的勾选不受影响。")
-        dialog.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
-        dialog.setDefaultButton(QMessageBox.StandardButton.Cancel)
-        dialog.button(QMessageBox.StandardButton.Yes).setText("清空并切换")
-        dialog.button(QMessageBox.StandardButton.Cancel).setText("留在当前对象")
-        return dialog.exec() == int(QMessageBox.StandardButton.Yes)
+        dialog = MessageBox(
+            "切换预览对象",
+            "切换对象将清空当前音频导出选择。\n\n左侧任务对象的勾选不受影响。",
+            self.bar.window(),
+        )
+        dialog.yesButton.setText("清空并切换")
+        dialog.cancelButton.setText("留在当前对象")
+        dialog.cancelButton.setFocus()
+        return bool(dialog.exec())
 
     def set_available(self, refs: tuple[AudioRef, ...], *, complete: bool) -> None:
         """应用已完成的路径索引，不把映射不可用叶子纳入选择。"""
@@ -227,6 +232,8 @@ class AudioExportController(QObject):
         request = self.request
         if request is None or self.busy:
             return
+        if self._event_output is not None:
+            request = replace(request, options=replace(request.options, group_by_event=self._event_output()))
         selection = self.selection
         if paths is not None:
             selection = AudioSelection()
@@ -247,34 +254,29 @@ class AudioExportController(QObject):
         if not output_text:
             return
         output = Path(output_text)
-        targets = tuple(ExportTarget(scope, output / self._output_prefix(scope.root)) for scope in scopes)
-        dialog = QMessageBox(self.bar.window())
-        dialog.setWindowTitle("核对音频导出")
-        dialog.setText(f"{request.entity_name} · WAV ({request.options.format})")
+        targets = request.build_targets(scopes, output)
         scope_text = "当前实体目录全部 WEM" if selection.state.all_selected else f"所选 {selection.count:,} 个音频"
         exclusions = len(selection.state.excluded)
         if exclusions:
             scope_text += f"，排除 {exclusions:,} 个"
-        dialog.setInformativeText(
+        details = (
             f"范围：{scope_text}\n源目录："
             + "\n".join(str(scope.root) for scope in scopes)
-            + f"\n输出：{output}\n保留目录结构与原始 ID。\n已知可用 {selection.count:,} 个；最终目录数量在后台扫描时复核。"
+            + "\n输出目录："
+            + "\n".join(str(target.output_root) for target in targets)
+            + (
+                "\n按事件分类；无可用映射时保留普通目录，有映射但无关联时放入“未关联事件”。"
+                if request.options.group_by_event
+                else ""
+            )
+            + f"\n保留版本、语言、完整目录结构与原始 ID。\n已知可用 {selection.count:,} 个；最终目录数量在后台扫描时复核。"
             + f"\n对应文件不可用的映射项 {self._unavailable_count:,} 个，本次不会自动解包。"
         )
-        overwrite = CheckBox("覆盖本次范围内的已有 WAV（默认跳过）", dialog)
-        dialog.setCheckBox(overwrite)
-        dialog.setStandardButtons(QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        dialog.button(QMessageBox.StandardButton.Ok).setText("开始导出")
-        dialog.button(QMessageBox.StandardButton.Cancel).setText("返回选择")
-        if dialog.exec() == int(QMessageBox.StandardButton.Ok):
-            self.export_requested.emit(replace(request, targets=targets, overwrite=overwrite.isChecked()))
-
-    def _output_prefix(self, root: Path) -> str:
-        """按现有按类型分目录布局保留逻辑路径，不用实体显示名拼路径。"""
-        if self.request is None or len(self.request.targets) == 1:
-            return ""
-        parts = root.relative_to(self.request.version_root).parts
-        return parts[0] if parts and parts[0] in {"VO", "SFX", "MUSIC"} else "lobby"
+        dialog = AudioExportDialog(
+            f"{request.entity_name} · WAV ({request.options.format})", details, self.bar.window()
+        )
+        if dialog.exec():
+            self.export_requested.emit(replace(request, targets=targets, overwrite=dialog.overwrite.isChecked()))
 
     def export_file(self, source: Path, output: Path, *, overwrite: bool, reveal: bool = False) -> None:
         """单文件另存为也进入共用执行器，不阻塞 UI 线程。"""
@@ -292,5 +294,6 @@ class AudioExportController(QObject):
                 output_file=output,
                 overwrite=overwrite,
                 reveal_output=reveal,
+                options=replace(request.options, group_by_event=False),
             )
         )

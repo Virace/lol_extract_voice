@@ -110,9 +110,10 @@ def normalize_mapping(  # noqa: PLR0911
 
             normalized_events = _normalize_integrated_events(skin_payload.get("events"))
             normalized_paths = _normalize_integrated_audio_paths(skin_payload.get("audioPaths"))
-            if normalized_events or normalized_paths:
+            if normalized_events or isinstance(skin_payload.get("audioPaths"), dict):
                 normalized_skin: dict[str, object] = {"events": normalized_events}
-                if normalized_paths:
+                # 显式空表同样是可用映射，不能与旧的 ID-only 数据混淆。
+                if isinstance(skin_payload.get("audioPaths"), dict):
                     normalized_skin["audioPaths"] = normalized_paths
                 normalized_skins[skin_id] = normalized_skin
 
@@ -129,7 +130,7 @@ def normalize_mapping(  # noqa: PLR0911
         normalized_events = _normalize_integrated_events(resource_pack.get("events"))
         normalized_paths = _normalize_integrated_audio_paths(resource_pack.get("audioPaths"))
         normalized_pack: dict[str, object] = {"events": normalized_events}
-        if normalized_paths:
+        if isinstance(resource_pack.get("audioPaths"), dict):
             normalized_pack["audioPaths"] = normalized_paths
         normalized["resourcePackKey"] = key
         normalized["resourcePacks"] = {key: normalized_pack}
@@ -144,7 +145,7 @@ def normalize_mapping(  # noqa: PLR0911
     normalized_events = _normalize_integrated_events(map_payload.get("events"))
     normalized_map: dict[str, object] = {"events": normalized_events}
     normalized_paths = _normalize_integrated_audio_paths(map_payload.get("audioPaths"))
-    if normalized_paths:
+    if isinstance(map_payload.get("audioPaths"), dict):
         normalized_map["audioPaths"] = normalized_paths
     normalized["map"] = {str(data_payload.get("mapId", entity_id)): normalized_map}
     return normalized
