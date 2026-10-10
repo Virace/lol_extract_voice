@@ -54,7 +54,7 @@ jobs:
         working-directory: docs
         run: npm ci
 
-      - name: 构建网站并获取最新正式版信息
+      - name: 构建网站并获取正式版更新日志
         working-directory: docs
         env:
           GITHUB_TOKEN: ${{ github.token }}
