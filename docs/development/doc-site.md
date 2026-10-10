@@ -35,6 +35,7 @@ npm run preview
 - `docs/` 下现有 Markdown 直接生成详细页面，文件继续保持 GitHub 可阅读的格式。
 - 网站导航、侧边栏、主题和本地搜索由 `.vitepress/config.mts` 管理。
 - `.vitepress/source.mts` 只处理发布范围、链接和原始资源，不改写 Markdown 正文。
+- `docs/changelog.md` 为更新日志入口；`.vitepress/changelog.mts` 在渲染时装入 Release 正文，不生成需要入库的副本。
 
 导航按界面使用、控制台使用、其他信息、API、开发与构建划分。命令示例与参数放在控制台区；
 音频分组、输出目录和本地输入放在“其他信息”；配置读写接口与运行上下文放在 API 区。
@@ -56,12 +57,22 @@ README 中的 `project-summary` 标记包围首页共用简介，“你可以做
 
 | 发布信息 | 规则 |
 | --- | --- |
-| 获取时机 | 启动开发服务或构建时调用公开 `releases/latest` API，获取版本、更新时间与发布页 |
+| 获取时机 | 启动开发服务或构建时通过 `gh api` 读取 `releases/latest` 与 Release 列表 |
+| 更新日志 | 展示最近 5 个正式版的完整正文，按发布日期倒序；排除草稿和预发布版，更早版本链接到 GitHub |
 | 下载按钮 | 显示版本，统一跳转 Release 页面；源码和示例配置仍使用 GitHub 文件页 |
 | 缓存 | 本地缓存一小时，位于 `.temp/.docs-site/release.json`；CI 每次重新获取，页面访问不请求 GitHub API |
 | 网络失败 | 本地提示并沿用缓存或发布页入口；CI 构建失败，保留线上站点 |
-| CI 授权 | 使用 GitHub 自动提供的 `GITHUB_TOKEN` 请求 API，令牌不进入网页 |
+| 本地与 CI | 本地使用已登录的 `gh`；GitHub runner 自带 `gh`，使用自动提供的 `GITHUB_TOKEN` 和现有 `contents: read` 权限，令牌不进入网页 |
 | 刷新版本 | 重新构建站点；页面是构建时的发布快照，Release 页面可查看当前版本 |
+
+本地需先安装 GitHub CLI 并执行 `gh auth login`。可直接核对数据来源：
+
+```sh
+gh api repos/Virace/lol_extract_voice/releases/latest
+gh api 'repos/Virace/lol_extract_voice/releases?per_page=30&page=1'
+```
+
+Release 正文仅调整标题层级和排版，不另写摘要；Markdown 在构建时渲染，网页访问时不请求 GitHub。
 
 ## 配图维护
 

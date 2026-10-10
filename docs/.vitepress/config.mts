@@ -4,9 +4,11 @@ import { defineConfig } from 'vitepress'
 import { brandIcon, repoRoot, siteRoot, sourceExcludes, sourceLinks } from './source.mts'
 import { readProject } from './home.mts'
 import { loadRelease } from './release.mts'
+import { renderChangelog } from './changelog.mts'
 
 const require = createRequire(import.meta.url)
 const release = await loadRelease()
+const changelog = await renderChangelog(release)
 const project = readProject()
 
 export default defineConfig({
@@ -21,7 +23,16 @@ export default defineConfig({
   cacheDir: path.join(siteRoot, 'cache'),
   useWebFonts: false,
   head: [['link', { rel: 'icon', href: brandIcon, type: 'image/svg+xml' }]],
-  markdown: { config: sourceLinks },
+  markdown: {
+    config(md) {
+      sourceLinks(md)
+      md.core.ruler.before('normalize', 'release-notes', (state) => {
+        if (state.env.relativePath === 'docs/changelog.md') {
+          state.src = state.src.replace('<!-- release-notes -->', changelog)
+        }
+      })
+    },
+  },
   transformPageData(page) {
     if (page.frontmatter.layout !== 'home') return
     page.frontmatter.hero = {
@@ -74,6 +85,7 @@ export default defineConfig({
     logo: { src: brandIcon, alt: 'Lol Audio Unpack' },
     nav: [
       { text: '首页', link: '/' },
+      { text: '更新日志', link: '/docs/changelog' },
       {
         text: '使用说明',
         items: [
@@ -91,6 +103,7 @@ export default defineConfig({
         text: '项目与导航',
         items: [
           { text: '项目介绍', link: '/project' },
+          { text: '更新日志', link: '/docs/changelog' },
           { text: '文档导航', link: '/docs/README' },
         ],
       },
