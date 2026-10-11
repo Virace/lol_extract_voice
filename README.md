@@ -1,8 +1,20 @@
+<div align="center">
+
+<img src="./src/lol_audio_unpack/gui/assets/app_icon.svg" alt="Lol Audio Unpack 程序图标" width="160">
+
 # Lol Audio Unpack
+
+[![最新发布版本](https://img.shields.io/github/v/release/Virace/lol-audio-unpack?style=flat&logo=github&label=release)](https://github.com/Virace/lol-audio-unpack/releases/latest)
+[![GitHub 下载量](https://img.shields.io/github/downloads/Virace/lol-audio-unpack/total?style=flat&logo=github&label=downloads)](https://github.com/Virace/lol-audio-unpack/releases)
+[![Python 3.10 或更新版本](https://img.shields.io/badge/python-%3E%3D3.10-3776AB?style=flat&logo=python&logoColor=white)](#从仓库运行)
+[![GPLv3 许可证](https://img.shields.io/badge/license-GPLv3-blue?style=flat)](LICENSE)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Virace/lol_extract_voice)
 
 <!-- project-summary -->
 提取、查找、试听并导出英雄联盟语音和音效的桌面工具。
 <!-- /project-summary -->
+
+</div>
 
 [下载](https://github.com/Virace/lol_extract_voice/releases/latest) · [界面使用](docs/gui/usage.md) · [控制台使用](docs/cli-package.md) · [Python API](docs/api/python_api.md)
 
