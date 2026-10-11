@@ -41,6 +41,7 @@
 
 - [开发文档](development/README.md)：环境、代码结构和检查命令
 - [音频 ID 与内容实测](research/historical-wem.md)：跨版本换号与 WEM 内容共享
+- [事件名与事件范围实测](research/historical-events.md)：事件改名、候选音频变化与分析资料包
 - [控制台本地打包与验收](development/cli-packaging.md)
 - [基准测试与性能参考](api/benchmarking_and_performance.md)
 - [界面共享实体数据刷新](gui/shared_entity_data_refresh.md)

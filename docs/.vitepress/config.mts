@@ -149,6 +149,7 @@ export default defineConfig({
         items: [
           { text: '开发文档', link: '/docs/development/README' },
           { text: '音频 ID 与内容实测', link: '/docs/research/historical-wem' },
+          { text: '事件名与范围实测', link: '/docs/research/historical-events' },
           { text: '文档网站维护', link: '/docs/development/doc-site' },
           { text: '控制台打包', link: '/docs/development/cli-packaging' },
           { text: '基准与性能', link: '/docs/api/benchmarking_and_performance' },

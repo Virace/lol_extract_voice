@@ -52,6 +52,7 @@ uv run pytest
 ## 打包与验证
 
 - [音频 ID 与内容实测](../research/historical-wem.md)：历史换号证据与当前内容共享方式
+- [事件名与事件范围实测](../research/historical-events.md)：真实事件关系、最终统计数据与分析脚本
 - [界面任务与导出规则](gui-tasks-and-exports.md)：选择确认、任务快照、分类回退与共享边界
 - [本地数据源验证合同](prepared-source-contract.md)：输入预检、精确资源绑定与旧配置迁移
 - [文档网站维护](doc-site.md)：在 `docs/` 独立运行 VitePress，复用仓库 Markdown
